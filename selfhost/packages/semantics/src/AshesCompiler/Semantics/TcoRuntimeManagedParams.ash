@@ -447,9 +447,16 @@ let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
         | ExprCall(function, argument, _sugar, _layout) -> shapeCallSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
+// An empty list literal, the edge that empties a list refilled at other edges.
+let shapeIsEmptyList (expression: Expr) =
+    match shapeUnspan(expression) with
+        | ExprList([], _isMultiline) -> true
+        | _ -> false
+
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail, the
-// parameter itself, or a call's result, whether one passed the consumed tail, and whether one passed
-// a call's result, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge` and `AnyRefillEdge`.
+// parameter itself, a call's result, or an empty list, whether one passed the consumed tail, and
+// whether one passed a call's result, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge` and
+// `AnyRefillEdge`.
 let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (walks: List((Bool, Bool, Bool))) =
     match (arguments, walks) with
         | (argument :: restArguments, (everyEdge, anyWalk, anyRefill) :: restWalks) ->
@@ -463,7 +470,12 @@ let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: 
                         | _ -> false)
                 in
                     let walk = local == TcoConsumedTailShape
-                    in (everyEdge && (walk || refill || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill)) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
+                    in
+                        let emptied =
+                            parameters
+                            |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
+                            |> shapeIsEmptyList
+                        in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill)) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
         | _ -> walks
 
 type ShapeWalk =
@@ -527,11 +539,11 @@ let recursive shapeInitialWalks (count: Int) =
 // accumulator edge there (the parameter, a cons onto it, or a choice between those), stage 0's
 // `ChoiceAccumulatorRebuild`: one self-call chooses between two, or every one hands the parameter
 // on or conses onto it, some doing each; and a walked-or-refilled list when every self-call passed
-// the parameter's consumed tail, the parameter itself, or a call's result, both a consumed tail
-// and a call's result among them, stage 0's `WalkedOrRefilled`.
+// the parameter's consumed tail, the parameter itself, a call's result or an empty list, a call's
+// result among them, stage 0's `WalkedOrRefilled`.
 let shapeResolveWalk (walk: (Bool, Bool, Bool)) =
     match walk with
-        | (true, true, true) -> TcoWalkedOrRefilledShape
+        | (true, _anyWalk, true) -> TcoWalkedOrRefilledShape
         | _ -> TcoOtherShape
 
 let shapeResolveOther (choice: (Bool, Bool, Bool)) (walk: (Bool, Bool, Bool)) =

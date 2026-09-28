@@ -2826,6 +2826,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_back_only_refilled_from_helper_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist whose back queue is only ever handed on, emptied, or refilled from a helper
+        // that conses each step's target onto it. Left in the arena, the queue kept every refill's
+        // reference-counted cells; placed on the reference-counted heap, each refill is taken at
+        // the back edge and the one it replaces released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildWorklistBackOnlyRefilledFromHelperProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist back queue only refilled from a helper", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_front_refilled_behind_marking_helper_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10664,6 +10689,51 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistBackOnlyRefilledFromHelperProgram(int rounds)
+        => $$"""
+            let recursive enqueue (pending: List(Str)) (back: List(Str)) =
+                match pending with
+                    | [] -> back
+                    | key :: rest -> enqueue(rest)(key :: back)
+
+            let recursive reverseAll (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> reverseAll(rest)(value :: acc)
+
+            let next (key: Str) =
+                if key == "cinder"
+                then Some("smoke")
+                else
+                    if key == "smoke"
+                    then Some("soot")
+                    else
+                        if key == "soot"
+                        then Some("cinder")
+                        else None
+
+            let recursive solve (count: Int) (front: List(Str)) (back: List(Str)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> count
+                            | _ -> solve(count)(reverseAll(back)([]))([])(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then count
+                        else
+                            match next(key) with
+                                | None -> solve(count)(rest)(back)(fuel - 1)
+                                | Some(target) -> solve(count + 1)(rest)(enqueue([target])(back))(fuel - 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + solve(0)(["cinder", "ember"])([])(7))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildWorklistFrontRefilledBehindMarkingHelperProgram(int rounds)

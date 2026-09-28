@@ -1,0 +1,45 @@
+// A worklist whose back queue is only ever handed on, emptied, or refilled from a helper that
+// conses each step's target onto it: the back queue is placed on the reference-counted heap and
+// each refill taken at the back edge.
+let recursive enqueue (pending: List(Str)) (back: List(Str)) =
+    match pending with
+        | [] -> back
+        | key :: rest -> enqueue(rest)(key :: back)
+
+let recursive reverseAll (values: List(Str)) (acc: List(Str)) =
+    match values with
+        | [] -> acc
+        | value :: rest -> reverseAll(rest)(value :: acc)
+
+let next (key: Str) =
+    if key == "cinder"
+    then Some("smoke")
+    else
+        if key == "smoke"
+        then Some("soot")
+        else
+            if key == "soot"
+            then Some("cinder")
+            else None
+
+let recursive solve (count: Int) (front: List(Str)) (back: List(Str)) (fuel: Int) =
+    match front with
+        | [] ->
+            match back with
+                | [] -> count
+                | _ -> solve(count)(reverseAll(back)([]))([])(fuel)
+        | key :: rest ->
+            if fuel <= 0
+            then count
+            else
+                match next(key) with
+                    | None -> solve(count)(rest)(back)(fuel - 1)
+                    | Some(target) -> solve(count + 1)(rest)(enqueue([target])(back))(fuel - 1)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + solve(0)(["cinder", "ember"])([])(7))
+
+0
+|> rounds(3)

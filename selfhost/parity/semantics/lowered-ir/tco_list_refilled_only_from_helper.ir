@@ -1,0 +1,1335 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from enqueue]
+  locals=34 temps=109
+    LoadEnv               Target=0 Index=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=2 Source=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=42 Slot=2   (tco_list_refilled_only_from_helper.ash:4:1)
+    IsReferenceCounted    Target=43 SourceTemp=42
+    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_10   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDup                 Target=44 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=44   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rc_representation_done_11   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_representation_copy_10:
+    CopyOutList           DestTemp=45 SrcTemp=42 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=24 Source=45   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_representation_done_11:
+    LoadLocal             Target=46 Slot=24   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=2 Source=46   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=47 Value=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=6 Source=47   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=48 Slot=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadArgumentOwnership Target=49   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=50 Value=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    AndInt                Target=51 Left=49 Right=50   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=51 Target=rc_arg_normalize_copy_12   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=25 Source=48   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rc_arg_normalize_done_13   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_arg_normalize_copy_12:
+    IsReferenceCounted    Target=52 SourceTemp=48
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_14   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDup                 Target=53 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=53   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rc_representation_done_15   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_representation_copy_14:
+    CopyOutList           DestTemp=54 SrcTemp=48 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=26 Source=54   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_representation_done_15:
+    LoadLocal             Target=55 Slot=26   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=25 Source=55   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_arg_normalize_done_13:
+    LoadLocal             Target=56 Slot=25   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=1 Source=56   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=57 Value=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=7 Source=57   (tco_list_refilled_only_from_helper.ash:4:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=5 Source=1   (tco_list_refilled_only_from_helper.ash:4:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=2 Slot=2   (tco_list_refilled_only_from_helper.ash:5:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (tco_list_refilled_only_from_helper.ash:5:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_list_refilled_only_from_helper.ash:5:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (tco_list_refilled_only_from_helper.ash:5:5)
+    LoadLocal             Target=5 Slot=1   (tco_list_refilled_only_from_helper.ash:6:17)
+    StoreLocal            Slot=11 Source=5   (tco_list_refilled_only_from_helper.ash:5:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_0   (tco_list_refilled_only_from_helper.ash:5:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_2   (tco_list_refilled_only_from_helper.ash:5:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (tco_list_refilled_only_from_helper.ash:5:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_list_refilled_only_from_helper.ash:5:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (tco_list_refilled_only_from_helper.ash:5:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:5:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:5:5)
+    StoreLocal            Slot=18 Source=8   (tco_list_refilled_only_from_helper.ash:5:5)
+    StoreLocal            Slot=19 Source=9   (tco_list_refilled_only_from_helper.ash:5:5)
+    LoadLocal             Target=40 Slot=18   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDup                 Target=41 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=41   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=10 Slot=19   (tco_list_refilled_only_from_helper.ash:7:34)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=18   (tco_list_refilled_only_from_helper.ash:7:40)
+    Borrow                Target=13 SourceTemp=12
+    CopyOutArena          DestTemp=14 SrcTemp=13 RuntimeManaged=true Purpose=RcNormalization
+    RcDrop                SourceTemp=8 TypeName=String OwnerSlot=18 RuntimeManaged=true
+    LoadLocal             Target=15 Slot=1   (tco_list_refilled_only_from_helper.ash:7:47)
+    RcDup                 Target=16 SourceTemp=14
+    IsReferenceCounted    Target=17 SourceTemp=15
+    StoreLocal            Slot=20 Source=15   (tco_list_refilled_only_from_helper.ash:7:40)
+    LoadConstInt          Target=18 Value=0   (tco_list_refilled_only_from_helper.ash:7:40)
+    CmpIntEq              Target=19 Left=15 Right=18   (tco_list_refilled_only_from_helper.ash:7:40)
+    OrInt                 Target=20 Left=17 Right=19   (tco_list_refilled_only_from_helper.ash:7:40)
+    JumpIfFalse           CondTemp=20 Target=rc_tail_copy_6   (tco_list_refilled_only_from_helper.ash:7:40)
+    Jump                  Target=rc_tail_done_5   (tco_list_refilled_only_from_helper.ash:7:40)
+  rc_tail_copy_6:
+    CopyOutList           DestTemp=21 SrcTemp=15 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:7:40)
+    StoreLocal            Slot=20 Source=21   (tco_list_refilled_only_from_helper.ash:7:40)
+  rc_tail_done_5:
+    LoadLocal             Target=22 Slot=20   (tco_list_refilled_only_from_helper.ash:7:40)
+    Alloc                 Target=23 SizeBytes=16 RuntimeManaged=true   (tco_list_refilled_only_from_helper.ash:7:40)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=16   (tco_list_refilled_only_from_helper.ash:7:40)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=22   (tco_list_refilled_only_from_helper.ash:7:40)
+    RcDup                 Target=24 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    LoadLocal             Target=25 Slot=2   (tco_list_refilled_only_from_helper.ash:7:26)
+    StoreLocal            Slot=21 Source=25   (tco_list_refilled_only_from_helper.ash:7:26)
+  rcdrop_list_7:
+    LoadLocal             Target=26 Slot=21   (tco_list_refilled_only_from_helper.ash:7:26)
+    LoadConstInt          Target=27 Value=0   (tco_list_refilled_only_from_helper.ash:7:26)
+    CmpIntNe              Target=28 Left=26 Right=27   (tco_list_refilled_only_from_helper.ash:7:26)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_9   (tco_list_refilled_only_from_helper.ash:7:26)
+    RcIsUnique            Target=29 SourceTemp=26
+    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_8   (tco_list_refilled_only_from_helper.ash:7:26)
+    LoadMemOffset         Target=30 BasePtr=26 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:7:26)
+    RcDrop                SourceTemp=30 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=31 BasePtr=26 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:7:26)
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=31   (tco_list_refilled_only_from_helper.ash:7:26)
+    Jump                  Target=rcdrop_list_7   (tco_list_refilled_only_from_helper.ash:7:26)
+  rcdrop_list_shared_8:
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_9   (tco_list_refilled_only_from_helper.ash:7:26)
+  rcdrop_list_end_9:
+    LoadConstInt          Target=32 Value=0   (tco_list_refilled_only_from_helper.ash:7:26)
+    StoreLocal            Slot=6 Source=32   (tco_list_refilled_only_from_helper.ash:7:26)
+    LoadLocal             Target=33 Slot=2   (tco_list_refilled_only_from_helper.ash:7:26)
+    LoadLocal             Target=34 Slot=1   (tco_list_refilled_only_from_helper.ash:7:26)
+    StoreLocal            Slot=2 Source=24   (tco_list_refilled_only_from_helper.ash:7:26)
+    StoreLocal            Slot=1 Source=23   (tco_list_refilled_only_from_helper.ash:7:26)
+    LoadLocal             Target=100 Slot=6
+    JumpIfFalse           CondTemp=100 Target=rc_tco_drop_inactive_120
+    StoreLocal            Slot=33 Source=33
+  rcdrop_list_121:
+    LoadLocal             Target=101 Slot=33
+    LoadConstInt          Target=102 Value=0
+    CmpIntNe              Target=103 Left=101 Right=102
+    JumpIfFalse           CondTemp=103 Target=rcdrop_list_end_123
+    RcIsUnique            Target=104 SourceTemp=101
+    JumpIfFalse           CondTemp=104 Target=rcdrop_list_shared_122
+    LoadMemOffset         Target=105 BasePtr=101 OffsetBytes=0
+    RcDrop                SourceTemp=105 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=106 BasePtr=101 OffsetBytes=8
+    RcDrop                SourceTemp=101 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=33 Source=106
+    Jump                  Target=rcdrop_list_121
+  rcdrop_list_shared_122:
+    RcDrop                SourceTemp=101 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_123
+  rcdrop_list_end_123:
+  rc_tco_drop_inactive_120:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=32
+    StoreLocal            Slot=2 Source=24
+    LoadConstInt          Target=107 Value=1
+    StoreLocal            Slot=6 Source=107
+    StoreLocal            Slot=1 Source=23
+    LoadConstInt          Target=108 Value=1
+    StoreLocal            Slot=7 Source=108
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=32
+    RestoreStackPointer   Slot=10   (tco_list_refilled_only_from_helper.ash:7:26)
+    Jump                  Target=lambda_1_body   (tco_list_refilled_only_from_helper.ash:7:26)
+    LoadConstInt          Target=35 Value=0   (tco_list_refilled_only_from_helper.ash:7:26)
+    StoreLocal            Slot=11 Source=35   (tco_list_refilled_only_from_helper.ash:5:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
+    Jump                  Target=match_end_0   (tco_list_refilled_only_from_helper.ash:5:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=23
+    Jump                  Target=match_none_1   (tco_list_refilled_only_from_helper.ash:5:5)
+  match_none_1:
+    LoadConstInt          Target=38 Value=0   (tco_list_refilled_only_from_helper.ash:5:5)
+    StoreLocal            Slot=11 Source=38   (tco_list_refilled_only_from_helper.ash:5:5)
+  match_end_0:
+    LoadLocal             Target=39 Slot=11   (tco_list_refilled_only_from_helper.ash:5:5)
+    LoadConstInt          Target=58 Value=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=27 Source=58   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=59 Slot=2   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=60 Slot=6   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntEq              Target=61 Left=59 Right=39   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=62 Slot=27   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntEq              Target=63 Left=62 Right=58   (tco_list_refilled_only_from_helper.ash:4:1)
+    AndInt                Target=64 Left=60 Right=61   (tco_list_refilled_only_from_helper.ash:4:1)
+    AndInt                Target=65 Left=64 Right=63   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_transfer_not_selected_16   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=66 Value=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=27 Source=66   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rc_tco_exit_transfer_done_17   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_tco_exit_transfer_not_selected_16:
+    LoadLocal             Target=67 Slot=6   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=67 Target=rc_tco_exit_drop_inactive_18   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=28 Source=59   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_19:
+    LoadLocal             Target=68 Slot=28   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=69 Value=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntNe              Target=70 Left=68 Right=69   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=70 Target=rcdrop_list_end_21   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcIsUnique            Target=71 SourceTemp=68
+    JumpIfFalse           CondTemp=71 Target=rcdrop_list_shared_20   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadMemOffset         Target=72 BasePtr=68 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=73 BasePtr=68 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDrop                SourceTemp=68 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=73   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rcdrop_list_19   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_shared_20:
+    RcDrop                SourceTemp=68 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_21   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_end_21:
+  rc_tco_exit_drop_inactive_18:
+  rc_tco_exit_transfer_done_17:
+    LoadLocal             Target=74 Slot=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=75 Slot=7   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntEq              Target=76 Left=74 Right=39   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=77 Slot=27   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntEq              Target=78 Left=77 Right=58   (tco_list_refilled_only_from_helper.ash:4:1)
+    AndInt                Target=79 Left=75 Right=76   (tco_list_refilled_only_from_helper.ash:4:1)
+    AndInt                Target=80 Left=79 Right=78   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=80 Target=rc_tco_exit_transfer_not_selected_22   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=81 Value=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=27 Source=81   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rc_tco_exit_transfer_done_23   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_tco_exit_transfer_not_selected_22:
+    LoadLocal             Target=82 Slot=7   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=82 Target=rc_tco_exit_drop_inactive_24   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=29 Source=74   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_25:
+    LoadLocal             Target=83 Slot=29   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=84 Value=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntNe              Target=85 Left=83 Right=84   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=85 Target=rcdrop_list_end_27   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcIsUnique            Target=86 SourceTemp=83
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_shared_26   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadMemOffset         Target=87 BasePtr=83 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDrop                SourceTemp=87 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=88 BasePtr=83 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=88   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rcdrop_list_25   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_shared_26:
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_27   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_end_27:
+  rc_tco_exit_drop_inactive_24:
+  rc_tco_exit_transfer_done_23:
+    LoadArgumentOwnership Target=89   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=90 Value=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    ShrInt                Target=91 Left=89 Right=90   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=91 Target=rc_result_owned_28   (tco_list_refilled_only_from_helper.ash:4:1)
+    CopyOutList           DestTemp=92 SrcTemp=39 HeadCopy=String Purpose=ArenaResultBoundary   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=31 Source=39   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_30:
+    LoadLocal             Target=93 Slot=31   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=94 Value=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    CmpIntNe              Target=95 Left=93 Right=94   (tco_list_refilled_only_from_helper.ash:4:1)
+    JumpIfFalse           CondTemp=95 Target=rcdrop_list_end_32   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcIsUnique            Target=96 SourceTemp=93
+    JumpIfFalse           CondTemp=96 Target=rcdrop_list_shared_31   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadMemOffset         Target=97 BasePtr=93 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDrop                SourceTemp=97 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=98 BasePtr=93 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:4:1)
+    RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=31 Source=98   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rcdrop_list_30   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_shared_31:
+    RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_32   (tco_list_refilled_only_from_helper.ash:4:1)
+  rcdrop_list_end_32:
+    StoreLocal            Slot=30 Source=92   (tco_list_refilled_only_from_helper.ash:4:1)
+    Jump                  Target=rc_result_done_29   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_result_owned_28:
+    StoreLocal            Slot=30 Source=39   (tco_list_refilled_only_from_helper.ash:4:1)
+  rc_result_done_29:
+    LoadLocal             Target=99 Slot=30   (tco_list_refilled_only_from_helper.ash:4:1)
+    Return                Source=99   (tco_list_refilled_only_from_helper.ash:4:1)
+
+function lambda_0  [SourceFunction from enqueue]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_list_refilled_only_from_helper.ash:4:1)
+    Return                Source=4   (tco_list_refilled_only_from_helper.ash:4:1)
+
+function lambda_3  [ClosureHelper from reverseAll]
+  locals=34 temps=109
+    LoadEnv               Target=0 Index=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=2 Source=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=42 Slot=2   (tco_list_refilled_only_from_helper.ash:9:1)
+    IsReferenceCounted    Target=43 SourceTemp=42
+    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_43   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDup                 Target=44 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=44   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rc_representation_done_44   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_representation_copy_43:
+    CopyOutList           DestTemp=45 SrcTemp=42 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=24 Source=45   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_representation_done_44:
+    LoadLocal             Target=46 Slot=24   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=2 Source=46   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=47 Value=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=6 Source=47   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=48 Slot=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadArgumentOwnership Target=49   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=50 Value=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    AndInt                Target=51 Left=49 Right=50   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=51 Target=rc_arg_normalize_copy_45   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=25 Source=48   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rc_arg_normalize_done_46   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_arg_normalize_copy_45:
+    IsReferenceCounted    Target=52 SourceTemp=48
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_47   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDup                 Target=53 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=53   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rc_representation_done_48   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_representation_copy_47:
+    CopyOutList           DestTemp=54 SrcTemp=48 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=26 Source=54   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_representation_done_48:
+    LoadLocal             Target=55 Slot=26   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=25 Source=55   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_arg_normalize_done_46:
+    LoadLocal             Target=56 Slot=25   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=1 Source=56   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=57 Value=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=7 Source=57   (tco_list_refilled_only_from_helper.ash:9:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=5 Source=1   (tco_list_refilled_only_from_helper.ash:9:1)
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=2 Slot=2   (tco_list_refilled_only_from_helper.ash:10:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (tco_list_refilled_only_from_helper.ash:10:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_list_refilled_only_from_helper.ash:10:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_36   (tco_list_refilled_only_from_helper.ash:10:5)
+    LoadLocal             Target=5 Slot=1   (tco_list_refilled_only_from_helper.ash:11:17)
+    StoreLocal            Slot=11 Source=5   (tco_list_refilled_only_from_helper.ash:10:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_33   (tco_list_refilled_only_from_helper.ash:10:5)
+  match_arm_cleanup_36:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_35   (tco_list_refilled_only_from_helper.ash:10:5)
+  match_next_35:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (tco_list_refilled_only_from_helper.ash:10:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_list_refilled_only_from_helper.ash:10:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_37   (tco_list_refilled_only_from_helper.ash:10:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:10:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:10:5)
+    StoreLocal            Slot=18 Source=8   (tco_list_refilled_only_from_helper.ash:10:5)
+    StoreLocal            Slot=19 Source=9   (tco_list_refilled_only_from_helper.ash:10:5)
+    LoadLocal             Target=40 Slot=18   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDup                 Target=41 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=41   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=10 Slot=19   (tco_list_refilled_only_from_helper.ash:12:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=18   (tco_list_refilled_only_from_helper.ash:12:45)
+    Borrow                Target=13 SourceTemp=12
+    CopyOutArena          DestTemp=14 SrcTemp=13 RuntimeManaged=true Purpose=RcNormalization
+    RcDrop                SourceTemp=8 TypeName=String OwnerSlot=18 RuntimeManaged=true
+    LoadLocal             Target=15 Slot=1   (tco_list_refilled_only_from_helper.ash:12:54)
+    RcDup                 Target=16 SourceTemp=14
+    IsReferenceCounted    Target=17 SourceTemp=15
+    StoreLocal            Slot=20 Source=15   (tco_list_refilled_only_from_helper.ash:12:45)
+    LoadConstInt          Target=18 Value=0   (tco_list_refilled_only_from_helper.ash:12:45)
+    CmpIntEq              Target=19 Left=15 Right=18   (tco_list_refilled_only_from_helper.ash:12:45)
+    OrInt                 Target=20 Left=17 Right=19   (tco_list_refilled_only_from_helper.ash:12:45)
+    JumpIfFalse           CondTemp=20 Target=rc_tail_copy_39   (tco_list_refilled_only_from_helper.ash:12:45)
+    Jump                  Target=rc_tail_done_38   (tco_list_refilled_only_from_helper.ash:12:45)
+  rc_tail_copy_39:
+    CopyOutList           DestTemp=21 SrcTemp=15 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:12:45)
+    StoreLocal            Slot=20 Source=21   (tco_list_refilled_only_from_helper.ash:12:45)
+  rc_tail_done_38:
+    LoadLocal             Target=22 Slot=20   (tco_list_refilled_only_from_helper.ash:12:45)
+    Alloc                 Target=23 SizeBytes=16 RuntimeManaged=true   (tco_list_refilled_only_from_helper.ash:12:45)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=16   (tco_list_refilled_only_from_helper.ash:12:45)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=22   (tco_list_refilled_only_from_helper.ash:12:45)
+    RcDup                 Target=24 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    LoadLocal             Target=25 Slot=2   (tco_list_refilled_only_from_helper.ash:12:28)
+    StoreLocal            Slot=21 Source=25   (tco_list_refilled_only_from_helper.ash:12:28)
+  rcdrop_list_40:
+    LoadLocal             Target=26 Slot=21   (tco_list_refilled_only_from_helper.ash:12:28)
+    LoadConstInt          Target=27 Value=0   (tco_list_refilled_only_from_helper.ash:12:28)
+    CmpIntNe              Target=28 Left=26 Right=27   (tco_list_refilled_only_from_helper.ash:12:28)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_42   (tco_list_refilled_only_from_helper.ash:12:28)
+    RcIsUnique            Target=29 SourceTemp=26
+    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_41   (tco_list_refilled_only_from_helper.ash:12:28)
+    LoadMemOffset         Target=30 BasePtr=26 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:12:28)
+    RcDrop                SourceTemp=30 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=31 BasePtr=26 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:12:28)
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=31   (tco_list_refilled_only_from_helper.ash:12:28)
+    Jump                  Target=rcdrop_list_40   (tco_list_refilled_only_from_helper.ash:12:28)
+  rcdrop_list_shared_41:
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_42   (tco_list_refilled_only_from_helper.ash:12:28)
+  rcdrop_list_end_42:
+    LoadConstInt          Target=32 Value=0   (tco_list_refilled_only_from_helper.ash:12:28)
+    StoreLocal            Slot=6 Source=32   (tco_list_refilled_only_from_helper.ash:12:28)
+    LoadLocal             Target=33 Slot=2   (tco_list_refilled_only_from_helper.ash:12:28)
+    LoadLocal             Target=34 Slot=1   (tco_list_refilled_only_from_helper.ash:12:28)
+    StoreLocal            Slot=2 Source=24   (tco_list_refilled_only_from_helper.ash:12:28)
+    StoreLocal            Slot=1 Source=23   (tco_list_refilled_only_from_helper.ash:12:28)
+    LoadLocal             Target=100 Slot=6
+    JumpIfFalse           CondTemp=100 Target=rc_tco_drop_inactive_124
+    StoreLocal            Slot=33 Source=33
+  rcdrop_list_125:
+    LoadLocal             Target=101 Slot=33
+    LoadConstInt          Target=102 Value=0
+    CmpIntNe              Target=103 Left=101 Right=102
+    JumpIfFalse           CondTemp=103 Target=rcdrop_list_end_127
+    RcIsUnique            Target=104 SourceTemp=101
+    JumpIfFalse           CondTemp=104 Target=rcdrop_list_shared_126
+    LoadMemOffset         Target=105 BasePtr=101 OffsetBytes=0
+    RcDrop                SourceTemp=105 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=106 BasePtr=101 OffsetBytes=8
+    RcDrop                SourceTemp=101 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=33 Source=106
+    Jump                  Target=rcdrop_list_125
+  rcdrop_list_shared_126:
+    RcDrop                SourceTemp=101 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_127
+  rcdrop_list_end_127:
+  rc_tco_drop_inactive_124:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=32
+    StoreLocal            Slot=2 Source=24
+    LoadConstInt          Target=107 Value=1
+    StoreLocal            Slot=6 Source=107
+    StoreLocal            Slot=1 Source=23
+    LoadConstInt          Target=108 Value=1
+    StoreLocal            Slot=7 Source=108
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=32
+    RestoreStackPointer   Slot=10   (tco_list_refilled_only_from_helper.ash:12:28)
+    Jump                  Target=lambda_3_body   (tco_list_refilled_only_from_helper.ash:12:28)
+    LoadConstInt          Target=35 Value=0   (tco_list_refilled_only_from_helper.ash:12:28)
+    StoreLocal            Slot=11 Source=35   (tco_list_refilled_only_from_helper.ash:10:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
+    Jump                  Target=match_end_33   (tco_list_refilled_only_from_helper.ash:10:5)
+  match_arm_cleanup_37:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=23
+    Jump                  Target=match_none_34   (tco_list_refilled_only_from_helper.ash:10:5)
+  match_none_34:
+    LoadConstInt          Target=38 Value=0   (tco_list_refilled_only_from_helper.ash:10:5)
+    StoreLocal            Slot=11 Source=38   (tco_list_refilled_only_from_helper.ash:10:5)
+  match_end_33:
+    LoadLocal             Target=39 Slot=11   (tco_list_refilled_only_from_helper.ash:10:5)
+    LoadConstInt          Target=58 Value=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=27 Source=58   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=59 Slot=2   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=60 Slot=6   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntEq              Target=61 Left=59 Right=39   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=62 Slot=27   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntEq              Target=63 Left=62 Right=58   (tco_list_refilled_only_from_helper.ash:9:1)
+    AndInt                Target=64 Left=60 Right=61   (tco_list_refilled_only_from_helper.ash:9:1)
+    AndInt                Target=65 Left=64 Right=63   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_transfer_not_selected_49   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=66 Value=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=27 Source=66   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rc_tco_exit_transfer_done_50   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_tco_exit_transfer_not_selected_49:
+    LoadLocal             Target=67 Slot=6   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=67 Target=rc_tco_exit_drop_inactive_51   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=28 Source=59   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_52:
+    LoadLocal             Target=68 Slot=28   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=69 Value=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntNe              Target=70 Left=68 Right=69   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=70 Target=rcdrop_list_end_54   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcIsUnique            Target=71 SourceTemp=68
+    JumpIfFalse           CondTemp=71 Target=rcdrop_list_shared_53   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadMemOffset         Target=72 BasePtr=68 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDrop                SourceTemp=72 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=73 BasePtr=68 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDrop                SourceTemp=68 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=73   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rcdrop_list_52   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_shared_53:
+    RcDrop                SourceTemp=68 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_54   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_end_54:
+  rc_tco_exit_drop_inactive_51:
+  rc_tco_exit_transfer_done_50:
+    LoadLocal             Target=74 Slot=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=75 Slot=7   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntEq              Target=76 Left=74 Right=39   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=77 Slot=27   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntEq              Target=78 Left=77 Right=58   (tco_list_refilled_only_from_helper.ash:9:1)
+    AndInt                Target=79 Left=75 Right=76   (tco_list_refilled_only_from_helper.ash:9:1)
+    AndInt                Target=80 Left=79 Right=78   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=80 Target=rc_tco_exit_transfer_not_selected_55   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=81 Value=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=27 Source=81   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rc_tco_exit_transfer_done_56   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_tco_exit_transfer_not_selected_55:
+    LoadLocal             Target=82 Slot=7   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=82 Target=rc_tco_exit_drop_inactive_57   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=29 Source=74   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_58:
+    LoadLocal             Target=83 Slot=29   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=84 Value=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntNe              Target=85 Left=83 Right=84   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=85 Target=rcdrop_list_end_60   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcIsUnique            Target=86 SourceTemp=83
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_shared_59   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadMemOffset         Target=87 BasePtr=83 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDrop                SourceTemp=87 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=88 BasePtr=83 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=88   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rcdrop_list_58   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_shared_59:
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_60   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_end_60:
+  rc_tco_exit_drop_inactive_57:
+  rc_tco_exit_transfer_done_56:
+    LoadArgumentOwnership Target=89   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=90 Value=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    ShrInt                Target=91 Left=89 Right=90   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=91 Target=rc_result_owned_61   (tco_list_refilled_only_from_helper.ash:9:1)
+    CopyOutList           DestTemp=92 SrcTemp=39 HeadCopy=String Purpose=ArenaResultBoundary   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=31 Source=39   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_63:
+    LoadLocal             Target=93 Slot=31   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadConstInt          Target=94 Value=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    CmpIntNe              Target=95 Left=93 Right=94   (tco_list_refilled_only_from_helper.ash:9:1)
+    JumpIfFalse           CondTemp=95 Target=rcdrop_list_end_65   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcIsUnique            Target=96 SourceTemp=93
+    JumpIfFalse           CondTemp=96 Target=rcdrop_list_shared_64   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadMemOffset         Target=97 BasePtr=93 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDrop                SourceTemp=97 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=98 BasePtr=93 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:9:1)
+    RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=31 Source=98   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rcdrop_list_63   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_shared_64:
+    RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_65   (tco_list_refilled_only_from_helper.ash:9:1)
+  rcdrop_list_end_65:
+    StoreLocal            Slot=30 Source=92   (tco_list_refilled_only_from_helper.ash:9:1)
+    Jump                  Target=rc_result_done_62   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_result_owned_61:
+    StoreLocal            Slot=30 Source=39   (tco_list_refilled_only_from_helper.ash:9:1)
+  rc_result_done_62:
+    LoadLocal             Target=99 Slot=30   (tco_list_refilled_only_from_helper.ash:9:1)
+    Return                Source=99   (tco_list_refilled_only_from_helper.ash:9:1)
+
+function lambda_2  [SourceFunction from reverseAll]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_list_refilled_only_from_helper.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_refilled_only_from_helper.ash:9:1)
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_list_refilled_only_from_helper.ash:9:1)
+    Return                Source=4   (tco_list_refilled_only_from_helper.ash:9:1)
+
+function lambda_4  [SourceFunction from next]
+  locals=5 temps=19
+    LoadLocal             Target=0 Slot=1   (tco_list_refilled_only_from_helper.ash:15:8)
+    LoadConstStr          Target=1 StrLabel=str_0   (tco_list_refilled_only_from_helper.ash:15:15)
+    CmpStrEq              Target=2 Left=0 Right=1   (tco_list_refilled_only_from_helper.ash:15:8)
+    JumpIfFalse           CondTemp=2 Target=else_66   (tco_list_refilled_only_from_helper.ash:15:5)
+    LoadConstStr          Target=3 StrLabel=str_1   (tco_list_refilled_only_from_helper.ash:16:15)
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (tco_list_refilled_only_from_helper.ash:16:10)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=3   (tco_list_refilled_only_from_helper.ash:16:10)
+    StoreLocal            Slot=2 Source=4   (tco_list_refilled_only_from_helper.ash:15:5)
+    Jump                  Target=endif_67   (tco_list_refilled_only_from_helper.ash:15:5)
+  else_66:
+    LoadLocal             Target=5 Slot=1   (tco_list_refilled_only_from_helper.ash:18:12)
+    LoadConstStr          Target=6 StrLabel=str_1   (tco_list_refilled_only_from_helper.ash:18:19)
+    CmpStrEq              Target=7 Left=5 Right=6   (tco_list_refilled_only_from_helper.ash:18:12)
+    JumpIfFalse           CondTemp=7 Target=else_68   (tco_list_refilled_only_from_helper.ash:18:9)
+    LoadConstStr          Target=8 StrLabel=str_2   (tco_list_refilled_only_from_helper.ash:19:19)
+    AllocAdt              Target=9 Tag=1 FieldCount=1   (tco_list_refilled_only_from_helper.ash:19:14)
+    SetAdtField           Ptr=9 FieldIndex=0 Source=8   (tco_list_refilled_only_from_helper.ash:19:14)
+    StoreLocal            Slot=3 Source=9   (tco_list_refilled_only_from_helper.ash:18:9)
+    Jump                  Target=endif_69   (tco_list_refilled_only_from_helper.ash:18:9)
+  else_68:
+    LoadLocal             Target=10 Slot=1   (tco_list_refilled_only_from_helper.ash:21:16)
+    LoadConstStr          Target=11 StrLabel=str_2   (tco_list_refilled_only_from_helper.ash:21:23)
+    CmpStrEq              Target=12 Left=10 Right=11   (tco_list_refilled_only_from_helper.ash:21:16)
+    JumpIfFalse           CondTemp=12 Target=else_70   (tco_list_refilled_only_from_helper.ash:21:13)
+    LoadConstStr          Target=13 StrLabel=str_0   (tco_list_refilled_only_from_helper.ash:22:23)
+    AllocAdt              Target=14 Tag=1 FieldCount=1   (tco_list_refilled_only_from_helper.ash:22:18)
+    SetAdtField           Ptr=14 FieldIndex=0 Source=13   (tco_list_refilled_only_from_helper.ash:22:18)
+    StoreLocal            Slot=4 Source=14   (tco_list_refilled_only_from_helper.ash:21:13)
+    Jump                  Target=endif_71   (tco_list_refilled_only_from_helper.ash:21:13)
+  else_70:
+    AllocAdt              Target=15 Tag=0 FieldCount=0   (tco_list_refilled_only_from_helper.ash:23:18)
+    StoreLocal            Slot=4 Source=15   (tco_list_refilled_only_from_helper.ash:21:13)
+  endif_71:
+    LoadLocal             Target=16 Slot=4   (tco_list_refilled_only_from_helper.ash:21:13)
+    StoreLocal            Slot=3 Source=16   (tco_list_refilled_only_from_helper.ash:18:9)
+  endif_69:
+    LoadLocal             Target=17 Slot=3   (tco_list_refilled_only_from_helper.ash:18:9)
+    StoreLocal            Slot=2 Source=17   (tco_list_refilled_only_from_helper.ash:15:5)
+  endif_67:
+    LoadLocal             Target=18 Slot=2   (tco_list_refilled_only_from_helper.ash:15:5)
+    Return                Source=18   (tco_list_refilled_only_from_helper.ash:14:1)
+
+function lambda_8  [ClosureHelper from solve]
+  locals=74 temps=228
+    LoadEnv               Target=0 Index=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=2 Source=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=1 Index=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=3 Source=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=2 Index=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=4 Source=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=146 Slot=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    IsReferenceCounted    Target=147 SourceTemp=146
+    JumpIfFalse           CondTemp=147 Target=rc_representation_copy_106   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcDup                 Target=148 SourceTemp=146 RuntimeManaged=true
+    StoreLocal            Slot=60 Source=148   (tco_list_refilled_only_from_helper.ash:25:1)
+    Jump                  Target=rc_representation_done_107   (tco_list_refilled_only_from_helper.ash:25:1)
+  rc_representation_copy_106:
+    CopyOutList           DestTemp=149 SrcTemp=146 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=60 Source=149   (tco_list_refilled_only_from_helper.ash:25:1)
+  rc_representation_done_107:
+    LoadLocal             Target=150 Slot=60   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=2 Source=150   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadConstInt          Target=151 Value=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=10 Source=151   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=152 Slot=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    IsReferenceCounted    Target=153 SourceTemp=152
+    JumpIfFalse           CondTemp=153 Target=rc_representation_copy_108   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcDup                 Target=154 SourceTemp=152 RuntimeManaged=true
+    StoreLocal            Slot=61 Source=154   (tco_list_refilled_only_from_helper.ash:25:1)
+    Jump                  Target=rc_representation_done_109   (tco_list_refilled_only_from_helper.ash:25:1)
+  rc_representation_copy_108:
+    CopyOutList           DestTemp=155 SrcTemp=152 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=61 Source=155   (tco_list_refilled_only_from_helper.ash:25:1)
+  rc_representation_done_109:
+    LoadLocal             Target=156 Slot=61   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=3 Source=156   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadConstInt          Target=157 Value=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=11 Source=157   (tco_list_refilled_only_from_helper.ash:25:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=3 Value=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=7 Source=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=8 Source=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=9 Source=3   (tco_list_refilled_only_from_helper.ash:25:1)
+  lambda_8_body:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    SaveStackPointer      Slot=14   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=4 Slot=2   (tco_list_refilled_only_from_helper.ash:26:11)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=5 Value=0   (tco_list_refilled_only_from_helper.ash:26:5)
+    CmpIntEq              Target=6 Left=4 Right=5   (tco_list_refilled_only_from_helper.ash:26:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_75   (tco_list_refilled_only_from_helper.ash:26:5)
+    LoadLocal             Target=7 Slot=3   (tco_list_refilled_only_from_helper.ash:28:19)
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadConstInt          Target=8 Value=0   (tco_list_refilled_only_from_helper.ash:28:13)
+    CmpIntEq              Target=9 Left=7 Right=8   (tco_list_refilled_only_from_helper.ash:28:13)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_79   (tco_list_refilled_only_from_helper.ash:28:13)
+    LoadLocal             Target=10 Slot=4   (tco_list_refilled_only_from_helper.ash:29:25)
+    StoreLocal            Slot=18 Source=10   (tco_list_refilled_only_from_helper.ash:28:13)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=21
+    Jump                  Target=match_end_76   (tco_list_refilled_only_from_helper.ash:28:13)
+  match_arm_cleanup_79:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=22
+    Jump                  Target=match_next_78   (tco_list_refilled_only_from_helper.ash:28:13)
+  match_next_78:
+    SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
+    LoadLocal             Target=11 Slot=4   (tco_list_refilled_only_from_helper.ash:30:30)
+    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
+    LoadEnv               Target=12 Index=3   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadLocal             Target=13 Slot=3   (tco_list_refilled_only_from_helper.ash:30:48)
+    LoadMemOffset         Target=14 BasePtr=12 OffsetBytes=16   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadConstInt          Target=15 Value=62   (tco_list_refilled_only_from_helper.ash:30:37)
+    ShrInt                Target=16 Left=14 Right=15   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadConstInt          Target=17 Value=1   (tco_list_refilled_only_from_helper.ash:30:37)
+    AndInt                Target=18 Left=16 Right=17   (tco_list_refilled_only_from_helper.ash:30:37)
+    RcDup                 Target=19 SourceTemp=13 RuntimeManaged=true MayBeEmpty=true
+    CallClosure           Target=20 ClosureTemp=12 ArgTemp=19 RuntimeManagedArgumentFlagTemp=18   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadConstInt          Target=21 Value=0   (tco_list_refilled_only_from_helper.ash:30:54)
+    LoadMemOffset         Target=22 BasePtr=20 OffsetBytes=16   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadConstInt          Target=23 Value=63   (tco_list_refilled_only_from_helper.ash:30:37)
+    ShrInt                Target=24 Left=22 Right=23   (tco_list_refilled_only_from_helper.ash:30:37)
+    CallClosure           Target=25 ClosureTemp=20 ArgTemp=21   (tco_list_refilled_only_from_helper.ash:30:37)
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=27
+    JumpIfFalse           CondTemp=18 Target=rc_handed_over_not_adopted_81   (tco_list_refilled_only_from_helper.ash:30:37)
+    Jump                  Target=rc_handed_over_done_82   (tco_list_refilled_only_from_helper.ash:30:37)
+  rc_handed_over_not_adopted_81:
+    StoreLocal            Slot=28 Source=19   (tco_list_refilled_only_from_helper.ash:30:37)
+  rcdrop_list_83:
+    LoadLocal             Target=26 Slot=28   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadConstInt          Target=27 Value=0   (tco_list_refilled_only_from_helper.ash:30:37)
+    CmpIntNe              Target=28 Left=26 Right=27   (tco_list_refilled_only_from_helper.ash:30:37)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_85   (tco_list_refilled_only_from_helper.ash:30:37)
+    RcIsUnique            Target=29 SourceTemp=26
+    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_84   (tco_list_refilled_only_from_helper.ash:30:37)
+    LoadMemOffset         Target=30 BasePtr=26 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:30:37)
+    RcDrop                SourceTemp=30 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=31 BasePtr=26 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:30:37)
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=31   (tco_list_refilled_only_from_helper.ash:30:37)
+    Jump                  Target=rcdrop_list_83   (tco_list_refilled_only_from_helper.ash:30:37)
+  rcdrop_list_shared_84:
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_85   (tco_list_refilled_only_from_helper.ash:30:37)
+  rcdrop_list_end_85:
+  rc_handed_over_done_82:
+    LoadConstInt          Target=32 Value=0   (tco_list_refilled_only_from_helper.ash:30:59)
+    LoadLocal             Target=33 Slot=1   (tco_list_refilled_only_from_helper.ash:30:63)
+    LoadLocal             Target=34 Slot=4   (tco_list_refilled_only_from_helper.ash:30:24)
+    LoadLocal             Target=35 Slot=2   (tco_list_refilled_only_from_helper.ash:30:24)
+    LoadLocal             Target=36 Slot=3   (tco_list_refilled_only_from_helper.ash:30:24)
+    LoadLocal             Target=37 Slot=1   (tco_list_refilled_only_from_helper.ash:30:24)
+    StoreLocal            Slot=4 Source=11   (tco_list_refilled_only_from_helper.ash:30:24)
+    StoreLocal            Slot=2 Source=25   (tco_list_refilled_only_from_helper.ash:30:24)
+    StoreLocal            Slot=3 Source=32   (tco_list_refilled_only_from_helper.ash:30:24)
+    StoreLocal            Slot=1 Source=33   (tco_list_refilled_only_from_helper.ash:30:24)
+    IsReferenceCounted    Target=174 SourceTemp=32
+    JumpIfFalse           CondTemp=174 Target=rc_representation_copy_128
+    RcDup                 Target=175 SourceTemp=32 RuntimeManaged=true
+    StoreLocal            Slot=65 Source=175
+    Jump                  Target=rc_representation_done_129
+  rc_representation_copy_128:
+    CopyOutList           DestTemp=176 SrcTemp=32 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=65 Source=176
+  rc_representation_done_129:
+    LoadLocal             Target=177 Slot=65
+    LoadLocal             Target=178 Slot=10
+    JumpIfFalse           CondTemp=178 Target=rc_tco_drop_inactive_130
+    StoreLocal            Slot=66 Source=35
+  rcdrop_list_131:
+    LoadLocal             Target=179 Slot=66
+    LoadConstInt          Target=180 Value=0
+    CmpIntNe              Target=181 Left=179 Right=180
+    JumpIfFalse           CondTemp=181 Target=rcdrop_list_end_133
+    RcIsUnique            Target=182 SourceTemp=179
+    JumpIfFalse           CondTemp=182 Target=rcdrop_list_shared_132
+    LoadMemOffset         Target=183 BasePtr=179 OffsetBytes=0
+    RcDrop                SourceTemp=183 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=184 BasePtr=179 OffsetBytes=8
+    RcDrop                SourceTemp=179 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=66 Source=184
+    Jump                  Target=rcdrop_list_131
+  rcdrop_list_shared_132:
+    RcDrop                SourceTemp=179 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_133
+  rcdrop_list_end_133:
+  rc_tco_drop_inactive_130:
+    LoadLocal             Target=185 Slot=11
+    JumpIfFalse           CondTemp=185 Target=rc_tco_drop_inactive_134
+    StoreLocal            Slot=67 Source=36
+  rcdrop_list_135:
+    LoadLocal             Target=186 Slot=67
+    LoadConstInt          Target=187 Value=0
+    CmpIntNe              Target=188 Left=186 Right=187
+    JumpIfFalse           CondTemp=188 Target=rcdrop_list_end_137
+    RcIsUnique            Target=189 SourceTemp=186
+    JumpIfFalse           CondTemp=189 Target=rcdrop_list_shared_136
+    LoadMemOffset         Target=190 BasePtr=186 OffsetBytes=0
+    RcDrop                SourceTemp=190 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=191 BasePtr=186 OffsetBytes=8
+    RcDrop                SourceTemp=186 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=67 Source=191
+    Jump                  Target=rcdrop_list_135
+  rcdrop_list_shared_136:
+    RcDrop                SourceTemp=186 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_137
+  rcdrop_list_end_137:
+  rc_tco_drop_inactive_134:
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=64
+    LoadConstInt          Target=192 Value=0
+    StoreLocal            Slot=8 Source=192
+    StoreLocal            Slot=9 Source=192
+    StoreLocal            Slot=2 Source=25
+    LoadConstInt          Target=193 Value=1
+    StoreLocal            Slot=10 Source=193
+    StoreLocal            Slot=3 Source=177
+    LoadConstInt          Target=194 Value=1
+    StoreLocal            Slot=11 Source=194
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=64
+    RestoreStackPointer   Slot=14   (tco_list_refilled_only_from_helper.ash:30:24)
+    Jump                  Target=lambda_8_body   (tco_list_refilled_only_from_helper.ash:30:24)
+    LoadConstInt          Target=38 Value=0   (tco_list_refilled_only_from_helper.ash:30:24)
+    StoreLocal            Slot=18 Source=38   (tco_list_refilled_only_from_helper.ash:28:13)
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=29
+    Jump                  Target=match_end_76   (tco_list_refilled_only_from_helper.ash:28:13)
+  match_arm_cleanup_80:
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=30
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=30
+    Jump                  Target=match_none_77   (tco_list_refilled_only_from_helper.ash:28:13)
+  match_none_77:
+    LoadConstInt          Target=39 Value=0   (tco_list_refilled_only_from_helper.ash:28:13)
+    StoreLocal            Slot=18 Source=39   (tco_list_refilled_only_from_helper.ash:28:13)
+  match_end_76:
+    LoadLocal             Target=40 Slot=18   (tco_list_refilled_only_from_helper.ash:28:13)
+    StoreLocal            Slot=15 Source=40   (tco_list_refilled_only_from_helper.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=31
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=31
+    Jump                  Target=match_end_72   (tco_list_refilled_only_from_helper.ash:26:5)
+  match_arm_cleanup_75:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=32
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=32
+    Jump                  Target=match_next_74   (tco_list_refilled_only_from_helper.ash:26:5)
+  match_next_74:
+    SaveArenaState        CursorLocalSlot=33 EndLocalSlot=34
+    LoadConstInt          Target=41 Value=0   (tco_list_refilled_only_from_helper.ash:26:5)
+    CmpIntNe              Target=42 Left=4 Right=41   (tco_list_refilled_only_from_helper.ash:26:5)
+    JumpIfFalse           CondTemp=42 Target=match_arm_cleanup_86   (tco_list_refilled_only_from_helper.ash:26:5)
+    LoadMemOffset         Target=43 BasePtr=4 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:26:5)
+    LoadMemOffset         Target=44 BasePtr=4 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:26:5)
+    StoreLocal            Slot=35 Source=43   (tco_list_refilled_only_from_helper.ash:26:5)
+    StoreLocal            Slot=36 Source=44   (tco_list_refilled_only_from_helper.ash:26:5)
+    LoadLocal             Target=45 Slot=1   (tco_list_refilled_only_from_helper.ash:32:16)
+    LoadConstInt          Target=46 Value=0   (tco_list_refilled_only_from_helper.ash:32:24)
+    CmpIntLe              Target=47 Left=45 Right=46   (tco_list_refilled_only_from_helper.ash:32:16)
+    JumpIfFalse           CondTemp=47 Target=else_87   (tco_list_refilled_only_from_helper.ash:32:13)
+    RcDrop                SourceTemp=44 TypeName=List OwnerSlot=36
+    RcDrop                SourceTemp=43 TypeName=String OwnerSlot=35
+    LoadLocal             Target=48 Slot=4   (tco_list_refilled_only_from_helper.ash:33:18)
+    StoreLocal            Slot=37 Source=48   (tco_list_refilled_only_from_helper.ash:32:13)
+    Jump                  Target=endif_88   (tco_list_refilled_only_from_helper.ash:32:13)
+  else_87:
+    SaveArenaState        CursorLocalSlot=38 EndLocalSlot=39
+    LoadEnv               Target=49 Index=4   (tco_list_refilled_only_from_helper.ash:35:23)
+    Borrow                Target=50 SourceTemp=49
+    LoadLocal             Target=51 Slot=35   (tco_list_refilled_only_from_helper.ash:35:28)
+    Borrow                Target=52 SourceTemp=51
+    LoadMemOffset         Target=53 BasePtr=50 OffsetBytes=16   (tco_list_refilled_only_from_helper.ash:35:23)
+    LoadConstInt          Target=54 Value=62   (tco_list_refilled_only_from_helper.ash:35:23)
+    ShrInt                Target=55 Left=53 Right=54   (tco_list_refilled_only_from_helper.ash:35:23)
+    LoadConstInt          Target=56 Value=1   (tco_list_refilled_only_from_helper.ash:35:23)
+    AndInt                Target=57 Left=55 Right=56   (tco_list_refilled_only_from_helper.ash:35:23)
+    StoreLocal            Slot=40 Source=52   (tco_list_refilled_only_from_helper.ash:35:23)
+    JumpIfFalse           CondTemp=57 Target=rc_call_argument_not_retained_89   (tco_list_refilled_only_from_helper.ash:35:23)
+    RcDup                 Target=58 SourceTemp=52 RuntimeManaged=true
+    StoreLocal            Slot=40 Source=58   (tco_list_refilled_only_from_helper.ash:35:23)
+  rc_call_argument_not_retained_89:
+    LoadLocal             Target=59 Slot=40   (tco_list_refilled_only_from_helper.ash:35:23)
+    CallClosure           Target=60 ClosureTemp=50 ArgTemp=59 RuntimeManagedArgumentFlagTemp=57   (tco_list_refilled_only_from_helper.ash:35:23)
+    SaveArenaState        CursorLocalSlot=43 EndLocalSlot=44
+    LoadConstInt          Target=61 Value=0   (tco_list_refilled_only_from_helper.ash:35:17)
+    CmpIntNe              Target=62 Left=60 Right=61   (tco_list_refilled_only_from_helper.ash:35:17)
+    JumpIfFalse           CondTemp=62 Target=match_arm_cleanup_93   (tco_list_refilled_only_from_helper.ash:35:17)
+    GetAdtTag             Target=63 Ptr=60   (tco_list_refilled_only_from_helper.ash:35:17)
+    LoadConstInt          Target=65 Value=0   (tco_list_refilled_only_from_helper.ash:35:17)
+    CmpIntEq              Target=64 Left=63 Right=65   (tco_list_refilled_only_from_helper.ash:35:17)
+    JumpIfFalse           CondTemp=64 Target=match_arm_cleanup_93   (tco_list_refilled_only_from_helper.ash:35:17)
+    RcDrop                SourceTemp=43 TypeName=String OwnerSlot=35
+    LoadLocal             Target=66 Slot=4   (tco_list_refilled_only_from_helper.ash:36:37)
+    LoadLocal             Target=67 Slot=36   (tco_list_refilled_only_from_helper.ash:36:44)
+    Borrow                Target=68 SourceTemp=67
+    LoadLocal             Target=69 Slot=3   (tco_list_refilled_only_from_helper.ash:36:50)
+    LoadLocal             Target=70 Slot=1   (tco_list_refilled_only_from_helper.ash:36:56)
+    LoadConstInt          Target=71 Value=1   (tco_list_refilled_only_from_helper.ash:36:63)
+    SubInt                Target=72 Left=70 Right=71   (tco_list_refilled_only_from_helper.ash:36:56)
+    RcDup                 Target=73 SourceTemp=68 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=44 TypeName=List OwnerSlot=36
+    LoadLocal             Target=74 Slot=2   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=45 Source=74   (tco_list_refilled_only_from_helper.ash:36:31)
+  rcdrop_list_94:
+    LoadLocal             Target=75 Slot=45   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadConstInt          Target=76 Value=0   (tco_list_refilled_only_from_helper.ash:36:31)
+    CmpIntNe              Target=77 Left=75 Right=76   (tco_list_refilled_only_from_helper.ash:36:31)
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_end_96   (tco_list_refilled_only_from_helper.ash:36:31)
+    RcIsUnique            Target=78 SourceTemp=75
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_shared_95   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadMemOffset         Target=79 BasePtr=75 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:36:31)
+    RcDrop                SourceTemp=79 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=80 BasePtr=75 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:36:31)
+    RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=45 Source=80   (tco_list_refilled_only_from_helper.ash:36:31)
+    Jump                  Target=rcdrop_list_94   (tco_list_refilled_only_from_helper.ash:36:31)
+  rcdrop_list_shared_95:
+    RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_96   (tco_list_refilled_only_from_helper.ash:36:31)
+  rcdrop_list_end_96:
+    LoadConstInt          Target=81 Value=0   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=10 Source=81   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadLocal             Target=82 Slot=4   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadLocal             Target=83 Slot=2   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadLocal             Target=84 Slot=3   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadLocal             Target=85 Slot=1   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=4 Source=66   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=2 Source=73   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=3 Source=69   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=1 Source=72   (tco_list_refilled_only_from_helper.ash:36:31)
+    RcDup                 Target=195 SourceTemp=69 RuntimeManaged=true MayBeEmpty=true
+    LoadLocal             Target=196 Slot=10
+    JumpIfFalse           CondTemp=196 Target=rc_tco_drop_inactive_138
+    StoreLocal            Slot=69 Source=83
+  rcdrop_list_139:
+    LoadLocal             Target=197 Slot=69
+    LoadConstInt          Target=198 Value=0
+    CmpIntNe              Target=199 Left=197 Right=198
+    JumpIfFalse           CondTemp=199 Target=rcdrop_list_end_141
+    RcIsUnique            Target=200 SourceTemp=197
+    JumpIfFalse           CondTemp=200 Target=rcdrop_list_shared_140
+    LoadMemOffset         Target=201 BasePtr=197 OffsetBytes=0
+    RcDrop                SourceTemp=201 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=202 BasePtr=197 OffsetBytes=8
+    RcDrop                SourceTemp=197 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=69 Source=202
+    Jump                  Target=rcdrop_list_139
+  rcdrop_list_shared_140:
+    RcDrop                SourceTemp=197 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_141
+  rcdrop_list_end_141:
+  rc_tco_drop_inactive_138:
+    LoadLocal             Target=203 Slot=11
+    JumpIfFalse           CondTemp=203 Target=rc_tco_drop_inactive_142
+    StoreLocal            Slot=70 Source=84
+  rcdrop_list_143:
+    LoadLocal             Target=204 Slot=70
+    LoadConstInt          Target=205 Value=0
+    CmpIntNe              Target=206 Left=204 Right=205
+    JumpIfFalse           CondTemp=206 Target=rcdrop_list_end_145
+    RcIsUnique            Target=207 SourceTemp=204
+    JumpIfFalse           CondTemp=207 Target=rcdrop_list_shared_144
+    LoadMemOffset         Target=208 BasePtr=204 OffsetBytes=0
+    RcDrop                SourceTemp=208 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=209 BasePtr=204 OffsetBytes=8
+    RcDrop                SourceTemp=204 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=70 Source=209
+    Jump                  Target=rcdrop_list_143
+  rcdrop_list_shared_144:
+    RcDrop                SourceTemp=204 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_145
+  rcdrop_list_end_145:
+  rc_tco_drop_inactive_142:
+    StoreLocal            Slot=2 Source=73
+    LoadConstInt          Target=210 Value=1
+    StoreLocal            Slot=10 Source=210
+    StoreLocal            Slot=3 Source=195
+    LoadConstInt          Target=211 Value=1
+    StoreLocal            Slot=11 Source=211
+    RestoreStackPointer   Slot=14   (tco_list_refilled_only_from_helper.ash:36:31)
+    Jump                  Target=lambda_8_body   (tco_list_refilled_only_from_helper.ash:36:31)
+    LoadConstInt          Target=86 Value=0   (tco_list_refilled_only_from_helper.ash:36:31)
+    StoreLocal            Slot=42 Source=86   (tco_list_refilled_only_from_helper.ash:35:17)
+    RestoreArenaState     CursorLocalSlot=43 EndLocalSlot=44 PreRestoreEndSlot=46
+    ReclaimArenaChunks    SavedEndSlot=44 PreRestoreEndSlot=46
+    Jump                  Target=match_end_90   (tco_list_refilled_only_from_helper.ash:35:17)
+  match_arm_cleanup_93:
+    RestoreArenaState     CursorLocalSlot=43 EndLocalSlot=44 PreRestoreEndSlot=47
+    ReclaimArenaChunks    SavedEndSlot=44 PreRestoreEndSlot=47
+    Jump                  Target=match_next_92   (tco_list_refilled_only_from_helper.ash:35:17)
+  match_next_92:
+    SaveArenaState        CursorLocalSlot=48 EndLocalSlot=49
+    LoadConstInt          Target=87 Value=0   (tco_list_refilled_only_from_helper.ash:35:17)
+    CmpIntNe              Target=88 Left=60 Right=87   (tco_list_refilled_only_from_helper.ash:35:17)
+    JumpIfFalse           CondTemp=88 Target=match_arm_cleanup_97   (tco_list_refilled_only_from_helper.ash:35:17)
+    GetAdtTag             Target=89 Ptr=60   (tco_list_refilled_only_from_helper.ash:35:17)
+    LoadConstInt          Target=91 Value=1   (tco_list_refilled_only_from_helper.ash:35:17)
+    CmpIntEq              Target=90 Left=89 Right=91   (tco_list_refilled_only_from_helper.ash:35:17)
+    JumpIfFalse           CondTemp=90 Target=match_arm_cleanup_97   (tco_list_refilled_only_from_helper.ash:35:17)
+    GetAdtField           Target=92 Ptr=60 FieldIndex=0   (tco_list_refilled_only_from_helper.ash:35:17)
+    RcDrop                SourceTemp=43 TypeName=String OwnerSlot=35
+    StoreLocal            Slot=50 Source=92   (tco_list_refilled_only_from_helper.ash:35:17)
+    LoadLocal             Target=93 Slot=4   (tco_list_refilled_only_from_helper.ash:37:45)
+    LoadConstInt          Target=94 Value=1   (tco_list_refilled_only_from_helper.ash:37:53)
+    AddInt                Target=95 Left=93 Right=94   (tco_list_refilled_only_from_helper.ash:37:45)
+    LoadLocal             Target=96 Slot=36   (tco_list_refilled_only_from_helper.ash:37:56)
+    Borrow                Target=97 SourceTemp=96
+    SaveArenaState        CursorLocalSlot=51 EndLocalSlot=52
+    LoadEnv               Target=98 Index=5   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadConstInt          Target=99 Value=0   (tco_list_refilled_only_from_helper.ash:37:70)
+    LoadLocal             Target=100 Slot=50   (tco_list_refilled_only_from_helper.ash:37:71)
+    Borrow                Target=101 SourceTemp=100
+    Alloc                 Target=102 SizeBytes=16   (tco_list_refilled_only_from_helper.ash:37:70)
+    StoreMemOffset        BasePtr=102 OffsetBytes=0 Source=101   (tco_list_refilled_only_from_helper.ash:37:70)
+    StoreMemOffset        BasePtr=102 OffsetBytes=8 Source=99   (tco_list_refilled_only_from_helper.ash:37:70)
+    CallClosure           Target=103 ClosureTemp=98 ArgTemp=102   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadLocal             Target=104 Slot=3   (tco_list_refilled_only_from_helper.ash:37:80)
+    LoadMemOffset         Target=105 BasePtr=103 OffsetBytes=16   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadConstInt          Target=106 Value=62   (tco_list_refilled_only_from_helper.ash:37:62)
+    ShrInt                Target=107 Left=105 Right=106   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadConstInt          Target=108 Value=1   (tco_list_refilled_only_from_helper.ash:37:62)
+    AndInt                Target=109 Left=107 Right=108   (tco_list_refilled_only_from_helper.ash:37:62)
+    RcDup                 Target=110 SourceTemp=104 RuntimeManaged=true MayBeEmpty=true
+    LoadMemOffset         Target=111 BasePtr=103 OffsetBytes=16   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadConstInt          Target=112 Value=63   (tco_list_refilled_only_from_helper.ash:37:62)
+    ShrInt                Target=113 Left=111 Right=112   (tco_list_refilled_only_from_helper.ash:37:62)
+    CallClosure           Target=114 ClosureTemp=103 ArgTemp=110 RuntimeManagedArgumentFlagTemp=109   (tco_list_refilled_only_from_helper.ash:37:62)
+    RestoreArenaState     CursorLocalSlot=51 EndLocalSlot=52 PreRestoreEndSlot=53
+    ReclaimArenaChunks    SavedEndSlot=52 PreRestoreEndSlot=53
+    JumpIfFalse           CondTemp=109 Target=rc_handed_over_not_adopted_98   (tco_list_refilled_only_from_helper.ash:37:62)
+    Jump                  Target=rc_handed_over_done_99   (tco_list_refilled_only_from_helper.ash:37:62)
+  rc_handed_over_not_adopted_98:
+    StoreLocal            Slot=54 Source=110   (tco_list_refilled_only_from_helper.ash:37:62)
+  rcdrop_list_100:
+    LoadLocal             Target=115 Slot=54   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadConstInt          Target=116 Value=0   (tco_list_refilled_only_from_helper.ash:37:62)
+    CmpIntNe              Target=117 Left=115 Right=116   (tco_list_refilled_only_from_helper.ash:37:62)
+    JumpIfFalse           CondTemp=117 Target=rcdrop_list_end_102   (tco_list_refilled_only_from_helper.ash:37:62)
+    RcIsUnique            Target=118 SourceTemp=115
+    JumpIfFalse           CondTemp=118 Target=rcdrop_list_shared_101   (tco_list_refilled_only_from_helper.ash:37:62)
+    LoadMemOffset         Target=119 BasePtr=115 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:37:62)
+    RcDrop                SourceTemp=119 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=120 BasePtr=115 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:37:62)
+    RcDrop                SourceTemp=115 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=54 Source=120   (tco_list_refilled_only_from_helper.ash:37:62)
+    Jump                  Target=rcdrop_list_100   (tco_list_refilled_only_from_helper.ash:37:62)
+  rcdrop_list_shared_101:
+    RcDrop                SourceTemp=115 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_102   (tco_list_refilled_only_from_helper.ash:37:62)
+  rcdrop_list_end_102:
+  rc_handed_over_done_99:
+    LoadLocal             Target=121 Slot=1   (tco_list_refilled_only_from_helper.ash:37:87)
+    LoadConstInt          Target=122 Value=1   (tco_list_refilled_only_from_helper.ash:37:94)
+    SubInt                Target=123 Left=121 Right=122   (tco_list_refilled_only_from_helper.ash:37:87)
+    RcDup                 Target=124 SourceTemp=97 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=44 TypeName=List OwnerSlot=36
+    LoadLocal             Target=125 Slot=2   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=55 Source=125   (tco_list_refilled_only_from_helper.ash:37:39)
+  rcdrop_list_103:
+    LoadLocal             Target=126 Slot=55   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadConstInt          Target=127 Value=0   (tco_list_refilled_only_from_helper.ash:37:39)
+    CmpIntNe              Target=128 Left=126 Right=127   (tco_list_refilled_only_from_helper.ash:37:39)
+    JumpIfFalse           CondTemp=128 Target=rcdrop_list_end_105   (tco_list_refilled_only_from_helper.ash:37:39)
+    RcIsUnique            Target=129 SourceTemp=126
+    JumpIfFalse           CondTemp=129 Target=rcdrop_list_shared_104   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadMemOffset         Target=130 BasePtr=126 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:37:39)
+    RcDrop                SourceTemp=130 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=131 BasePtr=126 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:37:39)
+    RcDrop                SourceTemp=126 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=55 Source=131   (tco_list_refilled_only_from_helper.ash:37:39)
+    Jump                  Target=rcdrop_list_103   (tco_list_refilled_only_from_helper.ash:37:39)
+  rcdrop_list_shared_104:
+    RcDrop                SourceTemp=126 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_105   (tco_list_refilled_only_from_helper.ash:37:39)
+  rcdrop_list_end_105:
+    LoadConstInt          Target=132 Value=0   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=10 Source=132   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadLocal             Target=133 Slot=4   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadLocal             Target=134 Slot=2   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadLocal             Target=135 Slot=3   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadLocal             Target=136 Slot=1   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=4 Source=95   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=2 Source=124   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=3 Source=114   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=1 Source=123   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadLocal             Target=212 Slot=10
+    JumpIfFalse           CondTemp=212 Target=rc_tco_drop_inactive_146
+    StoreLocal            Slot=72 Source=134
+  rcdrop_list_147:
+    LoadLocal             Target=213 Slot=72
+    LoadConstInt          Target=214 Value=0
+    CmpIntNe              Target=215 Left=213 Right=214
+    JumpIfFalse           CondTemp=215 Target=rcdrop_list_end_149
+    RcIsUnique            Target=216 SourceTemp=213
+    JumpIfFalse           CondTemp=216 Target=rcdrop_list_shared_148
+    LoadMemOffset         Target=217 BasePtr=213 OffsetBytes=0
+    RcDrop                SourceTemp=217 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=218 BasePtr=213 OffsetBytes=8
+    RcDrop                SourceTemp=213 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=72 Source=218
+    Jump                  Target=rcdrop_list_147
+  rcdrop_list_shared_148:
+    RcDrop                SourceTemp=213 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_149
+  rcdrop_list_end_149:
+  rc_tco_drop_inactive_146:
+    LoadLocal             Target=219 Slot=11
+    JumpIfFalse           CondTemp=219 Target=rc_tco_drop_inactive_150
+    StoreLocal            Slot=73 Source=135
+  rcdrop_list_151:
+    LoadLocal             Target=220 Slot=73
+    LoadConstInt          Target=221 Value=0
+    CmpIntNe              Target=222 Left=220 Right=221
+    JumpIfFalse           CondTemp=222 Target=rcdrop_list_end_153
+    RcIsUnique            Target=223 SourceTemp=220
+    JumpIfFalse           CondTemp=223 Target=rcdrop_list_shared_152
+    LoadMemOffset         Target=224 BasePtr=220 OffsetBytes=0
+    RcDrop                SourceTemp=224 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=225 BasePtr=220 OffsetBytes=8
+    RcDrop                SourceTemp=220 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=73 Source=225
+    Jump                  Target=rcdrop_list_151
+  rcdrop_list_shared_152:
+    RcDrop                SourceTemp=220 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_153
+  rcdrop_list_end_153:
+  rc_tco_drop_inactive_150:
+    StoreLocal            Slot=2 Source=124
+    LoadConstInt          Target=226 Value=1
+    StoreLocal            Slot=10 Source=226
+    StoreLocal            Slot=3 Source=114
+    RcDrop                SourceTemp=92 TypeName=String OwnerSlot=50
+    LoadConstInt          Target=227 Value=1
+    StoreLocal            Slot=11 Source=227
+    RestoreStackPointer   Slot=14   (tco_list_refilled_only_from_helper.ash:37:39)
+    Jump                  Target=lambda_8_body   (tco_list_refilled_only_from_helper.ash:37:39)
+    LoadConstInt          Target=137 Value=0   (tco_list_refilled_only_from_helper.ash:37:39)
+    StoreLocal            Slot=42 Source=137   (tco_list_refilled_only_from_helper.ash:35:17)
+    RestoreArenaState     CursorLocalSlot=48 EndLocalSlot=49 PreRestoreEndSlot=56
+    ReclaimArenaChunks    SavedEndSlot=49 PreRestoreEndSlot=56
+    Jump                  Target=match_end_90   (tco_list_refilled_only_from_helper.ash:35:17)
+  match_arm_cleanup_97:
+    RcDrop                SourceTemp=44 TypeName=List OwnerSlot=36
+    RcDrop                SourceTemp=43 TypeName=String OwnerSlot=35
+    RestoreArenaState     CursorLocalSlot=48 EndLocalSlot=49 PreRestoreEndSlot=57
+    ReclaimArenaChunks    SavedEndSlot=49 PreRestoreEndSlot=57
+    Jump                  Target=match_none_91   (tco_list_refilled_only_from_helper.ash:35:17)
+  match_none_91:
+    LoadConstInt          Target=139 Value=0   (tco_list_refilled_only_from_helper.ash:35:17)
+    StoreLocal            Slot=42 Source=139   (tco_list_refilled_only_from_helper.ash:35:17)
+  match_end_90:
+    LoadLocal             Target=140 Slot=42   (tco_list_refilled_only_from_helper.ash:35:17)
+    StoreLocal            Slot=37 Source=140   (tco_list_refilled_only_from_helper.ash:32:13)
+  endif_88:
+    LoadLocal             Target=141 Slot=37   (tco_list_refilled_only_from_helper.ash:32:13)
+    StoreLocal            Slot=15 Source=141   (tco_list_refilled_only_from_helper.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=33 EndLocalSlot=34 PreRestoreEndSlot=58
+    ReclaimArenaChunks    SavedEndSlot=34 PreRestoreEndSlot=58
+    Jump                  Target=match_end_72   (tco_list_refilled_only_from_helper.ash:26:5)
+  match_arm_cleanup_86:
+    RestoreArenaState     CursorLocalSlot=33 EndLocalSlot=34 PreRestoreEndSlot=59
+    ReclaimArenaChunks    SavedEndSlot=34 PreRestoreEndSlot=59
+    Jump                  Target=match_none_73   (tco_list_refilled_only_from_helper.ash:26:5)
+  match_none_73:
+    LoadConstInt          Target=144 Value=0   (tco_list_refilled_only_from_helper.ash:26:5)
+    StoreLocal            Slot=15 Source=144   (tco_list_refilled_only_from_helper.ash:26:5)
+  match_end_72:
+    LoadLocal             Target=145 Slot=15   (tco_list_refilled_only_from_helper.ash:26:5)
+    LoadLocal             Target=158 Slot=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=159 Slot=10   (tco_list_refilled_only_from_helper.ash:25:1)
+    JumpIfFalse           CondTemp=159 Target=rc_tco_exit_drop_inactive_110   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=62 Source=158   (tco_list_refilled_only_from_helper.ash:25:1)
+  rcdrop_list_111:
+    LoadLocal             Target=160 Slot=62   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadConstInt          Target=161 Value=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    CmpIntNe              Target=162 Left=160 Right=161   (tco_list_refilled_only_from_helper.ash:25:1)
+    JumpIfFalse           CondTemp=162 Target=rcdrop_list_end_113   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcIsUnique            Target=163 SourceTemp=160
+    JumpIfFalse           CondTemp=163 Target=rcdrop_list_shared_112   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadMemOffset         Target=164 BasePtr=160 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcDrop                SourceTemp=164 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=165 BasePtr=160 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcDrop                SourceTemp=160 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=62 Source=165   (tco_list_refilled_only_from_helper.ash:25:1)
+    Jump                  Target=rcdrop_list_111   (tco_list_refilled_only_from_helper.ash:25:1)
+  rcdrop_list_shared_112:
+    RcDrop                SourceTemp=160 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_113   (tco_list_refilled_only_from_helper.ash:25:1)
+  rcdrop_list_end_113:
+  rc_tco_exit_drop_inactive_110:
+    LoadLocal             Target=166 Slot=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=167 Slot=11   (tco_list_refilled_only_from_helper.ash:25:1)
+    JumpIfFalse           CondTemp=167 Target=rc_tco_exit_drop_inactive_114   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=63 Source=166   (tco_list_refilled_only_from_helper.ash:25:1)
+  rcdrop_list_115:
+    LoadLocal             Target=168 Slot=63   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadConstInt          Target=169 Value=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    CmpIntNe              Target=170 Left=168 Right=169   (tco_list_refilled_only_from_helper.ash:25:1)
+    JumpIfFalse           CondTemp=170 Target=rcdrop_list_end_117   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcIsUnique            Target=171 SourceTemp=168
+    JumpIfFalse           CondTemp=171 Target=rcdrop_list_shared_116   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadMemOffset         Target=172 BasePtr=168 OffsetBytes=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcDrop                SourceTemp=172 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=173 BasePtr=168 OffsetBytes=8   (tco_list_refilled_only_from_helper.ash:25:1)
+    RcDrop                SourceTemp=168 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=63 Source=173   (tco_list_refilled_only_from_helper.ash:25:1)
+    Jump                  Target=rcdrop_list_115   (tco_list_refilled_only_from_helper.ash:25:1)
+  rcdrop_list_shared_116:
+    RcDrop                SourceTemp=168 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_117   (tco_list_refilled_only_from_helper.ash:25:1)
+  rcdrop_list_end_117:
+  rc_tco_exit_drop_inactive_114:
+    Return                Source=145   (tco_list_refilled_only_from_helper.ash:25:1)
+
+function lambda_7  [ClosureHelper from solve]
+  locals=2 temps=10
+    Alloc                 Target=0 SizeBytes=48   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=1 Index=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=2 Slot=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=3 Index=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=5 Index=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=6 Index=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    Borrow                Target=7 SourceTemp=6
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=7   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=8 Index=4   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=40 Source=8   (tco_list_refilled_only_from_helper.ash:25:1)
+    MakeClosure           Target=9 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=48   (tco_list_refilled_only_from_helper.ash:25:1)
+    Return                Source=9   (tco_list_refilled_only_from_helper.ash:25:1)
+
+function lambda_6  [ClosureHelper from solve]
+  locals=2 temps=9
+    Alloc                 Target=0 SizeBytes=40   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=2 Index=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=4 Index=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=5 Index=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=7 Index=3   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=7   (tco_list_refilled_only_from_helper.ash:25:1)
+    MakeClosure           Target=8 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=40   (tco_list_refilled_only_from_helper.ash:25:1)
+    Return                Source=8   (tco_list_refilled_only_from_helper.ash:25:1)
+
+function lambda_5  [SourceFunction from solve]
+  locals=2 temps=9
+    Alloc                 Target=0 SizeBytes=32   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=4 Index=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=5 Index=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=6   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadEnv               Target=7 Index=2   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=7   (tco_list_refilled_only_from_helper.ash:25:1)
+    MakeClosure           Target=8 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=32   (tco_list_refilled_only_from_helper.ash:25:1)
+    Return                Source=8   (tco_list_refilled_only_from_helper.ash:25:1)
+
+function lambda_10  [ClosureHelper from rounds]
+  locals=16 temps=28
+    LoadEnv               Target=0 Index=0   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreLocal            Slot=2 Source=0   (tco_list_refilled_only_from_helper.ash:39:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreLocal            Slot=5 Source=1   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreLocal            Slot=6 Source=1   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreLocal            Slot=7 Source=1   (tco_list_refilled_only_from_helper.ash:39:1)
+  lambda_10_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_list_refilled_only_from_helper.ash:39:1)
+    LoadLocal             Target=2 Slot=2   (tco_list_refilled_only_from_helper.ash:40:8)
+    LoadConstInt          Target=3 Value=0   (tco_list_refilled_only_from_helper.ash:40:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_list_refilled_only_from_helper.ash:40:8)
+    JumpIfFalse           CondTemp=4 Target=else_118   (tco_list_refilled_only_from_helper.ash:40:5)
+    LoadLocal             Target=5 Slot=1   (tco_list_refilled_only_from_helper.ash:41:10)
+    StoreLocal            Slot=11 Source=5   (tco_list_refilled_only_from_helper.ash:40:5)
+    Jump                  Target=endif_119   (tco_list_refilled_only_from_helper.ash:40:5)
+  else_118:
+    LoadLocal             Target=6 Slot=2   (tco_list_refilled_only_from_helper.ash:42:17)
+    LoadConstInt          Target=7 Value=1   (tco_list_refilled_only_from_helper.ash:42:21)
+    SubInt                Target=8 Left=6 Right=7   (tco_list_refilled_only_from_helper.ash:42:17)
+    LoadLocal             Target=9 Slot=1   (tco_list_refilled_only_from_helper.ash:42:24)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (tco_list_refilled_only_from_helper.ash:42:32)
+    LoadConstInt          Target=11 Value=0   (tco_list_refilled_only_from_helper.ash:42:38)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (tco_list_refilled_only_from_helper.ash:42:32)
+    LoadConstInt          Target=13 Value=0   (tco_list_refilled_only_from_helper.ash:42:41)
+    LoadConstStr          Target=14 StrLabel=str_3   (tco_list_refilled_only_from_helper.ash:42:52)
+    Alloc                 Target=15 SizeBytes=16   (tco_list_refilled_only_from_helper.ash:42:41)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=14   (tco_list_refilled_only_from_helper.ash:42:41)
+    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=13   (tco_list_refilled_only_from_helper.ash:42:41)
+    LoadConstStr          Target=16 StrLabel=str_0   (tco_list_refilled_only_from_helper.ash:42:42)
+    Alloc                 Target=17 SizeBytes=16   (tco_list_refilled_only_from_helper.ash:42:41)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (tco_list_refilled_only_from_helper.ash:42:41)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=15   (tco_list_refilled_only_from_helper.ash:42:41)
+    CallClosure           Target=18 ClosureTemp=12 ArgTemp=17   (tco_list_refilled_only_from_helper.ash:42:32)
+    LoadConstInt          Target=19 Value=0   (tco_list_refilled_only_from_helper.ash:42:62)
+    CallClosure           Target=20 ClosureTemp=18 ArgTemp=19   (tco_list_refilled_only_from_helper.ash:42:32)
+    LoadConstInt          Target=21 Value=7   (tco_list_refilled_only_from_helper.ash:42:66)
+    CallClosure           Target=22 ClosureTemp=20 ArgTemp=21   (tco_list_refilled_only_from_helper.ash:42:32)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    AddInt                Target=23 Left=9 Right=22   (tco_list_refilled_only_from_helper.ash:42:24)
+    LoadLocal             Target=24 Slot=2   (tco_list_refilled_only_from_helper.ash:42:10)
+    LoadLocal             Target=25 Slot=1   (tco_list_refilled_only_from_helper.ash:42:10)
+    StoreLocal            Slot=2 Source=8   (tco_list_refilled_only_from_helper.ash:42:10)
+    StoreLocal            Slot=1 Source=23   (tco_list_refilled_only_from_helper.ash:42:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
+    RestoreStackPointer   Slot=10   (tco_list_refilled_only_from_helper.ash:42:10)
+    Jump                  Target=lambda_10_body   (tco_list_refilled_only_from_helper.ash:42:10)
+    LoadConstInt          Target=26 Value=0   (tco_list_refilled_only_from_helper.ash:42:10)
+    StoreLocal            Slot=11 Source=26   (tco_list_refilled_only_from_helper.ash:40:5)
+  endif_119:
+    LoadLocal             Target=27 Slot=11   (tco_list_refilled_only_from_helper.ash:40:5)
+    Return                Source=27   (tco_list_refilled_only_from_helper.ash:39:1)
+
+function lambda_9  [SourceFunction from rounds]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (tco_list_refilled_only_from_helper.ash:39:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_refilled_only_from_helper.ash:39:1)
+    LoadEnv               Target=4 Index=0   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (tco_list_refilled_only_from_helper.ash:39:1)
+    MakeClosure           Target=5 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=16   (tco_list_refilled_only_from_helper.ash:39:1)
+    Return                Source=5   (tco_list_refilled_only_from_helper.ash:39:1)
+
+function _start_main  [ProgramEntry]
+  locals=12 temps=22
+    LoadConstInt          Target=0 Value=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_list_refilled_only_from_helper.ash:4:1)
+    StoreLocal            Slot=0 Source=1   (tco_list_refilled_only_from_helper.ash:4:1)
+    LoadConstInt          Target=2 Value=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (tco_list_refilled_only_from_helper.ash:9:1)
+    StoreLocal            Slot=1 Source=3   (tco_list_refilled_only_from_helper.ash:9:1)
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=4 Value=0   (tco_list_refilled_only_from_helper.ash:14:1)
+    MakeClosureStack      Target=5 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=0   (tco_list_refilled_only_from_helper.ash:14:1)
+    StoreLocal            Slot=4 Source=5   (tco_list_refilled_only_from_helper.ash:14:1)
+    Alloc                 Target=6 SizeBytes=24   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=7 Slot=1   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=7   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=8 Slot=4   (tco_list_refilled_only_from_helper.ash:25:1)
+    Borrow                Target=9 SourceTemp=8
+    StoreMemOffset        BasePtr=6 OffsetBytes=8 Source=9   (tco_list_refilled_only_from_helper.ash:25:1)
+    LoadLocal             Target=10 Slot=0   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreMemOffset        BasePtr=6 OffsetBytes=16 Source=10   (tco_list_refilled_only_from_helper.ash:25:1)
+    MakeClosure           Target=11 FuncLabel=lambda_5 EnvPtrTemp=6 EnvSizeBytes=24   (tco_list_refilled_only_from_helper.ash:25:1)
+    StoreLocal            Slot=5 Source=11   (tco_list_refilled_only_from_helper.ash:25:1)
+    Alloc                 Target=12 SizeBytes=8   (tco_list_refilled_only_from_helper.ash:39:1)
+    LoadLocal             Target=13 Slot=5   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=13   (tco_list_refilled_only_from_helper.ash:39:1)
+    MakeClosure           Target=14 FuncLabel=lambda_9 EnvPtrTemp=12 EnvSizeBytes=8   (tco_list_refilled_only_from_helper.ash:39:1)
+    StoreLocal            Slot=6 Source=14   (tco_list_refilled_only_from_helper.ash:39:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=15 Slot=6   (tco_list_refilled_only_from_helper.ash:45:4)
+    LoadConstInt          Target=16 Value=3   (tco_list_refilled_only_from_helper.ash:45:11)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (tco_list_refilled_only_from_helper.ash:44:1)
+    LoadConstInt          Target=18 Value=0   (tco_list_refilled_only_from_helper.ash:44:1)
+    CallClosure           Target=19 ClosureTemp=17 ArgTemp=18   (tco_list_refilled_only_from_helper.ash:44:1)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
+    StoreLocal            Slot=10 Source=19   (tco_list_refilled_only_from_helper.ash:14:1)
+    LoadLocal             Target=20 Slot=4   (tco_list_refilled_only_from_helper.ash:14:1)
+    CleanupResource       SourceTemp=20 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=11
+    LoadLocal             Target=21 Slot=10   (tco_list_refilled_only_from_helper.ash:14:1)
+    Return                Source=21
+

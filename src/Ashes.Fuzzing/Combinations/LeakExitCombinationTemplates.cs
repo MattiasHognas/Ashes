@@ -223,3 +223,65 @@ internal sealed class WorklistFrontWalkedAndRefilledTemplate() : LeakCombination
             """;
     }
 }
+
+/// <summary>
+/// A worklist whose back queue is only ever handed on, emptied, or refilled from a helper that
+/// conses the step's targets onto it: the back queue must live on the reference-counted heap for
+/// each refill's cells to be released.
+/// </summary>
+internal sealed class WorklistBackOnlyRefilledTemplate() : LeakCombinationTemplate(
+    "leak.worklist-back-only-refilled", "worklistBackOnlyRefilled", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string enqueue = names.Of("enqueue");
+        string next = names.Of("next");
+        string reverseAll = names.Of("reverseAll");
+        string solve = names.Of("solve");
+        IReadOnlyList<string> words = names.DistinctWords(3);
+        string first = words[0];
+        string second = words[1];
+        string third = words[2];
+        int fuel = names.Between(6, 14);
+        string refill = names.Coin("library-reverse") ? "Ashes.Collection.List.reverse(back)" : $"{reverseAll}(back)([])";
+        string pending = names.Coin("fresh-target") ? "[target + \"\"]" : "[target]";
+        return $$"""
+            let recursive {{enqueue}} (pending: List(Str)) (back: List(Str)) =
+                match pending with
+                    | [] -> back
+                    | key :: rest -> {{enqueue}}(rest)(key :: back)
+
+            let recursive {{reverseAll}} (values: List(Str)) (acc: List(Str)) =
+                match values with
+                    | [] -> acc
+                    | value :: rest -> {{reverseAll}}(rest)(value :: acc)
+
+            let {{next}} (key: Str) =
+                if key == {{first}}
+                then Some({{second}})
+                else
+                    if key == {{second}}
+                    then Some({{third}})
+                    else
+                        if key == {{third}}
+                        then Some({{first}})
+                        else None
+
+            let recursive {{solve}} (count: Int) (front: List(Str)) (back: List(Str)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> count
+                            | _ -> {{solve}}(count)({{refill}})([])(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then count
+                        else
+                            match {{next}}(key) with
+                                | None -> {{solve}}(count)(rest)(back)(fuel - 1)
+                                | Some(target) -> {{solve}}(count + 1)(rest)({{enqueue}}({{pending}})(back))(fuel - 1)
+
+            let {{names.Entry}} (seed: Int) = {{solve}}(0)([{{first}}, {{names.Word()}}])([])({{LeakNames.Text(fuel)}}) + seed
+            """;
+    }
+}

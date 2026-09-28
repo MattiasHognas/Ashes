@@ -1286,7 +1286,7 @@ public sealed partial class Lowering
                     state.ChoiceAccumulatorEdges[i] == true
                         && (state.AnyChoiceEdge[i]
                             || (shape == TcoSelfCallArgumentShape.Mixed && state.HandedOnOrGrownEdges[i] == true)),
-                    state.WalkOrRefillEdges[i] == true && state.AnyWalkEdge[i] && state.AnyRefillEdge[i]));
+                    state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i]));
             }
         }
 
@@ -2560,18 +2560,22 @@ public sealed partial class Lowering
     }
 
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
-    // or a call's result.
+    // a call's result, or an empty list. A list only ever handed on, emptied or refilled holds
+    // nothing older than its refills, so a walk among its edges is not required of it.
     private static void RecordWalkOrRefillEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, Expr structural)
     {
         bool walk = local == TcoSelfCallArgumentShape.ConsumedTail;
         bool refill = local != TcoSelfCallArgumentShape.ConsumedTail
             && local != TcoSelfCallArgumentShape.UnchangedPassthrough
             && structural is Expr.Call;
+        bool emptied = RefillOnlyListsEnabled && structural is Expr.ListLit { Elements.Count: 0 };
         state.WalkOrRefillEdges[ordinal] = (state.WalkOrRefillEdges[ordinal] ?? true)
-            && (walk || refill || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+            && (walk || refill || emptied || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
         state.AnyWalkEdge[ordinal] |= walk;
         state.AnyRefillEdge[ordinal] |= refill;
     }
+
+    private static bool RefillOnlyListsEnabled => Environment.GetEnvironmentVariable("GRC_NO_REFILLONLY") is null;
 
     // A choice between accumulator edges (the parameter handed on in one arm, a cons onto it in
     // another) is one itself, as long as no arm's pattern rebinds the parameter's name.
