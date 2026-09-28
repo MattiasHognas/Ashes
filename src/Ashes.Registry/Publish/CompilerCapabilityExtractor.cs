@@ -85,7 +85,7 @@ public sealed class CompilerCapabilityExtractor : ICapabilityExtractor
         var diag = new Diagnostics();
         var parsed = ProjectSupport.ParseImportHeader(source, ashFiles[0].Path);
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(
-            parsed.SourceWithoutImports, parsed.ImportNames, ashFiles[0].Path);
+            parsed.SourceWithoutImports, parsed.ImportNames, ashFiles[0].Path, parsed.ImportSelectors);
         var importedStd = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
 
         var program = new Parser(layout.Source, diag).ParseProgram();

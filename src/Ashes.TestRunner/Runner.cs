@@ -1035,7 +1035,7 @@ public static class Runner
         }
 
         var parsed = ProjectSupport.ParseImportHeader(source, filePath);
-        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>", parsed.ImportSelectors);
         var importedStdModules = parsed.ImportNames
             .Where(ProjectSupport.IsStdModule)
             .ToHashSet(StringComparer.Ordinal);

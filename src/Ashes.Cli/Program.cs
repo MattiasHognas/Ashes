@@ -250,7 +250,7 @@ static void WriteExplainReport(ExplainRequest? explain, Lowering lowering, IrPro
 static (CombinedCompilationLayout Layout, IReadOnlySet<string>? ImportedStdModules, IReadOnlyDictionary<string, string>? ModuleAliases) PrepareStandaloneCompilationSource(string source, string displayPath)
 {
     var parsed = ProjectSupport.ParseImportHeader(source, displayPath);
-    var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, displayPath);
+    var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, displayPath, parsed.ImportSelectors);
     var importedStdModules = parsed.ImportNames
         .Where(ProjectSupport.IsStdModule)
         .ToHashSet(StringComparer.Ordinal);

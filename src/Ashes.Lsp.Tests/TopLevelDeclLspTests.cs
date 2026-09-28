@@ -65,6 +65,13 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void Analyze_should_resolve_an_aliased_binding_selector_of_a_library_module()
+    {
+        const string source = "import Ashes.Collection.List.reverse as reverseList\n\nlet words = reverseList([\"a\", \"b\"])\n\nAshes.IO.print(Ashes.Collection.List.length(words))";
+        DocumentService.Analyze(source).ShouldBeEmpty();
+    }
+
+    [Test]
     public void Hover_should_report_type_for_top_level_let_binding()
     {
         // Hover a use of the top-level binding in a later declaration's value (Model-A visibility).
