@@ -179,36 +179,12 @@ let pairScalarEnvSpecializationLabeled (text: Str) =
 
 let scalarEnvSpecializationNotCorrelated = "the optimizer's scalar-environment specialization of pair reports its own generated label here rather than stage 0's shared origin label"
 
-// Representation is classified by a post-hoc IR walk (DecisionSnapshot's classifyInstructionRepr)
-// that tracks each local slot's representation flowing forward through StoreLocal/LoadLocal in
-// straight-line instruction order, without regard to which branch actually produced it. The RC
-// argument-normalization prologue stores to the same slot from both its Borrow arm and its
-// CopyOutArena arm, so the walk lets the copy arm's runtime-rc representation overwrite the
-// borrow arm's, and every later read of that slot inherits runtime-rc — even ordinary reads that
-// never went through the copy. Stage 0 tags representation onto each value where it is produced
-// instead of re-deriving it from slot flow, so only the value that actually came from the copy
-// carries runtime rc, and it also counts the value the representation test joins from its retain
-// and its copy, which the slot walk folds into the copy's own.
-let argNormalizePrologueMergesRcBranchLine (line: Str) =
-    match line with
-        | "    conservative unknown: 2" -> ["    conservative unknown: 1"]
-        | "    runtime rc:           3" -> ["    runtime rc:           2"]
-        | _ -> [line]
-
-let argNormalizePrologueMergesRcBranch (targetNames: List(Str)) (text: Str) =
-    rewriteLines(scopedRewrite(targetNames)(argNormalizePrologueMergesRcBranchLine)(false))(text)
-
-let argNormalizePrologueMergesRcBranchReason = "representation is classified by a post-hoc IR walk that lets a stored local's representation flow past its control-flow join, so every read of an RC-argument-normalized local after the Borrow/CopyOutArena merge inherits the copy branch's runtime-rc representation instead of only the value that actually went through the copy"
-
 let checkConsumedListArgument unit =
     unit
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainOwnership)("ownership"))
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainRc)("rc"))
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainReuse)("reuse"))
-    |> (given (_) ->
-        ["makeItems"]
-        |> argNormalizePrologueMergesRcBranch
-        |> checkKnownDifference("consumed_list_argument")(ExplainMemory)("memory")(argNormalizePrologueMergesRcBranchReason))
+    |> (given (_) -> checkFixture("consumed_list_argument")(ExplainMemory)("memory"))
 
 // The join read and the function's result reload of it are classified as runtime rc here, as stage
 // 0 classifies them: the lowering records the representation it decided for the join itself, so the

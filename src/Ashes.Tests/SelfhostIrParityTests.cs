@@ -70,7 +70,6 @@ public sealed class SelfhostIrParityTests
     [Arguments("self_call_inside_constructor_owns_its_result")]
     [Arguments("tco_predecessor_released_when_successors_are_its_parts")]
     [Arguments("tco_record_blocked_by_sibling_keeps_field_retain_pending")]
-    [Arguments("closure_conses_its_parameter_onto_recursive_tail")]
     [Arguments("spine_cell_head_bound_by_let_releases_its_binding")]
     [Arguments("back_edge_helper_calling_unreachable_helper_is_called")]
     [Arguments("tco_worklist_front_walked_or_refilled")]

@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from insertLeft]
-  locals=17 temps=32
+  locals=17 temps=31
     LoadLocal             Target=0 Slot=1   (reuse_path_rebuild_declines_copy.ash:12:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
@@ -45,16 +45,15 @@ function lambda_0  [SourceFunction from insertLeft]
     MakeClosure           Target=18 FuncLabel=lambda_0 EnvPtrTemp=19 EnvSizeBytes=0   (reuse_path_rebuild_declines_copy.ash:14:44)
     LoadLocal             Target=20 Slot=9   (reuse_path_rebuild_declines_copy.ash:14:55)
     Borrow                Target=21 SourceTemp=20
-    LoadConstInt          Target=23 Value=2   (reuse_path_rebuild_declines_copy.ash:14:44)
-    CallClosure           Target=22 ClosureTemp=18 ArgTemp=21 RuntimeManagedArgumentFlagTemp=23   (reuse_path_rebuild_declines_copy.ash:14:44)
-    LoadLocal             Target=24 Slot=10   (reuse_path_rebuild_declines_copy.ash:14:62)
-    LoadLocal             Target=25 Slot=11   (reuse_path_rebuild_declines_copy.ash:14:69)
-    Borrow                Target=26 SourceTemp=25
-    AllocAdt              Target=27 Tag=1 FieldCount=3   (reuse_path_rebuild_declines_copy.ash:14:39)
-    SetAdtField           Ptr=27 FieldIndex=0 Source=22   (reuse_path_rebuild_declines_copy.ash:14:39)
-    SetAdtField           Ptr=27 FieldIndex=1 Source=24   (reuse_path_rebuild_declines_copy.ash:14:39)
-    SetAdtField           Ptr=27 FieldIndex=2 Source=26   (reuse_path_rebuild_declines_copy.ash:14:39)
-    StoreLocal            Slot=2 Source=27   (reuse_path_rebuild_declines_copy.ash:12:5)
+    CallClosure           Target=22 ClosureTemp=18 ArgTemp=21   (reuse_path_rebuild_declines_copy.ash:14:44)
+    LoadLocal             Target=23 Slot=10   (reuse_path_rebuild_declines_copy.ash:14:62)
+    LoadLocal             Target=24 Slot=11   (reuse_path_rebuild_declines_copy.ash:14:69)
+    Borrow                Target=25 SourceTemp=24
+    AllocAdt              Target=26 Tag=1 FieldCount=3   (reuse_path_rebuild_declines_copy.ash:14:39)
+    SetAdtField           Ptr=26 FieldIndex=0 Source=22   (reuse_path_rebuild_declines_copy.ash:14:39)
+    SetAdtField           Ptr=26 FieldIndex=1 Source=23   (reuse_path_rebuild_declines_copy.ash:14:39)
+    SetAdtField           Ptr=26 FieldIndex=2 Source=25   (reuse_path_rebuild_declines_copy.ash:14:39)
+    StoreLocal            Slot=2 Source=26   (reuse_path_rebuild_declines_copy.ash:12:5)
     RcDrop                SourceTemp=17 TypeName=Tree OwnerSlot=11
     RcDrop                SourceTemp=15 TypeName=Tree OwnerSlot=9
     Jump                  Target=match_end_0   (reuse_path_rebuild_declines_copy.ash:12:5)
@@ -63,11 +62,11 @@ function lambda_0  [SourceFunction from insertLeft]
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=16
     Jump                  Target=match_none_1   (reuse_path_rebuild_declines_copy.ash:12:5)
   match_none_1:
-    LoadConstInt          Target=30 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
-    StoreLocal            Slot=2 Source=30   (reuse_path_rebuild_declines_copy.ash:12:5)
+    LoadConstInt          Target=29 Value=0   (reuse_path_rebuild_declines_copy.ash:12:5)
+    StoreLocal            Slot=2 Source=29   (reuse_path_rebuild_declines_copy.ash:12:5)
   match_end_0:
-    LoadLocal             Target=31 Slot=2   (reuse_path_rebuild_declines_copy.ash:12:5)
-    Return                Source=31   (reuse_path_rebuild_declines_copy.ash:11:1)
+    LoadLocal             Target=30 Slot=2   (reuse_path_rebuild_declines_copy.ash:12:5)
+    Return                Source=30   (reuse_path_rebuild_declines_copy.ash:11:1)
 
 function lambda_2  [ClosureHelper from fill]
   locals=15 temps=23
