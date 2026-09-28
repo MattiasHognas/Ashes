@@ -13,8 +13,7 @@ Function: count
   representation [lambda_1]
     conservative unknown: 2
     region:               1
-    runtime rc:           2
-    copy value:           15
+    copy value:           17
   representation [lambda_0]
     region:               3
     copy value:           1

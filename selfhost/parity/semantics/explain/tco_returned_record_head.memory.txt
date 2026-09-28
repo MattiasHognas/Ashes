@@ -68,8 +68,7 @@ Function: run
     uniqueness checks:    0
   representation [lambda_10]
     conservative unknown: 15
-    runtime rc:           2
-    copy value:           20
+    copy value:           22
   representation [lambda_9]
     region:               3
     copy value:           1

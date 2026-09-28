@@ -23,6 +23,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ExitArmRecordHoldsLoopParameterTemplate());
         registry.Register(new AccumulatorFromCallResultPartTemplate());
         registry.Register(new LoopRecordCellHoldingParameterFieldTemplate());
+        registry.Register(new SelfCallBesideErrorArmTemplate());
         registry.Register(new VariantAccumulatorThroughHelperTemplate());
         registry.Register(new WorklistSolveRecordsTemplate());
         registry.Register(new GenericPairPruningTemplate());
@@ -430,6 +431,57 @@ internal sealed class LoopRecordCellHoldingParameterFieldTemplate() : LeakCombin
                         {{step}}
 
             let {{names.Entry}} (seed: Int) = {{lower}}({{names.Ints(names.Between(2, 5), 1, 9)}})([])({{state}}({{bindings}} = {{names.Words(names.Between(1, 3))}}, counter = seed))
+            """;
+    }
+}
+
+/// <summary>
+/// A loop returning a `Result` whose error arm forwards a helper's error, beside a tail self call
+/// in the branch lowered first: the loop's error type must come from the forwarded error, not be
+/// left a variable, or the error's parts are never released.
+/// </summary>
+internal sealed class SelfCallBesideErrorArmTemplate() : LeakCombinationTemplate(
+    "leak.self-call-beside-error-arm", "selfCallBesideErrorArm", GeneratedFeature.Match, GeneratedFeature.TailCall, GeneratedFeature.If, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string error = names.Of("LeakFailure");
+        string check = names.Of("checkItem");
+        string walk = names.Of("walkItems");
+        string describe = names.Of("describeWalk");
+        int limit = names.Between(3, 7);
+        string forward = names.Coin("rebuild-error")
+            ? $"| Error({error}Bad(at, text)) -> Error({error}Bad(at)(text))"
+            : "| Error(failure) -> Error(failure)";
+        return $$"""
+            type {{error}} =
+                | {{error}}Bad(Int, Str)
+
+            let {{check}} (value: Int) =
+                if value > {{LeakNames.Text(limit)}}
+                then Error({{error}}Bad(value)({{names.Word()}} + Ashes.Text.fromInt(value)))
+                else Ok(value)
+
+            let recursive {{walk}} (n: Int) (acc: List(Int)) =
+                if n == 0
+                then Ok(acc)
+                else
+                    if n == 100
+                    then {{walk}}(n - 1)(acc)
+                    else
+                        match {{check}}(n) with
+                            {{forward}}
+                            | Ok(value) -> {{walk}}(n - 1)(value :: acc)
+
+            let {{describe}} result =
+                match result with
+                    | Ok(items) ->
+                        match items with
+                            | [] -> 0
+                            | head :: _ -> head
+                    | Error({{error}}Bad(at, text)) -> at + Ashes.Text.length(text)
+
+            let {{names.Entry}} (seed: Int) = {{describe}}({{walk}}({{LeakNames.Text(limit + 1)}} + seed % 3)([]))
             """;
     }
 }

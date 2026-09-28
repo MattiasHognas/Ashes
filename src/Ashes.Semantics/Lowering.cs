@@ -11159,7 +11159,7 @@ public sealed partial class Lowering
 
         tco.InTailPosition = savedTail;
 
-        return LowerCallTcoBackEdgeDummy();
+        return LowerCallTcoBackEdgeDummy(tco);
     }
 
     private void LowerCallTcoScheduleReset(
@@ -11309,15 +11309,19 @@ public sealed partial class Lowering
         }
     }
 
-    private (int Temp, TypeRef Type) LowerCallTcoBackEdgeDummy()
+    private (int Temp, TypeRef Type) LowerCallTcoBackEdgeDummy(TcoContext tco)
     {
         // The back-edge cannot reach its expression join. Mark its synthetic value ownership-neutral
-        // so reachable arms alone decide whether the function transfers an RC result.
+        // so reachable arms alone decide whether the function transfers an RC result. Its type is the
+        // function's result type, as a self call's is: a join whose other arm is lowered against the
+        // back edge's type then carries that arm's type into the function's result, where a fresh
+        // variable would drop it (a `Result` whose error arm meets a self call was typed with an
+        // unconstrained error).
         int dummy = NewTemp();
         Emit(new IrInst.LoadConstInt(dummy, 0));
         MarkRuntimeManagedTemp(dummy);
         RecordOwnershipNeutralTemp(dummy);
-        return (dummy, NewTypeVar());
+        return (dummy, Environment.GetEnvironmentVariable("GRC_NO_SELFCALLTYPE") is null && tco.ResultType is { } resultType ? resultType : NewTypeVar());
     }
 
     private int[] LowerCallTcoLoadOldRuntimeParams(TcoContext tco)

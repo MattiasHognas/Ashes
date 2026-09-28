@@ -11,8 +11,7 @@ Function: countdown
     drop:                 0
     uniqueness checks:    0
   representation [lambda_1]
-    runtime rc:           1
-    copy value:           11
+    copy value:           12
   representation [lambda_0]
     region:               3
     copy value:           1

@@ -3094,6 +3094,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_self_call_beside_error_arm_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's tail self call sits in the branch lowered first, and the other branch forwards a
+        // helper's error. The self call is typed with the loop's own result, so the loop's error
+        // type is the helper's and each error's string is released; typed with a fresh variable, the
+        // error type stayed unknown and every forwarded error leaked its string.
+        int[] roundCounts = [4000, 128000, 1024000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildSelfCallBesideErrorArmProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrWhiteSpace();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("self call beside a forwarded error", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_arena_list_cell_with_parameter_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10999,6 +11024,43 @@ public sealed class LinuxBackendCoverageTests
         let quantified = [1, 2, 3, 4, 5, 6, 7, 8]
 
         """;
+
+    private static string BuildSelfCallBesideErrorArmProgram(int rounds)
+        => $$"""
+            type E =
+                | Bad(Int, Str)
+
+            let check (x: Int) =
+                if x > 5
+                then Error(Bad(x)((if x % 2 == 0 then "big" else "wide") + "!"))
+                else Ok(x)
+
+            let recursive go (n: Int) (acc: List(Int)) =
+                if n == 0
+                then Ok(acc)
+                else
+                    if n == 100
+                    then go(n - 1)(acc)
+                    else
+                        match check(n) with
+                            | Error(error) -> Error(error)
+                            | Ok(v) -> go(n - 1)(v :: acc)
+
+            let describe result =
+                match result with
+                    | Ok(items) ->
+                        match items with
+                            | [] -> 0
+                            | head :: _ -> head
+                    | Error(Bad(x, text)) -> if text == "big!" then x else x + 1
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + describe(go(n % 9)([])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
 
     private static string BuildArenaListCellWithParameterFieldProgram(int rounds)
         => $$"""
