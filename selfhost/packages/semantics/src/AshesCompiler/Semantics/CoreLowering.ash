@@ -78,7 +78,7 @@ import AshesCompiler.Semantics.OwnershipInference.MoveCallSite
 import AshesCompiler.Semantics.OwnershipInference.collectAllCallSites
 import AshesCompiler.Semantics.OwnershipInference.moveSafetyProof
 import AshesCompiler.Semantics.OwnershipSummary
-import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
+import AshesCompiler.Semantics.ResultReach.resultReachesVariableOutsideCells
 import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.StructuralCopiers
@@ -10203,7 +10203,7 @@ let normalizesAlwaysReturnedParameter parameter body label parameterType (state:
     match entryNormalizationPlanOf(parameterType)(state) with
         | None -> false
         | Some(_plan) ->
-            !acceptsRuntimeManagedArgument(label)(state) && !letValueIsLambda(body) && resultAlwaysReachesVariable(state
+            !acceptsRuntimeManagedArgument(label)(state) && !letValueIsLambda(body) && resultReachesVariableOutsideCells(state
             |> stateConstructorLayouts
             |> constructorLayoutNames)(mustReachCallee(loneRecursiveBindingNames(state))(state))(body)(parameter)
 
@@ -18908,7 +18908,7 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                             match retainAggregateChildTemp(tailExpression)(preparedTemp)(tailType)(preparedState) with
                                 | (retained, retainedTemp) ->
                                     retained
-                                    |> referenceOrCopyUnplacedLetTail(managed && retainedTemp == preparedTemp)(tailExpression)(preparedTemp)(tailType)
+                                    |> referenceOrCopyUnplacedLetTail(managed && retainedTemp == preparedTemp)(tailExpression)(retainedTemp)(tailType)
                                     |> (given (owned: (CoreLoweringState, Int)) ->
                                         match owned with
                                             | (ownedState, ownedTemp) -> success(ownedTemp)(tailType)(ownedState))

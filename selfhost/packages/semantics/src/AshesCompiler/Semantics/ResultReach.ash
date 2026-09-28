@@ -18,6 +18,7 @@ import AshesCompiler.Frontend.Syntax.Pattern
 export (
     value patternBindsName,
     value resultAlwaysReachesVariable,
+    value resultReachesVariableOutsideCells,
 )
 
 let recursive sameLength (left: List(Expr)) (right: List(Str)) =
@@ -59,55 +60,58 @@ let recursive callSpineOf (expression: Expr) (arguments: List(Expr)) =
         | ExprCall(callee, argument, _sugar, _layout) -> callSpineOf(callee)(argument :: arguments)
         | root -> (root, arguments)
 
-let recursive reachesAt (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (expression: Expr) (variable: Str) =
+let recursive reachesAt (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (expression: Expr) (variable: Str) =
     match expression with
-        | ExprAt(_span, inner) -> reachesAt(constructors)(callees)(inner)(variable)
+        | ExprAt(_span, inner) -> reachesAt(constructors)(callees)(cells)(inner)(variable)
         | ExprVar(name) -> name == variable
-        | ExprLambda(parameter, body, _annotation) -> parameter != variable && reachesAt(constructors)(callees)(body)(variable)
-        | ExprLet(name, _value, body, _parameters, _annotation, _constraints) -> name != variable && reachesAt(constructors)(callees)(body)(variable)
-        | ExprIf(_condition, thenBranch, elseBranch) -> reachesAt(constructors)(callees)(thenBranch)(variable) && reachesAt(constructors)(callees)(elseBranch)(variable)
+        | ExprLambda(parameter, body, _annotation) -> parameter != variable && reachesAt(constructors)(callees)(cells)(body)(variable)
+        | ExprLet(name, _value, body, _parameters, _annotation, _constraints) -> name != variable && reachesAt(constructors)(callees)(cells)(body)(variable)
+        | ExprIf(_condition, thenBranch, elseBranch) -> reachesAt(constructors)(callees)(cells)(thenBranch)(variable) && reachesAt(constructors)(callees)(cells)(elseBranch)(variable)
         | ExprMatch(_scrutinee, [], _defaultArm) -> false
-        | ExprMatch(_scrutinee, arms, _defaultArm) -> everyArmReaches(constructors)(callees)(arms)(variable)
-        | ExprRecord(_name, fields, _multiline) -> anyFieldReaches(constructors)(callees)(fields)(variable)
-        | ExprRecordUpdate(target, updates) -> reachesAt(constructors)(callees)(target)(variable) || anyFieldReaches(constructors)(callees)(updates)(variable)
-        | ExprTuple(elements) -> anyReaches(constructors)(callees)(elements)(variable)
-        // A variable a list cell holds is not reached: the cell is built in the arena and keeps
-        // nothing of an owned entry copy alive (stage 0's `throughCells`, false for the entry
-        // normalization this walk serves).
-        | ExprList(_elements, _multiline) -> false
-        | ExprCons(_head, _tail) -> false
+        | ExprMatch(_scrutinee, arms, _defaultArm) -> everyArmReaches(constructors)(callees)(cells)(arms)(variable)
+        | ExprRecord(_name, fields, _multiline) -> anyFieldReaches(constructors)(callees)(cells)(fields)(variable)
+        | ExprRecordUpdate(target, updates) -> reachesAt(constructors)(callees)(cells)(target)(variable) || anyFieldReaches(constructors)(callees)(cells)(updates)(variable)
+        | ExprTuple(elements) -> anyReaches(constructors)(callees)(cells)(elements)(variable)
+        // A variable a list cell holds counts only through cells: the entry normalization asks
+        // without them, since the cell is built in the arena and keeps nothing of an owned entry
+        // copy alive (stage 0's `throughCells`).
+        | ExprList(elements, _multiline) -> cells && anyReaches(constructors)(callees)(cells)(elements)(variable)
+        | ExprCons(head, tail) -> cells && (reachesAt(constructors)(callees)(cells)(head)(variable) || reachesAt(constructors)(callees)(cells)(tail)(variable))
         | ExprCall(_callee, _argument, _sugar, _layout) ->
-            callReaches(constructors)(callees)(callSpineOf(expression)([]))(variable)
+            callReaches(constructors)(callees)(cells)(callSpineOf(expression)([]))(variable)
         | _ -> false
-and anyReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (expressions: List(Expr)) (variable: Str) =
+and anyReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (expressions: List(Expr)) (variable: Str) =
     match expressions with
         | [] -> false
-        | expression :: rest -> reachesAt(constructors)(callees)(expression)(variable) || anyReaches(constructors)(callees)(rest)(variable)
-and anyFieldReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (fields: List((Str, Expr))) (variable: Str) =
+        | expression :: rest -> reachesAt(constructors)(callees)(cells)(expression)(variable) || anyReaches(constructors)(callees)(cells)(rest)(variable)
+and anyFieldReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (fields: List((Str, Expr))) (variable: Str) =
     match fields with
         | [] -> false
-        | (_field, value) :: rest -> reachesAt(constructors)(callees)(value)(variable) || anyFieldReaches(constructors)(callees)(rest)(variable)
-and everyArmReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (arms: List((Pattern, Expr, Maybe(Expr)))) (variable: Str) =
+        | (_field, value) :: rest -> reachesAt(constructors)(callees)(cells)(value)(variable) || anyFieldReaches(constructors)(callees)(cells)(rest)(variable)
+and everyArmReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (arms: List((Pattern, Expr, Maybe(Expr)))) (variable: Str) =
     match arms with
         | [] -> true
-        | (pattern, body, _guard) :: rest -> !patternBindsName(pattern)(variable) && reachesAt(constructors)(callees)(body)(variable) && everyArmReaches(constructors)(callees)(rest)(variable)
-and callReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (spine: (Expr, List(Expr))) (variable: Str) =
+        | (pattern, body, _guard) :: rest -> !patternBindsName(pattern)(variable) && reachesAt(constructors)(callees)(cells)(body)(variable) && everyArmReaches(constructors)(callees)(cells)(rest)(variable)
+and callReaches (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (spine: (Expr, List(Expr))) (variable: Str) =
     match spine with
         | (ExprVar(name), arguments) ->
             if containsName(name)(constructors)
-            then anyReaches(constructors)(callees)(arguments)(variable)
+            then anyReaches(constructors)(callees)(cells)(arguments)(variable)
             else
                 match callees(name) with
-                    | Some((parameters, reached)) -> sameLength(arguments)(parameters) && anyArgumentReachesThrough(constructors)(callees)(arguments)(parameters)(reached)(variable)
+                    | Some((parameters, reached)) -> sameLength(arguments)(parameters) && anyArgumentReachesThrough(constructors)(callees)(cells)(arguments)(parameters)(reached)(variable)
                     | None -> false
         | _ -> false
-and anyArgumentReachesThrough (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (arguments: List(Expr)) (parameters: List(Str)) (reached: List(Str)) (variable: Str) =
+and anyArgumentReachesThrough (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (cells: Bool) (arguments: List(Expr)) (parameters: List(Str)) (reached: List(Str)) (variable: Str) =
     match (arguments, parameters) with
         | ([], []) -> false
-        | (argument :: argumentRest, parameter :: parameterRest) -> containsName(parameter)(reached) && reachesAt(constructors)(callees)(argument)(variable) || anyArgumentReachesThrough(constructors)(callees)(argumentRest)(parameterRest)(reached)(variable)
+        | (argument :: argumentRest, parameter :: parameterRest) -> containsName(parameter)(reached) && reachesAt(constructors)(callees)(cells)(argument)(variable) || anyArgumentReachesThrough(constructors)(callees)(cells)(argumentRest)(parameterRest)(reached)(variable)
         | _ -> false
 
 // Whether `body`'s result always reaches `variable`. `constructors` names the ADT constructors
 // in scope and `callees` answers a let-bound function's parameter chain and the parameters its
 // result always reaches; a call is followed only when it is saturated.
-let resultAlwaysReachesVariable (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (body: Expr) (variable: Str) = reachesAt(constructors)(callees)(body)(variable)
+let resultAlwaysReachesVariable (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (body: Expr) (variable: Str) = reachesAt(constructors)(callees)(true)(body)(variable)
+
+// The same, with a variable a list literal or cons holds not counted, for the entry normalization.
+let resultReachesVariableOutsideCells (constructors: List(Str)) (callees: Str -> Maybe((List(Str), List(Str)))) (body: Expr) (variable: Str) = reachesAt(constructors)(callees)(false)(body)(variable)

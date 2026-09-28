@@ -179,12 +179,30 @@ let pairScalarEnvSpecializationLabeled (text: Str) =
 
 let scalarEnvSpecializationNotCorrelated = "the optimizer's scalar-environment specialization of pair reports its own generated label here rather than stage 0's shared origin label"
 
+// Representation is classified by a post-hoc IR walk (DecisionSnapshot's classifyInstructionRepr)
+// over the lowered instructions. A string parameter stored twice into a list literal, with no entry
+// normalization of its own, is read three times there (the parameter slot's load and the two
+// element reads), and the walk counts each read as conservative unknown; stage 0 tags the
+// representation where the value is produced and counts the two element reads only.
+let parameterReadCountedUnknownLine (line: Str) =
+    match line with
+        | "    conservative unknown: 2" -> ["    conservative unknown: 3"]
+        | _ -> [line]
+
+let parameterReadCountedUnknown (targetNames: List(Str)) (text: Str) =
+    rewriteLines(scopedRewrite(targetNames)(parameterReadCountedUnknownLine)(false))(text)
+
+let parameterReadCountedUnknownReason = "representation is classified by a post-hoc IR walk that counts the parameter slot's own load beside the list element reads as conservative unknown, where stage 0 counts the element reads only"
+
 let checkConsumedListArgument unit =
     unit
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainOwnership)("ownership"))
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainRc)("rc"))
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainReuse)("reuse"))
-    |> (given (_) -> checkFixture("consumed_list_argument")(ExplainMemory)("memory"))
+    |> (given (_) ->
+        ["makeItems"]
+        |> parameterReadCountedUnknown
+        |> checkKnownDifference("consumed_list_argument")(ExplainMemory)("memory")(parameterReadCountedUnknownReason))
 
 // The join read and the function's result reload of it are classified as runtime rc here, as stage
 // 0 classifies them: the lowering records the representation it decided for the join itself, so the

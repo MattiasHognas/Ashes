@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from countLeft]
-  locals=14 temps=27
+  locals=14 temps=28
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
     StoreLocal            Slot=4 Source=0   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
@@ -32,33 +32,34 @@ function lambda_0  [SourceFunction from countLeft]
     LoadLocal             Target=15 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:14:28)
     LoadConstInt          Target=16 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:14:32)
     SubInt                Target=17 Left=15 Right=16   (tco_non_tail_self_call_in_operator_operand.ash:14:28)
-    CallClosure           Target=18 ClosureTemp=13 ArgTemp=17   (tco_non_tail_self_call_in_operator_operand.ash:14:18)
+    LoadConstInt          Target=19 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:14:18)
+    CallClosure           Target=18 ClosureTemp=13 ArgTemp=17 RuntimeManagedArgumentFlagTemp=19   (tco_non_tail_self_call_in_operator_operand.ash:14:18)
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
-    AddInt                Target=19 Left=12 Right=18   (tco_non_tail_self_call_in_operator_operand.ash:14:14)
-    StoreLocal            Slot=9 Source=19   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+    AddInt                Target=20 Left=12 Right=18   (tco_non_tail_self_call_in_operator_operand.ash:14:14)
+    StoreLocal            Slot=9 Source=20   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
     Jump                  Target=endif_3   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
   else_2:
-    LoadLocal             Target=20 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:15:24)
-    LoadConstInt          Target=21 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:15:28)
-    SubInt                Target=22 Left=20 Right=21   (tco_non_tail_self_call_in_operator_operand.ash:15:24)
-    LoadLocal             Target=23 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
-    StoreLocal            Slot=1 Source=22   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    LoadLocal             Target=21 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:15:24)
+    LoadConstInt          Target=22 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:15:28)
+    SubInt                Target=23 Left=21 Right=22   (tco_non_tail_self_call_in_operator_operand.ash:15:24)
+    LoadLocal             Target=24 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    StoreLocal            Slot=1 Source=23   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=13
     RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
     Jump                  Target=lambda_0_body   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
-    LoadConstInt          Target=24 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
-    StoreLocal            Slot=9 Source=24   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+    LoadConstInt          Target=25 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:15:14)
+    StoreLocal            Slot=9 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
   endif_3:
-    LoadLocal             Target=25 Slot=9   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
-    StoreLocal            Slot=8 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+    LoadLocal             Target=26 Slot=9   (tco_non_tail_self_call_in_operator_operand.ash:13:9)
+    StoreLocal            Slot=8 Source=26   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
   endif_1:
-    LoadLocal             Target=26 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
-    Return                Source=26   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
+    LoadLocal             Target=27 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:10:5)
+    Return                Source=27   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
 
 function lambda_1  [SourceFunction from countRight]
-  locals=14 temps=27
+  locals=14 temps=28
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:17:1)
     StoreLocal            Slot=4 Source=0   (tco_non_tail_self_call_in_operator_operand.ash:17:1)
@@ -87,34 +88,35 @@ function lambda_1  [SourceFunction from countRight]
     LoadLocal             Target=14 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:22:25)
     LoadConstInt          Target=15 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:22:29)
     SubInt                Target=16 Left=14 Right=15   (tco_non_tail_self_call_in_operator_operand.ash:22:25)
-    CallClosure           Target=17 ClosureTemp=12 ArgTemp=16   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    LoadConstInt          Target=18 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    CallClosure           Target=17 ClosureTemp=12 ArgTemp=16 RuntimeManagedArgumentFlagTemp=18   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
     RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
-    LoadConstInt          Target=18 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:22:34)
-    AddInt                Target=19 Left=17 Right=18   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
-    StoreLocal            Slot=9 Source=19   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+    LoadConstInt          Target=19 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:22:34)
+    AddInt                Target=20 Left=17 Right=19   (tco_non_tail_self_call_in_operator_operand.ash:22:14)
+    StoreLocal            Slot=9 Source=20   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
     Jump                  Target=endif_7   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
   else_6:
-    LoadLocal             Target=20 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:23:25)
-    LoadConstInt          Target=21 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:23:29)
-    SubInt                Target=22 Left=20 Right=21   (tco_non_tail_self_call_in_operator_operand.ash:23:25)
-    LoadLocal             Target=23 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
-    StoreLocal            Slot=1 Source=22   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    LoadLocal             Target=21 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:23:25)
+    LoadConstInt          Target=22 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:23:29)
+    SubInt                Target=23 Left=21 Right=22   (tco_non_tail_self_call_in_operator_operand.ash:23:25)
+    LoadLocal             Target=24 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    StoreLocal            Slot=1 Source=23   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=13
     RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
     Jump                  Target=lambda_1_body   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
-    LoadConstInt          Target=24 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
-    StoreLocal            Slot=9 Source=24   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+    LoadConstInt          Target=25 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:23:14)
+    StoreLocal            Slot=9 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
   endif_7:
-    LoadLocal             Target=25 Slot=9   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
-    StoreLocal            Slot=8 Source=25   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+    LoadLocal             Target=26 Slot=9   (tco_non_tail_self_call_in_operator_operand.ash:21:9)
+    StoreLocal            Slot=8 Source=26   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
   endif_5:
-    LoadLocal             Target=26 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
-    Return                Source=26   (tco_non_tail_self_call_in_operator_operand.ash:17:1)
+    LoadLocal             Target=27 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:18:5)
+    Return                Source=27   (tco_non_tail_self_call_in_operator_operand.ash:17:1)
 
 function lambda_2  [SourceFunction from countEvens]
-  locals=25 temps=38
+  locals=25 temps=40
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:25:1)
     StoreLocal            Slot=4 Source=0   (tco_non_tail_self_call_in_operator_operand.ash:25:1)
@@ -169,26 +171,28 @@ function lambda_2  [SourceFunction from countEvens]
     StoreLocal            Slot=20 Source=26   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
   rc_call_argument_not_retained_15:
     LoadLocal             Target=27 Slot=20   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
-    CallClosure           Target=28 ClosureTemp=17 ArgTemp=27 RuntimeManagedArgumentFlagTemp=25   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    LoadConstInt          Target=29 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    OrInt                 Target=30 Left=25 Right=29   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
+    CallClosure           Target=28 ClosureTemp=17 ArgTemp=27 RuntimeManagedArgumentFlagTemp=30   (tco_non_tail_self_call_in_operator_operand.ash:30:22)
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=21
-    AddInt                Target=29 Left=16 Right=28   (tco_non_tail_self_call_in_operator_operand.ash:30:18)
+    AddInt                Target=31 Left=16 Right=28   (tco_non_tail_self_call_in_operator_operand.ash:30:18)
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=16
-    StoreLocal            Slot=17 Source=29   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+    StoreLocal            Slot=17 Source=31   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
     Jump                  Target=endif_14   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
   else_13:
-    LoadLocal             Target=30 Slot=16   (tco_non_tail_self_call_in_operator_operand.ash:31:29)
-    Borrow                Target=31 SourceTemp=30
-    LoadLocal             Target=32 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
-    StoreLocal            Slot=1 Source=31   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    LoadLocal             Target=32 Slot=16   (tco_non_tail_self_call_in_operator_operand.ash:31:29)
+    Borrow                Target=33 SourceTemp=32
+    LoadLocal             Target=34 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    StoreLocal            Slot=1 Source=33   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=16
     RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
     Jump                  Target=lambda_2_body   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
-    LoadConstInt          Target=33 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
-    StoreLocal            Slot=17 Source=33   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+    LoadConstInt          Target=35 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:31:18)
+    StoreLocal            Slot=17 Source=35   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
   endif_14:
-    LoadLocal             Target=34 Slot=17   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
-    StoreLocal            Slot=8 Source=34   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    LoadLocal             Target=36 Slot=17   (tco_non_tail_self_call_in_operator_operand.ash:29:13)
+    StoreLocal            Slot=8 Source=36   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=22
     Jump                  Target=match_end_8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
@@ -197,14 +201,14 @@ function lambda_2  [SourceFunction from countEvens]
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=23
     Jump                  Target=match_none_9   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
   match_none_9:
-    LoadConstInt          Target=36 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
-    StoreLocal            Slot=8 Source=36   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    LoadConstInt          Target=38 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    StoreLocal            Slot=8 Source=38   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
   match_end_8:
-    LoadLocal             Target=37 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
-    Return                Source=37   (tco_non_tail_self_call_in_operator_operand.ash:25:1)
+    LoadLocal             Target=39 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:26:5)
+    Return                Source=39   (tco_non_tail_self_call_in_operator_operand.ash:25:1)
 
 function lambda_3  [SourceFunction from sumTo]
-  locals=6 temps=13
+  locals=6 temps=14
     LoadLocal             Target=0 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:34:8)
     LoadConstInt          Target=1 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:34:13)
     CmpIntEq              Target=2 Left=0 Right=1   (tco_non_tail_self_call_in_operator_operand.ash:34:8)
@@ -220,17 +224,18 @@ function lambda_3  [SourceFunction from sumTo]
     LoadLocal             Target=7 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:36:20)
     LoadConstInt          Target=8 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:36:24)
     SubInt                Target=9 Left=7 Right=8   (tco_non_tail_self_call_in_operator_operand.ash:36:20)
-    CallClosure           Target=10 ClosureTemp=5 ArgTemp=9   (tco_non_tail_self_call_in_operator_operand.ash:36:14)
+    LoadConstInt          Target=11 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:36:14)
+    CallClosure           Target=10 ClosureTemp=5 ArgTemp=9 RuntimeManagedArgumentFlagTemp=11   (tco_non_tail_self_call_in_operator_operand.ash:36:14)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    AddInt                Target=11 Left=4 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:36:10)
-    StoreLocal            Slot=2 Source=11   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+    AddInt                Target=12 Left=4 Right=10   (tco_non_tail_self_call_in_operator_operand.ash:36:10)
+    StoreLocal            Slot=2 Source=12   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
   endif_17:
-    LoadLocal             Target=12 Slot=2   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
-    Return                Source=12   (tco_non_tail_self_call_in_operator_operand.ash:33:1)
+    LoadLocal             Target=13 Slot=2   (tco_non_tail_self_call_in_operator_operand.ash:34:5)
+    Return                Source=13   (tco_non_tail_self_call_in_operator_operand.ash:33:1)
 
 function lambda_4  [SourceFunction from countFields]
-  locals=27 temps=39
+  locals=27 temps=40
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:38:1)
     StoreLocal            Slot=4 Source=0   (tco_non_tail_self_call_in_operator_operand.ash:38:1)
@@ -279,12 +284,13 @@ function lambda_4  [SourceFunction from countFields]
     MakeClosure           Target=21 FuncLabel=lambda_4 EnvPtrTemp=22 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
     LoadLocal             Target=23 Slot=15   (tco_non_tail_self_call_in_operator_operand.ash:41:73)
     Borrow                Target=24 SourceTemp=23
-    CallClosure           Target=25 ClosureTemp=21 ArgTemp=24   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    LoadConstInt          Target=26 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
+    CallClosure           Target=25 ClosureTemp=21 ArgTemp=24 RuntimeManagedArgumentFlagTemp=26   (tco_non_tail_self_call_in_operator_operand.ash:41:61)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=18
-    AddInt                Target=26 Left=20 Right=25   (tco_non_tail_self_call_in_operator_operand.ash:41:57)
+    AddInt                Target=27 Left=20 Right=25   (tco_non_tail_self_call_in_operator_operand.ash:41:57)
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=15
-    StoreLocal            Slot=8 Source=26   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    StoreLocal            Slot=8 Source=27   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=19
     Jump                  Target=match_end_18   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
@@ -294,21 +300,21 @@ function lambda_4  [SourceFunction from countFields]
     Jump                  Target=match_next_22   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
   match_next_22:
     SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
-    LoadConstInt          Target=28 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    CmpIntNe              Target=29 Left=1 Right=28   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    JumpIfFalse           CondTemp=29 Target=match_arm_cleanup_24   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    LoadMemOffset         Target=30 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    LoadMemOffset         Target=31 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    StoreLocal            Slot=23 Source=31   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    LoadLocal             Target=32 Slot=23   (tco_non_tail_self_call_in_operator_operand.ash:42:36)
-    Borrow                Target=33 SourceTemp=32
-    LoadLocal             Target=34 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
-    StoreLocal            Slot=1 Source=33   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
-    RcDrop                SourceTemp=31 TypeName=List OwnerSlot=23
+    LoadConstInt          Target=29 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    CmpIntNe              Target=30 Left=1 Right=29   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    JumpIfFalse           CondTemp=30 Target=match_arm_cleanup_24   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadMemOffset         Target=31 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadMemOffset         Target=32 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    StoreLocal            Slot=23 Source=32   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadLocal             Target=33 Slot=23   (tco_non_tail_self_call_in_operator_operand.ash:42:36)
+    Borrow                Target=34 SourceTemp=33
+    LoadLocal             Target=35 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    StoreLocal            Slot=1 Source=34   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    RcDrop                SourceTemp=32 TypeName=List OwnerSlot=23
     RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
     Jump                  Target=lambda_4_body   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
-    LoadConstInt          Target=35 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
-    StoreLocal            Slot=8 Source=35   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=36 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:42:24)
+    StoreLocal            Slot=8 Source=36   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
     RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=24
     Jump                  Target=match_end_18   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
@@ -317,14 +323,14 @@ function lambda_4  [SourceFunction from countFields]
     ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=25
     Jump                  Target=match_none_19   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
   match_none_19:
-    LoadConstInt          Target=37 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    StoreLocal            Slot=8 Source=37   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    LoadConstInt          Target=38 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    StoreLocal            Slot=8 Source=38   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
   match_end_18:
-    LoadLocal             Target=38 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
-    Return                Source=38   (tco_non_tail_self_call_in_operator_operand.ash:38:1)
+    LoadLocal             Target=39 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:39:5)
+    Return                Source=39   (tco_non_tail_self_call_in_operator_operand.ash:38:1)
 
 function lambda_5  [SourceFunction from countNegated]
-  locals=28 temps=44
+  locals=28 temps=45
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:44:1)
     StoreLocal            Slot=4 Source=0   (tco_non_tail_self_call_in_operator_operand.ash:44:1)
@@ -372,24 +378,25 @@ function lambda_5  [SourceFunction from countNegated]
     MakeClosure           Target=20 FuncLabel=lambda_5 EnvPtrTemp=21 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
     LoadLocal             Target=22 Slot=15   (tco_non_tail_self_call_in_operator_operand.ash:48:31)
     Borrow                Target=23 SourceTemp=22
-    CallClosure           Target=24 ClosureTemp=20 ArgTemp=23   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadConstInt          Target=25 Value=2   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    CallClosure           Target=24 ClosureTemp=20 ArgTemp=23 RuntimeManagedArgumentFlagTemp=25   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=18
-    LoadConstInt          Target=25 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:48:40)
-    CmpIntEq              Target=26 Left=24 Right=25   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
+    LoadConstInt          Target=26 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:48:40)
+    CmpIntEq              Target=27 Left=24 Right=26   (tco_non_tail_self_call_in_operator_operand.ash:48:18)
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=15
-    LoadConstBool         Target=27   (tco_non_tail_self_call_in_operator_operand.ash:48:16)
-    CmpIntEq              Target=28 Left=26 Right=27   (tco_non_tail_self_call_in_operator_operand.ash:48:16)
-    JumpIfFalse           CondTemp=28 Target=else_31   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
-    LoadConstInt          Target=29 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:49:18)
-    StoreLocal            Slot=19 Source=29   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    LoadConstBool         Target=28   (tco_non_tail_self_call_in_operator_operand.ash:48:16)
+    CmpIntEq              Target=29 Left=27 Right=28   (tco_non_tail_self_call_in_operator_operand.ash:48:16)
+    JumpIfFalse           CondTemp=29 Target=else_31   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    LoadConstInt          Target=30 Value=1   (tco_non_tail_self_call_in_operator_operand.ash:49:18)
+    StoreLocal            Slot=19 Source=30   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
     Jump                  Target=endif_32   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
   else_31:
-    LoadConstInt          Target=30 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:50:18)
-    StoreLocal            Slot=19 Source=30   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    LoadConstInt          Target=31 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:50:18)
+    StoreLocal            Slot=19 Source=31   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
   endif_32:
-    LoadLocal             Target=31 Slot=19   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
-    StoreLocal            Slot=8 Source=31   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadLocal             Target=32 Slot=19   (tco_non_tail_self_call_in_operator_operand.ash:48:13)
+    StoreLocal            Slot=8 Source=32   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=20
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=20
     Jump                  Target=match_end_25   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
@@ -399,21 +406,21 @@ function lambda_5  [SourceFunction from countNegated]
     Jump                  Target=match_next_29   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
   match_next_29:
     SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
-    LoadConstInt          Target=33 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    CmpIntNe              Target=34 Left=1 Right=33   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    JumpIfFalse           CondTemp=34 Target=match_arm_cleanup_33   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    LoadMemOffset         Target=35 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    LoadMemOffset         Target=36 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    StoreLocal            Slot=24 Source=36   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    LoadLocal             Target=37 Slot=24   (tco_non_tail_self_call_in_operator_operand.ash:51:37)
-    Borrow                Target=38 SourceTemp=37
-    LoadLocal             Target=39 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
-    StoreLocal            Slot=1 Source=38   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
-    RcDrop                SourceTemp=36 TypeName=List OwnerSlot=24
+    LoadConstInt          Target=34 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    CmpIntNe              Target=35 Left=1 Right=34   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    JumpIfFalse           CondTemp=35 Target=match_arm_cleanup_33   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadMemOffset         Target=36 BasePtr=1 OffsetBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadMemOffset         Target=37 BasePtr=1 OffsetBytes=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    StoreLocal            Slot=24 Source=37   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadLocal             Target=38 Slot=24   (tco_non_tail_self_call_in_operator_operand.ash:51:37)
+    Borrow                Target=39 SourceTemp=38
+    LoadLocal             Target=40 Slot=1   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    StoreLocal            Slot=1 Source=39   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    RcDrop                SourceTemp=37 TypeName=List OwnerSlot=24
     RestoreStackPointer   Slot=7   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
     Jump                  Target=lambda_5_body   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
-    LoadConstInt          Target=40 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
-    StoreLocal            Slot=8 Source=40   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadConstInt          Target=41 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:51:24)
+    StoreLocal            Slot=8 Source=41   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
     RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=25
     ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=25
     Jump                  Target=match_end_25   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
@@ -422,11 +429,11 @@ function lambda_5  [SourceFunction from countNegated]
     ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=26
     Jump                  Target=match_none_26   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
   match_none_26:
-    LoadConstInt          Target=42 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    StoreLocal            Slot=8 Source=42   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    LoadConstInt          Target=43 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    StoreLocal            Slot=8 Source=43   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
   match_end_25:
-    LoadLocal             Target=43 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
-    Return                Source=43   (tco_non_tail_self_call_in_operator_operand.ash:44:1)
+    LoadLocal             Target=44 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:45:5)
+    Return                Source=44   (tco_non_tail_self_call_in_operator_operand.ash:44:1)
 
 function _start_main  [ProgramEntry]
   locals=32 temps=92
