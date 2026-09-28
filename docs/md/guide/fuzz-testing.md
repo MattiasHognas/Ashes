@@ -144,7 +144,9 @@ helper, a lowering-state pipeline, two walks that leak one cell a round, an unan
 in its exit tuple, an item loop whose pending list blocks its state, a fresh list built in the
 program's trailing pipe, a worklist whose front queue is walked and refilled from its back queue, a
 record consed onto a producer's spine by a let, by a closure over it, or under a let-bound self call,
-and the two use-after-free shapes above. Names, list lengths, element values and types, updated fields,
+three classes still open (a list accumulator replaced by a helper's rebuild in one arm and handed on
+in the other, a pairwise concatenation consed onto an accumulator, a record built through two piped
+closures and consed onto the recursive tail), and the two use-after-free shapes above. Names, list lengths, element values and types, updated fields,
 and the variant of each class vary with the seed, and every choice is recorded in the case's trace.
 
 Every leak or use-after-free fixed by a lowering rule since the census was introduced has a template

@@ -45,6 +45,9 @@ internal static class LeakCombinationTemplates
         registry.Register(new SpineHeadBoundByLetTemplate());
         registry.Register(new ClosureConsesItsParameterTemplate());
         registry.Register(new SelfCallTailUnderOwnedHeadTemplate());
+        registry.Register(new AccumulatorReplacedByHelperInOneArmTemplate());
+        registry.Register(new PairwiseConcatAccumulatorTemplate());
+        registry.Register(new PipedClosuresConsRecordTemplate());
     }
 }
 
