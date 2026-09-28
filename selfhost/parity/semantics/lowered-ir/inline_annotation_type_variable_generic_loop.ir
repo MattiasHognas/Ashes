@@ -1,0 +1,268 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from reverseOnto]
+  locals=21 temps=25
+    LoadEnv               Target=0 Index=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    StoreLocal            Slot=2 Source=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    StoreLocal            Slot=5 Source=1   (inline_annotation_type_variable_generic_loop.ash:3:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    LoadLocal             Target=2 Slot=2   (inline_annotation_type_variable_generic_loop.ash:4:11)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    LoadLocal             Target=5 Slot=1   (inline_annotation_type_variable_generic_loop.ash:5:17)
+    StoreLocal            Slot=9 Source=5   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    Jump                  Target=match_end_0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
+    Jump                  Target=match_next_2   (inline_annotation_type_variable_generic_loop.ash:4:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=6 Value=0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    StoreLocal            Slot=16 Source=8   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    StoreLocal            Slot=17 Source=9   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    LoadLocal             Target=10 Slot=17   (inline_annotation_type_variable_generic_loop.ash:6:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=15 Slot=1   (inline_annotation_type_variable_generic_loop.ash:6:53)
+    RcDup                 Target=16 SourceTemp=13
+    RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=16
+    Alloc                 Target=17 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=15   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    LoadLocal             Target=18 Slot=2   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    LoadLocal             Target=19 Slot=1   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    StoreLocal            Slot=2 Source=11   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
+    StoreLocal            Slot=1 Source=17   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    RestoreStackPointer   Slot=8   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    Jump                  Target=lambda_1_body   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    LoadConstInt          Target=20 Value=0   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    StoreLocal            Slot=9 Source=20   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=18
+    Jump                  Target=match_end_0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
+    Jump                  Target=match_none_1   (inline_annotation_type_variable_generic_loop.ash:4:5)
+  match_none_1:
+    LoadConstInt          Target=23 Value=0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    StoreLocal            Slot=9 Source=23   (inline_annotation_type_variable_generic_loop.ash:4:5)
+  match_end_0:
+    LoadLocal             Target=24 Slot=9   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    Return                Source=24   (inline_annotation_type_variable_generic_loop.ash:3:1)
+
+function lambda_0  [SourceFunction from reverseOnto]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    LoadLocal             Target=1 Slot=1   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    Return                Source=4   (inline_annotation_type_variable_generic_loop.ash:3:1)
+
+function lambda_2  [SourceFunction from count]
+  locals=15 temps=19
+    LoadLocal             Target=0 Slot=1   (inline_annotation_type_variable_generic_loop.ash:11:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    CmpIntEq              Target=2 Left=0 Right=1   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_8   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    LoadConstInt          Target=3 Value=0   (inline_annotation_type_variable_generic_loop.ash:12:17)
+    StoreLocal            Slot=2 Source=3   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Jump                  Target=match_end_5   (inline_annotation_type_variable_generic_loop.ash:11:5)
+  match_arm_cleanup_8:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_next_7   (inline_annotation_type_variable_generic_loop.ash:11:5)
+  match_next_7:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=4 Value=0   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    CmpIntNe              Target=5 Left=0 Right=4   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_9   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    StoreLocal            Slot=9 Source=7   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    LoadConstInt          Target=8 Value=1   (inline_annotation_type_variable_generic_loop.ash:13:24)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=10 Slot=0   (inline_annotation_type_variable_generic_loop.ash:13:28)
+    MakeClosure           Target=9 FuncLabel=lambda_2 EnvPtrTemp=10 EnvSizeBytes=0   (inline_annotation_type_variable_generic_loop.ash:13:28)
+    LoadLocal             Target=11 Slot=9   (inline_annotation_type_variable_generic_loop.ash:13:34)
+    Borrow                Target=12 SourceTemp=11
+    LoadConstInt          Target=14 Value=2   (inline_annotation_type_variable_generic_loop.ash:13:28)
+    CallClosure           Target=13 ClosureTemp=9 ArgTemp=12 RuntimeManagedArgumentFlagTemp=14   (inline_annotation_type_variable_generic_loop.ash:13:28)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    AddInt                Target=15 Left=8 Right=13   (inline_annotation_type_variable_generic_loop.ash:13:24)
+    RcDrop                SourceTemp=7 TypeName=List OwnerSlot=9
+    StoreLocal            Slot=2 Source=15   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=13
+    Jump                  Target=match_end_5   (inline_annotation_type_variable_generic_loop.ash:11:5)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=14
+    Jump                  Target=match_none_6   (inline_annotation_type_variable_generic_loop.ash:11:5)
+  match_none_6:
+    LoadConstInt          Target=17 Value=0   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    StoreLocal            Slot=2 Source=17   (inline_annotation_type_variable_generic_loop.ash:11:5)
+  match_end_5:
+    LoadLocal             Target=18 Slot=2   (inline_annotation_type_variable_generic_loop.ash:11:5)
+    Return                Source=18   (inline_annotation_type_variable_generic_loop.ash:10:1)
+
+function lambda_4  [ClosureHelper from rounds]
+  locals=22 temps=46
+    LoadEnv               Target=0 Index=0   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreLocal            Slot=2 Source=0   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreLocal            Slot=5 Source=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreLocal            Slot=6 Source=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreLocal            Slot=7 Source=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+  lambda_4_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    LoadLocal             Target=2 Slot=2   (inline_annotation_type_variable_generic_loop.ash:16:8)
+    LoadConstInt          Target=3 Value=0   (inline_annotation_type_variable_generic_loop.ash:16:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (inline_annotation_type_variable_generic_loop.ash:16:8)
+    JumpIfFalse           CondTemp=4 Target=else_10   (inline_annotation_type_variable_generic_loop.ash:16:5)
+    LoadLocal             Target=5 Slot=1   (inline_annotation_type_variable_generic_loop.ash:17:10)
+    StoreLocal            Slot=11 Source=5   (inline_annotation_type_variable_generic_loop.ash:16:5)
+    Jump                  Target=endif_11   (inline_annotation_type_variable_generic_loop.ash:16:5)
+  else_10:
+    LoadLocal             Target=6 Slot=2   (inline_annotation_type_variable_generic_loop.ash:18:17)
+    LoadConstInt          Target=7 Value=1   (inline_annotation_type_variable_generic_loop.ash:18:21)
+    SubInt                Target=8 Left=6 Right=7   (inline_annotation_type_variable_generic_loop.ash:18:17)
+    LoadLocal             Target=9 Slot=1   (inline_annotation_type_variable_generic_loop.ash:18:24)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadEnv               Target=11 Index=2   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    LoadConstInt          Target=12 Value=0   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    LoadConstInt          Target=13 Value=3   (inline_annotation_type_variable_generic_loop.ash:18:57)
+    Alloc                 Target=14 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=12   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    LoadConstInt          Target=15 Value=2   (inline_annotation_type_variable_generic_loop.ash:18:54)
+    Alloc                 Target=16 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=14   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    LoadLocal             Target=17 Slot=2   (inline_annotation_type_variable_generic_loop.ash:18:51)
+    RcDup                 Target=18 SourceTemp=17
+    Alloc                 Target=19 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=18   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    StoreMemOffset        BasePtr=19 OffsetBytes=8 Source=16   (inline_annotation_type_variable_generic_loop.ash:18:50)
+    CallClosure           Target=20 ClosureTemp=11 ArgTemp=19   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    LoadConstInt          Target=21 Value=0   (inline_annotation_type_variable_generic_loop.ash:18:61)
+    LoadMemOffset         Target=22 BasePtr=20 OffsetBytes=16   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    LoadConstInt          Target=23 Value=63   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    ShrInt                Target=24 Left=22 Right=23   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    CallClosure           Target=25 ClosureTemp=20 ArgTemp=21   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    StoreLocal            Slot=17 Source=25   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
+    JumpIfFalse           CondTemp=24 Target=call_copy_arena_result_12   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    Jump                  Target=call_reclaim_owned_result_13   (inline_annotation_type_variable_generic_loop.ash:18:38)
+  call_copy_arena_result_12:
+    CopyOutList           DestTemp=26 SrcTemp=25 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    StoreLocal            Slot=17 Source=26   (inline_annotation_type_variable_generic_loop.ash:18:38)
+  call_reclaim_owned_result_13:
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
+    LoadLocal             Target=27 Slot=17   (inline_annotation_type_variable_generic_loop.ash:18:38)
+    LoadMemOffset         Target=28 BasePtr=10 OffsetBytes=16   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    LoadConstInt          Target=29 Value=62   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    ShrInt                Target=30 Left=28 Right=29   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    LoadConstInt          Target=31 Value=1   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    AndInt                Target=32 Left=30 Right=31   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    StoreLocal            Slot=18 Source=27   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    JumpIfFalse           CondTemp=32 Target=rc_call_argument_not_retained_14   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    RcDup                 Target=33 SourceTemp=27 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=18 Source=33   (inline_annotation_type_variable_generic_loop.ash:18:32)
+  rc_call_argument_not_retained_14:
+    LoadLocal             Target=34 Slot=18   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    CallClosure           Target=35 ClosureTemp=10 ArgTemp=34 RuntimeManagedArgumentFlagTemp=32   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=19
+    StoreLocal            Slot=20 Source=27   (inline_annotation_type_variable_generic_loop.ash:18:32)
+  rcdrop_list_15:
+    LoadLocal             Target=36 Slot=20   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    LoadConstInt          Target=37 Value=0   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    CmpIntNe              Target=38 Left=36 Right=37   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_end_17   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    RcIsUnique            Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=rcdrop_list_shared_16   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    LoadMemOffset         Target=40 BasePtr=36 OffsetBytes=8   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=20 Source=40   (inline_annotation_type_variable_generic_loop.ash:18:32)
+    Jump                  Target=rcdrop_list_15   (inline_annotation_type_variable_generic_loop.ash:18:32)
+  rcdrop_list_shared_16:
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_17   (inline_annotation_type_variable_generic_loop.ash:18:32)
+  rcdrop_list_end_17:
+    AddInt                Target=41 Left=9 Right=35   (inline_annotation_type_variable_generic_loop.ash:18:24)
+    LoadLocal             Target=42 Slot=2   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    LoadLocal             Target=43 Slot=1   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    StoreLocal            Slot=2 Source=8   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    StoreLocal            Slot=1 Source=41   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=21
+    RestoreStackPointer   Slot=10   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    Jump                  Target=lambda_4_body   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    LoadConstInt          Target=44 Value=0   (inline_annotation_type_variable_generic_loop.ash:18:10)
+    StoreLocal            Slot=11 Source=44   (inline_annotation_type_variable_generic_loop.ash:16:5)
+  endif_11:
+    LoadLocal             Target=45 Slot=11   (inline_annotation_type_variable_generic_loop.ash:16:5)
+    Return                Source=45   (inline_annotation_type_variable_generic_loop.ash:15:1)
+
+function lambda_3  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    LoadLocal             Target=1 Slot=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    LoadEnv               Target=4 Index=0   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    LoadEnv               Target=5 Index=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=24   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    Return                Source=6   (inline_annotation_type_variable_generic_loop.ash:15:1)
+
+function _start_main  [ProgramEntry]
+  locals=6 temps=14
+    LoadConstInt          Target=0 Value=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    StoreLocal            Slot=0 Source=1   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    LoadConstInt          Target=2 Value=0   (inline_annotation_type_variable_generic_loop.ash:10:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (inline_annotation_type_variable_generic_loop.ash:10:1)
+    StoreLocal            Slot=1 Source=3   (inline_annotation_type_variable_generic_loop.ash:10:1)
+    Alloc                 Target=4 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    LoadLocal             Target=5 Slot=1   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    LoadLocal             Target=6 Slot=0   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    MakeClosure           Target=7 FuncLabel=lambda_3 EnvPtrTemp=4 EnvSizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    StoreLocal            Slot=2 Source=7   (inline_annotation_type_variable_generic_loop.ash:15:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=8 Slot=2   (inline_annotation_type_variable_generic_loop.ash:21:4)
+    LoadConstInt          Target=9 Value=3   (inline_annotation_type_variable_generic_loop.ash:21:11)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (inline_annotation_type_variable_generic_loop.ash:20:1)
+    LoadConstInt          Target=11 Value=0   (inline_annotation_type_variable_generic_loop.ash:20:1)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (inline_annotation_type_variable_generic_loop.ash:20:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    PrintInt              Source=12   (inline_annotation_type_variable_generic_loop.ash:20:1)
+    AllocAdt              Target=13 Tag=0 FieldCount=0   (inline_annotation_type_variable_generic_loop.ash:20:1)
+    Return                Source=13
+

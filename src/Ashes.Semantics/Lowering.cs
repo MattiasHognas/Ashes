@@ -1201,7 +1201,9 @@ public sealed partial class Lowering
 
     private void FinishEntryInference(TypeRef resultType)
     {
-        if (!_collectInferredTraitElaboration)
+        // A program already rejected is not placed: its types may stand in for what could not be
+        // resolved (an unknown type name is `Never`), which placement cannot take for a layout.
+        if (!_collectInferredTraitElaboration && _diag.StructuredErrors.Count == 0)
         {
             ResolveDeferredTcoResets();
             ResolveDeferredTupleMaterializations();
@@ -8642,9 +8644,12 @@ public sealed partial class Lowering
 
         // An inline parameter annotation (`given (x: T) ->`, or the lambda a `let f (x: T) = ...`
         // sugar parameter desugars to) pins the parameter's type before the body is lowered.
+        EnterInlineAnnotationTypeVariables(lam);
         if (lam.ParamAnnotation is { } inlineAnnotation)
         {
-            Unify(paramTy, ResolveAnnotationType(inlineAnnotation));
+            // An unknown type name in the annotation is reported at the parameter it annotates.
+            using IDisposable parameterSpan = PushDiagnosticSpan(AstSpans.GetLambdaParameterOrDefault(lam));
+            Unify(paramTy, ResolveInlineParameterAnnotation(inlineAnnotation));
         }
 
         LowerLambdaCoreSeedParamTypeFromConstructorFields(lam, paramTy);

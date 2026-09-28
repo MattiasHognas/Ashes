@@ -553,6 +553,9 @@ type CoreFunctionState =
     // The functions a `let` binds, with the curry stages each one returns (stage 0's
     // `_letBoundFunctionLabels`).
     | letBoundFunctionLabels: List(Str)
+    // The type variables written in the inline parameter annotations of the function being
+    // lowered, by name (stage 0's `_inlineAnnotationTypeVariables`).
+    | inlineTypeVariables: List((Str, SemanticType))
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
@@ -1164,6 +1167,14 @@ let stateLetBoundFunctionLabels (state: CoreLoweringState) =
 let withStateLetBoundFunctionLabels (value: List(Str)) (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with letBoundFunctionLabels = value))
+
+let stateInlineTypeVariables (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.inlineTypeVariables)
+
+let withStateInlineTypeVariables (value: List((Str, SemanticType))) (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with inlineTypeVariables = value))
 
 let stateSealedOperatorDefaults (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2203,6 +2214,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             pendingOperatorDefaults = [],
             enclosingBindings = [],
             letBoundFunctionLabels = [],
+            inlineTypeVariables = [],
             sealedOperatorDefaults = [],
             pendingSourceFunction = None,
             activeFunctionOrigin = None,
@@ -10074,15 +10086,92 @@ and typeExprListToSemanticTypes (typeExprs: List(TypeExpr)) (parameterTypes: Lis
 // type, a resource, anything `typeExprToSemanticType` answers `None` for) is left unchecked rather
 // than rejected, matching this resolver's existing constructor-field contract: an unproven "can't
 // check this" is not the same as "this is wrong."
+// A lowercase type name other than an unsigned integer width (stage 0's `CollectTypeParameterNames`).
+let isAnnotationTypeVariableName (name: Str) =
+    if name == "u8" || name == "u16" || name == "u32" || name == "u64"
+    then false
+    else
+        let bytes = Ashes.Byte.fromText(name)
+        in
+            if Ashes.Byte.length(bytes) <= 0
+            then false
+            else
+                let first =
+                    0
+                    |> Ashes.Byte.get(bytes)
+                    |> Ashes.Number.UInt.toInt
+                in first >= 97 && first <= 122
+
+let recursive annotationTypeVariableNames (typeExpr: TypeExpr) (names: List(Str)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> annotationTypeVariableNames(inner)(names)
+        | TypeNamed(name) ->
+            if isAnnotationTypeVariableName(name) && !containsName(name)(names)
+            then name :: names
+            else names
+        | TypeApplied(_name, arguments) -> annotationTypeVariableNamesIn(arguments)(names)
+        | TypeArrow(argument, result, _capabilities, _tail) ->
+            names
+            |> annotationTypeVariableNames(argument)
+            |> annotationTypeVariableNames(result)
+        | TypeTuple(elements) -> annotationTypeVariableNamesIn(elements)(names)
+        | TypeUnit -> names
+and annotationTypeVariableNamesIn (types: List(TypeExpr)) (names: List(Str)) =
+    match types with
+        | [] -> names
+        | head :: rest ->
+            names
+            |> annotationTypeVariableNames(head)
+            |> annotationTypeVariableNamesIn(rest)
+
+// Stage 0's `EnterInlineAnnotationTypeVariables`: a curry stage shares its enclosing stage's
+// inline annotation type variables; any other lambda starts with none.
+let enterInlineTypeVariables (parameter: Str) (state: CoreLoweringState) =
+    match stateCurryStage(state) with
+        | Some((_stageLabel, stageParameter)) ->
+            if stageParameter == parameter
+            then state
+            else withStateInlineTypeVariables([])(state)
+        | None -> withStateInlineTypeVariables([])(state)
+
+// Each lowercase name of an inline annotation not yet a type variable of the function, nor a type
+// parameter in scope, becomes a fresh one (stage 0's `ResolveInlineParameterAnnotation`).
+let recursive bindInlineTypeVariables (names: List(Str)) (state: CoreLoweringState) =
+    match names with
+        | [] -> state
+        | name :: rest ->
+            match (state
+            |> stateInlineTypeVariables
+            |> lookupTypeParameter(name), state
+            |> stateActiveTypeParameters
+            |> lookupTypeParameter(name)) with
+                | (None, None) ->
+                    match freshType(state) with
+                        | FreshType { state = fresh, semanticType = variable } ->
+                            fresh
+                            |> withStateInlineTypeVariables((name, variable) :: stateInlineTypeVariables(fresh))
+                            |> bindInlineTypeVariables(rest)
+                | _ -> bindInlineTypeVariables(rest)(state)
+
+let recursive appendTypeParameters (left: List((Str, SemanticType))) (right: List((Str, SemanticType))) =
+    match left with
+        | [] -> right
+        | head :: rest -> head :: appendTypeParameters(rest)(right)
+
 let lowerLambdaParameterType annotation parameterType state =
     match annotation with
         | None -> (state, None)
         | Some(typeExpr) ->
-            match state
-            |> stateActiveTypeParameters
-            |> typeExprToSemanticType(expandTypeAliases(stateTypeAliases(state))(32)(typeExpr)) with
-                | None -> (state, None)
-                | Some(annotationType) -> bindType(parameterType)(annotationType)(state)
+            match state |> bindInlineTypeVariables([]
+            |> annotationTypeVariableNames(typeExpr)
+            |> reverse) with
+                | bound ->
+                    match bound
+                    |> stateInlineTypeVariables
+                    |> appendTypeParameters(stateActiveTypeParameters(bound))
+                    |> typeExprToSemanticType(expandTypeAliases(stateTypeAliases(bound))(32)(typeExpr)) with
+                        | None -> (bound, None)
+                        | Some(annotationType) -> bindType(parameterType)(annotationType)(bound)
 
 // A let-bound lambda's generated label is remembered under the let's name, so a call through the
 // name can consult the function's recorded body placement.
@@ -12637,7 +12726,9 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                             match applyExpectedLambdaType(parameterType)(freshState) with
                                 | (expectedFailed, Some(error)) -> failure(expectedFailed)(error)
                                 | (expectedState, None) ->
-                                    match lowerLambdaParameterType(annotation)(parameterType)(expectedState) with
+                                    match expectedState
+                                    |> enterInlineTypeVariables(parameter)
+                                    |> lowerLambdaParameterType(annotation)(parameterType) with
                                         | (checkedState, Some(error)) -> failure(checkedState)(error)
                                         | (checkedState, None) ->
                                             lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(expectedLambdaResultType(freshState))(FreshType(state = seedParameterFromConstructorFields(parameter)(parameterType)(body)(checkedState), semanticType = parameterType))
@@ -18120,7 +18211,9 @@ let finishPreparedRecursiveMember name parameter body lambdaId slot fresh =
 let annotatePreparedParameter annotation fresh =
     match fresh with
         | FreshFunctionType { state = state, semanticType = semanticType, parameterType = parameterType, resultType = resultType } ->
-            match lowerLambdaParameterType(annotation)(parameterType)(state) with
+            match state
+            |> withStateInlineTypeVariables([])
+            |> lowerLambdaParameterType(annotation)(parameterType) with
                 | (annotatedState, error) ->
                     (FreshFunctionType(
                         state = annotatedState,

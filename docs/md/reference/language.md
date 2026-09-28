@@ -1108,6 +1108,12 @@ operator selection) as well as document intent. A mismatch between the
 annotation and how the parameter is used is a compile error. The bare
 (unparenthesized) single-parameter form does not take an annotation.
 
+As in a whole-binding annotation, a lowercase name in an inline annotation is a type
+variable. One name is one variable across the parameters of the same function (the
+curried parameters of one `let f (x: a) (y: List(a)) = ...` share `a`), and the
+function is generalized over it like over any inferred variable. A lambda that is not
+a curried parameter of the enclosing one starts with no names of its own.
+
 Functions:
 
 - are first-class values

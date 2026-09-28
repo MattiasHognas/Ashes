@@ -1,0 +1,22 @@
+// A generic loop whose curried parameters are annotated with a type variable (`List(a)`): the
+// name is one flexible variable across both parameters, so the loop is generic over its element.
+let recursive reverseOnto (items: List(a)) (acc: List(a)) =
+    match items with
+        | [] -> acc
+        | head :: rest -> reverseOnto(rest)(head :: acc)
+
+
+
+let recursive count items =
+    match items with
+        | [] -> 0
+        | _ :: rest -> 1 + count(rest)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + count(reverseOnto([n, 2, 3])([])))
+
+0
+|> rounds(3)
+|> Ashes.IO.print
