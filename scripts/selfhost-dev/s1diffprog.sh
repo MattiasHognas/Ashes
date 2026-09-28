@@ -1,7 +1,8 @@
 #!/bin/bash
 # usage: s1diffprog.sh [-b] <program.ash> [binding] ; stage 0's lowered IR of any program against stage 1's, normalised
 # like s1diff.sh, whole or for the functions lowered from one binding: a port is driven by the smallest program that
-# shows the rule, before a fixture exists. -b rebuilds the dump tool first.
+# shows the rule, before a fixture exists; the shipped modules the program imports are stitched in on both sides. -b
+# rebuilds the dump tool first.
 . "$(dirname "$0")/env.sh"
 cd "$R" || exit 1
 if [ "$1" = "-b" ]; then
@@ -24,7 +25,7 @@ norm() {
 dotnet run -c Release --no-build --project src/Ashes.Cli -- compile "$src" -o "$E/bin" --emit-ir lowered > /dev/null 2> "$E/$name.s0"
 echo "stage 0 exit=$?"
 cp "$src" "$J/dumpir/$name.ash"
-bash -c "ulimit -s 1048576; '$J/dumpir/out/$BIN' '$J/dumpir/$name.ash'" > "$E/$name.s1" 2>&1
+bash -c "ulimit -s 1048576; '$J/dumpir/out/$BIN' '$J/dumpir/$name.ash' '$R/lib/Ashes'" > "$E/$name.s1" 2>&1
 echo "stage 1 exit=$?"
 for stage in s0 s1; do
     if [ -n "$binding" ]; then
