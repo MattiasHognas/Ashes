@@ -16266,16 +16266,7 @@ public sealed partial class Lowering
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(head.Type, head.Temp))
         {
-            tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp, request);
-            if (request.RuntimeListTailBinding is null && IsRecursiveProducerTail(cons.Tail))
-            {
-                int preparedTemp = tailTemp;
-                tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
-                if (tailTemp == preparedTemp && IsUnplacedLetBoundTail(cons.Tail, tailTemp) && Prune(tailType) is TypeRef.TList tailList)
-                {
-                    tailTemp = EmitReferenceOrCopy(preparedTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(preparedTemp, tailList));
-                }
-            }
+            tailTemp = PrepareRuntimeRcConsTail(cons.Tail, tailTemp, tailType, request);
         }
         else if (transfersChildren)
         {
@@ -16309,6 +16300,26 @@ public sealed partial class Lowering
             tailType,
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
+    }
+
+    // The tail of a reference-counted cell: a recursive producer's result is retained, and an
+    // unplaced let-bound one takes a reference when it is reference-counted or a copy when it is not.
+    private int PrepareRuntimeRcConsTail(Expr tail, int tailTemp, TypeRef tailType, LoweredValueRequest request)
+    {
+        tailTemp = PrepareRuntimeRcListTail(tail, tailTemp, request);
+        if (request.RuntimeListTailBinding is not null || !IsRecursiveProducerTail(tail))
+        {
+            return tailTemp;
+        }
+
+        int preparedTemp = tailTemp;
+        tailTemp = RetainRuntimeManagedAggregateChild(tail, tailTemp, tailType);
+        if (tailTemp == preparedTemp && IsUnplacedLetBoundTail(tail, tailTemp) && Prune(tailType) is TypeRef.TList tailList)
+        {
+            tailTemp = EmitReferenceOrCopy(preparedTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(preparedTemp, tailList));
+        }
+
+        return tailTemp;
     }
 
     /// <summary>
