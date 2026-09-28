@@ -5522,6 +5522,17 @@ let recursive collectFree expression bound free =
             |> collectFree(value)(bound)
             |> collectMatchCasesFree(cases)(bound)
         | ExprQualifiedVar(owner, _member) -> addFreeName(owner)(bound)(free)
+        | ExprResultPipe(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprResultMapErrorPipe(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprLetResult(name, value, body) ->
+            let valueFree = collectFree(value)(bound)(free)
+            in collectFree(body)(name :: bound)(valueFree)
+        | ExprAwait(operand) -> collectFree(operand)(bound)(free)
+        | ExprPerform(operand) -> collectFree(operand)(bound)(free)
+        | ExprHandle(body, arms) ->
+            free
+            |> collectFree(body)(bound)
+            |> collectHandleArmsFree(arms)(bound)
         | _ -> free
 and collectFreeBinary left right bound free =
     free
@@ -5559,6 +5570,17 @@ and collectMatchCasesFree cases bound free =
             case
             |> collectMatchCaseFree(bound)(free)
             |> collectMatchCasesFree(rest)(bound)
+// Stage 0's `FreeVarsVisitHandle`: an arm's parameters and its `resume` are bound in its body.
+and collectHandleArmsFree arms bound free =
+    match arms with
+        | [] -> free
+        | (_capability, _operation, parameters, body) :: rest ->
+            let armBound =
+                append(patternListBindingNames(parameters)([]))("resume" :: bound)
+            in
+                free
+                |> collectFree(body)(armBound)
+                |> collectHandleArmsFree(rest)(bound)
 
 let recursive capturedBindings names bindings reversed =
     match names with

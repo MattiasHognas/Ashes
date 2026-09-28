@@ -3338,6 +3338,13 @@ let testMapUpsertLoopLeavesNothingPerRound shipped unit =
     |> mapUpsertLoopSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMapUpsertOneRound")("selfhost_backend_map_upsert_one_round_e2e"))
 
+// A handler arm inside a lambda resumes with a value let-bound outside the lambda, which the
+// lambda captures: the arm binds only its parameters and `resume`.
+let buildHandlerArmCaptureModule shipped name context = codegenShippedSource(shipped)("capability Source(a) =\n    | get : Unit -> a\n\nlet result =\n    (let captured = 8\n    in\n        ((given (unit: Unit) ->\n            handle perform Source.get(Unit) with\n                | Source.get(_) -> resume(captured)\n                | return(handled) -> handled + 34))(Unit))\n\nAshes.IO.print(result)")(name)(context)
+
+let testRunStaticExecutableForHandlerArmCaptureModule shipped unit =
+    assertProgramPrints(buildHandlerArmCaptureModule(shipped))("selfhostBackendRunHandlerArmCapture")("selfhost_backend_handler_arm_capture_e2e")("42")
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5676,6 +5683,7 @@ let run shipped =
     |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
     |> testMapUpsertLoopLeavesNothingPerRound(shipped)
+    |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
