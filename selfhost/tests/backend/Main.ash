@@ -3338,6 +3338,19 @@ let testMapUpsertLoopLeavesNothingPerRound shipped unit =
     |> mapUpsertLoopSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMapUpsertOneRound")("selfhost_backend_map_upsert_one_round_e2e"))
 
+// A loop threading a `(List(Str), Int)` state returns that state inside its result: the state is
+// placed on the reference-counted heap, and each back edge releases the predecessor with its list.
+let tupleStateLoopSource rounds = "let advance (state: (List(Str), Int)) =\n    match state with\n        | (token :: tail, count) -> (token, (tail, count + 1))\n        | ([], _count) -> (\"\", state)\n\nlet currentIs (text: Str) (state: (List(Str), Int)) =\n    match state with\n        | (token :: _, _count) -> token == text\n        | ([], _count) -> false\n\nlet recursive parameters (reversed: List(Str)) (state: (List(Str), Int)) =\n    if currentIs(\"=\")(state)\n    then (reversed, state)\n    else\n        match advance(state) with\n            | (name, afterName) -> parameters(name :: reversed)(afterName)\n\nlet run (seed: Int) =\n    match parameters([])(([\"smoke\", \"coal\", \"smoke\", \"=\", \"ash\"], seed)) with\n        | (names, _after) -> Ashes.Collection.List.length(names)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + run(2))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testTupleStateLoopLeavesNothingPerRound shipped unit =
+    "selfhost_backend_tuple_state_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> tupleStateLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendTupleStateTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> tupleStateLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendTupleStateOneRound")("selfhost_backend_tuple_state_one_round_e2e"))
+
 // A handler arm inside a lambda resumes with a value let-bound outside the lambda, which the
 // lambda captures: the arm binds only its parameters and `resume`.
 let buildHandlerArmCaptureModule shipped name context = codegenShippedSource(shipped)("capability Source(a) =\n    | get : Unit -> a\n\nlet result =\n    (let captured = 8\n    in\n        ((given (unit: Unit) ->\n            handle perform Source.get(Unit) with\n                | Source.get(_) -> resume(captured)\n                | return(handled) -> handled + 34))(Unit))\n\nAshes.IO.print(result)")(name)(context)
@@ -5689,6 +5702,7 @@ let run shipped =
     |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
     |> testMapUpsertLoopLeavesNothingPerRound(shipped)
+    |> testTupleStateLoopLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
     |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)

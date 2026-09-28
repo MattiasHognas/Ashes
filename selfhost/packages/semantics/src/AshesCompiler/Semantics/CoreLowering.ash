@@ -7081,11 +7081,16 @@ let emitGuardedListRelease emitter (labelName: Str) (activeSlot: Int) (listTemp:
                     |> emitInlineListRelease(emitter)(listTemp)(elementType)
                     |> emitter(Label(skipLabel))
 
+let recursive allScalarElements (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest -> resultSurvivesReset(element)(state) && allScalarElements(rest)(state)
+
 // The release of one owned runtime-managed value by its resolved type, stage 0's
 // `EmitRuntimeManagedChildDrop`: a string, bytes or big integer is one allocation; a list walks
 // its cells; an ADT with owned children tests its cell for uniqueness, releases a unique cell's
-// children and drops the cell (`rc_drop_shared`); a scalar-field cell and a tuple of scalars
-// drop as one allocation.
+// children and drops the cell (`rc_drop_shared`), as does a tuple with owned elements
+// (`rc_drop_tuple_shared`); a scalar-field cell and a tuple of scalars drop as one allocation.
 let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString ->
@@ -7102,13 +7107,21 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
                         | None ->
                             emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
                         | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
-        | SemTuple(_elements) ->
-            // Stage 0's `EmitRuntimeManagedTupleDrop` allocates its shared label before it knows
-            // whether any element needs the unique-cell walk; a tuple of scalars burns the label
-            // and drops as one allocation, so the label is allocated here too to keep the numbering.
-            match freshLabel("rc_drop_tuple_shared")(state) with
-                | FreshLabel { state = labelled, label = _sharedLabel } ->
-                    emitter(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))(labelled)
+        | SemTuple(elements) as tuple ->
+            if allScalarElements(elements)(state)
+            then
+                // Stage 0's `EmitRuntimeManagedTupleDrop` allocates its shared label before it
+                // knows whether any element needs the unique-cell walk; a tuple of scalars burns
+                // the label and drops as one allocation, so the label is allocated here too to
+                // keep the numbering.
+                match freshLabel("rc_drop_tuple_shared")(state) with
+                    | FreshLabel { state = labelled, label = _sharedLabel } ->
+                        emitter(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))(labelled)
+            else
+                // A tuple with owned elements releases them from a unique cell before the cell.
+                match state with
+                    | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+                        spliceInlineReleaseWith(emitter)(synthesizeChildDrop(valueTemp)(tuple)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
         | _ -> state
 
 // The release of a runtime-managed ADT slot's old value under its active flag.
@@ -7124,8 +7137,8 @@ let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: 
                     |> emitter(Label(skipLabel))
 
 // The copy plan of a runtime-managed aggregate loop parameter: a same-arity scalar-field ADT and
-// a tuple of scalars copy their cell in one piece, a record with owned children copies its cell
-// and every owned child (stage 0's `EmitRuntimeManagedTcoDeepCopy`).
+// a tuple of scalars copy their cell in one piece, a record with owned children and a tuple with
+// owned elements copy their cell and every owned child (stage 0's `EmitRuntimeManagedTcoDeepCopy`).
 let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> LeafArgumentCopy(-1)
@@ -7133,7 +7146,13 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
             match argumentCopyPlanOf(list)(state) with
                 | Some(plan) -> plan
                 | None -> ScalarArgumentCopy
-        | SemTuple(elements) -> ShallowAdtArgumentCopy(8 * length(elements))
+        | SemTuple(elements) as tuple ->
+            if allScalarElements(elements)(state)
+            then ShallowAdtArgumentCopy(8 * length(elements))
+            else
+                match argumentCopyPlanOf(tuple)(state) with
+                    | Some(plan) -> plan
+                    | None -> ShallowAdtArgumentCopy(8 * length(elements))
         | SemNamed(_symbolId, name, _arguments) as named ->
             match (generalCopyPlanOf(named)(state), argumentCopyPlanOf(named)(state)) with
                 | (Some(NormalizerArgumentCopy(normalized)), _plan) -> NormalizerArgumentCopy(normalized)
@@ -10486,17 +10505,13 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (sta
                     else None
         | _ -> None
 
-let recursive allScalarElements (elements: List(SemanticType)) (state: CoreLoweringState) =
-    match elements with
-        | [] -> true
-        | element :: rest -> resultSurvivesReset(element)(state) && allScalarElements(rest)(state)
-
 // A single-constructor ADT loop parameter admitted to runtime-managed placement, stage 0's
 // `IsRcEligibleScalarTupleOrAdtType`: a copy ADT (every field a scalar, `CanCopyOutAdt`) or a
 // tuple of scalars copies its cell whole at entry and at every back edge and releases as one
 // `RcDrop` under the type's name (`Tuple` for a tuple); a record with owned children
-// (`CanRuntimeManageTcoAdt`) copies its children with the cell and releases them through the
-// cell's structural walk; a parameter of the contract's own types is normalized by its helper
+// (`CanRuntimeManageTcoAdt`) and a tuple whose elements a runtime-managed parent owns
+// (`CanRuntimeManageOwnedTupleType`) copy their children with the cell and release them through
+// the cell's structural walk; a parameter of the contract's own types is normalized by its helper
 // (`tcoGeneralRcParameterPlacement`). Answers the resolved type and that name.
 let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
     match (layouts, heapFactsOf(named)(state)) with
@@ -10572,7 +10587,7 @@ let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: C
                             | Some(false) -> None
                             | None -> tcoNamedSlotCopy(named)(name)(layouts)(state)
             | Some(SemTuple(elements) as tuple) ->
-                if length(elements) > 0 && allScalarElements(elements)(state)
+                if length(elements) > 0 && allRuntimeOwnedCopyElements(elements)(state)
                 then Some((tuple, "Tuple"))
                 else None
             | Some(SemString) -> Some((SemString, "String"))
