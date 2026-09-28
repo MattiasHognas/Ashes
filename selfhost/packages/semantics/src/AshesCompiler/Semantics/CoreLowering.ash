@@ -10077,6 +10077,10 @@ let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List(
         | TypeNamed("BigInt") -> Some(SemBigInt)
         | TypeNamed("Rune") -> Some(SemRune)
         | TypeNamed("Bytes") -> Some(SemBytes)
+        | TypeNamed("u8") -> Some(SemUInt(8))
+        | TypeNamed("u16") -> Some(SemUInt(16))
+        | TypeNamed("u32") -> Some(SemUInt(32))
+        | TypeNamed("u64") -> Some(SemUInt(64))
         | TypeUnit ->
             []
             |> SemNamed(0)("Unit")

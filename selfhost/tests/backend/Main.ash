@@ -3345,6 +3345,12 @@ let buildHandlerArmCaptureModule shipped name context = codegenShippedSource(shi
 let testRunStaticExecutableForHandlerArmCaptureModule shipped unit =
     assertProgramPrints(buildHandlerArmCaptureModule(shipped))("selfhostBackendRunHandlerArmCapture")("selfhost_backend_handler_arm_capture_e2e")("42")
 
+// Parameters annotated `u8` through `u64` take arguments of those types.
+let buildUnsignedParameterAnnotationModule shipped name context = codegenShippedSource(shipped)("let f8 =\n    given (p: u8) -> p\n\nlet f16 =\n    given (p: u16) -> p\n\nlet f32 =\n    given (p: u32) -> p\n\nlet f64 =\n    given (p: u64) -> p\n\nAshes.IO.print(Ashes.Number.UInt.toInt(f8(14u8)) + Ashes.Number.UInt.toInt(f16(15u16)) + Ashes.Number.UInt.toInt(f32(16u32)) + Ashes.Number.UInt.toInt(f64(17u64)))")(name)(context)
+
+let testRunStaticExecutableForUnsignedParameterAnnotationModule shipped unit =
+    assertProgramPrints(buildUnsignedParameterAnnotationModule(shipped))("selfhostBackendRunUnsignedParameterAnnotation")("selfhost_backend_unsigned_parameter_annotation_e2e")("62")
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5684,6 +5690,7 @@ let run shipped =
     |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
     |> testMapUpsertLoopLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
+    |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
