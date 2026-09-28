@@ -142,8 +142,9 @@ let-bound tuple destructured into a result tuple, an optimizer pass matching a h
 and rewritten record, a list parameter returned inside a tuple, a nested group record replaced by a
 helper, a lowering-state pipeline, two walks that leak one cell a round, an unannotated loop's state
 in its exit tuple, an item loop whose pending list blocks its state, a fresh list built in the
-program's trailing pipe, a worklist whose front queue is walked and refilled from its back queue, and
-the two use-after-free shapes above. Names, list lengths, element values and types, updated fields,
+program's trailing pipe, a worklist whose front queue is walked and refilled from its back queue, a
+record consed onto a producer's spine by a let, by a closure over it, or under a let-bound self call,
+and the two use-after-free shapes above. Names, list lengths, element values and types, updated fields,
 and the variant of each class vary with the seed, and every choice is recorded in the case's trace.
 
 Every leak or use-after-free fixed by a lowering rule since the census was introduced has a template
@@ -155,6 +156,9 @@ see says why.
 
 | Fix | Template | With the rule off |
 |---|---|---|
+| A spine cell's head retained out of a let binding leaves the binding its own reference | `leak.spine-head-bound-by-let` | `GRC_NO_TMCHEADRETAIN`: 5, 5 and 2 cells per round |
+| A call of the binding's own self reference never asks for an arena result | `leak.self-call-tail-under-owned-head` | `GRC_NO_SELFCALLOWNED`: segfault on every seed, plain and poisoned (`UAF`, exit 139) |
+| A parameter reaching the result only as a list cell's head is not normalized at entry | `leak.closure-conses-its-parameter` | `GRC_NO_CELLHEADPARAM`: 3, 4 and 5 cells per round |
 | 59fa6dd1 A loop releases an earlier iteration's result when no successor names it or a part of it | `leak.worklist-solve-records` (still open: 6, 14 and 22 cells per round with every rule on) | `GRC_NO_PREDECESSORNAMES`: 46, 75 and 154 cells per round |
 | dd18b233 A retain of an unannotated loop parameter in an exit tuple is withdrawn behind the copy-out | `leak.unannotated-loop-state-in-exit-tuple` | `GRC_NO_DEFERREDCOPYREAD`: 5, 4 and 7 cells per round |
 | b75fc5ca A reference handed over for an arena result to keep goes to an owned slot | `leak.variant-accumulator-through-helper`, `leak.list-parameter-in-tuple-result` | `GRC_NO_HANDEDSLOT`: 5, 10 and 18, and 8, 4 and 4 cells per round (`leak.header-tuple-destructured`, still open at 1, grows to 1, 10 and 11) |

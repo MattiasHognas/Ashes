@@ -43,6 +43,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new WorklistBackOnlyRefilledTemplate());
         registry.Register(new ChoiceAccumulatorBorrowedHeadTemplate());
         registry.Register(new SpineHeadBoundByLetTemplate());
+        registry.Register(new ClosureConsesItsParameterTemplate());
+        registry.Register(new SelfCallTailUnderOwnedHeadTemplate());
     }
 }
 
@@ -703,46 +705,89 @@ internal sealed class NestedItemLoopPendingBlocksStateTemplate() : LeakCombinati
     }
 }
 
+
 /// <summary>
-/// A record a helper returns, bound by a let or passed through a closure, consed onto the list a
-/// recursive producer builds: the cell takes a reference of its own, and the binding's or the
-/// caller's reference is released behind it.
+/// The shared program of the spine-head templates: a record a helper returns consed onto the list a
+/// recursive producer builds, by the cons arm the template gives, and the list folded.
 /// </summary>
-internal sealed class SpineHeadBoundByLetTemplate() : LeakCombinationTemplate(
-    "leak.spine-head-bound-by-let", "spineHeadByLet", GeneratedFeature.Record, GeneratedFeature.RecordPattern, GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.Lambda)
+internal static class SpineHeadProgram
 {
-    protected override string Declarations(LeakNames names)
+    internal static string Declarations(LeakNames names, Func<string, string, string> consArm)
     {
         string entry = names.Of("LeakEntry");
         string make = names.Of("makeEntry");
         string step = names.Of("stepEntries");
         string count = names.Of("countEntries");
+        string slot = names.Pick("slot", "block", "index");
+        string flag = names.Pick("live", "seen", "marked");
         string items = names.Ints(names.Between(2, 5), 1, 9);
-        string head = names.Variant("head", 3) switch
-        {
-            0 => $"let entry = {make}(value)\n                        in entry :: {step}(rest)",
-            1 => $"let next = {step}(rest)\n                        in {make}(value) :: next",
-            _ => $"value\n                        |> {make}\n                        |> (given (entry) -> entry :: {step}(rest))",
-        };
+        string modulus = LeakNames.Text(names.Between(2, 3));
         return $$"""
             type {{entry}} =
-                | slot: Int
-                | live: Bool
+                | {{slot}}: Int
+                | {{flag}}: Bool
+                | done: Bool
 
-            let {{make}} (value: Int) = {{entry}}(slot = value, live = value % 2 == 0)
+            let {{make}} (value: Int) = {{entry}}({{slot}} = value, {{flag}} = value % {{modulus}} == 0, done = false)
 
             let recursive {{step}} (remaining: List(Int)) =
                 match remaining with
                     | [] -> []
                     | value :: rest ->
-                        {{head}}
+                        {{consArm(make, step)}}
 
             let recursive {{count}} (entries: List({{entry}})) (total: Int) =
                 match entries with
                     | [] -> total
-                    | {{entry}} { slot = slot } :: rest -> {{count}}(rest)(total + slot)
+                    | {{entry}} { {{slot}} = found } :: rest -> {{count}}(rest)(total + found)
 
             let {{names.Entry}} (seed: Int) = {{count}}({{step}}({{items}}))(seed)
             """;
+    }
+}
+
+/// <summary>
+/// A record a helper returns, let-bound and consed onto the spine the producer builds in place: the
+/// cell retains the binding's value, and the binding's own reference is released with the iteration.
+/// </summary>
+internal sealed class SpineHeadBoundByLetTemplate() : LeakCombinationTemplate(
+    "leak.spine-head-bound-by-let", "spineHeadByLet", GeneratedFeature.Record, GeneratedFeature.RecordPattern, GeneratedFeature.TailCall, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string bound = names.Pick("entry", "made", "cell");
+        return SpineHeadProgram.Declarations(names, (make, step) => $"let {bound} = {make}(value)\n                        in {bound} :: {step}(rest)");
+    }
+}
+
+/// <summary>
+/// A closure applied in a pipe conses its parameter onto the producer's recursive tail: the
+/// parameter reaches the result only as a list cell's head, so its entry takes no owned copy.
+/// </summary>
+internal sealed class ClosureConsesItsParameterTemplate() : LeakCombinationTemplate(
+    "leak.closure-conses-its-parameter", "closureConsesParameter", GeneratedFeature.Record, GeneratedFeature.RecordPattern, GeneratedFeature.Lambda, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string parameter = names.Pick("entry", "made", "cell");
+        bool pipedValue = names.Coin("piped-value");
+        return SpineHeadProgram.Declarations(names, (make, step) => pipedValue
+            ? $"value\n                        |> {make}\n                        |> (given ({parameter}) -> {parameter} :: {step}(rest))"
+            : $"{make}(value) |> (given ({parameter}) -> {parameter} :: {step}(rest))");
+    }
+}
+
+/// <summary>
+/// A non-tail call of the recursive binding from its own body, let-bound and consed under a record
+/// a helper returns owned: the call asks for no arena result, so the reference-counted cell holds a
+/// reference-counted tail. Without the rule the program reads freed memory.
+/// </summary>
+internal sealed class SelfCallTailUnderOwnedHeadTemplate() : LeakCombinationTemplate(
+    "leak.self-call-tail-under-owned-head", "selfCallTailUnderHead", GeneratedFeature.Record, GeneratedFeature.RecordPattern, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string tail = names.Pick("tail", "built", "following");
+        return SpineHeadProgram.Declarations(names, (make, step) => $"let {tail} = {step}(rest)\n                        in {make}(value) :: {tail}");
     }
 }
