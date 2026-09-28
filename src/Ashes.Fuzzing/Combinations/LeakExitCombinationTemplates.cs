@@ -225,6 +225,40 @@ internal sealed class WorklistFrontWalkedAndRefilledTemplate() : LeakCombination
 }
 
 /// <summary>
+/// A list accumulator handed on in one arm and grown by a cons of a pattern-bound head in the other:
+/// the back edge copies the accumulator's cell with references of its own, so the cell must borrow
+/// its head rather than take a pattern-owner duplicate of it.
+/// </summary>
+internal sealed class ChoiceAccumulatorBorrowedHeadTemplate() : LeakCombinationTemplate(
+    "leak.choice-accumulator-borrowed-head", "choiceAccumulatorBorrowedHead", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string enqueue = names.Of("enqueue");
+        string countAll = names.Of("countAll");
+        IReadOnlyList<string> words = names.DistinctWords(names.Between(3, 5));
+        string skipped = LeakNames.Text(names.Between(0, words.Count - 1));
+        string keys = "[" + string.Join(", ", words.Select(word => word + " + \"x\"")) + "]";
+        return $$"""
+            let recursive {{enqueue}} (pending: List(Str)) (back: List(Str)) (index: Int) =
+                match pending with
+                    | [] -> back
+                    | key :: rest ->
+                        if index == {{skipped}}
+                        then {{enqueue}}(rest)(back)(index + 1)
+                        else {{enqueue}}(rest)(key :: back)(index + 1)
+
+            let recursive {{countAll}} (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> {{countAll}}(rest)(total + 1)
+
+            let {{names.Entry}} (seed: Int) = {{countAll}}({{enqueue}}({{keys}})([])(0))(0) + seed
+            """;
+    }
+}
+
+/// <summary>
 /// A worklist whose back queue is only ever handed on, emptied, or refilled from a helper that
 /// conses the step's targets onto it: the back queue must live on the reference-counted heap for
 /// each refill's cells to be released.

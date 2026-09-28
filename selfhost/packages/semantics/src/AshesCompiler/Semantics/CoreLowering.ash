@@ -275,6 +275,10 @@ type ConsumerRequest =
     // extends. A cons whose tail reads that slot takes the parameter's own list over rather than
     // copying it, once the runtime says the list is reference-counted.
     | runtimeTcoListTailSlot: Maybe(Int)
+    // Stage 0's `_backEdgeCopiedCell`: the cons a tail self call passes as the successor of a list
+    // parameter whose back edge copies its successor with references of its own borrows its head
+    // and tail, taking no pattern-owner duplicate of them.
+    | borrowsCellParts: Bool
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -296,7 +300,8 @@ let emptyConsumerRequest =
         transfersRuntimeManagedChildren = false,
         tailCall = false,
         consTailPosition = false,
-        runtimeTcoListTailSlot = None
+        runtimeTcoListTailSlot = None,
+        borrowsCellParts = false
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
@@ -3103,6 +3108,13 @@ let recursive aggregateRequestForwards expression =
         | ExprLambda(_, _, _) -> false
         | other -> expectedTypeForwards(other)
 
+// A borrowing successor cell's flag reaches the cons itself, through its spans, and nothing else.
+let consPartsRequestForwards (expression: Expr) =
+    match expression with
+        | ExprAt(_span, _inner) -> true
+        | ExprCons(_head, _tail) -> true
+        | _ -> false
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
@@ -3125,7 +3137,8 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         consTailPosition = tailPositionOrConsForwards(expression) && request.consTailPosition,
         runtimeTcoListTailSlot = if aggregateRequestForwards(expression)
         then request.runtimeTcoListTailSlot
-        else None
+        else None,
+        borrowsCellParts = consPartsRequestForwards(expression) && request.borrowsCellParts
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =
@@ -18890,6 +18903,18 @@ let duplicatePatternOwnerConsParts (headExpression: Expr) (tailExpression: Expr)
                         | (tailDuplicated, tailDuplicate) -> (LoweredCoreValue(state = tailDuplicated, temp = headDuplicate, semanticType = headType, error = None), LoweredCoreValue(state = tailDuplicated, temp = tailDuplicate, semanticType = tailType, error = None))
         | _ -> (head, tail)
 
+// A successor cell the back edge copies borrows its parts: the head keeps the tail's state, and
+// neither takes a duplicate.
+let borrowedConsParts (head: LoweredCoreValue) (tail: LoweredCoreValue) =
+    match (head, tail) with
+        | (LoweredCoreValue { error = None }, LoweredCoreValue { state = tailState, error = None }) -> ((head with state = tailState), tail)
+        | _ -> (head, tail)
+
+let consPartsFor (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
+    if request.borrowsCellParts
+    then borrowedConsParts(head)(tail)
+    else duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head)(tail)
+
 // The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
@@ -18898,7 +18923,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
             match headState
             |> withOnlyExpectedType(Some(SemList(headType)))
             |> lower(tailExpression)
-            |> duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head) with
+            |> consPartsFor(request)(headExpression)(tailExpression)(head) with
                 | (duplicatedHead, duplicatedTail) ->
                     duplicatedTail
                     |> retainConsTail(request)(transfers)(headExpression)(tailExpression)(duplicatedHead)
@@ -23099,10 +23124,15 @@ let backEdgeCopiesListSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (lo
         | (TcoChoiceAccumulatorShape, Some(parameterSlot), Some(frame)) -> loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
         | _ -> false
 
-let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (state: CoreLoweringState) =
+let isConsExpression (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, _tail) -> true
+        | _ -> false
+
+let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
     withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
     then tailSlot
-    else None)))(state)
+    else None), borrowsCellParts = copiesSuccessor && isConsExpression(argument)))(state)
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
 // A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was
@@ -23168,7 +23198,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
                     match functionState
                     |> withStateBackEdgeArgumentSlot(headSlotOf(slots))
                     |> withStateAffineAppendContext(affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations))
-                    |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState))
+                    |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState))(argument)
                     |> lower(argument)
                     |> duplicatePatternOwnerChild(argument)
                     |> retainTransferredChild(argument)(true) with

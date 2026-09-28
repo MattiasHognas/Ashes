@@ -576,6 +576,12 @@ public sealed partial class Lowering
     // instead of crossing an intermediate call boundary before the back-edge copy/reset.
     private bool _loweringTcoBackEdgeArguments;
 
+    // The cons a tail self call passes as the successor of a list parameter whose back edge copies
+    // its successor with references of its own: the cell borrows its head and tail.
+    private Expr? _backEdgeCopiedCell;
+
+    private static bool CopiedCellBorrowsEnabled => Environment.GetEnvironmentVariable("GRC_NO_COPIEDCELLBORROW") is null;
+
     // The parameter slot the tail self-call argument being lowered is stored into (-1 outside a
     // back edge's arguments): a read of that same parameter inside its own successor is the
     // reference the back edge moves, every other parameter read into an aggregate there is a
@@ -11521,7 +11527,9 @@ public sealed partial class Lowering
             // of this iteration exactly like a function result escapes its callee: a runtime-managed
             // owned binding stored inside it (a `let` call result placed in a constructor field) must
             // be retained, because the binding's own release still fires at the back edge.
-            request = request with { TransfersRuntimeManagedChildren = !BackEdgeCopiesListSuccessor(tco, index) };
+            bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index);
+            request = request with { TransfersRuntimeManagedChildren = !copiedSuccessor };
+            _backEdgeCopiedCell = copiedSuccessor && argument is Expr.Cons && CopiedCellBorrowsEnabled ? argument : null;
             request = request
                 .AddRuntime(
                     freshClosure,
@@ -11547,6 +11555,7 @@ public sealed partial class Lowering
         finally
         {
             _affineAppendCtx = savedAffineCtx;
+            _backEdgeCopiedCell = null;
         }
     }
 
@@ -16214,10 +16223,17 @@ public sealed partial class Lowering
     {
         LoweredValueRequest tailRequest = LoweredValueRequest.None.WithExpectedType(listType);
         var (tailTemp, tailType) = LowerExpr(cons.Tail, tailRequest);
-        head = CreateLoweredValue(
-            DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp),
-            head.Type);
-        tailTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Tail, tailTemp);
+
+        // A successor cell the back edge copies borrows its parts: the copy takes references of
+        // its own before the iteration's owners are released, and a duplicate stored in the cell
+        // would never be released.
+        if (!ReferenceEquals(cons, _backEdgeCopiedCell))
+        {
+            head = CreateLoweredValue(
+                DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp),
+                head.Type);
+            tailTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Tail, tailTemp);
+        }
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(head.Type, head.Temp))
         {

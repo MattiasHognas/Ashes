@@ -243,6 +243,8 @@ let recursive printEach (lines: List(Str)) =
 // tco_pair_released_past_unnamed_successor threads a helper's pair as a worklist's back queue and
 // tree beside a log of fresh strings: the log's type could hold a part of an earlier pair, but its
 // successor names nothing bound from the pair, so the earlier pair is released at the back edge.
+// choice_accumulator_cell_borrows_pattern_head grows a choice accumulator the back edge copies by a
+// cons of a pattern-bound head: the cell borrows its head and takes no pattern-owner duplicate.
 let fixtures =
     [
         "simple_arith",
@@ -325,7 +327,8 @@ let fixtures =
         "tco_worklist_front_walked_or_refilled",
         "tco_pair_released_past_unnamed_successor",
         "loop_record_cell_keeps_one_reference_to_parameter_field",
-        "phantom_result_variable_owned_tuple_result"
+        "phantom_result_variable_owned_tuple_result",
+        "choice_accumulator_cell_borrows_pattern_head"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

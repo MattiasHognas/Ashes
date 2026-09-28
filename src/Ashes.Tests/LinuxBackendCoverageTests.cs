@@ -2826,6 +2826,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_choice_accumulator_cell_borrows_pattern_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list accumulator handed on in one arm and grown by a cons of a pattern-bound head in
+        // the other. The back edge copies the cell with references of its own, so a pattern-owner
+        // duplicate taken for the cell's head was never released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildChoiceAccumulatorCellBorrowsPatternHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("choice accumulator cell borrowing a pattern head", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_back_only_refilled_from_helper_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10788,6 +10812,33 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildChoiceAccumulatorCellBorrowsPatternHeadProgram(int rounds)
+        => $$"""
+            let recursive enqueue (pending: List(Str)) (back: List(Str)) (index: Int) =
+                match pending with
+                    | [] -> back
+                    | key :: rest ->
+                        if index == 1
+                        then enqueue(rest)(back)(index + 1)
+                        else enqueue(rest)(key :: back)(index + 1)
+
+            let recursive countAll (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let keys = [wide + "1", wide + "2", wide + "3", wide + "4"]
+                    in rounds(n - 1)(total + countAll(enqueue(keys)([])(0))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildWorklistBackOnlyRefilledFromHelperProgram(int rounds)

@@ -40,6 +40,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new BorrowedChildOfLiteralSuccessorTemplate());
         registry.Register(new WorklistFrontWalkedAndRefilledTemplate());
         registry.Register(new WorklistBackOnlyRefilledTemplate());
+        registry.Register(new ChoiceAccumulatorBorrowedHeadTemplate());
     }
 }
 

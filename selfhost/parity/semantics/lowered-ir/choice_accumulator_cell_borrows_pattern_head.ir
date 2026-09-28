@@ -1,0 +1,731 @@
+IR (lowered)
+============
+
+function lambda_2  [ClosureHelper from enqueue]
+  locals=40 temps=153
+    LoadEnv               Target=0 Index=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=2 Source=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadEnv               Target=1 Index=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=3 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=62 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    IsReferenceCounted    Target=63 SourceTemp=62
+    JumpIfFalse           CondTemp=63 Target=rc_representation_copy_13   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDup                 Target=64 SourceTemp=62 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=64   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rc_representation_done_14   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_representation_copy_13:
+    CopyOutList           DestTemp=65 SrcTemp=62 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=26 Source=65   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_representation_done_14:
+    LoadLocal             Target=66 Slot=26   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=2 Source=66   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=67 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=7 Source=67   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=68 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    IsReferenceCounted    Target=69 SourceTemp=68
+    JumpIfFalse           CondTemp=69 Target=rc_representation_copy_15   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDup                 Target=70 SourceTemp=68 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=70   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rc_representation_done_16   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_representation_copy_15:
+    CopyOutList           DestTemp=71 SrcTemp=68 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=27 Source=71   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_representation_done_16:
+    LoadLocal             Target=72 Slot=27   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=3 Source=72   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=73 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=8 Source=73   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=6 Source=2   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=3 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:5:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=4 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    LoadLocal             Target=6 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:6:17)
+    StoreLocal            Slot=12 Source=6   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_0   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_2   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=7 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    CmpIntNe              Target=8 Left=3 Right=7   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_4   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    LoadMemOffset         Target=9 BasePtr=3 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    LoadMemOffset         Target=10 BasePtr=3 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    StoreLocal            Slot=19 Source=9   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    StoreLocal            Slot=20 Source=10   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    LoadLocal             Target=60 Slot=19   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDup                 Target=61 SourceTemp=60 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=61   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=11 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:8:16)
+    LoadConstInt          Target=12 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:8:25)
+    CmpIntEq              Target=13 Left=11 Right=12   (choice_accumulator_cell_borrows_pattern_head.ash:8:16)
+    JumpIfFalse           CondTemp=13 Target=else_5   (choice_accumulator_cell_borrows_pattern_head.ash:8:13)
+    LoadLocal             Target=14 Slot=20   (choice_accumulator_cell_borrows_pattern_head.ash:9:26)
+    Borrow                Target=15 SourceTemp=14
+    LoadLocal             Target=16 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:9:32)
+    LoadLocal             Target=17 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:9:38)
+    LoadConstInt          Target=18 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:9:46)
+    AddInt                Target=19 Left=17 Right=18   (choice_accumulator_cell_borrows_pattern_head.ash:9:38)
+    RcDup                 Target=20 SourceTemp=15 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=10 TypeName=List OwnerSlot=20
+    LoadLocal             Target=21 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    StoreLocal            Slot=22 Source=21   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+  rcdrop_list_7:
+    LoadLocal             Target=22 Slot=22   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    LoadConstInt          Target=23 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    CmpIntNe              Target=24 Left=22 Right=23   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_9   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    RcIsUnique            Target=25 SourceTemp=22
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_8   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    RcDrop                SourceTemp=26 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=27 BasePtr=22 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=22 Source=27   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    Jump                  Target=rcdrop_list_7   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+  rcdrop_list_shared_8:
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_9   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+  rcdrop_list_end_9:
+    LoadConstInt          Target=28 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    StoreLocal            Slot=7 Source=28   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    LoadLocal             Target=29 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    LoadLocal             Target=30 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    LoadLocal             Target=31 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    StoreLocal            Slot=2 Source=20   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    StoreLocal            Slot=3 Source=16   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    StoreLocal            Slot=1 Source=19   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    RcDup                 Target=116 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
+    LoadLocal             Target=117 Slot=7
+    JumpIfFalse           CondTemp=117 Target=rc_tco_drop_inactive_54
+    StoreLocal            Slot=34 Source=29
+  rcdrop_list_55:
+    LoadLocal             Target=118 Slot=34
+    LoadConstInt          Target=119 Value=0
+    CmpIntNe              Target=120 Left=118 Right=119
+    JumpIfFalse           CondTemp=120 Target=rcdrop_list_end_57
+    RcIsUnique            Target=121 SourceTemp=118
+    JumpIfFalse           CondTemp=121 Target=rcdrop_list_shared_56
+    LoadMemOffset         Target=122 BasePtr=118 OffsetBytes=0
+    RcDrop                SourceTemp=122 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=123 BasePtr=118 OffsetBytes=8
+    RcDrop                SourceTemp=118 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=34 Source=123
+    Jump                  Target=rcdrop_list_55
+  rcdrop_list_shared_56:
+    RcDrop                SourceTemp=118 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_57
+  rcdrop_list_end_57:
+  rc_tco_drop_inactive_54:
+    LoadLocal             Target=124 Slot=8
+    JumpIfFalse           CondTemp=124 Target=lambda_2_rc_edge_19_24
+    StoreLocal            Slot=35 Source=30
+  rcdrop_list_59:
+    LoadLocal             Target=125 Slot=35
+    LoadConstInt          Target=126 Value=0
+    CmpIntNe              Target=127 Left=125 Right=126
+    JumpIfFalse           CondTemp=127 Target=lambda_2_rc_edge_19_26
+    RcIsUnique            Target=128 SourceTemp=125
+    JumpIfFalse           CondTemp=128 Target=rcdrop_list_shared_60
+    LoadMemOffset         Target=129 BasePtr=125 OffsetBytes=0
+    RcDrop                SourceTemp=129 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=130 BasePtr=125 OffsetBytes=8
+    RcDrop                SourceTemp=125 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=130
+    Jump                  Target=rcdrop_list_59
+  rcdrop_list_shared_60:
+    RcDrop                SourceTemp=125 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_61
+  rcdrop_list_end_61:
+  rc_tco_drop_inactive_58:
+    StoreLocal            Slot=2 Source=20
+    LoadConstInt          Target=131 Value=1
+    StoreLocal            Slot=7 Source=131
+    StoreLocal            Slot=3 Source=116
+    LoadConstInt          Target=132 Value=1
+    StoreLocal            Slot=8 Source=132
+    RestoreStackPointer   Slot=11   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    Jump                  Target=lambda_2_body   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    LoadConstInt          Target=32 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:9:18)
+    StoreLocal            Slot=21 Source=32   (choice_accumulator_cell_borrows_pattern_head.ash:8:13)
+    Jump                  Target=endif_6   (choice_accumulator_cell_borrows_pattern_head.ash:8:13)
+  else_5:
+    LoadLocal             Target=33 Slot=20   (choice_accumulator_cell_borrows_pattern_head.ash:10:26)
+    Borrow                Target=34 SourceTemp=33
+    LoadLocal             Target=35 Slot=19   (choice_accumulator_cell_borrows_pattern_head.ash:10:32)
+    Borrow                Target=36 SourceTemp=35
+    LoadLocal             Target=37 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:10:39)
+    Alloc                 Target=38 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:10:32)
+    StoreMemOffset        BasePtr=38 OffsetBytes=0 Source=36   (choice_accumulator_cell_borrows_pattern_head.ash:10:32)
+    StoreMemOffset        BasePtr=38 OffsetBytes=8 Source=37   (choice_accumulator_cell_borrows_pattern_head.ash:10:32)
+    LoadLocal             Target=39 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:10:45)
+    LoadConstInt          Target=40 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:10:53)
+    AddInt                Target=41 Left=39 Right=40   (choice_accumulator_cell_borrows_pattern_head.ash:10:45)
+    RcDup                 Target=42 SourceTemp=34 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=10 TypeName=List OwnerSlot=20
+    LoadLocal             Target=43 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    StoreLocal            Slot=23 Source=43   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+  rcdrop_list_10:
+    LoadLocal             Target=44 Slot=23   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    LoadConstInt          Target=45 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    CmpIntNe              Target=46 Left=44 Right=45   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_end_12   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    RcIsUnique            Target=47 SourceTemp=44
+    JumpIfFalse           CondTemp=47 Target=rcdrop_list_shared_11   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    LoadMemOffset         Target=48 BasePtr=44 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    RcDrop                SourceTemp=48 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=49 BasePtr=44 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    RcDrop                SourceTemp=44 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=49   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    Jump                  Target=rcdrop_list_10   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+  rcdrop_list_shared_11:
+    RcDrop                SourceTemp=44 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_12   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+  rcdrop_list_end_12:
+    LoadConstInt          Target=50 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    StoreLocal            Slot=7 Source=50   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    LoadLocal             Target=51 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    LoadLocal             Target=52 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    LoadLocal             Target=53 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    StoreLocal            Slot=2 Source=42   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    StoreLocal            Slot=3 Source=38   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    StoreLocal            Slot=1 Source=41   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    IsReferenceCounted    Target=133 SourceTemp=38
+    JumpIfFalse           CondTemp=133 Target=rc_representation_copy_62
+    RcDup                 Target=134 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=37 Source=134
+    Jump                  Target=rc_representation_done_63
+  rc_representation_copy_62:
+    CopyOutList           DestTemp=135 SrcTemp=38 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=37 Source=135
+  rc_representation_done_63:
+    LoadLocal             Target=136 Slot=37
+    LoadLocal             Target=137 Slot=7
+    JumpIfFalse           CondTemp=137 Target=rc_tco_drop_inactive_64
+    StoreLocal            Slot=38 Source=51
+  rcdrop_list_65:
+    LoadLocal             Target=138 Slot=38
+    LoadConstInt          Target=139 Value=0
+    CmpIntNe              Target=140 Left=138 Right=139
+    JumpIfFalse           CondTemp=140 Target=rcdrop_list_end_67
+    RcIsUnique            Target=141 SourceTemp=138
+    JumpIfFalse           CondTemp=141 Target=rcdrop_list_shared_66
+    LoadMemOffset         Target=142 BasePtr=138 OffsetBytes=0
+    RcDrop                SourceTemp=142 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=143 BasePtr=138 OffsetBytes=8
+    RcDrop                SourceTemp=138 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=38 Source=143
+    Jump                  Target=rcdrop_list_65
+  rcdrop_list_shared_66:
+    RcDrop                SourceTemp=138 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_67
+  rcdrop_list_end_67:
+  rc_tco_drop_inactive_64:
+    LoadLocal             Target=144 Slot=8
+    JumpIfFalse           CondTemp=144 Target=lambda_2_rc_edge_19_48
+    StoreLocal            Slot=39 Source=52
+  rcdrop_list_69:
+    LoadLocal             Target=145 Slot=39
+    LoadConstInt          Target=146 Value=0
+    CmpIntNe              Target=147 Left=145 Right=146
+    JumpIfFalse           CondTemp=147 Target=lambda_2_rc_edge_19_50
+    RcIsUnique            Target=148 SourceTemp=145
+    JumpIfFalse           CondTemp=148 Target=rcdrop_list_shared_70
+    LoadMemOffset         Target=149 BasePtr=145 OffsetBytes=0
+    RcDrop                SourceTemp=149 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=150 BasePtr=145 OffsetBytes=8
+    RcDrop                SourceTemp=145 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=39 Source=150
+    Jump                  Target=rcdrop_list_69
+  rcdrop_list_shared_70:
+    RcDrop                SourceTemp=145 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_71
+  rcdrop_list_end_71:
+  rc_tco_drop_inactive_68:
+    StoreLocal            Slot=2 Source=42
+    LoadConstInt          Target=151 Value=1
+    StoreLocal            Slot=7 Source=151
+    StoreLocal            Slot=3 Source=136
+    LoadConstInt          Target=152 Value=1
+    StoreLocal            Slot=8 Source=152
+    RestoreStackPointer   Slot=11   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    Jump                  Target=lambda_2_body   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    LoadConstInt          Target=54 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:10:18)
+    StoreLocal            Slot=21 Source=54   (choice_accumulator_cell_borrows_pattern_head.ash:8:13)
+  endif_6:
+    LoadLocal             Target=55 Slot=21   (choice_accumulator_cell_borrows_pattern_head.ash:8:13)
+    StoreLocal            Slot=12 Source=55   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=24
+    Jump                  Target=match_end_0   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=25
+    Jump                  Target=match_none_1   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+  match_none_1:
+    LoadConstInt          Target=58 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    StoreLocal            Slot=12 Source=58   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+  match_end_0:
+    LoadLocal             Target=59 Slot=12   (choice_accumulator_cell_borrows_pattern_head.ash:5:5)
+    LoadConstInt          Target=74 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=28 Source=74   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=75 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=76 Slot=7   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntEq              Target=77 Left=75 Right=59   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=78 Slot=28   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntEq              Target=79 Left=78 Right=74   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    AndInt                Target=80 Left=76 Right=77   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    AndInt                Target=81 Left=80 Right=79   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=81 Target=rc_tco_exit_transfer_not_selected_17   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=82 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=28 Source=82   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rc_tco_exit_transfer_done_18   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_tco_exit_transfer_not_selected_17:
+    LoadLocal             Target=83 Slot=7   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=83 Target=rc_tco_exit_drop_inactive_19   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=29 Source=75   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_20:
+    LoadLocal             Target=84 Slot=29   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=85 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntNe              Target=86 Left=84 Right=85   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_end_22   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcIsUnique            Target=87 SourceTemp=84
+    JumpIfFalse           CondTemp=87 Target=rcdrop_list_shared_21   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadMemOffset         Target=88 BasePtr=84 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDrop                SourceTemp=88 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=89 BasePtr=84 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=89   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rcdrop_list_20   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_shared_21:
+    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_22   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_end_22:
+  rc_tco_exit_drop_inactive_19:
+  rc_tco_exit_transfer_done_18:
+    LoadLocal             Target=90 Slot=3   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=91 Slot=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntEq              Target=92 Left=90 Right=59   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=93 Slot=28   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntEq              Target=94 Left=93 Right=74   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    AndInt                Target=95 Left=91 Right=92   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    AndInt                Target=96 Left=95 Right=94   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=96 Target=rc_tco_exit_transfer_not_selected_23   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=97 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=28 Source=97   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rc_tco_exit_transfer_done_24   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_tco_exit_transfer_not_selected_23:
+    LoadLocal             Target=98 Slot=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=98 Target=rc_tco_exit_drop_inactive_25   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=30 Source=90   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_26:
+    LoadLocal             Target=99 Slot=30   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=100 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntNe              Target=101 Left=99 Right=100   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=101 Target=rcdrop_list_end_28   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcIsUnique            Target=102 SourceTemp=99
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_shared_27   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDrop                SourceTemp=103 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=104 BasePtr=99 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=104   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rcdrop_list_26   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_shared_27:
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_28   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_end_28:
+  rc_tco_exit_drop_inactive_25:
+  rc_tco_exit_transfer_done_24:
+    LoadArgumentOwnership Target=105   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=106 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    ShrInt                Target=107 Left=105 Right=106   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=107 Target=rc_result_owned_29   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CopyOutList           DestTemp=108 SrcTemp=59 HeadCopy=String Purpose=ArenaResultBoundary   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=32 Source=59   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_31:
+    LoadLocal             Target=109 Slot=32   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=110 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    CmpIntNe              Target=111 Left=109 Right=110   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    JumpIfFalse           CondTemp=111 Target=rcdrop_list_end_33   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcIsUnique            Target=112 SourceTemp=109
+    JumpIfFalse           CondTemp=112 Target=rcdrop_list_shared_32   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadMemOffset         Target=113 BasePtr=109 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDrop                SourceTemp=113 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=114 BasePtr=109 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    RcDrop                SourceTemp=109 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=114   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rcdrop_list_31   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_shared_32:
+    RcDrop                SourceTemp=109 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_33   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rcdrop_list_end_33:
+    StoreLocal            Slot=31 Source=108   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Jump                  Target=rc_result_done_30   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_result_owned_29:
+    StoreLocal            Slot=31 Source=59   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  rc_result_done_30:
+    LoadLocal             Target=115 Slot=31   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Return                Source=115   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+  lambda_2_rc_edge_19_26:
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_61
+  lambda_2_rc_edge_19_24:
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    Jump                  Target=rc_tco_drop_inactive_58
+  lambda_2_rc_edge_19_50:
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_71
+  lambda_2_rc_edge_19_48:
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    Jump                  Target=rc_tco_drop_inactive_68
+
+function lambda_1  [ClosureHelper from enqueue]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadEnv               Target=1 Index=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=2 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Return                Source=4   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+
+function lambda_0  [SourceFunction from enqueue]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadLocal             Target=1 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    Return                Source=4   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+
+function lambda_4  [ClosureHelper from countAll]
+  locals=28 temps=54
+    LoadEnv               Target=0 Index=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=2 Source=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadLocal             Target=31 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    IsReferenceCounted    Target=32 SourceTemp=31
+    JumpIfFalse           CondTemp=32 Target=rc_representation_copy_42   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    RcDup                 Target=33 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=33   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    Jump                  Target=rc_representation_done_43   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+  rc_representation_copy_42:
+    CopyOutList           DestTemp=34 SrcTemp=31 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=24 Source=34   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+  rc_representation_done_43:
+    LoadLocal             Target=35 Slot=24   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=2 Source=35   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadConstInt          Target=36 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=8 Source=36   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=5 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=6 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=7 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+  lambda_4_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadLocal             Target=2 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:13:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=3 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_37   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    LoadLocal             Target=5 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:14:17)
+    StoreLocal            Slot=12 Source=5   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_34   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+  match_arm_cleanup_37:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_36   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+  match_next_36:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=6 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_38   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    StoreLocal            Slot=19 Source=8   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    RcDrop                SourceTemp=8 TypeName=String OwnerSlot=19
+    StoreLocal            Slot=20 Source=9   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    LoadLocal             Target=10 Slot=20   (choice_accumulator_cell_borrows_pattern_head.ash:15:38)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:15:44)
+    LoadConstInt          Target=13 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:15:52)
+    AddInt                Target=14 Left=12 Right=13   (choice_accumulator_cell_borrows_pattern_head.ash:15:44)
+    RcDup                 Target=15 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=16 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    StoreLocal            Slot=21 Source=16   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+  rcdrop_list_39:
+    LoadLocal             Target=17 Slot=21   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    LoadConstInt          Target=18 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    CmpIntNe              Target=19 Left=17 Right=18   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_41   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    RcIsUnique            Target=20 SourceTemp=17
+    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_40   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    RcDrop                SourceTemp=21 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=22 BasePtr=17 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=22   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    Jump                  Target=rcdrop_list_39   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+  rcdrop_list_shared_40:
+    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_41   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+  rcdrop_list_end_41:
+    LoadConstInt          Target=23 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    StoreLocal            Slot=8 Source=23   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    LoadLocal             Target=24 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    LoadLocal             Target=25 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    StoreLocal            Slot=2 Source=15   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    StoreLocal            Slot=1 Source=14   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    LoadLocal             Target=45 Slot=8
+    JumpIfFalse           CondTemp=45 Target=rc_tco_drop_inactive_72
+    StoreLocal            Slot=27 Source=24
+  rcdrop_list_73:
+    LoadLocal             Target=46 Slot=27
+    LoadConstInt          Target=47 Value=0
+    CmpIntNe              Target=48 Left=46 Right=47
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_75
+    RcIsUnique            Target=49 SourceTemp=46
+    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_74
+    LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0
+    RcDrop                SourceTemp=50 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=51 BasePtr=46 OffsetBytes=8
+    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=51
+    Jump                  Target=rcdrop_list_73
+  rcdrop_list_shared_74:
+    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_75
+  rcdrop_list_end_75:
+  rc_tco_drop_inactive_72:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
+    LoadConstInt          Target=52 Value=0
+    StoreLocal            Slot=6 Source=52
+    StoreLocal            Slot=7 Source=52
+    StoreLocal            Slot=2 Source=15
+    LoadConstInt          Target=53 Value=1
+    StoreLocal            Slot=8 Source=53
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
+    RestoreStackPointer   Slot=11   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    Jump                  Target=lambda_4_body   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    LoadConstInt          Target=26 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:15:29)
+    StoreLocal            Slot=12 Source=26   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    Jump                  Target=match_end_34   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+  match_arm_cleanup_38:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
+    Jump                  Target=match_none_35   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+  match_none_35:
+    LoadConstInt          Target=29 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    StoreLocal            Slot=12 Source=29   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+  match_end_34:
+    LoadLocal             Target=30 Slot=12   (choice_accumulator_cell_borrows_pattern_head.ash:13:5)
+    LoadLocal             Target=37 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadLocal             Target=38 Slot=8   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    JumpIfFalse           CondTemp=38 Target=rc_tco_exit_drop_inactive_44   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=25 Source=37   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+  rcdrop_list_45:
+    LoadLocal             Target=39 Slot=25   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadConstInt          Target=40 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    CmpIntNe              Target=41 Left=39 Right=40   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_47   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    RcIsUnique            Target=42 SourceTemp=39
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_46   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    RcDrop                SourceTemp=43 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=44 BasePtr=39 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=44   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    Jump                  Target=rcdrop_list_45   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+  rcdrop_list_shared_46:
+    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_47   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+  rcdrop_list_end_47:
+  rc_tco_exit_drop_inactive_44:
+    Return                Source=30   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+
+function lambda_3  [SourceFunction from countAll]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    LoadLocal             Target=1 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    MakeClosure           Target=4 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    Return                Source=4   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+
+function lambda_6  [ClosureHelper from rounds]
+  locals=26 temps=63
+    LoadEnv               Target=0 Index=0   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreLocal            Slot=2 Source=0   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreLocal            Slot=5 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreLocal            Slot=6 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreLocal            Slot=7 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    LoadLocal             Target=2 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:18:8)
+    LoadConstInt          Target=3 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:18:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (choice_accumulator_cell_borrows_pattern_head.ash:18:8)
+    JumpIfFalse           CondTemp=4 Target=else_48   (choice_accumulator_cell_borrows_pattern_head.ash:18:5)
+    LoadLocal             Target=5 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:19:10)
+    StoreLocal            Slot=11 Source=5   (choice_accumulator_cell_borrows_pattern_head.ash:18:5)
+    Jump                  Target=endif_49   (choice_accumulator_cell_borrows_pattern_head.ash:18:5)
+  else_48:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=6 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    LoadConstStr          Target=7 StrLabel=str_0   (choice_accumulator_cell_borrows_pattern_head.ash:21:54)
+    LoadConstStr          Target=8 StrLabel=str_1   (choice_accumulator_cell_borrows_pattern_head.ash:21:60)
+    ConcatStr             Target=9 Left=7 Right=8   (choice_accumulator_cell_borrows_pattern_head.ash:21:54)
+    Alloc                 Target=10 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=6   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    LoadConstStr          Target=11 StrLabel=str_2   (choice_accumulator_cell_borrows_pattern_head.ash:21:43)
+    LoadConstStr          Target=12 StrLabel=str_3   (choice_accumulator_cell_borrows_pattern_head.ash:21:49)
+    ConcatStr             Target=13 Left=11 Right=12   (choice_accumulator_cell_borrows_pattern_head.ash:21:43)
+    Alloc                 Target=14 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=10   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    LoadConstStr          Target=15 StrLabel=str_4   (choice_accumulator_cell_borrows_pattern_head.ash:21:32)
+    LoadConstStr          Target=16 StrLabel=str_5   (choice_accumulator_cell_borrows_pattern_head.ash:21:38)
+    ConcatStr             Target=17 Left=15 Right=16   (choice_accumulator_cell_borrows_pattern_head.ash:21:32)
+    Alloc                 Target=18 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=17   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=18 OffsetBytes=8 Source=14   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    LoadConstStr          Target=19 StrLabel=str_6   (choice_accumulator_cell_borrows_pattern_head.ash:21:21)
+    LoadConstStr          Target=20 StrLabel=str_7   (choice_accumulator_cell_borrows_pattern_head.ash:21:27)
+    ConcatStr             Target=21 Left=19 Right=20   (choice_accumulator_cell_borrows_pattern_head.ash:21:21)
+    Alloc                 Target=22 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=21   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=18   (choice_accumulator_cell_borrows_pattern_head.ash:21:20)
+    StoreLocal            Slot=14 Source=22   (choice_accumulator_cell_borrows_pattern_head.ash:21:9)
+    LoadLocal             Target=23 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:22:19)
+    LoadConstInt          Target=24 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:22:23)
+    SubInt                Target=25 Left=23 Right=24   (choice_accumulator_cell_borrows_pattern_head.ash:22:19)
+    LoadLocal             Target=26 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:22:26)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadEnv               Target=27 Index=1   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadEnv               Target=28 Index=2   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    LoadLocal             Target=29 Slot=14   (choice_accumulator_cell_borrows_pattern_head.ash:22:51)
+    Borrow                Target=30 SourceTemp=29
+    RcDup                 Target=62 SourceTemp=30   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    CallClosure           Target=31 ClosureTemp=28 ArgTemp=30   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    LoadConstInt          Target=32 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:22:57)
+    CallClosure           Target=33 ClosureTemp=31 ArgTemp=32   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    LoadConstInt          Target=34 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:22:61)
+    LoadMemOffset         Target=35 BasePtr=33 OffsetBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    LoadConstInt          Target=36 Value=63   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    ShrInt                Target=37 Left=35 Right=36   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    CallClosure           Target=38 ClosureTemp=33 ArgTemp=34   (choice_accumulator_cell_borrows_pattern_head.ash:22:43)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=19
+    LoadMemOffset         Target=39 BasePtr=27 OffsetBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    LoadConstInt          Target=40 Value=62   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    ShrInt                Target=41 Left=39 Right=40   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    LoadConstInt          Target=42 Value=1   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    AndInt                Target=43 Left=41 Right=42   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    StoreLocal            Slot=20 Source=38   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    JumpIfFalse           CondTemp=43 Target=rc_call_argument_not_retained_50   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    RcDup                 Target=44 SourceTemp=38 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=20 Source=44   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+  rc_call_argument_not_retained_50:
+    LoadLocal             Target=45 Slot=20   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    CallClosure           Target=46 ClosureTemp=27 ArgTemp=45 RuntimeManagedArgumentFlagTemp=43   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    LoadConstInt          Target=47 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:22:65)
+    CallClosure           Target=48 ClosureTemp=46 ArgTemp=47   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    StoreLocal            Slot=22 Source=38   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+  rcdrop_list_51:
+    LoadLocal             Target=49 Slot=22   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    LoadConstInt          Target=50 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    CmpIntNe              Target=51 Left=49 Right=50   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_53   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    RcIsUnique            Target=52 SourceTemp=49
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_52   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    RcDrop                SourceTemp=53 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=54 BasePtr=49 OffsetBytes=8   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=22 Source=54   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+    Jump                  Target=rcdrop_list_51   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+  rcdrop_list_shared_52:
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_53   (choice_accumulator_cell_borrows_pattern_head.ash:22:34)
+  rcdrop_list_end_53:
+    AddInt                Target=55 Left=26 Right=48   (choice_accumulator_cell_borrows_pattern_head.ash:22:26)
+    RcDrop                SourceTemp=22 TypeName=List OwnerSlot=14
+    LoadLocal             Target=56 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    LoadLocal             Target=57 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    StoreLocal            Slot=2 Source=25   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    StoreLocal            Slot=1 Source=55   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=25
+    RestoreStackPointer   Slot=10   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    Jump                  Target=lambda_6_body   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    LoadConstInt          Target=58 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:22:12)
+    StoreLocal            Slot=23 Source=58   (choice_accumulator_cell_borrows_pattern_head.ash:21:9)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=24
+    LoadLocal             Target=60 Slot=23   (choice_accumulator_cell_borrows_pattern_head.ash:21:9)
+    StoreLocal            Slot=11 Source=60   (choice_accumulator_cell_borrows_pattern_head.ash:18:5)
+  endif_49:
+    LoadLocal             Target=61 Slot=11   (choice_accumulator_cell_borrows_pattern_head.ash:18:5)
+    Return                Source=61   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+
+function lambda_5  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    LoadLocal             Target=1 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    LoadEnv               Target=4 Index=0   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    LoadEnv               Target=5 Index=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    MakeClosure           Target=6 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=24   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    Return                Source=6   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+
+function _start_main  [ProgramEntry]
+  locals=6 temps=13
+    LoadConstInt          Target=0 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    StoreLocal            Slot=0 Source=1   (choice_accumulator_cell_borrows_pattern_head.ash:4:1)
+    LoadConstInt          Target=2 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    MakeClosure           Target=3 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=0   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    StoreLocal            Slot=1 Source=3   (choice_accumulator_cell_borrows_pattern_head.ash:12:1)
+    Alloc                 Target=4 SizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    LoadLocal             Target=5 Slot=1   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    LoadLocal             Target=6 Slot=0   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    MakeClosure           Target=7 FuncLabel=lambda_5 EnvPtrTemp=4 EnvSizeBytes=16   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    StoreLocal            Slot=2 Source=7   (choice_accumulator_cell_borrows_pattern_head.ash:17:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=8 Slot=2   (choice_accumulator_cell_borrows_pattern_head.ash:25:4)
+    LoadConstInt          Target=9 Value=3   (choice_accumulator_cell_borrows_pattern_head.ash:25:11)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (choice_accumulator_cell_borrows_pattern_head.ash:24:1)
+    LoadConstInt          Target=11 Value=0   (choice_accumulator_cell_borrows_pattern_head.ash:24:1)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (choice_accumulator_cell_borrows_pattern_head.ash:24:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Return                Source=12
+
