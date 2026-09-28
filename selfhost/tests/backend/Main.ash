@@ -3311,6 +3311,20 @@ let testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree shipp
     |> shippedTypeAnnotationLoopSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendShippedTypeAnnotationOneRound")("selfhost_backend_shipped_type_annotation_one_round_e2e"))
 
+// A helper called in a loop's back edge whose body calls a qualified built-in
+// (`Ashes.Text.byteLength`) is spliced into the back edge, so its fresh result is the successor
+// itself rather than a call result the loop never releases.
+let backEdgeHelperLoopSource rounds = "let targetsOf (width: Int) (name: Str) =\n    if Ashes.Text.byteLength(name) < width\n    then [name + \"a\", name + \"b\"]\n    else []\n\nlet recursive walk (stack: List(List(Str))) (seen: List(Str)) (n: Int) =\n    match stack with\n        | [] -> n\n        | [] :: rest -> walk(rest)(seen)(n)\n        | (name :: more) :: rest -> walk(targetsOf(3)(name) :: more :: rest)(name :: seen)(n + 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + walk([[\"x\"], [\"y\"]])([])(0))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testBackEdgeHelperCallingABuiltinLeavesNothingPerRound shipped unit =
+    "selfhost_backend_back_edge_helper_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> backEdgeHelperLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBackEdgeHelperTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> backEdgeHelperLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBackEdgeHelperOneRound")("selfhost_backend_back_edge_helper_one_round_e2e"))
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5647,6 +5661,7 @@ let run shipped =
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
     |> testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
     |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)

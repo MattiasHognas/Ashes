@@ -23910,7 +23910,8 @@ let nestedHelperInlinedHere (name: Str) (parameters: List(Str)) (body: Expr) (st
 // Stage 0's `InlinedBodyReferencesResolveHere`: an inlined body lowers in the caller's scope, so
 // every name it reads past its parameters must resolve there, lexically, as a constructor, or
 // by being an inlinable helper whose own references resolve in turn. A helper already accepted
-// on this walk is a shared sibling, not a cycle.
+// on this walk is a shared sibling, not a cycle. A module qualifier (`Ashes.Text` of
+// `Ashes.Text.byteLength`) names no binding; stage 0's free-variable walk never collects one.
 let recursive inlinedReferencesResolveHere (names: List(Str)) (visited: List(Str)) (state: CoreLoweringState) =
     match names with
         | [] -> true
@@ -23924,7 +23925,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
         | None ->
             if containsName(name)(state
             |> stateConstructorLayouts
-            |> constructorLayoutNames) || containsName(name)(visited) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None
+            |> constructorLayoutNames) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None
             then true
             else
                 if state
