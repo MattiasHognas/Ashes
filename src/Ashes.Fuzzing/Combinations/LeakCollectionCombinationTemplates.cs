@@ -9,6 +9,8 @@ namespace Ashes.Fuzzing.Combinations;
 internal sealed class MapThreadedWhileWalkingTemplate() : LeakCombinationTemplate(
     "leak.map-threaded-while-walking", "mapThreadedWhileWalking", GeneratedFeature.ClosureCapture, GeneratedFeature.Lambda, GeneratedFeature.TailCall, GeneratedFeature.Match)
 {
+    protected override IReadOnlyList<string> RequiredImports => ["Ashes.Collection.Map"];
+
     protected override string Declarations(LeakNames names)
     {
         string add = names.Of("addDependents");
@@ -231,6 +233,8 @@ internal sealed class VariantAccumulatorThroughHelperTemplate() : LeakCombinatio
 internal sealed class WorklistSolveRecordsTemplate() : LeakCombinationTemplate(
     "leak.worklist-solve-records", "worklistSolve", GeneratedFeature.Tuple, GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.Let)
 {
+    protected override IReadOnlyList<string> RequiredImports => ["Ashes.Collection.Map"];
+
     protected override string Declarations(LeakNames names)
     {
         string enqueue = names.Of("enqueue");

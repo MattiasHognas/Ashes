@@ -217,4 +217,10 @@ internal sealed record GeneratedFuzzCase(
     /// entry-function loop, naming its rounds count <c>ROUNDS</c>; null for every other case.
     /// </summary>
     internal string? TrailingWorkload { get; init; }
+
+    /// <summary>
+    /// The modules a forced template's declarations name types of (<c>MapTree</c> from
+    /// <c>Ashes.Collection.Map</c>), imported ahead of the program the census renders.
+    /// </summary>
+    internal IReadOnlyList<string> Imports { get; init; } = [];
 }

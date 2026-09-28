@@ -199,7 +199,10 @@ return but the entry must release at its end) cannot show inside that function, 
 also give the census a trailing workload: an expression naming its rounds count `ROUNDS`, which the
 census runs as the program's trailing expression after the declarations, here with the rounds count
 as the built list's length. `leak.entry-trailing-pipe-fresh-argument` is that template; the other
-profiles still call its entry function. The declarations widen the case's budget by
+profiles still call its entry function. A template whose declarations name a standard-library type
+unqualified (`MapTree`) names the module it comes from, and the rendered program imports it
+(`import Ashes.Collection.Map`): an unimported type is not in scope, and the self-hosted compiler
+reads such a name as a type of its own with no layout. The declarations widen the case's budget by
 their own size, the case records the node budget it was requested with for replay, and its prelude
 holds only the stable generation types, because a case-varying declaration such as a capability
 provider changes whether several of these classes leak. Declaring templates come last in a

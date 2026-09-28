@@ -161,7 +161,7 @@ internal abstract class LeakCombinationTemplate : IDeclaringCombinationTemplate
         }
 
         GeneratedBinding entry = new(names.Entry, new AshesType.Function(AshesType.Int, AshesType.Int), IsFunction: true);
-        return new GeneratedDeclarations(parsed.Items, entry, new GenerationTrace([$"leak-declarations:{Id}", .. names.Choices]), TrailingWorkload(names));
+        return new GeneratedDeclarations(parsed.Items, entry, new GenerationTrace([$"leak-declarations:{Id}", .. names.Choices]), TrailingWorkload(names), RequiredImports);
     }
 
     /// <summary>
@@ -175,6 +175,12 @@ internal abstract class LeakCombinationTemplate : IDeclaringCombinationTemplate
     /// entry-function loop is the placement.
     /// </summary>
     protected virtual string? TrailingWorkload(LeakNames names) => null;
+
+    /// <summary>
+    /// The modules whose types the declarations name unqualified, imported ahead of the rendered
+    /// program: an unimported type is not in scope (the language reference's import rules).
+    /// </summary>
+    protected virtual IReadOnlyList<string> RequiredImports => [];
 
     private GeneratedBinding? EntryIn(GenerationContext context) => context.Bindings.FirstOrDefault(binding =>
         binding.IsFunction &&

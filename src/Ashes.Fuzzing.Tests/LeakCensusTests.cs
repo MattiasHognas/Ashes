@@ -128,6 +128,20 @@ public sealed class LeakCensusTrailingWorkloadTests
     }
 
     [Test]
+    public void AMapTemplateRendersWithTheMapModuleImported()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = fixture.Profiles.Get("memory-growth");
+        string[] rotation = fixture.Generator.RotationOrder(profile);
+        int caseIndex = Array.IndexOf(rotation, "leak.map-threaded-while-walking");
+        caseIndex.ShouldBeGreaterThanOrEqualTo(0);
+        GeneratedFuzzCase generated = fixture.Generator.Generate(677349, caseIndex, profile, profile.EffectiveDefaults.MaximumNodes);
+        generated.Imports.ShouldBe(["Ashes.Collection.Map"]);
+        ObservableValueRenderer.RenderMemoryWorkload(generated, 2).ShouldStartWith("import Ashes.Collection.Map\n\n");
+        generated.Source.ShouldNotStartWith("import");
+    }
+
+    [Test]
     public void EveryOtherLeakTemplateKeepsTheEntryFunctionPlacement()
     {
         var fixture = TestFixture.Create();

@@ -35,8 +35,14 @@ internal static class ObservableValueRenderer
             throw new InvalidOperationException($"The trailing workload is not one expression: {string.Join(" ", diagnostics.Errors)}{Environment.NewLine}{source}");
         }
 
-        return AshesFormatter.Format(testCase.Program with { Body = parsed.Body });
+        return WithImports(testCase, AshesFormatter.Format(testCase.Program with { Body = parsed.Body }));
     }
+
+    // The modules a forced template's declarations name types of, imported ahead of the program.
+    private static string WithImports(GeneratedFuzzCase testCase, string source)
+        => testCase.Imports.Count == 0
+            ? source
+            : string.Concat(testCase.Imports.Select(module => "import " + module + "\n")) + "\n" + source;
 
     internal static string RenderMemoryWorkload(GeneratedFuzzCase testCase, int iterations)
     {
@@ -84,7 +90,7 @@ internal static class ObservableValueRenderer
                     Needs = new NeedsRowSyntax([], "e"),
                 }),
         };
-        return AshesFormatter.Format(testCase.Program with { Body = workload });
+        return WithImports(testCase, AshesFormatter.Format(testCase.Program with { Body = workload }));
     }
 
     private static Expr Render(Expr value, AshesType type, ObservationNames names) => type switch

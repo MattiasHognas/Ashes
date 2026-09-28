@@ -138,6 +138,7 @@ internal sealed class ProgramGenerator
         {
             RequestedNodes = maximumNodes,
             TrailingWorkload = declarations?.TrailingWorkload,
+            Imports = declarations?.Imports ?? [],
         };
     }
 
