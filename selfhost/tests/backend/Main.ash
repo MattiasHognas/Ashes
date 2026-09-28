@@ -3351,6 +3351,20 @@ let testTupleStateLoopLeavesNothingPerRound shipped unit =
     |> tupleStateLoopSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendTupleStateOneRound")("selfhost_backend_tuple_state_one_round_e2e"))
 
+// A nested recursive let declared `List(Int) -> Str` concatenates its own self call's result: the
+// declared result is pinned before the body is lowered, so the self call asks for no arena result
+// and the string it returns is released after the concatenation.
+let annotatedNestedRecursionSource rounds = "let recursive loop (remaining: Int) (checksum: Int) =\n    if remaining == 0\n    then checksum\n    else\n        let observed =\n            let recursive render : List(Int) -> Str =\n                given (items: List(Int)) ->\n                    match items with\n                        | [] -> \"]\"\n                        | head :: tail -> Ashes.Text.fromInt(head) + render(tail)\n            in render([-6, -8])\n        in loop(remaining - 1)(checksum + Ashes.Text.byteLength(observed))\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testAnnotatedNestedRecursionLeavesNothingPerRound shipped unit =
+    "selfhost_backend_annotated_nested_recursion_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> annotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendAnnotatedNestedRecursionTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> annotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendAnnotatedNestedRecursionOneRound")("selfhost_backend_annotated_nested_recursion_one_round_e2e"))
+
 // A handler arm inside a lambda resumes with a value let-bound outside the lambda, which the
 // lambda captures: the arm binds only its parameters and `resume`.
 let buildHandlerArmCaptureModule shipped name context = codegenShippedSource(shipped)("capability Source(a) =\n    | get : Unit -> a\n\nlet result =\n    (let captured = 8\n    in\n        ((given (unit: Unit) ->\n            handle perform Source.get(Unit) with\n                | Source.get(_) -> resume(captured)\n                | return(handled) -> handled + 34))(Unit))\n\nAshes.IO.print(result)")(name)(context)
@@ -5703,6 +5717,7 @@ let run shipped =
     |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
     |> testMapUpsertLoopLeavesNothingPerRound(shipped)
     |> testTupleStateLoopLeavesNothingPerRound(shipped)
+    |> testAnnotatedNestedRecursionLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
     |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)

@@ -18377,23 +18377,57 @@ let relabelSingleRecursive lambdaId prepared =
             )
         | _ -> prepared
 
-// A recursive let's declared type inside a generic implementation method body names the head's
-// type parameters (`let recursive equalLists : List(a) -> List(a) -> Bool requires {Eq(a)}`):
-// the binding's fresh function type is unified with the annotation read against the active type
-// parameters before the body is lowered, so a comparison inside the body sees the variable the
-// active evidence carries. Outside such a body the annotation is left to the ordinary inference.
+// A lowercase type name other than the unsigned integer types: a type variable.
+let isTypeVariableName (name: Str) =
+    if name == "u8" || name == "u16" || name == "u32" || name == "u64"
+    then false
+    else
+        let bytes = Ashes.Byte.fromText(name)
+        in
+            if Ashes.Byte.length(bytes) <= 0
+            then false
+            else
+                let first =
+                    0
+                    |> Ashes.Byte.get(bytes)
+                    |> Ashes.Number.UInt.toInt
+                in first >= 97 && first <= 122
+
+let recursive typeExprNamesVariable (typeExpr: TypeExpr) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> typeExprNamesVariable(inner)
+        | TypeNamed(name) -> isTypeVariableName(name)
+        | TypeApplied(_name, arguments) -> anyTypeExprNamesVariable(arguments)
+        | TypeArrow(argument, result, _capabilities, _tail) -> typeExprNamesVariable(argument) || typeExprNamesVariable(result)
+        | TypeTuple(elements) -> anyTypeExprNamesVariable(elements)
+        | TypeUnit -> false
+and anyTypeExprNamesVariable (typeExprs: List(TypeExpr)) =
+    match typeExprs with
+        | [] -> false
+        | typeExpr :: rest -> typeExprNamesVariable(typeExpr) || anyTypeExprNamesVariable(rest)
+
+// A recursive let's declared type is unified with the binding's fresh function type before the
+// body is lowered, so a self call inside the body meets the declared result, as stage 0's
+// elaborated binding does, and asks for no arena result. Inside a generic implementation method
+// body the annotation names the head's type parameters (`let recursive equalLists : List(a) ->
+// List(a) -> Bool requires {Eq(a)}`) and is read against the active type parameters, so a
+// comparison inside the body sees the variable the active evidence carries. Elsewhere an
+// annotation naming a type variable is left to the ordinary inference.
 let pinRecursiveAnnotation (annotation: Maybe(TypeExpr)) (prepared: PreparedCoreRecursiveGroup) =
     match (annotation, prepared) with
         | (Some(typeExpr), PreparedCoreRecursiveGroup { state = state, members = (PreparedCoreRecursiveBinding { semanticType = semanticType } as member) :: [], error = None }) ->
-            match stateActiveTypeParameters(state) with
-                | [] -> prepared
-                | parameters ->
-                    match typeExprToSemanticType(expandTypeAliases(stateTypeAliases(state))(32)(typeExpr))(parameters) with
-                        | None -> prepared
-                        | Some(annotationType) ->
-                            match bindType(semanticType)(annotationType)(state) with
-                                | (boundState, None) -> PreparedCoreRecursiveGroup(state = boundState, members = [member], error = None)
-                                | (failedState, Some(error)) -> PreparedCoreRecursiveGroup(state = failedState, members = [member], error = Some(error))
+            let expanded =
+                expandTypeAliases(stateTypeAliases(state))(32)(typeExpr)
+            in
+                match (stateActiveTypeParameters(state), typeExprNamesVariable(expanded)) with
+                    | ([], true) -> prepared
+                    | (parameters, _namesVariable) ->
+                        match typeExprToSemanticType(expanded)(parameters) with
+                            | None -> prepared
+                            | Some(annotationType) ->
+                                match bindType(semanticType)(annotationType)(state) with
+                                    | (boundState, None) -> PreparedCoreRecursiveGroup(state = boundState, members = [member], error = None)
+                                    | (failedState, Some(error)) -> PreparedCoreRecursiveGroup(state = failedState, members = [member], error = Some(error))
         | _ -> prepared
 
 let lowerLetRecursive name value body annotation lower state =
