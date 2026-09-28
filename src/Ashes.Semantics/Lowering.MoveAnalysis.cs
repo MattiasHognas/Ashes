@@ -1186,6 +1186,7 @@ public sealed partial class Lowering
     {
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
         public required bool?[] ArenaSelfContainedListRebuild { get; init; }
+        public required bool?[] FreshOrHandedOnListRebuild { get; init; }
         public required bool?[] FreshClosureRebuild { get; init; }
         public required bool?[] BytesProvenanceSafeListRebuild { get; init; }
         public required bool?[] AccumulatorEdges { get; init; }
@@ -1204,6 +1205,7 @@ public sealed partial class Lowering
             {
                 Observed = new TcoSelfCallArgumentShape?[count],
                 ArenaSelfContainedListRebuild = new bool?[count],
+                FreshOrHandedOnListRebuild = new bool?[count],
                 FreshClosureRebuild = new bool?[count],
                 BytesProvenanceSafeListRebuild = new bool?[count],
                 AccumulatorEdges = new bool?[count],
@@ -1286,7 +1288,8 @@ public sealed partial class Lowering
                     state.ChoiceAccumulatorEdges[i] == true
                         && (state.AnyChoiceEdge[i]
                             || (shape == TcoSelfCallArgumentShape.Mixed && state.HandedOnOrGrownEdges[i] == true)),
-                    state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i]));
+                    state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i],
+                    state.FreshOrHandedOnListRebuild[i] == true && state.AnyRebuildEdge[i]));
             }
         }
 
@@ -2512,8 +2515,6 @@ public sealed partial class Lowering
                 && letValues.TryGetValue(letVar.Name, out Expr? boundValue)
                     ? boundValue
                     : argument;
-            bool arenaSelfContainedListRebuild =
-                IsArenaSelfContainedListRebuildExpr(structural);
             bool freshClosureRebuild = IsFreshClosureRebuildExpr(structural);
             bool bytesProvenanceSafeListRebuild =
                 IsBytesProvenanceSafeListRebuildExpr(structural);
@@ -2523,9 +2524,7 @@ public sealed partial class Lowering
             state.Observed[i] = state.Observed[i] is { } already && already != local
                 ? TcoSelfCallArgumentShape.Mixed
                 : state.Observed[i] ?? local;
-            state.ArenaSelfContainedListRebuild[i] =
-                (state.ArenaSelfContainedListRebuild[i] ?? true)
-                && arenaSelfContainedListRebuild;
+            RecordListRebuildEdge(state, i, local, IsArenaSelfContainedListRebuildExpr(structural));
             state.FreshClosureRebuild[i] = (state.FreshClosureRebuild[i] ?? true) && freshClosureRebuild;
             state.BytesProvenanceSafeListRebuild[i] =
                 (state.BytesProvenanceSafeListRebuild[i] ?? true) && bytesProvenanceSafeListRebuild;
@@ -2544,6 +2543,16 @@ public sealed partial class Lowering
                 && IsHandedOnOrGrownEdge(local, structural, parameterScope);
             RecordWalkOrRefillEdge(state, i, local, structural);
         }
+    }
+
+    // An arena-self-contained list rebuild at every site, or at every site that does not hand the
+    // parameter on unchanged.
+    private static void RecordListRebuildEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, bool arenaSelfContainedListRebuild)
+    {
+        state.ArenaSelfContainedListRebuild[ordinal] =
+            (state.ArenaSelfContainedListRebuild[ordinal] ?? true) && arenaSelfContainedListRebuild;
+        state.FreshOrHandedOnListRebuild[ordinal] = (state.FreshOrHandedOnListRebuild[ordinal] ?? true)
+            && (arenaSelfContainedListRebuild || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
     }
 
     // A site that hands the parameter on as it is or conses onto it a head reading no loop

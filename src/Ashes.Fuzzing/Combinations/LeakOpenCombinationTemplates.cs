@@ -5,7 +5,8 @@ namespace Ashes.Fuzzing.Combinations;
 /// <summary>
 /// A loop over positions that replaces its list accumulator with a helper's rebuild of it in one
 /// arm and hands it on in the other, the shape of stage 1's immediate-dominator round
-/// (`idomRound` over `replaceIntAt`). Still open: the rebuilt lists leak.
+/// (`idomRound` over `replaceIntAt`). The rebuilt lists, reference-counted results of a
+/// tail-modulo-cons helper, leaked while the parameter stayed in the arena.
 /// </summary>
 internal sealed class AccumulatorReplacedByHelperInOneArmTemplate() : LeakCombinationTemplate(
     "leak.accumulator-replaced-by-helper-in-one-arm", "replacedInOneArm", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.If)

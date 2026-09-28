@@ -48,9 +48,10 @@ export (
 // whose tail is that read (the accumulator grows by one cell per iteration), a name bound as the
 // cons-tail of a `match` on that parameter one level up (the parameter shrinks by one cell), a
 // choice between handing the parameter on and consing onto it, the parameter's consumed tail at
-// some self-calls and a call's result at others (a worklist walked and refilled), or
-// anything else — a different shape at some self-call, a fresh rebuild, or a value the walk does
-// not classify.
+// some self-calls and a call's result at others (a worklist walked and refilled), the parameter
+// handed on at some self-calls and a fresh list at the others, a call's result among them (a list
+// replaced by a helper's result in one arm) or not, or anything else — a different shape at some
+// self-call, a fresh rebuild, or a value the walk does not classify.
 type TcoArgumentShape =
     | TcoPassThroughShape
     | TcoGrownConsShape
@@ -58,6 +59,8 @@ type TcoArgumentShape =
     | TcoFreshListShape
     | TcoChoiceAccumulatorShape
     | TcoWalkedOrRefilledShape
+    | TcoRefilledFreshListShape
+    | TcoHandedOnFreshListShape
     | TcoOtherShape
     deriving {Eq, Show}
 
@@ -480,12 +483,13 @@ let shapeIsEmptyList (expression: Expr) =
         | _ -> false
 
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail, the
-// parameter itself, a call's result, or an empty list, whether one passed the consumed tail, and
-// whether one passed a call's result, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge` and
-// `AnyRefillEdge`.
-let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (walks: List((Bool, Bool, Bool))) =
+// parameter itself, a call's result, or an empty list, whether one passed the consumed tail,
+// whether one passed a call's result, and whether every one passed the parameter itself or a fresh
+// list, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge`, `AnyRefillEdge` and
+// `FreshOrHandedOnListRebuild`.
+let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (walks: List((Bool, Bool, Bool, Bool))) =
     match (arguments, walks) with
-        | (argument :: restArguments, (everyEdge, anyWalk, anyRefill) :: restWalks) ->
+        | (argument :: restArguments, (everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn) :: restWalks) ->
             (let local = shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters)
             in
                 let refill =
@@ -501,13 +505,18 @@ let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: 
                             parameters
                             |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
                             |> shapeIsEmptyList
-                        in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill)) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
+                        in
+                            let fresh =
+                                parameters
+                                |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
+                                |> shapeIsFreshList
+                            in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill, everyFreshOrHandedOn && (fresh || local == TcoPassThroughShape))) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
         | _ -> walks
 
 type ShapeWalk =
     | observed: List(Maybe(TcoArgumentShape))
     | choices: List((Bool, Bool, Bool))
-    | walks: List((Bool, Bool, Bool))
+    | walks: List((Bool, Bool, Bool, Bool))
     | sawSelfCall: Bool
 
 let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (walk: ShapeWalk) =
@@ -559,20 +568,25 @@ let recursive shapeInitialChoices (count: Int) =
 let recursive shapeInitialWalks (count: Int) =
     if count == 0
     then []
-    else (true, false, false) :: shapeInitialWalks(count - 1)
+    else (true, false, false, true) :: shapeInitialWalks(count - 1)
 
 // A position no single shape describes is a choice accumulator when every self-call passed an
 // accumulator edge there (the parameter, a cons onto it, or a choice between those), stage 0's
 // `ChoiceAccumulatorRebuild`: one self-call chooses between two, or every one hands the parameter
 // on or conses onto it, some doing each; and a walked-or-refilled list when every self-call passed
 // the parameter's consumed tail, the parameter itself, a call's result or an empty list, a call's
-// result among them, stage 0's `WalkedOrRefilled`.
-let shapeResolveWalk (walk: (Bool, Bool, Bool)) =
+// result among them, stage 0's `WalkedOrRefilled`. One whose self-calls all hand the parameter on
+// or pass a fresh list is stage 0's `FreshOrHandedOnListRebuild`, a fresh-list rebuild of a list
+// of scalars; when those fresh lists include a call's result it is also walked-or-refilled, which
+// decides for a list of strings.
+let shapeResolveWalk (walk: (Bool, Bool, Bool, Bool)) =
     match walk with
-        | (true, _anyWalk, true) -> TcoWalkedOrRefilledShape
+        | (true, _anyWalk, true, true) -> TcoRefilledFreshListShape
+        | (true, _anyWalk, true, false) -> TcoWalkedOrRefilledShape
+        | (_everyWalk, _anyWalk, _anyRefill, true) -> TcoHandedOnFreshListShape
         | _ -> TcoOtherShape
 
-let shapeResolveOther (choice: (Bool, Bool, Bool)) (walk: (Bool, Bool, Bool)) =
+let shapeResolveOther (choice: (Bool, Bool, Bool)) (walk: (Bool, Bool, Bool, Bool)) =
     match choice with
         | (true, anyChoice, everyHandedOnOrGrown) ->
             if anyChoice || everyHandedOnOrGrown
@@ -580,7 +594,7 @@ let shapeResolveOther (choice: (Bool, Bool, Bool)) (walk: (Bool, Bool, Bool)) =
             else shapeResolveWalk(walk)
         | _ -> shapeResolveWalk(walk)
 
-let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool, Bool))) (walks: List((Bool, Bool, Bool))) =
+let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool, Bool))) (walks: List((Bool, Bool, Bool, Bool))) =
     match (observed, choices, walks) with
         | (Some(TcoOtherShape) :: rest, choice :: restChoices, walk :: restWalks) -> shapeResolveOther(choice)(walk) :: shapeResolveObserved(rest)(restChoices)(restWalks)
         | (Some(shape) :: rest, _choice :: restChoices, _walk :: restWalks) -> shape :: shapeResolveObserved(rest)(restChoices)(restWalks)
@@ -618,6 +632,7 @@ let isTcoListShape (shape: TcoArgumentShape) =
         | TcoConsumedTailShape -> true
         | TcoChoiceAccumulatorShape -> true
         | TcoWalkedOrRefilledShape -> true
+        | TcoRefilledFreshListShape -> true
         | _ -> false
 
 // Stage 0's `SelfCallArgumentOrdinal`: the position a call's argument takes in a call of `self`,

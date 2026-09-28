@@ -411,7 +411,8 @@ public sealed partial class Lowering
         bool consumedTail = facts.ConsumedListTail
             && !CanArenaReset(Prune(list.Element))
             && !IsBorrowableInspectOnlyList(tco, facts.ParameterOrdinal, list);
-        TcoRcEligibilityReason reason = facts.FreshRebuiltList
+        bool freshRebuiltList = facts.FreshRebuiltList || IsHandedOnFreshScalarList(tco, facts, list);
+        TcoRcEligibilityReason reason = freshRebuiltList
             ? TcoRcEligibilityReason.FreshListRebuild
             : facts.AffineConsList
                 ? TcoRcEligibilityReason.AffineConsList
@@ -421,7 +422,7 @@ public sealed partial class Lowering
                         ? TcoRcEligibilityReason.MissingListOwnershipShape
                         : TcoRcEligibilityReason.UnsupportedListElementLayout;
         return new TcoRcEligibility(
-            facts.FreshRebuiltList || facts.AffineConsList || consumedTail || generalAccumulator,
+            freshRebuiltList || facts.AffineConsList || consumedTail || generalAccumulator,
             layoutEligible,
             TcoRuntimeManagedKind.List,
             reason);
@@ -465,6 +466,20 @@ public sealed partial class Lowering
             && !facts.LoopInvariant
             && Prune(list.Element) is TypeRef.TStr
             && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.WalkedOrRefilled)
+                .Contains(facts.ParameterOrdinal);
+
+    // A list of scalars the loop hands on at some self-calls and rebuilds fresh at the others (one
+    // arm replaces it with a helper's result, another passes it through). Left in the arena, each
+    // rebuild that comes back reference-counted, a tail-modulo-cons helper's result, becomes the
+    // next iteration's parameter and is never released. Placed on the reference-counted heap it is
+    // taken or copied at the back edge and its predecessor released. Only scalar elements: a
+    // rebuild of a list whose elements hold heap values shares those values with the handed-on
+    // list, and the back edge would release them with the predecessor.
+    private bool IsHandedOnFreshScalarList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+        => Environment.GetEnvironmentVariable("GRC_NO_HANDEDONFRESHLIST") is null
+            && !tco.TmcShapePresent
+            && CanArenaReset(Prune(list.Element))
+            && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.FreshOrHandedOnListRebuild)
                 .Contains(facts.ParameterOrdinal);
 
     private bool IsChoiceAccumulatorElement(TypeRef element)

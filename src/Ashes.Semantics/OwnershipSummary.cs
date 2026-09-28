@@ -290,6 +290,11 @@ internal enum TcoParamReuseAffinity
 /// same-named rebinding at a site is neither), and no consed head reads a loop parameter: a head
 /// that is a sibling parameter is released with that parameter's predecessor at the back edge.
 /// </param>
+/// <param name="FreshOrHandedOnListRebuild">
+/// True when every self-recursive call site passes the parameter itself or an arena-self-contained
+/// list rebuild, and at least one rebuilds it: a list replaced by a helper's result in one arm and
+/// handed on in another, which the reset boundary treats like a list rebuilt at every site.
+/// </param>
 /// <param name="WalkedOrRefilled">
 /// True when every self-recursive call site passes the parameter's own consumed tail, the parameter
 /// itself, or a call's result, and both a consumed tail and a call's result occur: a list the loop
@@ -306,7 +311,8 @@ internal sealed record TcoParamStructuralFacts(
     TcoParamReuseAffinity ReuseAffinity,
     bool AccumulatorRebuild = false,
     bool ChoiceAccumulatorRebuild = false,
-    bool WalkedOrRefilled = false);
+    bool WalkedOrRefilled = false,
+    bool FreshOrHandedOnListRebuild = false);
 
 /// <summary>
 /// The ownership contract inferred for one fully-visible top-level function. It is the stable bridge

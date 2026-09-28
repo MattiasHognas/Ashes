@@ -3616,6 +3616,63 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_list_handed_on_or_replaced_by_helper_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's list of integers handed on in one arm and replaced by a tail-modulo-cons helper's
+        // reference-counted result in the other lives on the reference-counted heap, so each
+        // iteration's predecessor is released at the back edge instead of left behind.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildHandedOnOrReplacedListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list handed on or replaced by helper", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildHandedOnOrReplacedListProgram(int rounds)
+        => $$"""
+            let recursive replaceAt (items: List(Int)) (index: Int) (replacement: Int) =
+                match items with
+                    | [] -> []
+                    | head :: rest ->
+                        if index == 0
+                        then replacement :: rest
+                        else head :: replaceAt(rest)(index - 1)(replacement)
+
+            let recursive round (order: List(Int)) (idoms: List(Int)) =
+                match order with
+                    | [] -> idoms
+                    | block :: rest ->
+                        if block == 0
+                        then round(rest)(idoms)
+                        else round(rest)(replaceAt(idoms)(block)(block - 1))
+
+            let recursive sum (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | head :: rest -> sum(rest)(total + head)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + sum(round([0, 1, 2, 3, 4])([-1, -1, -1, -1, n]))(0))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    [Test]
     public async Task Linux_backend_closure_consing_its_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

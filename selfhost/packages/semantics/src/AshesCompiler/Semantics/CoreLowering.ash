@@ -7911,6 +7911,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                 |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
         // A walked-or-refilled list's successor is normalized as a choice accumulator's is.
         | (TcoResetArgument { managedList = Some(_managed), shape = TcoWalkedOrRefilledShape } as argument) :: rest -> normalizeRuntimeManagedBackEdgeArguments((argument with shape = TcoChoiceAccumulatorShape) :: rest)(reversedStores)(state)
+        | (TcoResetArgument { managedList = Some(_managed), shape = TcoRefilledFreshListShape } as argument) :: rest -> normalizeRuntimeManagedBackEdgeArguments((argument with shape = TcoChoiceAccumulatorShape) :: rest)(reversedStores)(state)
         // A choice accumulator's successor is whatever the chosen arm handed over: an owned
         // reference-counted list is stored as it is, the parameter's own value is retained, since
         // the predecessor release still runs, and anything else is taken by reference when it
@@ -7946,13 +7947,17 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                     // A back edge passing the parameter's own value on, when another edge
                     // rebuilds it: the read is the reference-counted value the parameter holds
                     // (stage 0's `TcoBackEdgeRetainRuntimeManagedArg`), retained for the next
-                    // iteration since the predecessor release still runs.
+                    // iteration since the predecessor release still runs. A list may be the empty
+                    // list, so its retain is guarded.
                     if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
                     then
                         match freshTemp(state) with
                             | FreshTemp { state = allocated, temp = duplicate } ->
                                 allocated
-                                |> unlocatedInstruction(RcDup(duplicate)(temp)(true)(false))
+                                |> unlocatedInstruction(semanticType
+                                |> resolveType(state)
+                                |> mayBeEmptyList
+                                |> RcDup(duplicate)(temp)(true))
                                 |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                                 |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
                     else
@@ -8009,6 +8014,10 @@ let recursive dropRuntimeManagedBackEdgePredecessors (arguments: List(TcoResetAr
             |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
             |> dropRuntimeManagedBackEdgePredecessors(rest)
         | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoWalkedOrRefilledShape, oldTemp = oldTemp } :: rest ->
+            state
+            |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
+            |> dropRuntimeManagedBackEdgePredecessors(rest)
+        | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoRefilledFreshListShape, oldTemp = oldTemp } :: rest ->
             state
             |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
             |> dropRuntimeManagedBackEdgePredecessors(rest)
@@ -10433,7 +10442,7 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (sta
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || shape == TcoWalkedOrRefilledShape && resolveType(state)(element) == SemString || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && resolveType(state)(element) == SemString || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
@@ -10506,7 +10515,7 @@ let tcoGeneralRcParameterPlacement (ordinal: Int) (named: SemanticType) (layouts
         | _ -> None
 
 let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
-    if isTcoListShape(shape) || shape == TcoPassThroughShape
+    if isTcoListShape(shape) && shape != TcoRefilledFreshListShape || shape == TcoPassThroughShape
     then None
     else
         match slotResolvedType(slot)(state.bindings)(state) with
@@ -10529,7 +10538,7 @@ let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: C
                 else None
             | Some(SemString) -> Some((SemString, "String"))
             | Some(SemList(element) as list) ->
-                if shape == TcoFreshListShape && tcoListElementSupported(element)(state)
+                if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
                 then
                     match argumentCopyPlanOf(list)(state) with
                         | Some(_plan) -> Some((list, "List"))
