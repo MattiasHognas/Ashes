@@ -3940,6 +3940,62 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_cons_chain_accumulator_memory_should_plateau()
+    {
+        // `interleave(part :: ":" :: acc)(rest)`: a tail call consing a chain of two cells onto its
+        // list parameter grows it as a single cons does, so both cells are reference-counted and the
+        // head matched out of the walked list is released with them; kept in the arena, the head's
+        // retain was stranded in the cell, one string per iteration.
+        IrProgram ir = LowerProgramWithImports(BuildConsChainAccumulatorProgram(3));
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Origin is { Source.SourceName: "interleave" }
+            && function.Instructions.Any(instruction => instruction is IrInst.Jump { Target: var target }
+                && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+        loop.Instructions.Count(instruction => instruction is IrInst.Alloc { RuntimeManaged: true })
+            .ShouldBe(2, "Both cells of the chain are reference-counted.");
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildConsChainAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons chain accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_text_join_of_loop_built_views_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `Ashes.Text.join` over a list of `subView` views a loop conses up: the join's interleave
+        // and pairwise passes keep nothing of the parts past the call.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildJoinedViewsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 14}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("joined views built in a loop", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_mapped_list_of_nullary_constructors_memory_should_plateau()
     {
         // `map(kindOf)(nums)` over an enum of nullary constructors specializes `map` for that element,
@@ -10465,6 +10521,47 @@ public sealed class LinuxBackendCoverageTests
                 else repeat(times - 1)(total + freeTypes(items)([])(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildConsChainAccumulatorProgram(int rounds)
+        => $$"""
+            let recursive collect (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive interleave (acc: List(Str)) (parts: List(Str)) =
+                match parts with
+                    | [] -> acc
+                    | part :: rest -> interleave(part :: ":" :: acc)(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildJoinedViewsProgram(int rounds)
+        => $$"""
+            let recursive collect (bytes: Bytes) (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(bytes)(n - 1)(Ashes.Byte.subView(bytes)(16)(4) :: acc)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let bytes = Ashes.Byte.fromText("abcdefghijklmnopqrstuvwxyz" + Ashes.Text.fromInt(n % 10))
+                    in rounds(n - 1)(total + Ashes.Text.byteLength(Ashes.Text.join(",")(collect(bytes)(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
             """;
 
     private static string BuildMappedNullaryEnumListProgram(int rounds)

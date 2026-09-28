@@ -18801,7 +18801,15 @@ let normalizePatternOwnerHead (request: ConsumerRequest) (head: Expr) (lowered: 
 // head is runtime-manageable, stage 0's `LowerConsCell`.
 let cellIsRuntimeManaged (request: ConsumerRequest) (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) = requestsRuntimeList(request) && isRuntimeManageableListElement(headExpression)(headTemp)(headType)(state)
 
-let finishCons (request: ConsumerRequest) (headExpression: Expr) head tail =
+// A reference-counted cell never points at an arena one: a cell of a chain consed onto a loop's
+// list parameter whose tail cell stayed in the arena (its head could not be reference-counted)
+// stays there too, stage 0's guard in `LowerConsTail`.
+let chainTailKeepsCellInArena (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
+    match (unspanArgument(tailExpression), request.runtimeTcoListTailSlot) with
+        | (ExprCons(_head, _tail), Some(_slot)) -> !isRuntimeTemp(tailTemp)(state)
+        | _ -> false
+
+let finishCons (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) head tail =
     match (head, tail) with
         | (LoweredCoreValue { state = failedState, error = Some(error) }, _tail) -> failure(failedState)(error)
         | (_head, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
@@ -18809,7 +18817,7 @@ let finishCons (request: ConsumerRequest) (headExpression: Expr) head tail =
             match bindType(SemList(headType))(tailType)(tailState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (typedState, None) ->
-                    allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState))(typedState)
+                    allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState) && !chainTailKeepsCellInArena(request)(tailExpression)(tailTemp)(typedState))(typedState)
 
 // Stage 0's `EmitReferenceCountedListTail`: the tail a reference-counted cell takes over from the
 // accumulator parameter it extends. The parameter's first value is whatever the caller passed, so
@@ -18916,18 +18924,26 @@ let consPartsFor (request: ConsumerRequest) (headExpression: Expr) (tailExpressi
     else duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head)(tail)
 
 // The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
+// Stage 0's cons tail request: a cell of a chain consed onto a loop's list parameter
+// (`first :: separator :: acc`) takes a tail built the same way, so every cell of the chain is
+// reference-counted, not only the first; any other tail is lowered with its expected type alone.
+let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType: SemanticType) (state: CoreLoweringState) =
+    match (unspanArgument(tailExpression), request.runtimeTcoListTailSlot) with
+        | (ExprCons(_head, _tail), Some(_slot)) -> withConsumerRequest((request with expectedType = Some(SemList(headType))))(state)
+        | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = headState, semanticType = headType } ->
             match headState
-            |> withOnlyExpectedType(Some(SemList(headType)))
+            |> consTailRequest(request)(tailExpression)(headType)
             |> lower(tailExpression)
             |> consPartsFor(request)(headExpression)(tailExpression)(head) with
                 | (duplicatedHead, duplicatedTail) ->
                     duplicatedTail
                     |> retainConsTail(request)(transfers)(headExpression)(tailExpression)(duplicatedHead)
-                    |> finishCons(request)(headExpression)(duplicatedHead)
+                    |> finishCons(request)(headExpression)(tailExpression)(duplicatedHead)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
 let expectedListElementType state =
@@ -19004,10 +19020,26 @@ let reserveUnusedHeadTemp (lowered: LoweredCoreValue) =
                 | FreshTemp { state = reserved } -> lowered with state = reserved
         | _ -> lowered
 
+// The last tail of a cons chain written out (`separator :: acc` under `first`).
+let recursive consChainLastTail (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, tail) -> consChainLastTail(tail)
+        | other -> other
+
+// A cell's tail that ends in the loop parameter: the parameter's own read, or, for a tail self-call
+// argument consing a chain onto its parameter (stage 0's cons tail request), a chain of cells over it.
+let consTailReachesLoopParameter (request: ConsumerRequest) (tail: Expr) (state: CoreLoweringState) =
+    if loopParameterReadSlot(tail)(state) != None
+    then true
+    else
+        match (unspanArgument(tail), request.runtimeTcoListTailSlot) with
+            | (ExprCons(_head, _tail), Some(_slot)) -> loopParameterReadSlot(consChainLastTail(tail))(state) != None
+            | _ -> false
+
 let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
+            if requestsRuntimeList(request) && consTailReachesLoopParameter(request)(tail)(state) && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
             then
                 match resolveType(state)(semanticType) with
                     | SemString ->
@@ -19064,7 +19096,7 @@ let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) 
 let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && loopParameterReadSlot(tail)(state) != None && !isRuntimeTemp(temp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
+            if requestsRuntimeList(request) && consTailReachesLoopParameter(request)(tail)(state) && !isRuntimeTemp(temp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
             then reserveUnusedHeadTemp(lowered)
             else normalizeRuntimeManagedHeapConsHead(request)(head)(tail)(lowered)
         | _ -> lowered

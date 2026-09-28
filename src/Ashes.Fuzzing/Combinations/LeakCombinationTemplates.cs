@@ -17,6 +17,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new LoopParameterReturnedWholeTemplate());
         registry.Register(new AccumulatorConsesCallResultPartTemplate());
         registry.Register(new MappedNullaryEnumListTemplate());
+        registry.Register(new ConsChainAccumulatorTemplate());
         registry.Register(new TupleResultWithMaybeTemplate());
         registry.Register(new NestedLetRecursiveHelperTemplate());
         registry.Register(new HelperReturnsListAndStateTemplate());

@@ -1265,6 +1265,13 @@ public sealed partial class Lowering
         // Successors retained for the transfer out of an iteration-local owner: the reference the
         // parameter takes over.
         public bool[] TransferRetainedArgs { get; init; } = [];
+
+        // Successors consed onto their own parameter, one cell (SingleFreshCons) or a chain of them:
+        // a reference-counted one took the predecessor over as its last cell's tail.
+        public bool[] ConsChainOverParameter { get; init; } = [];
+
+        public bool MovesPredecessorIntoTail(int index)
+            => SingleFreshCons[index] || (index < ConsChainOverParameter.Length && ConsChainOverParameter[index]);
     }
 
     private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
@@ -1505,7 +1512,7 @@ public sealed partial class Lowering
                 normalizedTemps[i] = TcoBackEdgeNormalizeSuccessor(info, i, argType);
             }
             bool movedListTail = argType is TypeRef.TList
-                && info.SingleFreshCons[i]
+                && info.MovesPredecessorIntoTail(i)
                 && info.RuntimeManagedArgResults[i];
             bool consumedStringPredecessor = info.RuntimeManagedArgResults[i]
                 && IsRuntimeManagedConcatStrTipResult(info.ArgTemps[i]);
@@ -2015,7 +2022,7 @@ public sealed partial class Lowering
                     && (info.PassThrough[index]
                         || info.FreshListRebuild[index]
                         || info.ConsumedListTail[index]
-                        || info.SingleFreshCons[index] && info.RuntimeManagedArgResults[index]),
+                        || info.MovesPredecessorIntoTail(index) && info.RuntimeManagedArgResults[index]),
                 TypeRef.TFun => info.RuntimeManagedArgResults[index],
                 _ => false,
             };
@@ -11503,9 +11510,7 @@ public sealed partial class Lowering
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
-            && argument is Expr.Cons { Tail: Expr.Var tail }
-            && Lookup(tail.Name) is Binding.Local tailLocal
-            && tailLocal.Slot == tco.ParamSlots[index];
+            && IsConsChainOverParameter(tco, argument, index);
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild
@@ -11576,6 +11581,14 @@ public sealed partial class Lowering
             _tcoArgumentDestination = savedDestination;
         }
     }
+
+    // A tail-call argument that conses one cell, or a chain of cells, onto the loop parameter in its
+    // own position: every cell it builds is fresh and the last one takes the parameter over as its tail.
+    private bool IsConsChainOverParameter(TcoContext tco, Expr argument, int index)
+        => index < tco.ParamSlots.Count
+            && GrownConsChainTail(argument) is Expr.Var tail
+            && Lookup(tail.Name) is Binding.Local tailLocal
+            && tailLocal.Slot == tco.ParamSlots[index];
 
     // A list accumulator already placed on the reference-counted heap whose successors differ in
     // shape: its back edge copies the successor with references of its own before the iteration's
@@ -11838,6 +11851,12 @@ public sealed partial class Lowering
                 k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rq) ? rq.End : -1).ToArray())
         {
             TransferRetainedArgs = newArgTemps.Select(IsTransferRetainedSuccessor).ToArray(),
+            ConsChainOverParameter = collectedArgs
+                .Select((argument, index) => ConsChainsGrowAccumulators
+                    && index < tco.ParamSlots.Count
+                    && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
+                    && IsConsChainOverParameter(tco, argument, index))
+                .ToArray(),
         };
 
         // Every reset is resolved after the complete lambda body has been lowered. A later sibling
@@ -16221,7 +16240,11 @@ public sealed partial class Lowering
         bool savedTailPos,
         LoweredValueRequest request)
     {
-        LoweredValueRequest tailRequest = LoweredValueRequest.None.WithExpectedType(listType);
+        // A cell of a chain consed onto a loop's list parameter (`first :: separator :: acc`) takes a
+        // tail built the same way, so every cell of the chain is reference-counted, not only the first.
+        LoweredValueRequest tailRequest = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null
+            ? request.WithExpectedType(listType)
+            : LoweredValueRequest.None.WithExpectedType(listType);
         var (tailTemp, tailType) = LowerExpr(cons.Tail, tailRequest);
 
         // A successor cell the back edge copies borrows its parts: the copy takes references of
@@ -16255,6 +16278,18 @@ public sealed partial class Lowering
         MarkResourceArgMoved(cons.Tail);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
+
+        // A reference-counted cell never points at an arena one: a chain cell whose tail cell stayed
+        // in the arena (its head could not be reference-counted) stays there too.
+        if (cons.Tail is Expr.Cons
+            && request.RuntimeTcoListTailSlot is not null
+            && !IsRuntimeManagedResultTemp(tailTemp))
+        {
+            request = request with
+            {
+                RuntimeRepresentation = request.RuntimeRepresentation & ~LoweredValueRuntimeRepresentation.List,
+            };
+        }
 
         return LowerConsCell(
             head.Temp,

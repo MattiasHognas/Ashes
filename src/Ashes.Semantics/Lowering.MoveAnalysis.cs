@@ -2555,8 +2555,7 @@ public sealed partial class Lowering
     {
         return local == TcoSelfCallArgumentShape.UnchangedPassthrough
             || (local == TcoSelfCallArgumentShape.GrownCons
-                && structural is Expr.Cons grown
-                && !ReadsLoopParameter(grown.Head, parameterScope));
+                && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)));
     }
 
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
@@ -2621,6 +2620,40 @@ public sealed partial class Lowering
             _ => EnumerateChildren(expression).Any(child => ReadsLoopParameter(child, parameterScope)),
         };
 
+    // The last tail of a cons that grows a list by one cell (`head :: tail`) or, a chain written
+    // out, by several (`first :: separator :: acc`): the accumulator the cells are consed onto.
+    // Anything else has none. A chain grows the accumulator only when none of its heads reads a
+    // loop parameter (ClassifyTcoSelfCallArgument): such a head is placed as its parameter is,
+    // and a cell over it may have to stay in the arena.
+    private static Expr? GrownConsChainTail(Expr expression)
+    {
+        if (expression is not Expr.Cons cons)
+        {
+            return null;
+        }
+
+        Expr tail = cons.Tail;
+        while (tail is Expr.Cons inner && ConsChainsGrowAccumulators)
+        {
+            tail = inner.Tail;
+        }
+
+        return tail;
+    }
+
+    private static bool ConsChainsGrowAccumulators
+        => Environment.GetEnvironmentVariable("GRC_NO_CONSCHAIN") is null;
+
+    // The heads of a cons chain, outermost first.
+    private static IEnumerable<Expr> ConsChainHeads(Expr expression)
+    {
+        while (expression is Expr.Cons cons)
+        {
+            yield return cons.Head;
+            expression = cons.Tail;
+        }
+    }
+
     // `argument` is how the tail call spells the value; `structural` is what it was bound to. The
     // first two shapes ask which binding the name refers to, so they read the spelling.
     private static TcoSelfCallArgumentShape ClassifyTcoSelfCallArgument(
@@ -2638,9 +2671,11 @@ public sealed partial class Lowering
             && tailOwners.TryGetValue(tailVar.Name, out int ownerOrdinal)
             && ownerOrdinal == ordinal
             ? TcoSelfCallArgumentShape.ConsumedTail
-        : structural is Expr.Cons { Tail: Expr.Var consTail }
+        : GrownConsChainTail(structural) is Expr.Var consTail
             && parameterScope.TryGetValue(consTail.Name, out int tailParameterOrdinal)
             && tailParameterOrdinal == ordinal
+            && (structural is Expr.Cons { Tail: Expr.Var }
+                || ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)))
             ? TcoSelfCallArgumentShape.GrownCons
         : expressionFreshness.TryGetValue(structural, out bool fresh) && fresh
             ? TcoSelfCallArgumentShape.FreshRebuilt

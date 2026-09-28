@@ -311,6 +311,28 @@ let recursive shapeIsFreshList (expression: Expr) =
         | ExprLet(_name, _value, body, _quantified, _annotation, _constraints) -> shapeIsFreshList(body)
         | _ -> false
 
+// Stage 0's `GrownConsChainTail`: the last tail of a chain of cons cells written out
+// (`first :: separator :: acc`), the list the chain is consed onto.
+let recursive shapeConsChainTail (expression: Expr) =
+    match shapeUnspan(expression) with
+        | ExprCons(_head, tail) -> shapeConsChainTail(tail)
+        | other -> other
+
+// Stage 0's `ReadsLoopParameter`: a head that is a sibling parameter, or is built from one, is
+// released with that parameter's predecessor at the back edge; the accumulator would be left
+// holding it.
+let recursive shapeReadsLoopParameter (expression: Expr) (shadowed: List(Str)) (remaining: List(Str)) =
+    match remaining with
+        | [] -> false
+        | parameter :: rest -> !shapeContainsName(parameter)(shadowed) && exprReadsName(parameter)(expression) || shapeReadsLoopParameter(expression)(shadowed)(rest)
+
+// A chain grows the accumulator only when none of its heads reads a loop parameter, stage 0's
+// condition in `ClassifyTcoSelfCallArgument`.
+let recursive shapeChainHeadsReadNoParameter (expression: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(expression) with
+        | ExprCons(head, tail) -> !shapeReadsLoopParameter(head)(shadowed)(parameters) && shapeChainHeadsReadNoParameter(tail)(shadowed)(parameters)
+        | _ -> true
+
 let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
     match shapeUnspan(argument) with
         | ExprVar(name) ->
@@ -326,6 +348,16 @@ let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwn
                     if shapeResolveParameter(name)(shadowed)(parameters) == Some(index)
                     then TcoGrownConsShape
                     else TcoOtherShape
+                | ExprCons(_inner, innerTail) ->
+                    match shapeConsChainTail(innerTail) with
+                        | ExprVar(name) ->
+                            if shapeResolveParameter(name)(shadowed)(parameters) == Some(index) && shapeChainHeadsReadNoParameter(argument)(shadowed)(parameters)
+                            then TcoGrownConsShape
+                            else TcoOtherShape
+                        | last ->
+                            if shapeIsFreshList(last)
+                            then TcoFreshListShape
+                            else TcoOtherShape
                 | rest ->
                     if shapeIsFreshList(rest)
                     then TcoFreshListShape
@@ -343,14 +375,6 @@ let recursive shapeObserveArguments (arguments: List(Expr)) (index: Int) (shadow
         | (argument :: restArguments, current :: restObserved) ->
             shapeMerge(current)(shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters)) :: shapeObserveArguments(restArguments)(index + 1)(shadowed)(tailOwners)(parameters)(restObserved)
         | _ -> observed
-
-// Stage 0's `ReadsLoopParameter`: a head that is a sibling parameter, or is built from one, is
-// released with that parameter's predecessor at the back edge; the accumulator would be left
-// holding it.
-let recursive shapeReadsLoopParameter (expression: Expr) (shadowed: List(Str)) (remaining: List(Str)) =
-    match remaining with
-        | [] -> false
-        | parameter :: rest -> !shapeContainsName(parameter)(shadowed) && exprReadsName(parameter)(expression) || shapeReadsLoopParameter(expression)(shadowed)(rest)
 
 let recursive shapeElementsReadNoLoopParameter (elements: List(Expr)) (shadowed: List(Str)) (parameters: List(Str)) =
     match elements with
@@ -413,11 +437,12 @@ let shapeStructuralArgument (argument: Expr) (shadowed: List(Str)) (tailOwners: 
 // A site that hands the parameter at `index` on as it is or conses onto it a head that reads no
 // loop parameter, stage 0's `HandedOnOrGrownEdges`; a fresh list or a same-named rebinding is
 // neither.
-let shapeIsGrownCons (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
+let recursive shapeIsGrownCons (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(structural) with
         | ExprCons(head, tail) ->
             match shapeUnspan(tail) with
                 | ExprVar(tailName) -> shapeResolveParameter(tailName)(shadowed)(parameters) == Some(index) && !shapeReadsLoopParameter(head)(shadowed)(parameters)
+                | ExprCons(_inner, _innerTail) -> !shapeReadsLoopParameter(head)(shadowed)(parameters) && shapeIsGrownCons(tail)(index)(shadowed)(parameters)
                 | _ -> false
         | _ -> false
 
