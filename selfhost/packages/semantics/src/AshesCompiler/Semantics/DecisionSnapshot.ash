@@ -624,7 +624,7 @@ let captureDecisionSnapshot qualifiedNameOf (program: ProgramSyntax) (lowered: I
                     |> (given (summaries) ->
                         program
                         |> topLevelFunctions
-                        |> inferProgramOwnership(map(reachFunctionSignature(qualifiedNameOf)(lowered)(summaries))(summaries))([])(constructorArities)(summaries)(program.body))
+                        |> inferProgramOwnership(map(reachFunctionSignature(qualifiedNameOf)(lowered)(summaries))(summaries))([])(constructorArities)(programSoleNullaryConstructors(program.items))(summaries)(program.body))
                     |> sortBy(summaryBefore)
                     |> ownershipRecords(0)
                     |> map(restrictCapturesToTopLevelValues(valueNames))

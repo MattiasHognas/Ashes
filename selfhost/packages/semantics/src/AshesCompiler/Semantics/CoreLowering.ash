@@ -74,9 +74,11 @@ import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
+import AshesCompiler.Semantics.OwnershipInference.programSoleNullaryConstructors
 import AshesCompiler.Semantics.OwnershipInference.MoveCallSite
 import AshesCompiler.Semantics.OwnershipInference.collectAllCallSites
 import AshesCompiler.Semantics.OwnershipInference.moveSafetyProof
+import AshesCompiler.Semantics.PathOccurrences
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.ResultReach.resultReachesVariableOutsideCells
 import AshesCompiler.Semantics.ParameterPassthrough.returnsParameterOrFreshValue
@@ -476,10 +478,12 @@ type CoreProgramState =
     | topLevelNames: MapTree(Str, Bool)
     | letLambdas: List((Str, List(Str), Expr))
     | letLambdasByName: MapTree(Str, (List(Str), Expr))
-    // The program's top-level functions and every call site among them, the census the
+    // The program's top-level functions, every call site among them, and the constructors that are the
+    // only nullary one of their type (the nullary seeds), the census the
     // move-safety proof of a loop parameter is drawn from.
     | moveFunctionTable: List((Str, List(Str), Expr))
     | moveCallSites: List(MoveCallSite)
+    | moveNullaryConstructors: List(Str)
     | patternOwnerSites: List(PatternOwnerSite)
     | bodyRuntimeManagedByLabel: MapTree(Str, Bool)
     // The functions whose compiled result is owned under the contract: each normalizes a result of
@@ -928,6 +932,14 @@ let stateMoveCallSites (state: CoreLoweringState) =
 let withStateMoveCallSites value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with moveCallSites = value))
+
+let stateMoveNullaryConstructors (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.moveNullaryConstructors)
+
+let withStateMoveNullaryConstructors value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with moveNullaryConstructors = value))
 
 let statePatternOwnerSites (state: CoreLoweringState) =
     (let group = state.programState
@@ -2184,6 +2196,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             letLambdasByName = Ashes.Collection.Map.empty,
             moveFunctionTable = [],
             moveCallSites = [],
+            moveNullaryConstructors = [],
             patternOwnerSites = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
             generalRcOwnedResultLabels = [],
@@ -11737,15 +11750,10 @@ and collectCtorMatchedScrutineesInCases (parameters: List(Str)) (cases: List((Pa
             |> collectCtorMatchedScrutinees(parameters)(body)
             |> collectCtorMatchedScrutineesInCases(parameters)(rest)
 
-// The names of the program's single-parameter specialization candidates: stage 0 excludes a
-// multi-parameter candidate from this scan (`_freshCompositionOnlySpecializable`), since only the
+// The candidates a loop parameter is routed to are the self-recursive ones with a single parameter
+// and the nested-worker ones (`loopRoutableSpecializationCandidates`): stage 0 excludes a
+// multi-parameter self-recursive candidate (`_freshCompositionOnlySpecializable`), since only the
 // fresh-composition call site can supply its earlier arguments.
-let recursive singleParameterCandidateNames (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> []
-        | (name, _parameter :: [], _value) :: rest -> name :: singleParameterCandidateNames(rest)
-        | _candidate :: rest -> singleParameterCandidateNames(rest)
-
 let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (candidates: List((Str, List(Str), Expr))) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
@@ -11767,7 +11775,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             argumentShapes = shapes,
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
-                            specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
+                            specializationAccumulators = collectSpecializableCallArgs(parameters)(loopRoutableSpecializationCandidates(candidates))(innermost)([]),
                             tmcShapePresent = hasTmcConsSelfCalls(innermost)(name)(arity),
                             selfCallParameterFlow = tcoSelfCallParameterFlow(name)(parameters)([])(innermost),
                             selfCallSpineFlow = tcoSelfCallSpineFlow(name)(parameters)([])(innermost),
@@ -11967,7 +11975,7 @@ let recursive moveCensusConstructorArities (layouts: List(CoreConstructorLayout)
 let reuseAccumulatorIsUnique (functionName: Str) (parameter: Str) (state: CoreLoweringState) =
     match moveSafetyProof(stateMoveFunctionTable(state))(stateMoveCallSites(state))(state
     |> stateConstructorLayouts
-    |> moveCensusConstructorArities)(stateReachSummaries(state))(functionName)(parameter) with
+    |> moveCensusConstructorArities)(stateMoveNullaryConstructors(state))(stateReachSummaries(state))(functionName)(parameter) with
         | ParameterMoveSafetyProof { isMoveSafe = safe } -> safe
 
 // The accumulator type's arena copier, synthesized ahead of the loop body as stage 0's
@@ -12009,20 +12017,41 @@ let recursive scanDirectReuseAccumulators (loop: CoreTcoLoop) (slots: List(Int))
                         | _ -> scanDirectReuseAccumulators(loop)(slots)(rest)(state)
                 | _ -> scanDirectReuseAccumulators(loop)(slots)(rest)(state)
 
-// The accumulator parameter type of a single-parameter specialization candidate, read through the
-// current substitution, and whether its layout admits the entry deep copy that makes it unique
-// (stage 0's `IsReusableSpecializationAccumulatorType`): a list of a deep-copyable element, or a
-// named ADT whose own direct-reuse rule already accepts it.
+// The type of the `ordinal`-th curried argument (zero-based) of a function type, stage 0's
+// `NthCurriedArgType`.
+let recursive nthCurriedArgumentType (functionType: SemanticType) (ordinal: Int) (state: CoreLoweringState) =
+    match resolveType(state)(functionType) with
+        | SemFunction(parameterType, resultType, _effects) ->
+            if ordinal == 0
+            then
+                parameterType
+                |> resolveType(state)
+                |> Some
+            else nthCurriedArgumentType(resultType)(ordinal - 1)(state)
+        | _ -> None
+
+let recursive specializationCandidateArity (callee: Str) (candidates: List((Str, List(Str), Expr))) =
+    match candidates with
+        | [] -> None
+        | (candidate, parameters, value) :: rest ->
+            if candidate == callee
+            then
+                value
+                |> specializationArity(parameters)
+                |> Some
+            else specializationCandidateArity(callee)(rest)
+
+// The accumulator type a specialization candidate is called at, read through the current
+// substitution: the argument a saturated call passes last (the parameter of a single-parameter
+// candidate, the worker's parameter of a nested-worker one), stage 0's
+// `NthCurriedArgType(type, ArgCount - 1)`. Whether its layout admits the entry deep copy that makes
+// it unique is `reusableSpecializationAccumulatorType`.
 let specializationAccumulatorTypeOf (callee: Str) (state: CoreLoweringState) =
-    match lookupBinding(callee)(state.bindings) with
-        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
-            match resolveType(state)(body) with
-                | SemFunction(parameterType, _resultType, _effects) ->
-                    parameterType
-                    |> resolveType(state)
-                    |> Some
-                | _ -> None
-        | None -> None
+    match (lookupBinding(callee)(state.bindings), state
+    |> stateSpecializationCandidates
+    |> specializationCandidateArity(callee)) with
+        | (Some(CoreBinding { scheme = TypeScheme { body = body } }), Some(arity)) -> nthCurriedArgumentType(body)(arity - 1)(state)
+        | _ -> None
 
 // Whether the rebuild's constructor-site materialization can relocate a field of this type into
 // to-space through a synthesized copier — the half of the persistence question that needs the type
@@ -12036,13 +12065,21 @@ let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLowerin
 // ordinary heap and carry whatever their elements already were, so its layout constrains nothing;
 // a named ADT accumulator's fresh cells would be allocated into the never-reset to-space, so it is
 // admitted only when every field is the accumulator itself or a leaf the materialization relocates.
+// A generic type's fields are read at the accumulator's instantiation (`MapTree(Str, List(Str))`'s
+// value field is a list of strings), as stage 0 maps the type parameters to the type arguments.
 let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match accumulatorType with
-        | SemNamed(_symbolId, typeName, _arguments) ->
+        | SemNamed(_symbolId, typeName, arguments) ->
             match namedTypeConstructorFieldTypes(typeName)(stateConstructorLayouts(state))(state)(false)([]) with
                 | (false, _fieldTypes) -> false
-                | (true, fieldTypes) ->
-                    namedAccumulatorFieldsPersistent(typeName)(given (fieldType: SemanticType) -> specializationFieldRelocatable(fieldType)(state))(fieldTypes)
+                | (true, declaredFieldTypes) ->
+                    let fieldTypes =
+                        match arguments with
+                            | [] -> declaredFieldTypes
+                            | _ ->
+                                namedTypeInstantiatedFieldTypes(typeName)(arguments)(stateConstructorLayouts(state))(state)([])
+                    in
+                        namedAccumulatorFieldsPersistent(typeName)(given (fieldType: SemanticType) -> specializationFieldRelocatable(fieldType)(state))(fieldTypes)
         | _ -> true
 
 // Stage 0's `IsReusableSpecializationAccumulatorType`, whose real question is whether the loop
@@ -12061,108 +12098,6 @@ let reusableSpecializationAccumulatorType (accumulatorType: SemanticType) (state
                 | HeapLayoutFacts { containsResource = containsResource, arenaDeepCopySupported = deepCopySupported } -> !containsResource && deepCopySupported
         | SemNamed(_symbolId, typeName, _arguments) -> !isResourceTypeName(typeName) && accumulatorLayoutIsPersistable(accumulatorType)(state)
         | _ -> false
-
-// Stage 0's `MaxPathOccurrences`: how many times a name can be evaluated on one path through an
-// expression. Branches take their worst arm, sequenced parts add up, a capturing lambda or a
-// node the walk does not model counts as unbounded, and a binding of the same name shadows it.
-let occurrenceEscape = 1048576
-
-let largerOf (left: Int) (right: Int) =
-    if left > right
-    then left
-    else right
-
-let recursive maxPathOccurrences (name: Str) (expression: Expr) =
-    match expression with
-        | ExprAt(_span, inner) -> maxPathOccurrences(name)(inner)
-        | ExprVar(candidate) ->
-            if candidate == name
-            then 1
-            else 0
-        | ExprQualifiedVar(_module, _member) -> 0
-        | ExprInt(_value) -> 0
-        | ExprBigInt(_value) -> 0
-        | ExprUInt(_value, _width, _text) -> 0
-        | ExprFloat(_value, _text) -> 0
-        | ExprString(_value) -> 0
-        | ExprRune(_value) -> 0
-        | ExprBool(_value) -> 0
-        | ExprIf(cond, thenBranch, elseBranch) ->
-            maxPathOccurrences(name)(cond) + largerOf(maxPathOccurrences(name)(thenBranch))(maxPathOccurrences(name)(elseBranch))
-        | ExprMatch(scrutinee, arms, _defaultArm) -> maxPathOccurrences(name)(scrutinee) + maxPathOccurrencesArms(name)(arms)(0)
-        | ExprLet(bound, value, body, _params, _annotation, _traits) ->
-            maxPathOccurrences(name)(value) + (if bound == name
-            then 0
-            else maxPathOccurrences(name)(body))
-        | ExprLetResult(bound, value, body) ->
-            maxPathOccurrences(name)(value) + (if bound == name
-            then 0
-            else maxPathOccurrences(name)(body))
-        | ExprLetRecursive(bound, value, body, _params, _annotation, _traits) ->
-            if bound == name
-            then 0
-            else maxPathOccurrences(name)(value) + maxPathOccurrences(name)(body)
-        | ExprLambda(parameter, body, _annotation) ->
-            if parameter == name
-            then 0
-            else
-                if maxPathOccurrences(name)(body) > 0
-                then occurrenceEscape
-                else 0
-        | ExprCall(function, argument, _isSugar, _layout) -> maxPathOccurrences(name)(function) + maxPathOccurrences(name)(argument)
-        | ExprAdd(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprSubtract(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprMultiply(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprDivide(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprModulo(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprBitwiseAnd(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprBitwiseOr(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprBitwiseXor(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprShiftLeft(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprShiftRight(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprBitwiseNot(operand) -> maxPathOccurrences(name)(operand)
-        | ExprLogicalNot(operand) -> maxPathOccurrences(name)(operand)
-        | ExprLogicalAnd(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprLogicalOr(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprGreaterThan(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprLessThan(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprGreaterOrEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprLessOrEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprNotEqual(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprResultPipe(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprResultMapErrorPipe(left, right) -> maxPathOccurrencesPair(name)(left)(right)
-        | ExprCons(head, tail) -> maxPathOccurrencesPair(name)(head)(tail)
-        | ExprAwait(task) -> maxPathOccurrences(name)(task)
-        | ExprTuple(elements) -> maxPathOccurrencesList(name)(elements)(0)
-        | ExprList(elements, _isMultiline) -> maxPathOccurrencesList(name)(elements)(0)
-        | ExprRecord(_constructor, fields, _isMultiline) -> maxPathOccurrencesFields(name)(fields)(0)
-        | ExprRecordUpdate(target, fields) -> maxPathOccurrences(name)(target) + maxPathOccurrencesFields(name)(fields)(0)
-        | _ -> occurrenceEscape
-and maxPathOccurrencesPair (name: Str) (left: Expr) (right: Expr) = maxPathOccurrences(name)(left) + maxPathOccurrences(name)(right)
-and maxPathOccurrencesArms (name: Str) (arms: List((Pattern, Expr, Maybe(Expr)))) (worst: Int) =
-    match arms with
-        | [] -> worst
-        | (pattern, body, guard) :: rest ->
-            let arm =
-                if patternBindsName(name)(pattern)
-                then 0
-                else
-                    match guard with
-                        | Some(guardExpression) -> maxPathOccurrences(name)(body) + maxPathOccurrences(name)(guardExpression)
-                        | None -> maxPathOccurrences(name)(body)
-            in
-                arm
-                |> largerOf(worst)
-                |> maxPathOccurrencesArms(name)(rest)
-and maxPathOccurrencesList (name: Str) (elements: List(Expr)) (total: Int) =
-    match elements with
-        | [] -> total
-        | element :: rest -> maxPathOccurrencesList(name)(rest)(total + maxPathOccurrences(name)(element))
-and maxPathOccurrencesFields (name: Str) (fields: List((Str, Expr))) (total: Int) =
-    match fields with
-        | [] -> total
-        | (_field, value) :: rest -> maxPathOccurrencesFields(name)(rest)(total + maxPathOccurrences(name)(value))
 
 // Stage 0's `HasMultipleSelfTypedFields`: some constructor of the named type holds two or more
 // children of the type itself, so a rebuild can descend into one and share the others.
@@ -12241,6 +12176,15 @@ let specializationRebuildsOnlyAPath (callee: Str) (accumulatorType: SemanticType
 // specialization may rewrite it in place, and its name joins
 // `linearSpecializationAccumulators` so the call site can prove it unique. The gate reads the
 // CALLEE's accumulator parameter type, the copy the loop parameter's own.
+// The type the scan's gates read: the callee's accumulator type, or, while that still holds a
+// type variable (a generic library function such as `Map.upsertStr`), the loop parameter's own
+// type, which the call unifies it with. Stage 0 reads the callee's type after the call's
+// instantiation, which is the loop parameter's.
+let scannedAccumulatorType (calleeAccumulatorType: SemanticType) (parameterType: SemanticType) (state: CoreLoweringState) =
+    if containsUnresolvedLayout(calleeAccumulatorType)(state)
+    then resolveType(state)(parameterType)
+    else calleeAccumulatorType
+
 let recursive scanSpecializationAccumulators (loop: CoreTcoLoop) (slots: List(Int)) (accumulators: List((Str, Str))) (state: CoreLoweringState) =
     match accumulators with
         | [] -> state
@@ -12249,11 +12193,11 @@ let recursive scanSpecializationAccumulators (loop: CoreTcoLoop) (slots: List(In
                 | (Some(ordinal), Some(calleeAccumulatorType)) ->
                     match (loopSlotAtOrdinal(ordinal)(slots), lookupBinding(accumulator)(state.bindings)) with
                         | (Some(slot), Some(CoreBinding { scheme = TypeScheme { body = parameterType } })) ->
-                            if containsName(accumulator)(stateLinearReuseNames(state)) == false && !provisionallyRuntimeManagedLoopSlot(ordinal)(slot)(loop)(state) && reusableSpecializationAccumulatorType(calleeAccumulatorType)(state)
+                            if containsName(accumulator)(stateLinearReuseNames(state)) == false && !provisionallyRuntimeManagedLoopSlot(ordinal)(slot)(loop)(state) && reusableSpecializationAccumulatorType(scannedAccumulatorType(calleeAccumulatorType)(parameterType)(state))(state)
                             then
                                 let unique = reuseAccumulatorIsUnique(loop.selfName)(accumulator)(state)
                                 in
-                                    if !unique && specializationRebuildsOnlyAPath(callee)(calleeAccumulatorType)(state)
+                                    if !unique && specializationRebuildsOnlyAPath(callee)(scannedAccumulatorType(calleeAccumulatorType)(parameterType)(state))(state)
                                     then scanSpecializationAccumulators(loop)(slots)(rest)(state)
                                     else
                                         state
@@ -23859,30 +23803,41 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
                             |> markCallArgumentsMoved(spine)
                             |> emitTailSelfCallBackEdge(frame)(loop)(spine.arguments)(temps)(argumentTypes)
 
-// Stage 0's `LowerCallTryReuseInlineForm` trigger: a saturated helper call is spliced into its
-// site while a reuse token is live (so the helper's constructor can consume it), or under a
-// loop's back edge when the helper's result is fresh (so the argument passes without the
+// Whether a reuse specialization's body is being lowered (stage 0's `_inSpecialization`): its
+// fresh inputs are recorded from the generating call until the body is lowered.
+let loweringReuseSpecialization (state: CoreLoweringState) =
+    match stateSpecializationFreshInputs(state) with
+        | Some(_names) -> true
+        | None -> false
+
+// Stage 0's `LowerCallTryReuseInlineForm` trigger (`InlinesHelperCallHere`): a saturated helper
+// call is spliced into its site while a reuse token is live (so the helper's constructor can
+// consume it), anywhere in a reuse specialization's body (whose helpers it never captured), or
+// under a loop's back edge when the helper's result is fresh (so the argument passes without the
 // accepts-bit retain of a general call).
 let inlineHelperTriggered (state: CoreLoweringState) =
     match (state.reuseTokens, stateBackEdgeArgumentSlot(state)) with
         | (_token :: _rest, _slot) -> true
         | ([], Some(_slot)) -> true
-        | ([], None) -> false
+        | ([], None) -> loweringReuseSpecialization(state)
 
+// Only the back-edge trigger asks for a fresh result.
 let inlineHelperNeedsFreshResult (state: CoreLoweringState) =
     match state.reuseTokens with
-        | [] -> true
+        | [] -> loweringReuseSpecialization(state) == false
         | _token :: _rest -> false
 
-// The callee name resolves to a function binding at this site: a local shadowing the helper's
-// name with a non-function value keeps the call out of the inline path.
+// The callee name resolves to a function at this site: a local shadowing the helper's name with a
+// non-function value keeps the call out of the inline path (stage 0's `_shadowedInlinables`). A
+// name bound nowhere here is the top-level helper itself, which a spliced body (a reuse
+// specialization's, an inlined helper's) reaches without having captured it.
 let calleeBindsFunction (callee: Str) (state: CoreLoweringState) =
     match lookupBinding(callee)(state.bindings) with
         | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
             match resolveType(state)(body) with
                 | SemFunction(_parameter, _result, _row) -> true
                 | _ -> false
-        | None -> false
+        | None -> true
 
 let recursive parameterReachedBy (parameter: Str) (counts: List(ParameterReachEntry)) =
     match counts with
@@ -24133,14 +24088,6 @@ let reuseSpecializationCalleeType (callee: Str) (argumentCount: Int) (state: Cor
                 | _ -> None
         | None -> None
 
-// The last of a candidate's parameters, its accumulator, and whether the call passes one argument
-// per parameter.
-let recursive lastParameterName (parameters: List(Str)) =
-    match parameters with
-        | [] -> None
-        | parameter :: [] -> Some(parameter)
-        | _parameter :: rest -> lastParameterName(rest)
-
 // Stage 0's `QualifyVariableReuseSpecialization`: the accumulator is a bare name the enclosing
 // loop's entry deep copy already made uniquely owned, so the specialization may rewrite it in
 // place without proving the value itself fresh.
@@ -24173,6 +24120,38 @@ let specializationAccumulatorIsUnique (accumulator: Expr) (accumulatorType: Sema
 // accumulator, and mentions
 // only names a body lowered here can bind. A candidate already being specialized is skipped, so
 // neither the specialization's own self-calls nor the call it is generated for re-enter this path.
+// Stage 0's `SpecializationReferencesResolvable`: a specialization's body is lowered with its
+// helpers inlined wherever they are called (its arms hold the linear parameter's reuse tokens), so
+// a free name of the candidate resolves when it is bound here, a constructor, a top-level function
+// called by label, or an inlinable helper, whatever its result; a module qualifier
+// (`Ashes.Byte` of `Ashes.Byte.compare`) is not a binding at all.
+let specializationReferenceResolvesHere (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(_binding) -> true
+        | None ->
+            let constructors =
+                state
+                |> stateConstructorLayouts
+                |> constructorLayoutNames
+            in
+                Ashes.Text.contains(name)(".") || containsName(name)(constructors) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None || containsName(name)(stateInlinableHelpers(state))
+
+let recursive specializationReferencesResolveHere (names: List(Str)) (state: CoreLoweringState) =
+    match names with
+        | [] -> true
+        | name :: rest -> specializationReferenceResolvesHere(name)(state) && specializationReferencesResolveHere(rest)(state)
+
+// The accumulator type a call's gates read: the accumulator argument's own when it is a bound
+// name, which the call unifies with the callee's (possibly generic) accumulator parameter, stage
+// 0's argument source type; the callee's otherwise.
+let callAccumulatorType (accumulator: Expr) (calleeAccumulatorType: SemanticType) (state: CoreLoweringState) =
+    match unspanArgument(accumulator) with
+        | ExprVar(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { scheme = TypeScheme { body = body } }) -> resolveType(state)(body)
+                | None -> calleeAccumulatorType
+        | _ -> calleeAccumulatorType
+
 let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
@@ -24182,13 +24161,15 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                 |> stateSpecializationCandidates
                 |> lookupSpecializationCandidate(callee) with
                     | Some((parameters, value)) ->
-                        match (lastParameterName(parameters), lastArgument(spine.arguments)) with
+                        match (specializationLinearParameter(parameters)(value), lastArgument(spine.arguments)) with
                             | (Some(parameter), Some(accumulator)) ->
                                 match reuseSpecializationCalleeType(callee)(coreListLength(spine.arguments))(state) with
-                                    | Some((accumulatorType, functionType)) ->
-                                        if length(parameters) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType)(state) && specializationAccumulatorIsUnique(accumulator)(accumulatorType)(state) && inlinedReferencesResolveHere(collectFree(value)([callee])([]))([callee])(state)
-                                        then Some((callee, parameter, parameters, value, accumulatorType, functionType, spine.arguments))
-                                        else None
+                                    | Some((calleeAccumulatorType, functionType)) ->
+                                        let accumulatorType = callAccumulatorType(accumulator)(calleeAccumulatorType)(state)
+                                        in
+                                            if specializationArity(parameters)(value) == coreListLength(spine.arguments) && specializationRebuildsAccumulator(functionType)(coreListLength(spine.arguments)) && accumulatorLayoutIsPersistable(accumulatorType)(state) && specializationAccumulatorIsUnique(accumulator)(accumulatorType)(state) && specializationReferencesResolveHere(collectFree(value)([callee])([]))(state)
+                                            then Some((callee, parameter, parameters, value, accumulatorType, functionType, spine.arguments))
+                                            else None
                                     | None -> None
                             | _ -> None
                     | None -> None
@@ -24226,8 +24207,9 @@ let recursive specializedCallExpression (callee: Expr) (arguments: List(Expr)) =
 
 // Stage 0's `GetOrCreateReuseSpecialization` cache key: a specialization is monomorphized to the
 // call's own argument types, so a function used at two concrete types gets two of them, and two
-// call sites at the same type share one.
-let reuseSpecializationCacheKey (callee: Str) (functionType: SemanticType) = callee + "|" + formatSemanticType(functionType)
+// call sites at the same type share one. A generic callee's own type is the same at every call,
+// so the accumulator's concrete type keys it too.
+let reuseSpecializationCacheKey (callee: Str) (functionType: SemanticType) (accumulatorType: SemanticType) = callee + "|" + formatSemanticType(functionType) + "|" + formatSemanticType(accumulatorType)
 
 let recursive lookupReuseSpecialization (key: Str) (specializations: List((Str, Str))) =
     match specializations with
@@ -24340,7 +24322,7 @@ let recursive recordRoutedAccumulator (arguments: List(Expr)) (state: CoreLoweri
         | _ :: rest -> recordRoutedAccumulator(rest)(state)
 
 let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
-    (let cacheKey = reuseSpecializationCacheKey(callee)(functionType)
+    (let cacheKey = reuseSpecializationCacheKey(callee)(functionType)(accumulatorType)
     in
         let routed = recordRoutedAccumulator(arguments)(state)
         in
@@ -26637,6 +26619,7 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateProgramParameterOwnership(inferProgramParameterOwnership(functionTable))
         |> withStateMoveFunctionTable(functionTable)
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
+        |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))
         |> withReachSummaries(programReachSummaries(program)))
 
 // Seeds the state with the result-reach summaries of the functions a bare expression binds.

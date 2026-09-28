@@ -3325,6 +3325,19 @@ let testBackEdgeHelperCallingABuiltinLeavesNothingPerRound shipped unit =
     |> backEdgeHelperLoopSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBackEdgeHelperOneRound")("selfhost_backend_back_edge_helper_one_round_e2e"))
 
+// A loop threading a map through `Map.upsertStr` routes the call to the map's reuse
+// specialization, which copies what it stores and releases it: nothing a round builds is left.
+let mapUpsertLoopSource rounds = "import Ashes.Collection.Map\n\nlet keepFirst (key: Str) value map =\n    Ashes.Collection.Map.upsertStr(key)(value)(given (existing) -> existing)(map)\n\nlet recursive adjacencyOf (n: Int) (adj: MapTree(Str, List(Str))) =\n    if n == 0\n    then adj\n    else\n        adj\n        |> keepFirst(\"k\" + Ashes.Text.fromInt(n))([\"t\" + Ashes.Text.fromInt(n)])\n        |> adjacencyOf(n - 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + Ashes.Collection.Map.size(adjacencyOf(8)(Ashes.Collection.Map.empty)))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testMapUpsertLoopLeavesNothingPerRound shipped unit =
+    "selfhost_backend_map_upsert_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> mapUpsertLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMapUpsertTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> mapUpsertLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMapUpsertOneRound")("selfhost_backend_map_upsert_one_round_e2e"))
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5662,6 +5675,7 @@ let run shipped =
     |> testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
     |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
+    |> testMapUpsertLoopLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)

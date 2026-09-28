@@ -217,10 +217,43 @@ let testLoopScanFindsSpecializationAccumulator unit =
                         | Some((parameters, value)) ->
                             value
                             |> collectInnermostBody
-                            |> (given (body: Expr) -> collectSpecializableCallArgs(parameters)(["bump"])(body)([]))
+                            |> (given (body: Expr) -> collectSpecializableCallArgs(parameters)([("bump", 1)])(body)([]))
                             |> describeSpecializationAccumulators
                             |> test.assertEqual("acc->bump")
                         | None -> test.fail("rounds should be a specialization candidate")
+
+// A non-recursive function returning a nested single-parameter worker (`Map.set`'s shape) is a
+// candidate specialized on the worker's parameter, and a loop handing it its accumulator as the
+// extra argument after the outer ones is routed to it.
+let nestedWorkerSource unit = "type Tree =\n    | Leaf\n    | Node(Tree, Int, Tree)\n\nlet insertOne (key: Int) =\n    (let recursive go tree =\n        match tree with\n            | Leaf -> Node(Leaf, key, Leaf)\n            | Node(left, current, right) -> Node(go(left), current, right)\n    in go)\n\nlet recursive fill (keys: List(Int)) (tree: Tree) =\n    match keys with\n        | [] -> tree\n        | key :: rest -> fill(rest)(insertOne(key)(tree))\n\nfill([1, 2])(Leaf)\n"
+
+let recursive describeRoutable (routable: List((Str, Int))) =
+    match routable with
+        | [] -> ""
+        | (name, arity) :: rest -> name + "/" + Ashes.Text.fromInt(arity) + " " + describeRoutable(rest)
+
+let testNestedWorkerIsARoutableCandidate unit =
+    match Unit
+    |> nestedWorkerSource
+    |> parsed with
+        | ProgramSyntax { items = items } ->
+            let candidates = reuseSpecializationCandidates(items)
+            in
+                match lookupCandidateValue("fill")(candidates) with
+                    | Some((parameters, value)) ->
+                        let _ =
+                            candidates
+                            |> loopRoutableSpecializationCandidates
+                            |> describeRoutable
+                            |> test.assertEqual("insertOne/2 ")
+                        in
+                            value
+                            |> collectInnermostBody
+                            |> (given (body: Expr) ->
+                                collectSpecializableCallArgs(parameters)(loopRoutableSpecializationCandidates(candidates))(body)([]))
+                            |> describeSpecializationAccumulators
+                            |> test.assertEqual("tree->insertOne")
+                    | None -> test.fail("fill should be a specialization candidate")
 
 let testLoopAccumulatorGeneratesSpecialization unit =
     Unit
@@ -363,6 +396,7 @@ let runReuseFunctionSpecializationTests unit =
     |> testMultiParameterCandidateGeneratesSpecialization
     |> testMultiParameterSpecializationReusesListCell
     |> testLoopScanFindsSpecializationAccumulator
+    |> testNestedWorkerIsARoutableCandidate
     |> testLoopAccumulatorGeneratesSpecialization
     |> testLoopAccumulatorSpecializationReusesCells
     |> testLoopBackEdgeReclaimsItsArena
