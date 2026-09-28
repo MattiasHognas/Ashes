@@ -18145,6 +18145,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         labeled
                         |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
                         |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
+                        |> noteLetBoundFunction(label)(origin)
                         |> lowerFunctionBodyResolvingCalls(labeled
                         |> stateRecursiveDeclarationSpan
                         |> sugarChainBody(body))(given (entered: CoreLoweringState) ->

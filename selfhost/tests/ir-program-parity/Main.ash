@@ -330,7 +330,8 @@ let fixtures =
         "loop_record_cell_keeps_one_reference_to_parameter_field",
         "phantom_result_variable_owned_tuple_result",
         "choice_accumulator_cell_borrows_pattern_head",
-        "inline_annotation_type_variable_generic_loop"
+        "inline_annotation_type_variable_generic_loop",
+        "phantom_result_variable_recursive_loop_exit"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

@@ -1,0 +1,22 @@
+// A recursive function's loop exit returns a record beside a `None` whose type variable no
+// parameter names. The function is let-bound, so both stages read the variable as Never for the
+// result's layout at the loop's exit and at the call.
+type State =
+    | counter: Int
+    | items: List(Int)
+
+let recursive build (n: Int) (acc: Int) =
+    if n == 0
+    then (State(counter = acc, items = [acc, acc + 1]), acc + 1, None)
+    else build(n - 1)(acc + n)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else
+        match build(3)(n) with
+            | (state, m, _h) -> rounds(n - 1)(total + state.counter + m)
+
+0
+|> rounds(3)
+|> Ashes.IO.print

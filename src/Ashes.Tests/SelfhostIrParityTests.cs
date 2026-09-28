@@ -77,6 +77,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("loop_record_cell_keeps_one_reference_to_parameter_field")]
     [Arguments("phantom_result_variable_owned_tuple_result")]
     [Arguments("inline_annotation_type_variable_generic_loop")]
+    [Arguments("phantom_result_variable_recursive_loop_exit")]
     [Arguments("aggregate_borrowing_owner_kept_by_callee")]
     [Arguments("reuse_path_rebuild_declines_copy")]
     [Arguments("rc_child_of_call_argument_kept_by_callee_result")]
