@@ -107,7 +107,7 @@ let emitSpawnScratch builder i64 i8 i32 =
 // argv[0] = the executable, argv[1..] = the args list (each NUL-terminated), argv[n] = null —
 // capped at 256 entries with stage 0's exact too-many-arguments panic. Cons cells are the
 // untagged 16-byte `[head@0][tail@8]` pair, nil the zero word.
-let emitSpawnBuildArgv context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType scratch exeRef argsRef =
+let emitSpawnBuildArgv context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType scratch exeRef argsRef =
     (let listLoopBlock = appendBasicBlock(context)(function_)("spawn_list_loop")
     in
         let listBodyBlock = appendBasicBlock(context)(function_)("spawn_list_body")
@@ -118,7 +118,7 @@ let emitSpawnBuildArgv context function_ i64 i8 ptrType builder mallocFn mallocT
                 in
                     let listDoneBlock = appendBasicBlock(context)(function_)("spawn_list_done")
                     in
-                        let exeCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(exeRef)("spawn_exe")
+                        let exeCstr = emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(exeRef)("spawn_exe")
                         in
                             let _ =
                                 "spawn_slot0"
@@ -144,7 +144,7 @@ let emitSpawnBuildArgv context function_ i64 i8 ptrType builder mallocFn mallocT
                                         let headRef =
                                             buildLoad(builder)(i64)(buildIntToPtr(builder)(cursor)(ptrType)("spawn_head_ptr"))("spawn_head")
                                         in
-                                            let headCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(headRef)("spawn_arg")
+                                            let headCstr = emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(headRef)("spawn_arg")
                                             in
                                                 let slotAddr =
                                                     buildAdd(builder)(scratch.spawnArgvBase)(buildMul(builder)(argc)(constInt(i64)(8u64)(false))("spawn_slot_off"))("spawn_slot_addr")
@@ -260,13 +260,13 @@ let emitSpawnForkExec context function_ i64 i8 ptrType builder mallocFn mallocTy
 
 // `Ashes.IO.Process.spawn(exe)(args)`: `Result(Str, Process)` — stage 0's
 // `EmitLinuxSpawnProcess` phase for phase.
-let emitSpawnProcess context function_ i64 i8 i32 ptrType builder mallocFn mallocType memcpyFn memcpyType envpGlobal exeRef argsRef =
+let emitSpawnProcess context function_ i64 i8 i32 ptrType builder arena mallocFn mallocType memcpyFn memcpyType envpGlobal exeRef argsRef =
     (let scratch = emitSpawnScratch(builder)(i64)(i8)(i32)
     in
         let _ =
             buildStore(builder)(constInt(i64)(0u64)(false))(scratch.spawnResultSlot)
         in
-            let exeCstr = emitSpawnBuildArgv(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch)(exeRef)(argsRef)
+            let exeCstr = emitSpawnBuildArgv(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch)(exeRef)(argsRef)
             in
                 let _ =
                     "spawn_stdin_pipe_addr"

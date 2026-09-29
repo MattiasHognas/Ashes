@@ -44,6 +44,8 @@ export (
     value arenaConst,
     value arenaValueImmortalCount,
     value alignArenaSizeDynamic,
+    value emitStringToArenaCString,
+    value emitArenaResultAdt,
     value addZeroWordGlobal,
     value addInternalFunction,
     value loadWordAt,
@@ -333,6 +335,24 @@ let emitArenaAllocAdt context function_ builder i64 i8 ptrType (arena: ArenaRunt
 let alignArenaSizeDynamic builder i64 sizeRef name =
     buildAnd(builder)(buildAdd(builder)(sizeRef)(arenaConst(i64)(7))(name + "_plus_7"))(arenaConst(i64)(-8))(name)
 
+// A NUL-terminated copy of `stringRef`'s bytes for a syscall or a C call, allocated in the arena as
+// stage 0's `EmitStringToCString` allocates it: the call reads it before the scope that owns the
+// arena memory is reclaimed, so nothing has to free it. An Ashes `Str` is length-prefixed and
+// never NUL-terminated.
+let emitStringToArenaCString context function_ builder i64 i8 ptrType (arena: ArenaRuntime) memcpyFn memcpyType stringRef name =
+    match emitStringParts(builder)(i64)(ptrType)(stringRef)(name) with
+        | (len, srcAddr) ->
+            name + "_size"
+            |> buildAdd(builder)(len)(arenaConst(i64)(1))
+            |> (given (size) -> alignArenaSizeDynamic(builder)(i64)(size)(name + "_aligned"))
+            |> (given (aligned) -> emitArenaAllocDynamic(context)(function_)(builder)(i64)(arena)(aligned)(name + "_base"))
+            |> (given (base) -> buildIntToPtr(builder)(base)(ptrType)(name + "_buf"))
+            |> (given (destPtr) ->
+                Unit
+                |> (given (_) -> buildCall(builder)(memcpyType)(memcpyFn)([destPtr, buildIntToPtr(builder)(srcAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
+                |> (given (_) -> buildStore(builder)(constInt(i8)(0u64)(false))(buildGEP(builder)(i8)(destPtr)([len])(1u32)(name + "_nul_ptr")))
+                |> (given (_) -> destPtr))
+
 // The `1 << 62` immortal count an arena-resident `Str`/`BigInt` copy carries in its header (the
 // same sentinel a string literal's `.rodata` global holds): a retain or release on the value never
 // reaches zero, so only the arena reset that owns it ever frees it.
@@ -345,6 +365,17 @@ let storeWordAt builder i64 i8 ptrType baseRef offsetBytes value name =
     name
     |> memOffsetPtr(builder)(i64)(i8)(ptrType)(baseRef)(offsetBytes)
     |> buildStore(builder)(value)
+
+// A builtin's one-field `Result` (`Ok(value)` for tag 0, `Error(value)` for tag 1) in the arena, as
+// stage 0's `EmitResultOk`/`EmitResultError` build it by default: the lowering treats the result as
+// an arena value and never releases it.
+let emitArenaResultAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) tag fieldValue name =
+    name
+    |> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(1)(false)
+    |> (given (address) ->
+        Unit
+        |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(address)(8)(fieldValue)(name + "_field"))
+        |> (given (_) -> address))
 
 // An arena block of `16 + valueSize` bytes with the immortal RC header written, returned as the
 // value address (the word after the header) — stage 0's `EmitArenaValueAllocDynamic`.

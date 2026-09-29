@@ -3392,6 +3392,19 @@ let buildUnsignedParameterAnnotationModule shipped name context = codegenShipped
 let testRunStaticExecutableForUnsignedParameterAnnotationModule shipped unit =
     assertProgramPrints(buildUnsignedParameterAnnotationModule(shipped))("selfhostBackendRunUnsignedParameterAnnotation")("selfhost_backend_unsigned_parameter_annotation_e2e")("62")
 
+// A loop making one syscall per round: the path's NUL-terminated copy and the call's result live
+// in the arena, as stage 0 places them, so its live-cell report is the same at any round count.
+let syscallLoopSource rounds = "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        match Ashes.IO.File.exists(\"missing-\" + Ashes.Text.fromInt(n) + \".txt\") with\n            | Ok(_found) -> loop(n - 1)(total + 1)\n            | Error(_message) -> loop(n - 1)(total)\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testSyscallLoopLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo shipped unit =
+    "selfhost_backend_syscall_leak_check_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> syscallLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendSyscallLeakCheckTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> syscallLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendSyscallLeakCheckOneRound")("selfhost_backend_syscall_leak_check_one_round_e2e"))
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -5735,6 +5748,7 @@ let run shipped =
     |> testEmptyListJoinLoopLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
     |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)
+    |> testSyscallLoopLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)

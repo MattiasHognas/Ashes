@@ -1110,7 +1110,7 @@ let codegenInstructionKind cx builder kind state =
                                                 else emitArenaAlloc(context)(function_)(builder)(i64)(arena)(sizeBytes)("t" + Ashes.Text.fromInt(target))
                                             in ((target, blockRef) :: tempEnv, terminated)
                                         | ToCString(target, value) ->
-                                            ((target, buildPtrToInt(builder)(emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(value)(tempEnv))("ffi_cstring"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            ((target, buildPtrToInt(builder)(emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(lookupTemp(cx)(value)(tempEnv))("ffi_cstring"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | CallExternal(target, symbolName, _libraryName, argTemps, parameterTypes, returnType) ->
                                             let arguments = lookupIndexedAll(argTemps)(tempEnv)
                                             in
@@ -1210,7 +1210,7 @@ let codegenInstructionKind cx builder kind state =
                         // `Ok(false)`), so this always resolves `Ok(...)`, never `Error(...)`.
                                         | FileExists(target, path) ->
                                             let pathCstr =
-                                                emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(path)(tempEnv))("file_exists_path")
+                                                emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(lookupTemp(cx)(path)(tempEnv))("file_exists_path")
                                             in
                                                 let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("file_exists_path_addr")
                                                 in
@@ -1237,14 +1237,14 @@ let codegenInstructionKind cx builder kind state =
                                                                                     let _ = emitLinuxClose(builder)(i64)(fd)
                                                                                     in
                                                                                         let _ =
-                                                                                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(constInt(i64)(1u64)(false))("file_exists_result"))(resultSlot)
+                                                                                            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(constInt(i64)(1u64)(false))("file_exists_result"))(resultSlot)
                                                                                         in
                                                                                             let _ = buildBr(builder)(continueBlock)
                                                                                             in
                                                                                                 let _ = positionBuilderAtEnd(builder)(missingBlock)
                                                                                                 in
                                                                                                     let _ =
-                                                                                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(constInt(i64)(0u64)(false))("file_exists_result"))(resultSlot)
+                                                                                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(constInt(i64)(0u64)(false))("file_exists_result"))(resultSlot)
                                                                                                     in
                                                                                                         let _ = buildBr(builder)(continueBlock)
                                                                                                         in
@@ -1294,7 +1294,7 @@ let codegenInstructionKind cx builder kind state =
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | DirectoryEntries(target, path) ->
                                             let resultValue =
-                                                emitDirectoryEntries(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(directoryExternals)(lookupTemp(cx)(path)(tempEnv))("dir_entries_t" + Ashes.Text.fromInt(target))
+                                                emitDirectoryEntries(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(directoryExternals)(lookupTemp(cx)(path)(tempEnv))("dir_entries_t" + Ashes.Text.fromInt(target))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | DirectoryRemoveTree(target, path) ->
                                             let resultValue =
@@ -1304,7 +1304,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
-                                                |> emitFileOpen(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitFileOpen(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileReadChunk(target, fileHandle, count) ->
                                             let resultValue =
@@ -1328,13 +1328,13 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
-                                                |> emitFileReadText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitFileReadText(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileReadAllBytes(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
-                                                |> emitFileReadAllBytes(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitFileReadAllBytes(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | CopyFfiBytes(target, pointer, length) ->
                                             let resultValue =
@@ -1346,7 +1346,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(path)
-                                                |> emitFileMmap(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitFileMmap(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileWriteBytes(target, path, bytes) ->
                                             let resultValue =
@@ -1363,22 +1363,22 @@ let codegenInstructionKind cx builder kind state =
                                         | EnvironmentDirectory(target, directoryKind) ->
                                             let resultValue =
                                                 match directoryKind with
-                                                    | CurrentDirectory -> emitEnvironmentCurrentDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
-                                                    | ExecutableDirectory -> emitEnvironmentExecutableDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
-                                                    | TemporaryDirectory -> emitEnvironmentTemporaryDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
-                                                    | CacheDirectory -> emitEnvironmentCacheDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | CurrentDirectory -> emitEnvironmentCurrentDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | ExecutableDirectory -> emitEnvironmentExecutableDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | TemporaryDirectory -> emitEnvironmentTemporaryDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | CacheDirectory -> emitEnvironmentCacheDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | EnvironmentGet(target, name) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(name)
-                                                |> emitEnvironmentGet(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                |> emitEnvironmentGet(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | SpawnProcess(target, executable, args) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(args)
-                                                |> emitSpawnProcess(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(envpGlobal)(lookupTemp(cx)(executable)(tempEnv))
+                                                |> emitSpawnProcess(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(envpGlobal)(lookupTemp(cx)(executable)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | ProcessWriteStdin(target, process, text) ->
                                             let resultValue =

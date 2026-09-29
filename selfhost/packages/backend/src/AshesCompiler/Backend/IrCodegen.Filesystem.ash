@@ -549,11 +549,11 @@ let emitFilesystemStatusResult context function_ i64 i8 ptrType builder arena ma
                     |> buildCondBr(builder)(succeeded)(okBlock)
                     |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                     |> (given (_) ->
-                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
+                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
                     |> (given (_) -> buildBr(builder)(continueBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                     |> (given (_) ->
-                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(codes)(prefix + "_error_msg"))(prefix + "_error"))(resultSlot))
+                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(codes)(prefix + "_error_msg"))(prefix + "_error"))(resultSlot))
                     |> (given (_) -> buildBr(builder)(continueBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_status_value")))
@@ -573,7 +573,7 @@ let emitFileWriteText context function_ i64 i8 ptrType builder arena mallocFn ma
         in
             let fd =
                 "file_write_text_path"
-                |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)
                 |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)("file_write_text_path_addr"))
                 |> (given (pathAddr) ->
                     false
@@ -610,12 +610,12 @@ let emitFileReplace context function_ i64 i8 ptrType builder arena mallocFn mall
             in
                 let sourceAddr =
                     "file_replace_source"
-                    |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(sourceRef)
+                    |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(sourceRef)
                     |> (given (sourceCstr) -> buildPtrToInt(builder)(sourceCstr)(i64)("file_replace_source_addr"))
                 in
                     let destinationAddr =
                         "file_replace_destination"
-                        |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(destinationRef)
+                        |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(destinationRef)
                         |> (given (destinationCstr) -> buildPtrToInt(builder)(destinationCstr)(i64)("file_replace_destination_addr"))
                     in
                         let probeFd =
@@ -746,7 +746,7 @@ let emitDirectoryCreateAll context function_ i64 i8 ptrType builder arena malloc
                             in
                                 let statusSlot = buildEntryAlloca(builder)(i64)("dir_create_status_slot")
                                 in
-                                    let pathCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)("dir_create_path")
+                                    let pathCstr = emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)("dir_create_path")
                                     in
                                         let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("dir_create_path_addr")
                                         in
@@ -1143,7 +1143,7 @@ let emitDirectoryEntriesResult context function_ i64 i8 i32 ptrType builder mall
 // libc-stream port of stage 0's own `EmitLinuxDirectoryEntriesCore`. The current block is closed
 // with a branch to a fresh resume block first, so the two trampoline function bodies can be built
 // (repositioning the shared builder into them) without a `getInsertBlock` binding to restore from.
-let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder mallocFn mallocType freeFn freeType memcpyFn memcpyType dirExt pathRef prefix =
+let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder arena mallocFn mallocType freeFn freeType memcpyFn memcpyType dirExt pathRef prefix =
     (let resumeBlock = appendBasicBlock(context)(function_)(prefix + "_resume")
     in
         let trampolines =
@@ -1170,7 +1170,7 @@ let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder 
                                         in
                                             let pathAddr =
                                                 prefix + "_path"
-                                                |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                                                |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)
                                                 |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)(prefix + "_path_addr"))
                                             in
                                                 let dir =
@@ -1208,7 +1208,7 @@ let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType build
                         let pathCstr =
                             resumeBlock
                             |> positionBuilderAtEnd(builder)
-                            |> (given (_) -> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path"))
+                            |> (given (_) -> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path"))
                         in
                             let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
                             in
@@ -1246,7 +1246,7 @@ let fileReadChunkErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 
 // resource-side contract (automatic close at scope exit, use-after-close/double-close
 // diagnostics) is ownership work this codegen does not carry yet — an unclosed handle leaks its
 // fd until process exit.
-let emitFileOpen context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
+let emitFileOpen context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef =
     (let resultSlot = buildEntryAlloca(builder)(i64)("file_open_result")
     in
         let okBlock = appendBasicBlock(context)(function_)("file_open_ok")
@@ -1257,7 +1257,7 @@ let emitFileOpen context function_ i64 i8 ptrType builder mallocFn mallocType me
                 in
                     let fd =
                         "file_open_path"
-                        |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                        |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)
                         |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)("file_open_path_addr"))
                         |> (given (pathAddr) ->
                             false
@@ -1368,10 +1368,10 @@ let emitFileReadBlocks context function_ prefix =
     )
 
 // Open the path read-only; a negative fd skips straight to `readErrorBlock` (nothing to close).
-let emitFileReadOpen builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType pathRef blocks prefix =
+let emitFileReadOpen context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType pathRef blocks prefix =
     (let fd =
         prefix + "_path"
-        |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+        |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)
         |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)(prefix + "_path_addr"))
         |> (given (pathAddr) ->
             false
@@ -1500,7 +1500,7 @@ let emitFileReadFinish context function_ i64 i8 ptrType builder mallocFn mallocT
 // The shared whole-file read: `open` → measure/rewind → allocate `length + 8` → read loop →
 // wrap — stage 0's `EmitLinuxFileReadText` phase for phase, with `validateUtf8` selecting the
 // `readText` (capped, validated `Str`) or `readAllBytes` (uncapped, raw `Bytes`) flavor.
-let emitFileReadWhole context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType validateUtf8 pathRef prefix =
+let emitFileReadWhole context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType validateUtf8 pathRef prefix =
     (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
     in
         let remainingSlot = buildEntryAlloca(builder)(i64)(prefix + "_remaining")
@@ -1509,23 +1509,23 @@ let emitFileReadWhole context function_ i64 i8 ptrType builder mallocFn mallocTy
             in
                 let blocks = emitFileReadBlocks(context)(function_)(prefix)
                 in
-                    let fd = emitFileReadOpen(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)(blocks)(prefix)
+                    let fd = emitFileReadOpen(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)(blocks)(prefix)
                     in
                         let length = emitFileReadMeasure(builder)(i64)(fd)(validateUtf8)(blocks)(prefix)
                         in
                             let stringRef = emitFileReadLoop(builder)(i64)(i8)(mallocFn)(mallocType)(fd)(length)(remainingSlot)(cursorSlot)(blocks)(prefix)
                             in emitFileReadFinish(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fd)(validateUtf8)(stringRef)(length)(resultSlot)(blocks)(prefix))
 
-let emitFileReadText context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef = emitFileReadWhole(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)(pathRef)("file_read_text")
+let emitFileReadText context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef = emitFileReadWhole(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)(pathRef)("file_read_text")
 
-let emitFileReadAllBytes context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef = emitFileReadWhole(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)(pathRef)("file_read_bytes")
+let emitFileReadAllBytes context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef = emitFileReadWhole(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)(pathRef)("file_read_bytes")
 
 // `Ashes.IO.File.mmap(path)`: `open` → `lseek(SEEK_END)` → `mmap(NULL, len, PROT_READ,
 // MAP_PRIVATE, fd, 0)` → close → `Ok` of a zero-copy `Bytes` view `{len|VIEW, mappingAddr}` over
 // the program-lifetime mapping, stage 0's `EmitFileMmap` exactly: an empty file short-circuits to
 // `Ok` of an empty owned value (nothing to map), and a mapping failure (any result unsigned-above
 // `-4096`) reports the shared read-failed message.
-let emitFileMmap context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
+let emitFileMmap context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef =
     (let resultSlot = buildEntryAlloca(builder)(i64)("file_mmap_result")
     in
         let measureBlock = appendBasicBlock(context)(function_)("file_mmap_measure")
@@ -1546,7 +1546,7 @@ let emitFileMmap context function_ i64 i8 ptrType builder mallocFn mallocType me
                                     in
                                         let fd =
                                             "file_mmap_path"
-                                            |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                                            |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)
                                             |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)("file_mmap_path_addr"))
                                             |> (given (pathAddr) ->
                                                 false
@@ -1631,7 +1631,7 @@ let emitFileMakeExecutable context function_ i64 i8 i32 ptrType builder arena ma
             in
                 let joinBlock = appendBasicBlock(context)(function_)("file_executable_join")
                 in
-                    let pathCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)("file_executable_path")
+                    let pathCstr = emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)("file_executable_path")
                     in
                         let statStatus = buildCall(builder)(dirExt.lstatType)(dirExt.lstatFn)([pathCstr, statBuffer])(2u32)("file_executable_lstat")
                         in

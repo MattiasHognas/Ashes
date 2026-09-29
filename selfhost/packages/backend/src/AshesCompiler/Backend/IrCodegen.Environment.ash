@@ -11,6 +11,7 @@
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Filesystem
+import AshesCompiler.Backend.IrCodegen.Arena
 import Ashes.Number.UInt
 export (
     value environmentReadFailedCodes,
@@ -54,15 +55,15 @@ let emitEnvironmentStrlen builder dirExt valuePtr name = buildCall(builder)(dirE
 
 // `getenv(name)` for a runtime `Str` name: NUL-terminate it, call through the libc import, and
 // hand back the raw `char*` (null when the variable is unset).
-let emitEnvironmentRawGet builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType dirExt nameRef prefix =
+let emitEnvironmentRawGet context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType dirExt nameRef prefix =
     prefix + "_name"
-    |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(nameRef)
+    |> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(nameRef)
     |> (given (nameCstr) -> buildCall(builder)(dirExt.getenvType)(dirExt.getenvFn)([nameCstr])(1u32)(prefix + "_call"))
 
-let emitEnvironmentRawGetNamed builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType dirExt nameCodes prefix =
+let emitEnvironmentRawGetNamed context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType dirExt nameCodes prefix =
     prefix + "_name_str"
     |> emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(nameCodes)
-    |> (given (nameRef) -> emitEnvironmentRawGet(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(nameRef)(prefix))
+    |> (given (nameRef) -> emitEnvironmentRawGet(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(nameRef)(prefix))
 
 // Wrap `length` bytes at `bufferPtr` as `Ok(Str)` after a whole-buffer UTF-8 check — with `failed`
 // short-circuiting to `Error(read-failed)` and an invalid buffer landing on `Error(invalid-UTF-8)`,
@@ -150,7 +151,7 @@ let emitParentPathLength context function_ i64 i8 builder bufferPtr length prefi
 // `currentDirectory`/`executableDirectory`: fill a fixed 4 KiB stack buffer via `getcwd` or
 // `readlink("/proc/self/exe")` (the latter trimmed to the parent directory), then wrap it —
 // stage 0's Linux `EmitEnvironmentPlatformDirectory` arm.
-let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt wantExecutable =
+let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt wantExecutable =
     (let prefix =
         if wantExecutable
         then "env_exe"
@@ -167,7 +168,7 @@ let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder ma
                     let pathCstr =
                         prefix + "_path"
                         |> emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentProcSelfExeCodes)
-                        |> (given (pathRef) -> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path_c"))
+                        |> (given (pathRef) -> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path_c"))
                     in
                         let written = buildCall(builder)(dirExt.readlinkType)(dirExt.readlinkFn)([pathCstr, bufferPtr, constInt(i64)(4096u64)(false)])(3u32)(prefix + "_readlink")
                         in
@@ -185,9 +186,9 @@ let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder ma
                                 else safeLength
                             in emitEnvironmentUtf8Result(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferPtr)(length)(failed)(prefix))
 
-let emitEnvironmentCurrentDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentPlatformDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(false)
+let emitEnvironmentCurrentDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentPlatformDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(false)
 
-let emitEnvironmentExecutableDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentPlatformDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(true)
+let emitEnvironmentExecutableDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentPlatformDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(true)
 
 // One candidate env value: UTF-8-validate it, append the static `suffixCodes` when non-empty
 // (`HOME` + `/.cache`), and store `Ok` — stage 0's `EmitEnvironmentFallbackValue`.
@@ -217,7 +218,7 @@ let emitEnvironmentFallbackValue context function_ i64 i8 ptrType builder malloc
 // fall back — to the literal `fallbackCodes` when `suffixCodes` is empty (`TMPDIR` else `/tmp`),
 // otherwise to env `fallbackCodes` + `suffixCodes` (`XDG_CACHE_HOME` else `HOME` + `/.cache`) —
 // stage 0's `EmitEnvironmentFallbackDirectory`.
-let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt preferredCodes fallbackCodes suffixCodes prefix =
+let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt preferredCodes fallbackCodes suffixCodes prefix =
     (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
     in
         let preferredBlock = appendBasicBlock(context)(function_)(prefix + "_preferred_value")
@@ -230,7 +231,7 @@ let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder ma
                     in
                         let doneBlock = appendBasicBlock(context)(function_)(prefix + "_done")
                         in
-                            let preferred = emitEnvironmentRawGetNamed(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(preferredCodes)(prefix + "_preferred")
+                            let preferred = emitEnvironmentRawGetNamed(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(preferredCodes)(prefix + "_preferred")
                             in
                                 let preferredOkBlock = appendBasicBlock(context)(function_)(prefix + "_preferred_ok")
                                 in
@@ -259,7 +260,7 @@ let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder ma
                                                         let fallbackValueBlock = appendBasicBlock(context)(function_)(prefix + "_fallback_value")
                                                         in
                                                             prefix + "_fallback_env"
-                                                            |> emitEnvironmentRawGetNamed(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(fallbackCodes)
+                                                            |> emitEnvironmentRawGetNamed(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(fallbackCodes)
                                                             |> (given (fallback) ->
                                                                 fallbackValueBlock
                                                                 |> buildCondBr(builder)(emitEnvironmentPtrIsNull(builder)(i64)(fallback)(prefix + "_fallback_missing"))(missingBlock)
@@ -279,13 +280,13 @@ let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder ma
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
 
-let emitEnvironmentTemporaryDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentFallbackDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(environmentTmpdirNameCodes)(environmentTmpFallbackCodes)([])("env_temp")
+let emitEnvironmentTemporaryDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentFallbackDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(environmentTmpdirNameCodes)(environmentTmpFallbackCodes)([])("env_temp")
 
-let emitEnvironmentCacheDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentFallbackDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(environmentXdgCacheNameCodes)(environmentHomeNameCodes)(environmentCacheSuffixCodes)("env_cache")
+let emitEnvironmentCacheDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentFallbackDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(environmentXdgCacheNameCodes)(environmentHomeNameCodes)(environmentCacheSuffixCodes)("env_cache")
 
 // `Ashes.IO.Environment.get(name)`: empty name is an `Error`, an unset variable `Ok(None)`, a set
 // one `Ok(Some(value))` after UTF-8 validation — stage 0's `EmitEnvironmentGet` block for block.
-let emitEnvironmentGet context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt nameRef =
+let emitEnvironmentGet context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt nameRef =
     (let resultSlot = buildEntryAlloca(builder)(i64)("env_get_result")
     in
         let invalidNameBlock = appendBasicBlock(context)(function_)("env_get_invalid_name")
@@ -312,7 +313,7 @@ let emitEnvironmentGet context function_ i64 i8 ptrType builder mallocFn mallocT
                                                 buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentEmptyNameCodes)("env_get_empty_msg"))("env_get_empty_err"))(resultSlot))
                                             |> (given (_) -> buildBr(builder)(doneBlock))
                                             |> (given (_) -> positionBuilderAtEnd(builder)(lookupBlock))
-                                            |> (given (_) -> emitEnvironmentRawGet(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(nameRef)("env_get"))
+                                            |> (given (_) -> emitEnvironmentRawGet(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(nameRef)("env_get"))
                                         in
                                             let valueLength =
                                                 valueBlock
