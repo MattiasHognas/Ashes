@@ -427,10 +427,14 @@ let recursive stepLiveness (blocks: List(IrCfgBlock)) (region: List(Int)) (facts
         | blockIndex :: rest ->
             match listAt(blocks)(blockIndex) with
                 | Some(IrCfgBlock { blockSuccessors = successors }) ->
-                    liveness
-                    |> anyLiveSuccessor(successors)(region)
-                    |> (given (liveOut) -> BlockLiveness(livenessBlock = blockIndex, livenessIn = hasUse(blockIndex)(facts) || liveOut, livenessOut = liveOut))
-                    |> (given (entry) -> entry :: stepLiveness(blocks)(region)(facts)(liveness)(rest))
+                    // The entry is let-bound, not piped into a lambda: consed in the function's own
+                    // body onto its own result, the cell takes the entry's reference, where a cell
+                    // built in a lambda borrowing the entry would be an arena one the entry leaks from.
+                    let entry =
+                        liveness
+                        |> anyLiveSuccessor(successors)(region)
+                        |> (given (liveOut) -> BlockLiveness(livenessBlock = blockIndex, livenessIn = hasUse(blockIndex)(facts) || liveOut, livenessOut = liveOut))
+                    in entry :: stepLiveness(blocks)(region)(facts)(liveness)(rest)
                 | None -> stepLiveness(blocks)(region)(facts)(liveness)(rest)
 
 let recursive fixLiveness (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) =
