@@ -575,6 +575,26 @@ F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoi
    discovered one failure at a time. The semantics package was last swept on 2026-09-17 and is due
    again. What remained there was SEM-22, confined to its own module, and a memory cap that was mostly
    repeated lowering. Gates: BOOT-2.
+
+   The leak census run under stage 1 (2026-09-28) found five more gaps it cannot close alone.
+   Each has a reproducer under `scripts/selfhost-dev/reproducers/`:
+
+   - A static `provide` is never wired into whole-program lowering (CAP-7, typed by CAP-9), so a
+     provided operation compiles and then exits "Unhandled capability operation":
+     `provided_capability_called_in_function.ash`. It covers all 15 no-count census cases left.
+   - A generic capability's operation result is not unified with its arm's `resume` argument, so
+     a handle valued by its body keeps a type variable that `print` rejects:
+     `handle_result_of_generic_capability_printed.ash`.
+   - A type selector import of a shipped module (`import Ashes.Collection.Map.MapTree`) fails to
+     stitch with `ShippedModuleMissing`: `shipped_type_selector_import.ash`.
+   - An unknown type name in an annotation surfaces as an ASH002 mismatch at a call, not as
+     stage 0's unknown-type diagnostic (whose span points at `<std:Ashes.Trait>:1:1`):
+     `unknown_type_name_in_annotation.ash`.
+   - Both stages accept a shipped type named without an import of its module, which the
+     language reference's import rules do not allow: `unimported_shipped_type_accepted.ash`.
+
+   The same run's parse errors on a parenthesized `let` whose value is a nested `let ... in`, the
+   unbound handler-arm capture (`capabilityClosureResultNNNN`) and the `u8 vs u8` mismatch are fixed.
 G. **Compile the whole self-hosted tree with stage 1.** With step A landed this is a loop of about
    two and a half minutes, a stage-1 build and a run, rather than a run that dies of memory: read the
    first diagnostic, find where it was raised, fix it, repeat. The three known stops are the ones
