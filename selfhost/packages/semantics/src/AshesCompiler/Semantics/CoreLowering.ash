@@ -23486,7 +23486,8 @@ let recursive fieldReadBase (temp: Int) (instructions: List(IrInstruction)) =
 
 // Stage 0's `OwnedSlotPartBoundInto`: a binding stored once with a field read out of an owned
 // slot's value (a pattern binding of a call's owned result), a part of a value holding its own
-// references, which stays alive with it.
+// references, which stays alive with it. A binding stored once with the owned slot's value itself
+// (`let next = f(x)`) is that value.
 let ownedSlotPartBound (slot: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
     if slotStoreCount(slot)(0)(instructions) != 1
     then false
@@ -23495,7 +23496,7 @@ let ownedSlotPartBound (slot: Int) (ownedSlots: List((Int, SemanticType))) (inst
             | None -> false
             | Some((partTemp, earlier)) ->
                 let baseTemp = fieldReadBase(partTemp)(earlier)
-                in baseTemp >= 0 && readsOwnedSlotDirectly(baseTemp)(ownedSlots)(earlier)
+                in baseTemp >= 0 && readsOwnedSlotDirectly(baseTemp)(ownedSlots)(earlier) || readsOwnedSlotDirectly(partTemp)(ownedSlots)(earlier)
 
 // Stage 0's `OwnedSlotReadInto` with parts: whether a successor argument is a plain read of an
 // owned slot, or, through its borrow, of a part of an owned slot's value.

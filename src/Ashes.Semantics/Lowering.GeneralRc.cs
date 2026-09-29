@@ -491,6 +491,9 @@ public sealed partial class Lowering
 
     // A binding stored once with a field read out of an owned slot's value (a pattern binding of a
     // call's owned result): a part of a value holding its own references, which stays alive with it.
+    // A binding stored once with the owned slot's value itself (`let next = f(x)`) is that value.
+    private static bool OwnedSlotAliasesEnabled => Environment.GetEnvironmentVariable("GRC_NO_OWNEDSLOTALIAS") is null;
+
     private int OwnedSlotPartBoundInto(int slot, List<GeneralRcOwnedSlot> ownedSlots)
     {
         if (Environment.GetEnvironmentVariable("GRC_NO_OWNEDSLOTPART") is not null)
@@ -522,6 +525,11 @@ public sealed partial class Lowering
         {
             if (StateMachineTransform.GetDefinedTemps(_inst[i]).Contains(partTemp))
             {
+                if (_inst[i] is IrInst.LoadLocal alias && OwnedSlotAliasesEnabled)
+                {
+                    return ownedSlots.Any(owned => owned.Slot == alias.Slot) ? alias.Slot : -1;
+                }
+
                 baseTemp = _inst[i] switch
                 {
                     IrInst.LoadMemOffset read => read.BasePtr,

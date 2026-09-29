@@ -2845,6 +2845,33 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Map_loop_successor_bound_by_let_releases_the_earlier_map_at_the_back_edge()
+    {
+        // A map handed on through a let binding of the call that built it, on the general path a
+        // map takes without its reuse specialization (the path stage 1 compiles). The binding is
+        // the owned result itself, so the back edge releases the previous iteration's map, as it
+        // does when the call is written in the argument's place. (The map's updates grow the arena
+        // per round on this path, so this is checked on the lowered loop.)
+        GeneralRcDropsInLoop(BuildMapLoopSuccessorBoundByLetProgram(3), "solve").ShouldBe(3);
+    }
+
+    // The general droppers a loop's closure helper calls, the loop lowered without reuse
+    // specializations.
+    private static int GeneralRcDropsInLoop(string source, string loopName)
+    {
+        IrProgram ir = LowerProgramWithImportsWithoutReuse(source);
+        IrFunction loop = ir.Functions
+            .Where(function => function.Origin is { Kind: IrFunctionOriginKind.ClosureHelper, Source.SourceName: var name }
+                && string.Equals(name, loopName, StringComparison.Ordinal))
+            .Single(function => function.Instructions.Any(instruction =>
+                instruction is IrInst.Jump { Target: var target }
+                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+        return loop.Instructions.Count(instruction =>
+            instruction is IrInst.CallKnown { FuncLabel: var label }
+                && label.StartsWith("__rcdrop_general", StringComparison.Ordinal));
+    }
+
+    [Test]
     public async Task Linux_backend_choice_accumulator_cell_borrows_pattern_head_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -7837,6 +7864,26 @@ public sealed class LinuxBackendCoverageTests
     internal static IrProgram LowerProgramWithImports(string source)
         => LowerProgramWithImportsAndLowering(source).Ir;
 
+    // A program with imports lowered without reuse specializations, the general path stage 1 takes.
+    private static IrProgram LowerProgramWithImportsWithoutReuse(string source)
+    {
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
+        HashSet<string> importedStdModules = parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal);
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(
+            diagnostics,
+            importedStdModules,
+            parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases,
+            layout.ConstructorModules,
+            new LoweringConfiguration(EnableReuse: false));
+        IrProgram ir = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
     internal static (Lowering Lowering, IrProgram Ir) LowerProgramWithImportsAndLowering(string source)
     {
         var parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
@@ -11052,6 +11099,36 @@ public sealed class LinuxBackendCoverageTests
             let wide = "{{new string('w', 480)}}"
 
             let run (seed: Int) = size(solve([wide + "1", wide + "2"])([])(Leaf)(7)) + seed
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMapLoopSuccessorBoundByLetProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map
+            import Ashes.Collection.List
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> queued
+                            | _ -> solve(Ashes.Collection.List.reverse(back))([])(queued)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then queued
+                        else
+                            let dequeued = Ashes.Collection.Map.setStr(key)(false)(queued)
+                            in solve(rest)((key + "x") :: back)(dequeued)(fuel - 1)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let run (seed: Int) = Ashes.Collection.Map.size(solve([wide + "1", wide + "2"])([])(Ashes.Collection.Map.empty)(7)) + seed
 
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0
