@@ -3859,6 +3859,15 @@ let patternOwnerFlag (fact: Maybe(PatternBindingFact)) =
 // child that reads a pattern owner takes a duplicate of that read — an identity marker until the
 // loop's finalize pass turns it into a real retain for a pattern owner it places on the
 // reference-counted heap.
+// A pattern-owner duplicate forwards the runtime fact of the value it duplicates, as stage 0's
+// `PropagateRcDupOwnership` forwards an identity marker's source ownership: the duplicate of a
+// head the cell's normalization copied into a fresh reference-counted value is that value, and
+// the cell built on it is reference-counted.
+let forwardRuntimeTemp (sourceTemp: Int) (targetTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(sourceTemp)(state) with
+        | Some(runtimeState) -> markRuntimeTemp(targetTemp)(runtimeState)(state)
+        | None -> state
+
 let duplicatePatternOwnerTemp (child: Expr) (temp: Int) (state: CoreLoweringState) =
     match unspanArgument(child) with
         | ExprVar(name) ->
@@ -3870,8 +3879,9 @@ let duplicatePatternOwnerTemp (child: Expr) (temp: Int) (state: CoreLoweringStat
                     then (state, temp)
                     else
                         match freshTemp(state) with
-                            | FreshTemp { state = allocated, temp = duplicate } ->
-                                (emit(RcDup(duplicate)(temp)(false)(false))(allocated), duplicate)
+                            | FreshTemp { state = allocated, temp = duplicate } -> (allocated
+                            |> emit(RcDup(duplicate)(temp)(false)(false))
+                            |> forwardRuntimeTemp(temp)(duplicate), duplicate)
                 | None -> (state, temp)
         | _ -> (state, temp)
 

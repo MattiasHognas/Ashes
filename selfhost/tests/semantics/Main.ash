@@ -41,6 +41,7 @@ import CoreLoweringTests
 import CoreProgramLoweringTests
 import RecursiveProducerResultTests
 import TcoParameterHeadCellTests
+import PairwiseHeadCellTests
 import FunctionFieldLoweringTests
 import ResultPipeLoweringTests
 import CapabilityProgramLoweringTests
@@ -117,6 +118,7 @@ let run unit =
     |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
     |> (given (_) -> RecursiveProducerResultTests.runRecursiveProducerResultTests(Unit))
     |> (given (_) -> TcoParameterHeadCellTests.runTcoParameterHeadCellTests(Unit))
+    |> (given (_) -> PairwiseHeadCellTests.runPairwiseHeadCellTests(Unit))
     |> (given (_) -> FunctionFieldLoweringTests.runFunctionFieldLoweringTests(Unit))
     |> (given (_) -> ResultPipeLoweringTests.runResultPipeLoweringTests(Unit))
     |> (given (_) -> CapabilityProgramLoweringTests.runCapabilityProgramLoweringTests(Unit))
