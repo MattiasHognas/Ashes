@@ -575,7 +575,7 @@ let placedDrop (anchor: OwnerAnchor) (slot: Int) (region: OwnerRegion) =
 // The compensating dups one owner load needs after it within its block: a record-field store of
 // an alias into a runtime-managed cell (an arena- or stack-allocated cell borrows instead, see
 // `arenaAdtCellTarget`), and a closure call handing an alias on while the owner stays live
-// afterwards.
+// afterwards. Either dup skips an empty list (a null reference) as the owner's own does.
 let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: List(Int)) (keepsLiveAfter: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) =
     match indexed with
         | [] -> (insertions, tempCount)
@@ -593,7 +593,7 @@ let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: 
                     else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
                 | CallClosure(_target, _closure, argument, _flag) ->
                     if sortedSetContains(argument)(aliases) && keepsLiveAfter
-                    then (append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(argument)(anchor.anchorRuntimeManaged)(false), location = location))]), tempCount + 1)
+                    then (append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(argument)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]), tempCount + 1)
                     else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
                 | _ -> callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
 
