@@ -452,9 +452,10 @@ let recordListAccumulatorSource = "type State =\n    | label: Str\n    | count: 
 // head copied into a fresh reference-counted cell), the record read consed at the back edge is
 // retained for the cell (the marker promoted once the parameter is placed), the back edge's cons
 // cell lives on the reference-counted heap, and the list's exit release and the arena-result
-// boundary each walk its cells. The exit arm's arena cell only borrows its head and tail: the
-// result's copy takes its own references before the loop releases its parameters. The record is
-// a contract record, so every copy of it goes through its normalization helper.
+// boundary each walk its cells. The exit arm's cell is reference-counted as well: it retains the
+// record and takes a reference to the accumulator, or a copy of it, before the loop releases its
+// parameters. The record is a contract record, so every copy of it goes through its normalization
+// helper.
 let expectRecordListAccumulatorIsRuntimeManaged unit =
     recordListAccumulatorSource
     |> loopLines("[ClosureHelper from collect]")
@@ -462,7 +463,7 @@ let expectRecordListAccumulatorIsRuntimeManaged unit =
         Unit
         |> (given (_) -> check("the entry normalizes the borrowed list under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
         |> (given (_) -> check("the entry deep-copies the list cell by cell")(countContaining("rc_normalize_list")(lines) > 0))
-        |> (given (_) -> check("the record read is retained for the back edge's cell only")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 1))
+        |> (given (_) -> check("the record read is retained for the exit arm's cell and for the back edge's")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 2))
         |> (given (_) -> check("the exit arm's tail takes no retain")(countContainingBoth("RcDup")("MayBeEmpty=true")(lines) == 0))
         |> (given (_) -> check("the back edge's cons cell lives on the reference-counted heap")(countContainingBoth("Alloc ")("SizeBytes=16 RuntimeManaged=true")(lines) >= 2))
         |> (given (_) -> check("the accumulator releases as a list at the exit and at the arena-result boundary")(countContainingBoth("RcDrop")("TypeName=List RuntimeManaged=true")(lines) == 4)))

@@ -580,6 +580,9 @@ public sealed partial class Lowering
     // its successor with references of its own: the cell borrows its head and tail.
     private Expr? _backEdgeCopiedCell;
 
+    // The cons a loop returns onto one of its list parameters, while it is lowered.
+    private Expr.Cons? _loopExitCell;
+
     private static bool CopiedCellBorrowsEnabled => Environment.GetEnvironmentVariable("GRC_NO_COPIEDCELLBORROW") is null;
 
     // The parameter slot the tail self-call argument being lowered is stored into (-1 outside a
@@ -16215,6 +16218,12 @@ public sealed partial class Lowering
         request = request.AddRuntime(
             IsRecursiveProducerTail(cons.Tail) || tmcCandidate,
             LoweredValueRuntimeRepresentation.List);
+        int parameterSlot = -1;
+        bool exitCell = !tmcCandidate && IsLoopExitCellOverParameter(cons, savedTailPos, out parameterSlot);
+        if (exitCell)
+        {
+            request = request.WithRuntimeListContext(tailBinding: null, tailShared: false, tcoTailSlot: parameterSlot);
+        }
 
         TypeRef? expectedElementType = request.ExpectedType is not null
             && Prune(request.ExpectedType) is TypeRef.TList expectedList
@@ -16240,7 +16249,42 @@ public sealed partial class Lowering
             RecordTmcDecline(head);
         }
 
-        return LowerConsTail(cons, head, listType, transfersChildren, savedTailPos, request);
+        Expr.Cons? outerExitCell = _loopExitCell;
+        _loopExitCell = exitCell ? cons : null;
+        try
+        {
+            return LowerConsTail(cons, head, listType, transfersChildren, savedTailPos, request);
+        }
+        finally
+        {
+            _loopExitCell = outerExitCell;
+        }
+    }
+
+    // The cell a loop returns consed onto one of its list parameters (`| [] -> first :: acc`) is
+    // reference-counted, like the cell a back edge conses onto an accumulator, when an arena cell
+    // there would hold a reference nothing releases: to the accumulator its back edges grow on the
+    // reference-counted heap, or to a head that is not a scalar. Neither the caller, which sees an
+    // arena result, nor the join that copies it beside a reference-counted arm releases them. A
+    // cell of scalars over a parameter handed on unchanged holds no reference and stays in the arena.
+    private bool IsLoopExitCellOverParameter(Expr.Cons cons, bool inTailPosition, out int parameterSlot)
+    {
+        parameterSlot = -1;
+        if (!inTailPosition
+            || !CanTestRepresentation
+            || Environment.GetEnvironmentVariable("GRC_NO_EXITCELL") is not null
+            || _tcoCtx is not { } tco
+            || cons.Tail is not Expr.Var tail
+            || Lookup(tail.Name) is not Binding.Local local
+            || !tco.ParamSlots.Contains(local.Slot)
+            || !(tco.ParamFacts.TryGetValue(local.Slot, out TcoParamStaticFacts? facts) && facts.AffineConsList
+                || !(Prune(local.T) is TypeRef.TList list && CanArenaReset(Prune(list.Element)))))
+        {
+            return false;
+        }
+
+        parameterSlot = local.Slot;
+        return true;
     }
 
     private (int, TypeRef) LowerConsTail(
@@ -16311,6 +16355,16 @@ public sealed partial class Lowering
     // unplaced let-bound one takes a reference when it is reference-counted or a copy when it is not.
     private int PrepareRuntimeRcConsTail(Expr tail, int tailTemp, TypeRef tailType, LoweredValueRequest request)
     {
+        // A back edge's cell takes the accumulator over from the iteration it replaces. The cell the
+        // loop returns shares the parameter with the loop, which still releases it at its exit, or
+        // with the caller that lent it, so it takes a reference of its own when the list is
+        // reference-counted and a copy when it is not, whatever the parameter's placement.
+        if (_loopExitCell is { } exitCell && ReferenceEquals(exitCell.Tail, tail) && Prune(tailType) is TypeRef.TList exitList)
+        {
+            int parameterTemp = tailTemp;
+            return EmitReferenceOrCopy(parameterTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(parameterTemp, exitList));
+        }
+
         tailTemp = PrepareRuntimeRcListTail(tail, tailTemp, request);
         if (request.RuntimeListTailBinding is not null || !IsRecursiveProducerTail(tail))
         {

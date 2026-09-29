@@ -93,7 +93,8 @@ internal sealed class FixpointComparesRebuiltListTemplate() : LeakCombinationTem
 /// <summary>
 /// A loop consing the concatenation of two elements onto its accumulator, the pairwise pass of the
 /// standard library's `Text.join` that stage 1's parser and project graph call for every qualified
-/// name and path. Still open: a concatenation leaks.
+/// name and path. The cell its exit arm returns (<c>| [] -&gt; first :: acc</c>) is
+/// reference-counted, like the cells its back edges cons.
 /// </summary>
 internal sealed class PairwiseConcatAccumulatorTemplate() : LeakCombinationTemplate(
     "leak.pairwise-concat-accumulator", "pairwiseConcat", GeneratedFeature.TailCall, GeneratedFeature.Match)

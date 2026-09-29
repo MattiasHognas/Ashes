@@ -4245,6 +4245,43 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_loop_exit_cell_memory_should_plateau()
+    {
+        // `| [] -> first :: acc` and `| [] -> "end" :: acc`: the cell a loop returns consed onto its
+        // list parameter is reference-counted and takes a reference to the parameter of its own. An
+        // arena cell there held references to its head and to the parameter that nothing released:
+        // not the caller, which saw an arena result, nor the join copying it beside `| [] -> acc`.
+        IrProgram ir = LowerProgramWithImports(BuildLoopExitCellProgram(3));
+        foreach (string loopName in new[] { "pairwiseGo", "stampEnd" })
+        {
+            IrFunction loop = ir.Functions.Single(function =>
+                function.Origin is { Source.SourceName: var sourceName }
+                && string.Equals(sourceName, loopName, StringComparison.Ordinal)
+                && function.Instructions.Any(instruction => instruction is IrInst.Jump { Target: var target }
+                    && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+            loop.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: false })
+                .ShouldBe(0, $"Every cell {loopName} conses is reference-counted.");
+        }
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildLoopExitCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cells a loop returns onto its list parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_text_join_of_loop_built_views_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10831,6 +10868,36 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildLoopExitCellProgram(int rounds)
+        => $$"""
+            let recursive collect (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive pairwiseGo (acc: List(Str)) (parts: List(Str)) =
+                match parts with
+                    | [] -> acc
+                    | first :: rest ->
+                        match rest with
+                            | [] -> first :: acc
+                            | second :: more -> pairwiseGo((first + second) :: acc)(more)
+
+            let recursive stampEnd (acc: List(Str)) (parts: List(Str)) =
+                match parts with
+                    | [] -> "end" :: acc
+                    | part :: rest -> stampEnd((part + "!") :: acc)(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(pairwiseGo([])(collect(3)([]))) + Ashes.Collection.List.length(stampEnd([])(collect(2)([]))))
 
             0
             |> rounds({{rounds}})

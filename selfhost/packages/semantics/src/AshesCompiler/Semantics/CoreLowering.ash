@@ -19021,6 +19021,57 @@ let emitReferenceCountedListTail (tailTemp: Int) (plan: ArgumentCopyPlan) (state
                                                                         | FreshTemp { state = resulted, temp = resultTemp } ->
                                                                             (emit(LoadLocal(resultTemp)(resultSlot))(resulted), resultTemp)
 
+// Whether an arena cell the loop returned over the parameter would hold a reference nothing
+// releases: to the accumulator its back edges grow on the reference-counted heap, or to a head that
+// is not a scalar.
+let loopParameterIsGrownAccumulator (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) =
+    match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
+        | Some(ordinal) -> shapeAtOrdinal(ordinal)(loop.argumentShapes) == TcoGrownConsShape
+        | None -> false
+
+let listBindingHoldsNonScalars (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+            match resolveType(state)(body) with
+                | SemList(element) -> !resultSurvivesReset(element)(state)
+                | _ -> true
+        | None -> true
+
+let loopExitCellHoldsReference (name: Str) (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) = loopParameterIsGrownAccumulator(slot)(frame)(loop) || listBindingHoldsNonScalars(name)(state)
+
+// Stage 0's `IsLoopExitCellOverParameter`: the cell a loop returns consed onto one of its list
+// parameters (`| [] -> first :: acc`) is reference-counted, like the cell a back edge conses onto
+// an accumulator, when an arena cell there would hold a reference nothing releases. Neither the
+// caller, which sees an arena result, nor the join that copies it beside a reference-counted arm
+// releases it. A cell of scalars over a parameter handed on unchanged stays in the arena.
+let loopExitCellSlot (request: ConsumerRequest) (tailExpression: Expr) (state: CoreLoweringState) =
+    match (canTestRepresentation && request.consTailPosition, stateTcoLoop(state), stateTcoLoopFrame(state), unspanArgument(tailExpression)) with
+        | (true, Some(loop), Some(frame), ExprVar(name)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) ->
+                    if loopExitCellHoldsReference(name)(slot)(frame)(loop)(state)
+                    then Some(slot)
+                    else None
+                | None -> None
+        | _ -> None
+
+let loopExitCellRequest (tailExpression: Expr) (state: CoreLoweringState) (request: ConsumerRequest) =
+    match loopExitCellSlot(request)(tailExpression)(state) with
+        | Some(slot) -> request with runtimeList = true, runtimeTcoListTailSlot = Some(slot)
+        | None -> request
+
+// A back edge's cell takes the accumulator over from the iteration it replaces. The cell the loop
+// returns shares the parameter with the loop, which still releases it at its exit, or with the
+// caller that lent it, so it takes a reference of its own when the list is reference-counted and a
+// copy when it is not, whatever the parameter's placement.
+let referenceOrCopyLoopExitTail (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
+    match argumentCopyPlanOf(tailType)(state) with
+        | Some(plan) ->
+            emitReferenceOrCopy(tailTemp)(state
+            |> entryCopyPlanOf(tailType)(plan)
+            |> emitArgumentCopyByCopy(tailTemp))(state)
+        | None -> (state, tailTemp)
+
 // Stage 0's `PrepareRuntimeRcListTail`: the cons argument of a tail self-call whose tail reads the
 // loop's own list accumulator takes that list over rather than copying it.
 let prepareRuntimeRcListTail (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
@@ -19051,6 +19102,11 @@ let referenceOrCopyUnplacedLetTail (applies: Bool) (tailExpression: Expr) (tailT
             |> emitArgumentCopyByCopy(tailTemp))(state)
         | _ -> (state, tailTemp)
 
+let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
+    match loopExitCellSlot(request)(tailExpression)(state) with
+        | Some(_slot) -> referenceOrCopyLoopExitTail(tailTemp)(tailType)(state)
+        | None -> prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(state)
+
 // The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
 // it exactly like an escaping tuple element, and is retained. A recursive producer result stored
 // in a runtime cell also needs its own reference when an existing local owns the tail.
@@ -19060,7 +19116,7 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
             let managed = cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(tailState)
             in
                 match if managed
-                then prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(tailState)
+                then prepareRuntimeRcConsTail(request)(tailExpression)(tailTemp)(tailType)(tailState)
                 else (tailState, tailTemp) with
                     | (preparedState, preparedTemp) ->
                         if transfers && managed == false || managed && recursiveProducerResult(tailExpression)(preparedState)
@@ -19298,13 +19354,20 @@ let listCellReuseTokenAvailable (tokens: List(CoreReuseToken)) =
         | Some(_found) -> true
         | None -> false
 
+// A cell whose tail is a recursive producer's result is reference-counted when no arena cell can be
+// reused for it.
+let producerConsRequest (tail: Expr) (state: CoreLoweringState) (request: ConsumerRequest) =
+    if isRecursiveProducerTail(tail)(state) && listCellReuseTokenAvailable(state.reuseTokens) == false
+    then request with runtimeList = true
+    else request
+
 let lowerCons head tail lower state =
     match consumerRequestOf(state) with
         | outerRequest ->
             let request =
-                if isRecursiveProducerTail(tail)(state) && listCellReuseTokenAvailable(state.reuseTokens) == false
-                then outerRequest with runtimeList = true
-                else outerRequest
+                outerRequest
+                |> producerConsRequest(tail)(state)
+                |> loopExitCellRequest(tail)(state)
             in
                 state
                 |> markResourceArgumentsMoved([head, tail])
