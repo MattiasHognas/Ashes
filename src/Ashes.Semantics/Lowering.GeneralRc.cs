@@ -1325,7 +1325,7 @@ public sealed partial class Lowering
         int[] argumentSlots = _generalRcBackEdgeArgumentPartSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
         foreach (GeneralRcOwnedSlot predecessor in predecessors)
         {
-            List<TypeRef> parts = HeapPartTypes(predecessor.Type);
+            List<TypeRef> parts = PredecessorPartTypes(predecessor.Type);
             bool[] unnamed = SuccessorsNamingNoPartOf(info, predecessor, successorsNormalized);
             bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
                 CanArenaReset(Prune(info.ArgTypes[index]))
@@ -1339,6 +1339,17 @@ public sealed partial class Lowering
                 EmitGeneralRcOwnedSlotDrops([predecessor]);
             }
         }
+    }
+
+    // The parts of an earlier iteration's value a successor could hold without a reference of its
+    // own. A string inside the value is retained wherever it is kept, so a successor holding one of
+    // the value's strings keeps it alive by itself; a value that is itself a string stays a part.
+    private List<TypeRef> PredecessorPartTypes(TypeRef type)
+    {
+        List<TypeRef> parts = HeapPartTypes(type);
+        return Environment.GetEnvironmentVariable("GRC_NO_STRINGPARTS") is null && Prune(type) is not TypeRef.TStr
+            ? parts.Where(part => Prune(part) is not TypeRef.TStr).ToList()
+            : parts;
     }
 
     // Per successor, whether its expression names nothing that can hold the predecessor's value or

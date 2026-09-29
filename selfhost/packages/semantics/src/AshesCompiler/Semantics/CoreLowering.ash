@@ -23551,13 +23551,31 @@ let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) 
                 |> length
                 |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
 
+let recursive withoutStringParts (parts: List(SemanticType)) =
+    match parts with
+        | [] -> []
+        | SemString :: rest -> withoutStringParts(rest)
+        | part :: rest -> part :: withoutStringParts(rest)
+
+// Stage 0's `PredecessorPartTypes`: the parts of an earlier iteration's value a successor could hold
+// without a reference of its own. A string inside the value is retained wherever it is kept, so a
+// successor holding one of the value's strings keeps it alive by itself; a value that is itself a
+// string stays a part.
+let predecessorPartTypes (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> heapPartTypesInto([semanticType])([])([])(state)
+        | _ ->
+            state
+            |> heapPartTypesInto([semanticType])([])([])
+            |> withoutStringParts
+
 let recursive predecessorDropsOf (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match predecessors with
         | [] -> []
         | (slot, semanticType) :: rest ->
             match predecessorUnnamedSuccessors(slot)(arguments)(frame)(state) with
                 | (unnamedPlain, unnamedNormalized) ->
-                    (slot, semanticType, predecessorBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(temps)(ownedSlots)(state), unnamedPlain, unnamedNormalized) :: predecessorDropsOf(rest)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)
+                    (slot, semanticType, predecessorBlockers(0)(predecessorPartTypes(semanticType)(state))(argumentTypes)(temps)(ownedSlots)(state), unnamedPlain, unnamedNormalized) :: predecessorDropsOf(rest)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)
 
 // The ordinals of the successors whose type may hold one of these heap parts: neither inline nor of
 // a type that cannot hold any of them.

@@ -2855,6 +2855,15 @@ public sealed class LinuxBackendCoverageTests
         GeneralRcDropsInLoop(BuildMapLoopSuccessorBoundByLetProgram(3), "solve").ShouldBe(3);
     }
 
+    [Test]
+    public void Map_loop_predecessor_is_released_past_a_queue_of_strings_handed_on_unchanged()
+    {
+        // A back queue of strings handed on unchanged while the map of queued keys is rebuilt, on
+        // the map's general path: the queue holds nothing of an earlier map but strings it retains,
+        // so the back edge releases the earlier map.
+        GeneralRcDropsInLoop(BuildMapLoopPredecessorPastQueueOfStringsProgram(3), "solve").ShouldBe(7);
+    }
+
     // The general droppers a loop's closure helper calls, the loop lowered without reuse
     // specializations.
     private static int GeneralRcDropsInLoop(string source, string loopName)
@@ -11129,6 +11138,52 @@ public sealed class LinuxBackendCoverageTests
             let wide = "{{new string('w', 480)}}"
 
             let run (seed: Int) = Ashes.Collection.Map.size(solve([wide + "1", wide + "2"])([])(Ashes.Collection.Map.empty)(7)) + seed
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMapLoopPredecessorPastQueueOfStringsProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map
+            import Ashes.Collection.List
+
+            let recursive enqueue (pending: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) =
+                match pending with
+                    | [] -> (back, queued)
+                    | key :: rest ->
+                        match Ashes.Collection.Map.getStr(key)(queued) with
+                            | Some(true) -> enqueue(rest)(back)(queued)
+                            | _ ->
+                                queued
+                                |> Ashes.Collection.Map.setStr(key)(true)
+                                |> enqueue(rest)(key :: back)
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (queued: MapTree(Str, Bool)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> Ashes.Collection.Map.size(queued)
+                            | _ -> solve(Ashes.Collection.List.reverse(back))([])(queued)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then Ashes.Collection.Map.size(queued)
+                        else
+                            let dequeued = Ashes.Collection.Map.setStr(key)(false)(queued)
+                            in
+                                if fuel % 4 == 0
+                                then solve(rest)(back)(dequeued)(fuel - 1)
+                                else
+                                    match enqueue([key + "coal"])(back)(dequeued) with
+                                        | (nextBack, nextQueued) -> solve(rest)(nextBack)(nextQueued)(fuel - 1)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let run (seed: Int) = solve([wide + "1", wide + "2", wide + "3", wide + "4"])([])(Ashes.Collection.Map.empty)(7) + seed
 
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0
