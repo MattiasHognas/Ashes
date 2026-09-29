@@ -1197,6 +1197,8 @@ public sealed partial class Lowering
         public required bool[] AnyWalkEdge { get; init; }
         public required bool[] AnyRefillEdge { get; init; }
         public required bool?[] HandedOnOrGrownEdges { get; init; }
+        public required TcoSelfCallArgumentShape?[] ObservedBesideResets { get; init; }
+        public required bool[] AnyResetSite { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
 
@@ -1220,6 +1222,8 @@ public sealed partial class Lowering
                 AnyWalkEdge = new bool[count],
                 AnyRefillEdge = new bool[count],
                 HandedOnOrGrownEdges = new bool?[count],
+                ObservedBesideResets = new TcoSelfCallArgumentShape?[count],
+                AnyResetSite = new bool[count],
                 SelfName = selfName,
             };
     }
@@ -1272,7 +1276,7 @@ public sealed partial class Lowering
             ComputeAffineSelfAppendOrdinals(function, info);
         for (int i = 0; i < paramNames.Count; i++)
         {
-            if (state.Observed[i] is { } shape)
+            if (EffectiveTcoShape(state, i) is { } shape)
             {
                 result.Add(new TcoParamStructuralFacts(
                     i,
@@ -2569,6 +2573,7 @@ public sealed partial class Lowering
                 ? TcoSelfCallArgumentShape.Mixed
                 : state.Observed[i] ?? local;
             RecordListRebuildEdge(state, i, local, IsArenaSelfContainedListRebuildExpr(structural));
+            RecordResetSite(state, i, local, argument, parameterScope);
             state.FreshClosureRebuild[i] = (state.FreshClosureRebuild[i] ?? true) && freshClosureRebuild;
             state.BytesProvenanceSafeListRebuild[i] =
                 (state.BytesProvenanceSafeListRebuild[i] ?? true) && bytesProvenanceSafeListRebuild;
@@ -2610,6 +2615,47 @@ public sealed partial class Lowering
                         && Environment.GetEnvironmentVariable("GRC_NO_CALLPARTEDGE") is null
                         && structural is Expr.Var part
                         && state.CallResultParts.Contains(part.Name))));
+
+    // A site that starts the list afresh (`first :: []`), with no head reading a loop parameter,
+    // holds nothing of the predecessor, which its back edge releases. Beside sites that
+    // all grow the parameter by cons cells it leaves the parameter a grown accumulator
+    // (EffectiveTcoShape); the other shapes see it as the site it is.
+    private static void RecordResetSite(
+        TcoParamFactsState state,
+        int ordinal,
+        TcoSelfCallArgumentShape local,
+        Expr argument,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        if (local != TcoSelfCallArgumentShape.GrownCons && IsFreshResetList(argument, parameterScope))
+        {
+            state.AnyResetSite[ordinal] = true;
+            return;
+        }
+
+        state.ObservedBesideResets[ordinal] = state.ObservedBesideResets[ordinal] is { } already && already != local
+            ? TcoSelfCallArgumentShape.Mixed
+            : state.ObservedBesideResets[ordinal] ?? local;
+    }
+
+    // A chain of cons cells ending in the empty list, none of whose heads reads a loop parameter.
+    // The empty list alone is left to the rules for emptied lists.
+    private static bool IsFreshResetList(Expr expression, IReadOnlyDictionary<string, int> parameterScope)
+        => expression is Expr.Cons cons
+            && !ReadsLoopParameter(cons.Head, parameterScope)
+            && (cons.Tail is Expr.ListLit { Elements.Count: 0 } || IsFreshResetList(cons.Tail, parameterScope));
+
+    private static bool ResetSitesKeepGrownAccumulatorsEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_RESETSITE") is null;
+
+    // The parameter's shape over every self-call site, except that fresh starts beside sites that
+    // all grow it by cons cells leave it a grown accumulator.
+    private static TcoSelfCallArgumentShape? EffectiveTcoShape(TcoParamFactsState state, int ordinal)
+        => ResetSitesKeepGrownAccumulatorsEnabled
+            && state.AnyResetSite[ordinal]
+            && state.ObservedBesideResets[ordinal] == TcoSelfCallArgumentShape.GrownCons
+                ? TcoSelfCallArgumentShape.GrownCons
+                : state.Observed[ordinal];
 
     // A site that hands the parameter on as it is, conses onto it a head reading no loop parameter,
     // or empties it; any other fresh list, or a same-named rebinding, is none of these.

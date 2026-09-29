@@ -393,6 +393,34 @@ let recursive shapeElementsReadNoLoopParameter (elements: List(Expr)) (shadowed:
         | [] -> true
         | element :: rest -> !shapeReadsLoopParameter(element)(shadowed)(parameters) && shapeElementsReadNoLoopParameter(rest)(shadowed)(parameters)
 
+// An empty list literal, the edge that empties a list refilled at other edges.
+let shapeIsEmptyList (expression: Expr) =
+    match shapeUnspan(expression) with
+        | ExprList([], _isMultiline) -> true
+        | _ -> false
+
+// Stage 0's `IsFreshResetList`: a chain of cons cells ending in the empty list, none of whose
+// heads reads a loop parameter; the empty list alone is left to the rules for emptied lists.
+let recursive shapeIsResetList (expression: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(expression) with
+        | ExprCons(head, tail) -> !shapeReadsLoopParameter(head)(shadowed)(parameters) && (shapeIsEmptyList(tail) || shapeIsResetList(tail)(shadowed)(parameters))
+        | _ -> false
+
+// Stage 0's `RecordResetSite`: a self-call that starts the list afresh holds nothing of the
+// predecessor, which its back edge releases; beside self-calls that all grow the parameter by cons
+// cells it leaves the parameter a grown accumulator.
+let shapeObserveReset (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) (reset: (Bool, Maybe(TcoArgumentShape))) =
+    match (shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters), reset) with
+        | (local, (anyReset, beside)) ->
+            if local != TcoGrownConsShape && shapeIsResetList(argument)(shadowed)(parameters)
+            then (true, beside)
+            else (anyReset, shapeMerge(beside)(local))
+
+let recursive shapeObserveResets (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) (resets: List((Bool, Maybe(TcoArgumentShape)))) =
+    match (arguments, resets) with
+        | (argument :: restArguments, reset :: restResets) -> shapeObserveReset(argument)(index)(shadowed)(tailOwners)(parameters)(reset) :: shapeObserveResets(restArguments)(index + 1)(shadowed)(tailOwners)(parameters)(restResets)
+        | _ -> resets
+
 // Stage 0's `IsAccumulatorEdgeArm` and `IsBranchingAccumulatorEdge`: an arm hands the parameter at
 // `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list
 // none of whose elements reads one (nil resets the accumulator), and a choice between such arms
@@ -486,12 +514,6 @@ let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
         | ExprCall(function, argument, _sugar, _layout) -> shapeCallSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
-// An empty list literal, the edge that empties a list refilled at other edges.
-let shapeIsEmptyList (expression: Expr) =
-    match shapeUnspan(expression) with
-        | ExprList([], _isMultiline) -> true
-        | _ -> false
-
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail, the
 // parameter itself, a call's result, or an empty list, whether one passed the consumed tail,
 // whether one passed a call's result, and whether every one passed the parameter itself or a fresh
@@ -551,6 +573,9 @@ type ShapeWalk =
     | choices: List((Bool, Bool, Bool))
     | walks: List((Bool, Bool, Bool, Bool))
     | accumulators: List((Bool, Bool))
+    // Per position: whether a self-call started the list afresh there, and the shape the other
+    // self-calls agree on (stage 0's `AnyResetSite` and `ObservedBesideResets`).
+    | resets: List((Bool, Maybe(TcoArgumentShape)))
     | sawSelfCall: Bool
 
 let recursive shapeWithoutNames (names: List(Str)) (parts: List(Str)) =
@@ -603,7 +628,7 @@ and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadow
     match shapeCallSpine(expression)([]) with
         | (ExprVar(callee), arguments) ->
             if callee == self && !shapeContainsName(self)(shadowed) && length(arguments) == length(parameters)
-            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), sawSelfCall = true)
+            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), resets = shapeObserveResets(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.resets), sawSelfCall = true)
             else walk
         | _ -> walk
 
@@ -621,6 +646,19 @@ let recursive shapeInitialWalks (count: Int) =
     if count == 0
     then []
     else (true, false, false, true) :: shapeInitialWalks(count - 1)
+
+let recursive shapeInitialResets (count: Int) =
+    if count == 0
+    then []
+    else (false, None) :: shapeInitialResets(count - 1)
+
+// Stage 0's `EffectiveTcoShape`: fresh starts beside self-calls that all grow the parameter by cons
+// cells leave it a grown accumulator.
+let recursive shapeResolveResets (resets: List((Bool, Maybe(TcoArgumentShape)))) (observed: List(Maybe(TcoArgumentShape))) =
+    match (observed, resets) with
+        | (_current :: rest, (true, Some(TcoGrownConsShape)) :: restResets) -> Some(TcoGrownConsShape) :: shapeResolveResets(restResets)(rest)
+        | (current :: rest, _reset :: restResets) -> current :: shapeResolveResets(restResets)(rest)
+        | _ -> observed
 
 // A position no single shape describes is a choice accumulator when every self-call passed an
 // accumulator edge there (the parameter, a cons onto it, or a choice between those), stage 0's
@@ -682,14 +720,17 @@ let shapeWalkOf (self: Str) (parameters: List(Str)) (body: Expr) =
     |> length
     |> shapeInitialWalks, accumulators = parameters
     |> length
-    |> shapeInitialAccumulators, sawSelfCall = false))
+    |> shapeInitialAccumulators, resets = parameters
+    |> length
+    |> shapeInitialResets, sawSelfCall = false))
 
 // The shape of every parameter position of the loop function `self` over `parameters` (the whole
 // curried chain, in order) with the innermost body `body`; every position is `TcoOtherShape` when
 // the body has no exact tail self-call.
 let tcoSelfCallShapes (self: Str) (parameters: List(Str)) (body: Expr) =
     match shapeWalkOf(self)(parameters)(body) with
-        | ShapeWalk { observed = observed, choices = choices, walks = walks, sawSelfCall = true } -> shapeResolveObserved(observed)(choices)(walks)
+        | ShapeWalk { observed = observed, choices = choices, walks = walks, resets = resets, sawSelfCall = true } ->
+            shapeResolveObserved(shapeResolveResets(resets)(observed))(choices)(walks)
         | _ ->
             parameters
             |> length

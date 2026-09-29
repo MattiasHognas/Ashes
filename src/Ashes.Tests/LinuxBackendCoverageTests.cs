@@ -4393,6 +4393,39 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_accumulator_started_afresh_memory_should_plateau()
+    {
+        // `interleave(first :: [])(rest)` beside `interleave(first :: ":" :: acc)(rest)`: a self-call
+        // starting the accumulator with a cell of its own leaves it a grown accumulator, so every
+        // cell is reference-counted and the head matched out of the walked list is released with
+        // them; kept in the arena, the head's retain was stranded in the cell, one string per element.
+        IrProgram ir = LowerProgramWithImports(BuildAccumulatorStartedAfreshProgram(3));
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Origin is { Source.SourceName: "interleave" }
+            && function.Instructions.Any(instruction => instruction is IrInst.Jump { Target: var target }
+                && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+        loop.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: false })
+            .ShouldBe(0, "Every cell the loop conses is reference-counted.");
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildAccumulatorStartedAfreshProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("accumulator started afresh beside grown cells", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_loop_exit_cell_memory_should_plateau()
     {
         // `| [] -> first :: acc` and `| [] -> "end" :: acc`: the cell a loop returns consed onto its
@@ -11034,6 +11067,31 @@ public sealed class LinuxBackendCoverageTests
                 match parts with
                     | [] -> acc
                     | part :: rest -> interleave(part :: ":" :: acc)(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildAccumulatorStartedAfreshProgram(int rounds)
+        => $$"""
+            let recursive collect (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive interleave (acc: List(Str)) (parts: List(Str)) =
+                match parts with
+                    | [] -> acc
+                    | first :: rest ->
+                        match acc with
+                            | [] -> interleave(first :: [])(rest)
+                            | _ -> interleave(first :: ":" :: acc)(rest)
 
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0

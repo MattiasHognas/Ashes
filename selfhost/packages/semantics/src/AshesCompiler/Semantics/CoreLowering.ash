@@ -8187,9 +8187,25 @@ let strPredecessorIsReleased (argument: TcoResetArgument) (state: CoreLoweringSt
 // The old root of a consumed list is released once its tail is retained for the successor
 // (stage 0's `TcoBackEdgeDropRuntimeManagedArg` under the active flag): a unique cell frees
 // its head and continues into the tail, which the retain keeps alive.
+// A self-call that starts a grown accumulator afresh (`first :: []`) moves nothing of the
+// predecessor into its cells, stage 0's `MovesPredecessorIntoTail` answering no.
+let recursive startsListAfresh (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprList(_elements, _isMultiline) -> true
+        | ExprCons(_head, tail) -> startsListAfresh(tail)
+        | _ -> false
+
 let recursive dropRuntimeManagedBackEdgePredecessors (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match arguments with
         | [] -> state
+        // A grown accumulator started afresh releases its predecessor, which no cell took over.
+        | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoGrownConsShape, oldTemp = oldTemp, argumentRuntime = true, argumentExpression = expression } :: rest ->
+            if startsListAfresh(expression)
+            then
+                state
+                |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
+                |> dropRuntimeManagedBackEdgePredecessors(rest)
+            else dropRuntimeManagedBackEdgePredecessors(rest)(state)
         | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoConsumedTailShape, oldTemp = oldTemp } :: rest ->
             state
             |> emitGuardedListRelease(unlocatedInstruction)("rc_tco_drop_inactive")(activeSlot)(oldTemp)(elementType)
@@ -19449,10 +19465,15 @@ let consTailReachesLoopParameter (request: ConsumerRequest) (tail: Expr) (state:
                 loopParameterReadSlot(consChainLastTail(tail))(state) != None
             | _ -> false
 
+// Stage 0's `NormalizeRuntimeManagedListElement` normalizes the head of every cell built under a
+// loop's list-slot request: a cell over the parameter, or a grown accumulator's fresh start
+// (`first :: []`) whose tail is a new list.
+let consHeadNormalizedForTailSlot (request: ConsumerRequest) (tail: Expr) (state: CoreLoweringState) = consTailReachesLoopParameter(request)(tail)(state) || request.runtimeTcoListTailSlot != None && startsListAfresh(tail)
+
 let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && consTailReachesLoopParameter(request)(tail)(state) && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
+            if requestsRuntimeList(request) && consHeadNormalizedForTailSlot(request)(tail)(state) && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
             then
                 match resolveType(state)(semanticType) with
                     | SemString ->
@@ -19509,7 +19530,7 @@ let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) 
 let normalizeRuntimeManagedConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && consTailReachesLoopParameter(request)(tail)(state) && !isRuntimeTemp(temp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
+            if requestsRuntimeList(request) && consHeadNormalizedForTailSlot(request)(tail)(state) && !isRuntimeTemp(temp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
             then reserveUnusedHeadTemp(lowered)
             else normalizeRuntimeManagedHeapConsHead(request)(head)(tail)(lowered)
         | _ -> lowered

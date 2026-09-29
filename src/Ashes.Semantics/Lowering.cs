@@ -11532,7 +11532,7 @@ public sealed partial class Lowering
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
-            && IsConsChainOverParameter(tco, argument, index);
+            && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument));
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild
