@@ -2826,6 +2826,25 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Worklist_front_whose_heads_reach_a_tree_only_as_keys_is_placed_on_the_reference_counted_heap()
+    {
+        // A worklist front walked and refilled while each walked head is marked in a tree. The
+        // tree receives only the front's string heads, which it retains, never the front's spine,
+        // so it does not keep the front in the arena, where each refill was never released. (The
+        // tree's own updates grow the arena per round, so this is checked on the placement.)
+        Diagnostics diagnostics = new();
+        Program program = new Parser(BuildWorklistFrontHeadsReachTreeOnlyAsKeysProgram(3), diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics);
+        lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+        IReadOnlyList<TcoParamPlacementTrace> decisions = lowering.GetTcoPlacementDecisions("solve")
+            ?? throw new InvalidOperationException("No TCO placement snapshot for 'solve'.");
+        TcoParamPlacementTrace front = decisions.Single(trace => string.Equals(trace.Current.ParameterName, "front", StringComparison.Ordinal));
+        front.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+    }
+
+    [Test]
     public async Task Linux_backend_choice_accumulator_cell_borrows_pattern_head_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -10981,6 +11000,65 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistFrontHeadsReachTreeOnlyAsKeysProgram(int rounds)
+        => $$"""
+            type Tree(K, V) =
+                | Leaf
+                | Node(Tree(K, V), K, V, Tree(K, V))
+
+            let compareKeys (left: Str) (right: Str) =
+                right
+                |> Ashes.Byte.fromText
+                |> Ashes.Byte.compare(Ashes.Byte.fromText(left))
+
+            let setStr newKey newValue =
+                (let recursive go map =
+                    match map with
+                        | Leaf -> Node(Leaf)(newKey)(newValue)(Leaf)
+                        | Node(left, key, value, right) ->
+                            let ordering = compareKeys(newKey)(key)
+                            in
+                                if ordering == 0
+                                then Node(left)(key)(newValue)(right)
+                                else
+                                    if ordering <= -1
+                                    then Node(go(left))(key)(value)(right)
+                                    else Node(left)(key)(value)(go(right))
+                in go)
+
+            let recursive size map =
+                match map with
+                    | Leaf -> 0
+                    | Node(left, _key, _value, right) -> size(left) + 1 + size(right)
+
+            let recursive reverseOnto (acc: List(Str)) (items: List(Str)) =
+                match items with
+                    | [] -> acc
+                    | head :: tail -> reverseOnto(head :: acc)(tail)
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (queued: Tree(Str, Bool)) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> queued
+                            | _ -> solve(reverseOnto([])(back))([])(queued)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then queued
+                        else solve(rest)((key + "x") :: back)(setStr(key)(true)(queued))(fuel - 1)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let run (seed: Int) = size(solve([wide + "1", wide + "2"])([])(Leaf)(7)) + seed
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildChoiceAccumulatorCellBorrowsPatternHeadProgram(int rounds)

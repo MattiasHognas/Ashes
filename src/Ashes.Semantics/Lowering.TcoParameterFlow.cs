@@ -24,7 +24,7 @@ public sealed partial class Lowering
     /// function is not a full self-call this walk recognizes, or the body holds an expression it
     /// does not know, so nothing is claimed about the flow.
     /// </summary>
-    private static Dictionary<int, HashSet<int>>? CollectSelfCallParameterFlow(string selfName, List<string> parameters, Expr body, FlowCallPolicy policy)
+    private static Dictionary<int, HashSet<int>>? CollectSelfCallParameterFlow(string selfName, List<string> parameters, Expr body, FlowCallPolicy policy, bool spineOnly = false)
     {
         var derived = parameters.Select(parameter => new HashSet<string>(StringComparer.Ordinal) { parameter }).ToList();
         bool changed = true;
@@ -33,7 +33,7 @@ public sealed partial class Lowering
             changed = false;
             foreach (Expr? node in EnumerateFlowNodes(body))
             {
-                changed |= node is not null && AddDerivedBinders(node, derived, parameters, policy);
+                changed |= node is not null && AddDerivedBinders(node, derived, parameters, policy, spineOnly);
             }
         }
 
@@ -62,7 +62,7 @@ public sealed partial class Lowering
         return selfReferences == recognizedCalls ? flow : null;
     }
 
-    private static bool AddDerivedBinders(Expr node, List<HashSet<string>> derived, List<string> parameters, FlowCallPolicy policy)
+    private static bool AddDerivedBinders(Expr node, List<HashSet<string>> derived, List<string> parameters, FlowCallPolicy policy, bool spineOnly = false)
     {
         bool changed = false;
         foreach (HashSet<string> names in derived)
@@ -73,7 +73,7 @@ public sealed partial class Lowering
                     foreach (MatchCase matchCase in match.Cases)
                     {
                         HashSet<string> binders = new(StringComparer.Ordinal);
-                        CollectPatternBinders(matchCase.Pattern, binders);
+                        CollectFlowBinders(matchCase.Pattern, binders, spineOnly);
                         foreach (string binder in binders)
                         {
                             changed |= names.Add(binder);
@@ -97,6 +97,32 @@ public sealed partial class Lowering
         }
 
         return changed;
+    }
+
+    // The names a pattern binds out of a value derived from a parameter. Followed through the spine
+    // alone, a cons pattern's head is left out: it binds an element, not a part of the list.
+    private static void CollectFlowBinders(Pattern pattern, HashSet<string> into, bool spineOnly)
+    {
+        switch (pattern)
+        {
+            case Pattern.Cons cons when spineOnly:
+                CollectFlowBinders(cons.Tail, into, spineOnly);
+                break;
+            case Pattern.As asPattern when spineOnly:
+                CollectFlowBinders(asPattern.Inner, into, spineOnly);
+                into.Add(asPattern.Name);
+                break;
+            case Pattern.Tuple tuple when spineOnly:
+                foreach (Pattern element in tuple.Elements)
+                {
+                    CollectFlowBinders(element, into, spineOnly);
+                }
+
+                break;
+            default:
+                CollectPatternBinders(pattern, into);
+                break;
+        }
     }
 
     // A lambda applied where it is written binds each of its parameters to the argument at that
@@ -343,6 +369,7 @@ public sealed partial class Lowering
 
         tco.FlowPolicy = routed ? CreateFlowCallPolicy(body) : FlowCallPolicy.All;
         tco.SelfCallParameterFlow = CollectSelfCallParameterFlow(tco.SelfName, tco.ParamNames, body, tco.FlowPolicy);
+        tco.SelfCallSpineFlow = CollectSelfCallParameterFlow(tco.SelfName, tco.ParamNames, body, tco.FlowPolicy, spineOnly: true);
     }
 
     // The policy for a loop body: every full application whose callee's ownership summary is known

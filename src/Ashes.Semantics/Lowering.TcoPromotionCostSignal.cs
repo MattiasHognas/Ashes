@@ -539,8 +539,18 @@ public sealed partial class Lowering
         int accumulatorOrdinal,
         TypeRef accumulatorType)
         => TypeMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal), instantiated: false)
-            && (tco.SelfCallParameterFlow is not { } flow
+            && (AccumulatorFlowFor(tco, accumulatorType) is not { } flow
                 || (flow.TryGetValue(siblingOrdinal, out HashSet<int>? sources) && sources.Contains(accumulatorOrdinal)));
+
+    // A list of strings reaches a sibling only through its spine: a string head matched out of it
+    // is retained wherever it is kept, so the sibling holding one keeps a reference of its own.
+    private Dictionary<int, HashSet<int>>? AccumulatorFlowFor(TcoContext tco, TypeRef accumulatorType)
+        => Environment.GetEnvironmentVariable("GRC_NO_SPINEFLOW") is null
+            && accumulatorType is TypeRef.TList { Element: var element }
+            && Prune(element) is TypeRef.TStr
+            && tco.SelfCallSpineFlow is { } spine
+                ? spine
+                : tco.SelfCallParameterFlow;
 
     private bool IsPermanentlyBlockingTcoParam(
         TcoContext tco,

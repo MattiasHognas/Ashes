@@ -334,6 +334,8 @@ type CoreTcoLoop =
     // position may receive; None when the body refers to the function other than by a full
     // self-call, or holds a node the walk does not follow (stage 0's `SelfCallParameterFlow`).
     | selfCallParameterFlow: Maybe(List(List(Int)))
+    // The same flow followed through a list's spine alone (stage 0's `SelfCallSpineFlow`).
+    | selfCallSpineFlow: Maybe(List(List(Int)))
     // The loop's body, the innermost lambda body of the binding, read by the back-edge rules that
     // follow the names a self call passes (stage 0's `TcoContext.Body`).
     | body: Expr
@@ -10803,11 +10805,19 @@ let flowMayPass (siblingOrdinal: Int) (accumulatorOrdinal: Int) (flow: Maybe(Lis
             |> flowSourcesAt(siblingOrdinal)
             |> containsInt(accumulatorOrdinal)
 
+// Stage 0's `AccumulatorFlowFor`: a list of strings reaches a sibling only through its spine, since a
+// string head matched out of it is retained wherever it is kept.
+let accumulatorFlowFor (accumulatorType: SemanticType) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (resolveType(state)(accumulatorType), loop.selfCallSpineFlow) with
+        | (SemList(SemString), Some(spine)) -> Some(spine)
+        | _ -> loop.selfCallParameterFlow
+
 // Stage 0's `SiblingMayReceiveAccumulator`: a sibling that could hold the accumulator, or a part of
 // it, would keep that part without a reference of its own, so it still blocks.
 let siblingMayReceiveAccumulator (sibling: TcoManagedCandidate) (candidate: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (accumulator, slotResolvedType(sibling.slot)(state.bindings)(state)) with
-        | (Some(accumulatorType), Some(siblingType)) -> flowMayPass(sibling.ordinal)(candidate.ordinal)(loop.selfCallParameterFlow) && typeMayContainArgumentType(false)(siblingType)(accumulatorType)([])(state)
+        | (Some(accumulatorType), Some(siblingType)) ->
+            flowMayPass(sibling.ordinal)(candidate.ordinal)(accumulatorFlowFor(accumulatorType)(loop)(state)) && typeMayContainArgumentType(false)(siblingType)(accumulatorType)([])(state)
         | _ -> true
 
 // Stage 0's `FindBlockingSiblingForCandidate`: whether some other parameter of the frame keeps this
@@ -11751,6 +11761,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(singleParameterCandidateNames(candidates))(innermost)([]),
                             tmcShapePresent = hasTmcConsSelfCalls(innermost)(name)(arity),
                             selfCallParameterFlow = tcoSelfCallParameterFlow(name)(parameters)([])(innermost),
+                            selfCallSpineFlow = tcoSelfCallSpineFlow(name)(parameters)([])(innermost),
                             body = innermost,
                             callFlow = [],
                             callFlowPending = false,
@@ -18910,8 +18921,7 @@ let finishCons (request: ConsumerRequest) (headExpression: Expr) (tailExpression
         | (LoweredCoreValue { temp = headTemp, semanticType = headType }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType }) ->
             match bindType(SemList(headType))(tailType)(tailState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
-                | (typedState, None) ->
-                    allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState) && !chainTailKeepsCellInArena(request)(tailExpression)(tailTemp)(typedState))(typedState)
+                | (typedState, None) -> allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState) && !chainTailKeepsCellInArena(request)(tailExpression)(tailTemp)(typedState))(typedState)
 
 // Stage 0's `EmitReferenceCountedListTail`: the tail a reference-counted cell takes over from the
 // accumulator parameter it extends. The parameter's first value is whatever the caller passed, so
@@ -19143,7 +19153,8 @@ let consTailReachesLoopParameter (request: ConsumerRequest) (tail: Expr) (state:
     then true
     else
         match (unspanArgument(tail), request.runtimeTcoListTailSlot) with
-            | (ExprCons(_head, _tail), Some(_slot)) -> loopParameterReadSlot(consChainLastTail(tail))(state) != None
+            | (ExprCons(_head, _tail), Some(_slot)) ->
+                loopParameterReadSlot(consChainLastTail(tail))(state) != None
             | _ -> false
 
 let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
@@ -24788,7 +24799,7 @@ let resolveLoopCallFlow (state: CoreLoweringState) =
                 match flowNodes([body])([]) with
                     | Some(nodes) -> loopCallFlowOf(nodes)([])(state)
                     | None -> []
-            in withStateTcoLoop(Some((loop with callFlow = table, callFlowPending = false, selfCallParameterFlow = tcoSelfCallParameterFlow(selfName)(parameters)(table)(body))))(state)
+            in withStateTcoLoop(Some((loop with callFlow = table, callFlowPending = false, selfCallParameterFlow = tcoSelfCallParameterFlow(selfName)(parameters)(table)(body), selfCallSpineFlow = tcoSelfCallSpineFlow(selfName)(parameters)(table)(body))))(state)
         | _ -> state
 
 let recursive lowerCore expression state =

@@ -36,6 +36,7 @@ export (
     value isTcoListShape,
     value selfCallOrdinalPassing,
     value tcoSelfCallParameterFlow,
+    value tcoSelfCallSpineFlow,
     value shapePatternNames,
     value flowSuccessorsNamingNoPartOf,
     value flowCallKeyOf,
@@ -796,6 +797,42 @@ and flowLambdaApplicationDerivations (root: Expr) (arguments: List(Expr)) (deriv
         | (ExprLambda(parameter, body, _annotation), argument :: rest) -> flowLambdaApplicationDerivations(body)(rest)((argument, [parameter]) :: derivations)
         | _ -> derivations
 
+// Stage 0's `CollectFlowBinders` followed through a list's spine alone: a cons pattern's head binds
+// an element, not a part of the list, so only its tail's names and the whole values' names count.
+let recursive flowSpinePatternNames (pattern: Pattern) (names: List(Str)) =
+    match pattern with
+        | PatternAt(_span, inner) -> flowSpinePatternNames(inner)(names)
+        | PatternCons(_head, tail) -> flowSpinePatternNames(tail)(names)
+        | PatternAs(inner, alias) -> alias :: flowSpinePatternNames(inner)(names)
+        | PatternTuple(patterns) -> flowSpinePatternListNames(patterns)(names)
+        | _ -> shapePatternNames(pattern)(names)
+and flowSpinePatternListNames (patterns: List(Pattern)) (names: List(Str)) =
+    match patterns with
+        | [] -> names
+        | pattern :: rest ->
+            names
+            |> flowSpinePatternNames(pattern)
+            |> flowSpinePatternListNames(rest)
+
+let recursive flowCaseSpineBinders (cases: List((Pattern, Expr, Maybe(Expr)))) (names: List(Str)) =
+    match cases with
+        | [] -> names
+        | (pattern, _body, _guard) :: rest ->
+            names
+            |> flowSpinePatternNames(pattern)
+            |> flowCaseSpineBinders(rest)
+
+// The body's derivations with each `match` binding only the names its patterns bind along a list's
+// spine.
+let recursive flowSpineDerivations (nodes: List(Expr)) (derivations: List((Expr, List(Str)))) =
+    match nodes with
+        | [] -> derivations
+        | ExprMatch(value, cases, _position) :: rest -> flowSpineDerivations(rest)((value, flowCaseSpineBinders(cases)([])) :: derivations)
+        | node :: rest ->
+            derivations
+            |> flowDerivations([node])
+            |> flowSpineDerivations(rest)
+
 // The name a call's callee root reads as: a bare or qualified name, or none for any other root.
 let flowCallRootName (root: Expr) =
     match shapeUnspan(root) with
@@ -1085,14 +1122,21 @@ let recursive flowEmpty (count: Int) =
 // parameters whose value, or a part of it, the position may receive. None when some reference to
 // the function is not a full self-call, or the body holds a node the walk does not know, so nothing
 // is claimed about the flow.
-let tcoSelfCallParameterFlow (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) =
+let tcoSelfCallFlowWith (spineOnly: Bool) (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) =
     match flowNodes([body])([]) with
         | None -> None
         | Some(nodes) ->
             match FlowCount(selfReferences = 0, recognizedCalls = 0, flow = parameters
             |> length
-            |> flowEmpty) |> flowCountNodes(self)(parameters)(policy)(parameters |> flowDerivedOf(flowDerivations(nodes)([]))(parameters)(policy))(nodes) with
+            |> flowEmpty) |> flowCountNodes(self)(parameters)(policy)(parameters |> flowDerivedOf(if spineOnly
+            then flowSpineDerivations(nodes)([])
+            else flowDerivations(nodes)([]))(parameters)(policy))(nodes) with
                 | FlowCount { selfReferences = references, recognizedCalls = calls, flow = flow } ->
                     if references == calls
                     then Some(flow)
                     else None
+
+let tcoSelfCallParameterFlow (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) = tcoSelfCallFlowWith(false)(self)(parameters)(policy)(body)
+
+// Stage 0's `SelfCallSpineFlow`: the same flow followed through a list's spine alone.
+let tcoSelfCallSpineFlow (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) = tcoSelfCallFlowWith(true)(self)(parameters)(policy)(body)

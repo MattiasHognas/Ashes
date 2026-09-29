@@ -233,6 +233,10 @@ public sealed partial class Lowering
         // null when the body's flow was not followed.
         public Dictionary<int, HashSet<int>>? SelfCallParameterFlow { get; set; }
 
+        // The same flow followed through a list's spine alone: a head a cons pattern binds out of a
+        // parameter is not one of its parts here, only the tails and the whole values.
+        public Dictionary<int, HashSet<int>>? SelfCallSpineFlow { get; set; }
+
         // The loop's body, the innermost lambda body of the recursive binding, read by the
         // back-edge rules that follow the names a self call passes.
         public Expr? Body { get; set; }
