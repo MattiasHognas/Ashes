@@ -158,6 +158,7 @@ see says why.
 
 | Fix | Template | With the rule off |
 |---|---|---|
+| A comparison borrows both operands | `leak.fixpoint-compares-rebuilt-list` | `GRC_NO_BORROWEDCOMPARE`: 42, 30 and 42 cells per round |
 | A list of scalars handed on in one arm and replaced by a helper's result in another lives on the reference-counted heap | `leak.accumulator-replaced-by-helper-in-one-arm` | `GRC_NO_HANDEDONFRESHLIST`: 24, 24 and 17 cells per round |
 | A spine cell's head retained out of a let binding leaves the binding its own reference | `leak.spine-head-bound-by-let` | `GRC_NO_TMCHEADRETAIN`: 5, 5 and 2 cells per round |
 | A reference-counted cell takes a reference to a recursive producer's let-bound result, or a copy of an arena one | `leak.self-call-tail-under-owned-head` | `GRC_NO_LETCALLTAIL`: segfault on every seed poisoned (`UAF`, exit 139), plain on one (the other two leak 1 cell per round) |

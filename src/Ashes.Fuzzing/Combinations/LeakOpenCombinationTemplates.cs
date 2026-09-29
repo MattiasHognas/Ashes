@@ -48,6 +48,49 @@ internal sealed class AccumulatorReplacedByHelperInOneArmTemplate() : LeakCombin
 }
 
 /// <summary>
+/// A fixpoint loop that compares the list it rebuilt this iteration with its parameter and either
+/// returns it or loops on it, the shape of stage 1's `idomFixpoint`. The comparison's calls borrow
+/// their operands; a duplicate taken for the rebuilt list, still live after the comparison, was
+/// never released.
+/// </summary>
+internal sealed class FixpointComparesRebuiltListTemplate() : LeakCombinationTemplate(
+    "leak.fixpoint-compares-rebuilt-list", "fixpointCompare", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.If)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string lower = names.Of("lowerEach");
+        string fixpoint = names.Of("settle");
+        string sum = names.Of("sumItems");
+        int length = names.Between(3, 6);
+        int floor = names.Between(0, 2);
+        string seeds = "[" + string.Join(", ", Enumerable.Range(0, length).Select(index => LeakNames.Text(index + 2))) + "]";
+        return $$"""
+            let recursive {{lower}} (items: List(Int)) =
+                match items with
+                    | [] -> []
+                    | head :: rest ->
+                        if head > {{LeakNames.Text(floor)}}
+                        then (head - 1) :: {{lower}}(rest)
+                        else head :: {{lower}}(rest)
+
+            let recursive {{fixpoint}} (values: List(Int)) =
+                (let next = {{lower}}(values)
+                in
+                    if next == values
+                    then next
+                    else {{fixpoint}}(next))
+
+            let recursive {{sum}} (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | head :: rest -> {{sum}}(rest)(total + head)
+
+            let {{names.Entry}} (seed: Int) = {{sum}}({{fixpoint}}({{seeds}}))(seed)
+            """;
+    }
+}
+
+/// <summary>
 /// A loop consing the concatenation of two elements onto its accumulator, the pairwise pass of the
 /// standard library's `Text.join` that stage 1's parser and project graph call for every qualified
 /// name and path. Still open: a concatenation leaks.

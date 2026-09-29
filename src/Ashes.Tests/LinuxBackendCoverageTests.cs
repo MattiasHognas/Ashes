@@ -3639,6 +3639,61 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("list handed on or replaced by helper", samples, maxRssKb: 16_000);
     }
 
+    [Test]
+    public async Task Linux_backend_fixpoint_comparing_rebuilt_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A fixpoint loop compares the list it rebuilt with its parameter: the comparison borrows
+        // both operands, so the rebuilt list, live after it, takes no duplicate nothing releases.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildFixpointCompareProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fixpoint comparing rebuilt list", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildFixpointCompareProgram(int rounds)
+        => $$"""
+            let recursive lowerEach (items: List(Int)) =
+                match items with
+                    | [] -> []
+                    | head :: rest ->
+                        if head > 1
+                        then (head - 1) :: lowerEach(rest)
+                        else head :: lowerEach(rest)
+
+            let recursive settle (values: List(Int)) =
+                (let next = lowerEach(values)
+                in
+                    if next == values
+                    then next
+                    else settle(next))
+
+            let recursive sum (items: List(Int)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | head :: rest -> sum(rest)(total + head)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + sum(settle([2, 3, 4]))(0))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
     private static string BuildHandedOnOrReplacedListProgram(int rounds)
         => $$"""
             let recursive replaceAt (items: List(Int)) (index: Int) (replacement: Int) =

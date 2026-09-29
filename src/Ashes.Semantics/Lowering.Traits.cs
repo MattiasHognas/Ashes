@@ -780,6 +780,20 @@ public sealed partial class Lowering
         };
     }
 
+    // A comparison's result is a Bool, which holds neither operand, and neither of its two calls
+    // passes an ownership word, so the method borrows both operands: the call just emitted gets no
+    // compensating duplicate from lifetime placement, which nothing would release. The emitted
+    // instruction is the one registered, since Emit may re-create it with its source location.
+    private void MarkComparisonOperandBorrowed(bool returnsBool)
+    {
+        if (returnsBool
+            && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCOMPARE") is null
+            && _inst[^1] is IrInst.CallClosure emitted)
+        {
+            _borrowedArgumentCalls.Add(emitted);
+        }
+    }
+
     private (int, TypeRef)? RecordMappedBinaryTrait(
         string traitName,
         string methodName,
@@ -830,8 +844,10 @@ public sealed partial class Lowering
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int first = NewTemp();
         Emit(new IrInst.CallClosure(first, methodTemp, leftTemp));
+        MarkComparisonOperandBorrowed(returnsBool);
         int result = NewTemp();
         Emit(new IrInst.CallClosure(result, first, rightTemp));
+        MarkComparisonOperandBorrowed(returnsBool);
         if (returnsBool)
         {
             ReleaseFreshComparisonOperand(leftTemp, operandType);
