@@ -531,3 +531,39 @@ internal sealed class TableMergedOrHandedOnTemplate() : LeakCombinationTemplate(
             """;
     }
 }
+
+/// <summary>
+/// A loop over a list of strings growing a variant (a chain of nodes) whose every node holds a
+/// head the walk matched out of the list: the variant parameter lives on the reference-counted heap
+/// and is normalized at the back edge, while the arena node built for it retains the head.
+/// </summary>
+internal sealed class VariantNodeHoldingWalkedHeadTemplate() : LeakCombinationTemplate(
+    "leak.variant-node-holding-walked-head", "variantNodeHead", GeneratedFeature.Adt, GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string tree = names.Of("LeakChain");
+        string leaf = names.Of("LeakEnd");
+        string node = names.Of("LeakLink");
+        string size = names.Of("sizeOf");
+        string grow = names.Of("grow");
+        string keys = names.Words(names.Between(2, 5));
+        return $$"""
+            type {{tree}} =
+                | {{leaf}}
+                | {{node}}(Str, {{tree}})
+
+            let recursive {{size}} (chain: {{tree}}) =
+                match chain with
+                    | {{leaf}} -> 0
+                    | {{node}}(_key, rest) -> 1 + {{size}}(rest)
+
+            let recursive {{grow}} (keys: List(Str)) (chain: {{tree}}) =
+                match keys with
+                    | [] -> chain
+                    | key :: rest -> {{grow}}(rest)({{node}}(key)(chain))
+
+            let {{names.Entry}} (seed: Int) = {{size}}({{grow}}({{keys}})({{leaf}})) + seed
+            """;
+    }
+}

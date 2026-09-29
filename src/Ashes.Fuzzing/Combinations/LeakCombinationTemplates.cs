@@ -28,6 +28,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new VariantAccumulatorThroughHelperTemplate());
         registry.Register(new WorklistSolveRecordsTemplate());
         registry.Register(new TableMergedOrHandedOnTemplate());
+        registry.Register(new VariantNodeHoldingWalkedHeadTemplate());
         registry.Register(new GenericPairPruningTemplate());
         registry.Register(new HeaderTupleDestructuredTemplate());
         registry.Register(new PassStateAndRewritePairTemplate());
