@@ -2873,6 +2873,17 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Table_record_is_released_where_the_table_is_handed_on_unchanged()
+    {
+        // A map of records threaded through a loop that merges each key's earlier record into the
+        // map or hands the map on unchanged, on the map's general path. The map position only ever
+        // receives the parameter itself or a call's owned result, which holds the earlier record's
+        // parts by references of its own, so the earlier record is released at the edge that hands
+        // the map on unchanged.
+        DropperCallsInLoop(BuildTableMergedOrHandedOnProgram(3), "solve", "__rcdrop_record").ShouldBe(5);
+    }
+
+    [Test]
     public void Map_loop_predecessor_is_released_past_a_queue_of_strings_handed_on_unchanged()
     {
         // A back queue of strings handed on unchanged while the map of queued keys is rebuilt, on
@@ -2884,6 +2895,11 @@ public sealed class LinuxBackendCoverageTests
     // The general droppers a loop's closure helper calls, the loop lowered without reuse
     // specializations.
     private static int GeneralRcDropsInLoop(string source, string loopName)
+        => DropperCallsInLoop(source, loopName, "__rcdrop_general");
+
+    // The droppers of one family (a label prefix) a loop's closure helper calls, the loop lowered
+    // without reuse specializations.
+    private static int DropperCallsInLoop(string source, string loopName, string dropperPrefix)
     {
         IrProgram ir = LowerProgramWithImportsWithoutReuse(source);
         IrFunction loop = ir.Functions
@@ -2894,7 +2910,7 @@ public sealed class LinuxBackendCoverageTests
                     && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
         return loop.Instructions.Count(instruction =>
             instruction is IrInst.CallKnown { FuncLabel: var label }
-                && label.StartsWith("__rcdrop_general", StringComparison.Ordinal));
+                && label.StartsWith(dropperPrefix, StringComparison.Ordinal));
     }
 
     [Test]
@@ -11326,6 +11342,45 @@ public sealed class LinuxBackendCoverageTests
             let wide = "{{new string('w', 480)}}"
 
             let run (seed: Int) = Ashes.Collection.Map.size(solve([wide + "1", wide + "2"])([])(Ashes.Collection.Map.empty)(7)) + seed
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTableMergedOrHandedOnProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.Map
+            import Ashes.Collection.List
+
+            type Reach =
+                | fresh: Bool
+                | parts: List(Str)
+
+            let lookup (key: Str) (table: MapTree(Str, Reach)) =
+                match Ashes.Collection.Map.getStr(key)(table) with
+                    | Some(found) -> found
+                    | None -> Reach(fresh = false, parts = [])
+
+            let recursive solve (table: MapTree(Str, Reach)) (keys: List(Str)) (fuel: Int) =
+                match keys with
+                    | [] -> table
+                    | key :: rest ->
+                        if fuel <= 0
+                        then table
+                        else
+                            let previous = lookup(key)(table)
+                            in
+                                let merged = Reach(fresh = true, parts = key :: previous.parts)
+                                in
+                                    if Ashes.Collection.List.length(previous.parts) > 1
+                                    then solve(table)(rest)(fuel - 1)
+                                    else solve(Ashes.Collection.Map.setStr(key)(merged)(table))(rest)(fuel - 1)
+
+            let run (seed: Int) = Ashes.Collection.Map.size(solve(Ashes.Collection.Map.empty)(["flint", "coal", "flint", "flint", "coal", "flint", "flint"])(11)) + seed
 
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0

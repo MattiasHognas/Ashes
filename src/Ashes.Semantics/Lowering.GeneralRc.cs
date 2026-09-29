@@ -1371,7 +1371,9 @@ public sealed partial class Lowering
         List<string> parameters = info.Tco.ParamNames;
         FlowCallPolicy policy = info.Tco.FlowPolicy;
         HashSet<string> named = CollectDerivedNames(body, binders, parameters, policy);
+        HashSet<int> ownReferences = PositionsHoldingOwnReferences(info.Tco, body);
         HashSet<int> holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named, policy);
+        holders.ExceptWith(ownReferences);
         bool changed = true;
         while (changed)
         {
@@ -1381,7 +1383,7 @@ public sealed partial class Lowering
                 bool normalized = successorsNormalized
                     && position < info.ParamPlacements.Length
                     && info.ParamPlacements[position]?.Representation == TcoPlacementRepresentation.RuntimeRc;
-                if (!normalized && !holders.Contains(position) && sources.Any(holders.Contains))
+                if (!normalized && !ownReferences.Contains(position) && !holders.Contains(position) && sources.Any(holders.Contains))
                 {
                     holders.Add(position);
                     changed = true;
@@ -1401,6 +1403,51 @@ public sealed partial class Lowering
             .Select(argument => !named.Any(name => FlowMentionsName(argument, name, parameters, policy, 0)))
             .ToArray();
     }
+
+    // The parameter positions of a value of the contract's own types that every self call hands
+    // either the parameter itself or a call's result. A call's result of these types is owned and
+    // holds references of its own to whatever it keeps, so such a parameter holds nothing of an
+    // iteration's value without a reference of its own, whatever the call was given.
+    private HashSet<int> PositionsHoldingOwnReferences(TcoContext tco, Expr body)
+    {
+        HashSet<int> positions = [];
+        if (Environment.GetEnvironmentVariable("GRC_NO_OWNEDRESULTPOSITION") is not null)
+        {
+            return positions;
+        }
+
+        List<string> parameters = tco.ParamNames;
+        for (int position = 0; position < parameters.Count; position++)
+        {
+            if (tco.ParamTypes.TryGetValue(position, out TypeRef? type) && IsGeneralRcValueType(Prune(type)))
+            {
+                positions.Add(position);
+            }
+        }
+
+        foreach (Expr? node in EnumerateFlowNodes(body))
+        {
+            if (node is null)
+            {
+                return [];
+            }
+
+            if (TryUnwindSelfCall(node, tco.SelfName, parameters.Count, out List<Expr> arguments))
+            {
+                positions.RemoveWhere(position => !IsOwnReferenceSuccessor(arguments[position], parameters[position]));
+            }
+        }
+
+        return positions;
+    }
+
+    private bool IsOwnReferenceSuccessor(Expr argument, string parameter)
+        => argument switch
+        {
+            Expr.Var variable => string.Equals(variable.Name, parameter, StringComparison.Ordinal),
+            Expr.Call => !TryDescribeConstructorExpression(argument, out _, out _, out _),
+            _ => false,
+        };
 
     // A successor that is the parameter's own consumed tail, where every self call passes that tail,
     // or the parameter itself, where every self call hands it on unchanged: only parts of the value

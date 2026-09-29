@@ -39,6 +39,7 @@ export (
     value tcoSelfCallSpineFlow,
     value shapePatternNames,
     value flowSuccessorsNamingNoPartOf,
+    value tcoOwnReferencePositions,
     value flowCallKeyOf,
     value flowNodes,
 )
@@ -1074,7 +1075,65 @@ let recursive flowPositionsReadingNone (arguments: List(Expr)) (position: Int) (
 // binders, and none of the parameters a self call may hand such a name, whole or through another
 // parameter; `cuts` marks the parameters normalized onto the reference-counted heap, which hold
 // references of their own. Nothing is claimed without binders or without the body's flow.
-let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) (flow: Maybe(List(List(Int)))) (binders: List(Str)) (cuts: List(Bool)) (arguments: List(Expr)) =
+// A successor that is the parameter itself or a call's result other than a constructor's.
+let flowIsOwnReferenceSuccessor (argument: Expr) (parameter: Str) (constructors: List(Str)) =
+    match shapeUnspan(argument) with
+        | ExprVar(name) -> name == parameter
+        | ExprCall(_function, _argument, _sugar, _layout) as call ->
+            match shapeCallSpine(call)([]) with
+                | (root, _arguments) ->
+                    match shapeUnspan(root) with
+                        | ExprVar(name) -> !shapeContainsName(name)(constructors)
+                        | ExprQualifiedVar(qualifier, member) -> !shapeContainsName(member)(constructors) && !shapeContainsName(qualifier + "." + member)(constructors)
+                        | _ -> true
+        | _ -> false
+
+let recursive flowKeepOwnReferencePositions (arguments: List(Expr)) (parameters: List(Str)) (constructors: List(Str)) (position: Int) (candidates: List(Int)) =
+    match (arguments, parameters) with
+        | (argument :: restArguments, parameter :: restParameters) ->
+            flowKeepOwnReferencePositions(restArguments)(restParameters)(constructors)(position + 1)(if flowIsOwnReferenceSuccessor(argument)(parameter)(constructors)
+            then candidates
+            else flowWithoutPositions([position])(candidates))
+        | _ -> candidates
+and flowWithoutPositions (removed: List(Int)) (positions: List(Int)) =
+    match positions with
+        | [] -> []
+        | position :: rest ->
+            if flowContainsInt(position)(removed)
+            then flowWithoutPositions(removed)(rest)
+            else position :: flowWithoutPositions(removed)(rest)
+
+let recursive flowOwnReferenceNodes (self: Str) (parameters: List(Str)) (constructors: List(Str)) (nodes: List(Expr)) (candidates: List(Int)) =
+    match nodes with
+        | [] -> candidates
+        | (ExprCall(_function, _argument, _sugar, _layout) as call) :: rest ->
+            match shapeCallSpine(call)([]) with
+                | (ExprVar(callee), arguments) ->
+                    if callee == self && length(arguments) == length(parameters)
+                    then
+                        candidates
+                        |> flowKeepOwnReferencePositions(arguments)(parameters)(constructors)(0)
+                        |> flowOwnReferenceNodes(self)(parameters)(constructors)(rest)
+                    else flowOwnReferenceNodes(self)(parameters)(constructors)(rest)(candidates)
+                | _ -> flowOwnReferenceNodes(self)(parameters)(constructors)(rest)(candidates)
+        | _node :: rest -> flowOwnReferenceNodes(self)(parameters)(constructors)(rest)(candidates)
+
+// Stage 0's `PositionsHoldingOwnReferences` after its type test (`candidates`, the positions of a
+// value of the contract's own types): the candidates every full self call hands the parameter
+// itself or a call's result, whose owned value holds references of its own.
+let tcoOwnReferencePositions (self: Str) (parameters: List(Str)) (constructors: List(Str)) (body: Expr) (candidates: List(Int)) =
+    match flowNodes([body])([]) with
+        | None -> []
+        | Some(nodes) -> flowOwnReferenceNodes(self)(parameters)(constructors)(nodes)(candidates)
+
+let recursive flowCutsWith (positions: List(Int)) (position: Int) (cuts: List(Bool)) =
+    match cuts with
+        | [] -> []
+        | cut :: rest -> (cut || flowContainsInt(position)(positions)) :: flowCutsWith(positions)(position + 1)(rest)
+
+// `ownReferences` marks the parameters holding references of their own to whatever they keep
+// (stage 0's `PositionsHoldingOwnReferences`): like a cut, and never a holder.
+let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (body: Expr) (flow: Maybe(List(List(Int)))) (binders: List(Str)) (ownReferences: List(Int)) (cuts: List(Bool)) (arguments: List(Expr)) =
     match (binders, flow) with
         | ([], _) -> []
         | (_, None) -> []
@@ -1084,7 +1143,8 @@ let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (policy: Li
                 | Some((nodes, named)) ->
                     match []
                     |> flowSelfCallPositionsReading(self)(parameters)(policy)(named)(nodes)
-                    |> flowHolderClosure(sources)(cuts) with
+                    |> flowWithoutPositions(ownReferences)
+                    |> flowHolderClosure(sources)(flowCutsWith(ownReferences)(0)(cuts)) with
                         | holders ->
                             flowPositionsReadingNone(arguments)(0)(flowParameterNamesAt(holders)(parameters)(named))(parameters)(policy)
 

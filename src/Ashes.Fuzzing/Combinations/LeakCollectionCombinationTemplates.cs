@@ -482,3 +482,52 @@ internal sealed class LoweringStatePipelineTemplate() : LeakCombinationTemplate(
         internal string LoopFunction { get; } = names.Of("loop");
     }
 }
+
+/// <summary>
+/// A loop threading a map of records that it merges each key's earlier record into, or hands on
+/// unchanged once the record is full: the map is only ever the parameter itself or a call's owned
+/// result, so it holds the earlier record's parts by references of its own, and the earlier record
+/// is released on the edge that hands the map on unchanged.
+/// </summary>
+internal sealed class TableMergedOrHandedOnTemplate() : LeakCombinationTemplate(
+    "leak.table-merged-or-handed-on", "tableMerged", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.Let)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string reach = names.Of("LeakReach");
+        string lookup = names.Of("lookup");
+        string solve = names.Of("solve");
+        IReadOnlyList<string> words = names.DistinctWords(names.Between(2, 3));
+        List<string> keys = [.. Enumerable.Range(0, names.Between(5, 9)).Select(index => words[index % words.Count])];
+        int full = names.Between(1, 2);
+        int fuel = names.Between(8, 14);
+        string merged = names.Coin("key-part") ? "key :: previous.parts" : "(key + \"\") :: previous.parts";
+        return $$"""
+            type {{reach}} =
+                | fresh: Bool
+                | parts: List(Str)
+
+            let {{lookup}} (key: Str) (table: MapTree(Str, {{reach}})) =
+                match Ashes.Collection.Map.getStr(key)(table) with
+                    | Some(found) -> found
+                    | None -> {{reach}}(fresh = false, parts = [])
+
+            let recursive {{solve}} (table: MapTree(Str, {{reach}})) (keys: List(Str)) (fuel: Int) =
+                match keys with
+                    | [] -> table
+                    | key :: rest ->
+                        if fuel <= 0
+                        then table
+                        else
+                            let previous = {{lookup}}(key)(table)
+                            in
+                                let merged = {{reach}}(fresh = true, parts = {{merged}})
+                                in
+                                    if Ashes.Collection.List.length(previous.parts) > {{LeakNames.Text(full)}}
+                                    then {{solve}}(table)(rest)(fuel - 1)
+                                    else {{solve}}(Ashes.Collection.Map.setStr(key)(merged)(table))(rest)(fuel - 1)
+
+            let {{names.Entry}} (seed: Int) = Ashes.Collection.Map.size({{solve}}(Ashes.Collection.Map.empty)([{{string.Join(", ", keys)}}])({{LeakNames.Text(fuel)}})) + seed
+            """;
+    }
+}

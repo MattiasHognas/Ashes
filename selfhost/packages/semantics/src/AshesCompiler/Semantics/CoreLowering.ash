@@ -23574,15 +23574,34 @@ let recursive unmanagedFlags (count: Int) =
 
 // The successors naming nothing that can hold a part of the predecessor slot's value, on a path
 // that did not normalize the successors and on one that did.
+// The positions of the frame's parameters of a value of the contract's own types.
+let recursive generalRcParameterPositions (slots: List(Int)) (position: Int) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | slot :: rest ->
+            match slotResolvedType(slot)(state.bindings)(state) with
+                | Some(resolved) ->
+                    if isGeneralRcValueType(resolved)(state)
+                    then position :: generalRcParameterPositions(rest)(position + 1)(state)
+                    else generalRcParameterPositions(rest)(position + 1)(state)
+                | None -> generalRcParameterPositions(rest)(position + 1)(state)
+
 let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match stateTcoLoop(state) with
         | None -> ([], [])
         | Some(loop) ->
             let binders = predecessorBindersOf(predecessorSlot)(state)
             in
-                (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(frame.parameterSlots
-                |> length
-                |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+                let ownReferences =
+                    state
+                    |> generalRcParameterPositions(frame.parameterSlots)(0)
+                    |> tcoOwnReferencePositions(loop.selfName)(loop.parameterNames)(state
+                    |> stateConstructorLayouts
+                    |> constructorNamesOf)(loop.body)
+                in
+                    (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(ownReferences)(frame.parameterSlots
+                    |> length
+                    |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
 
 let recursive withoutStringParts (parts: List(SemanticType)) =
     match parts with
