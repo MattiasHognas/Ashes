@@ -4393,6 +4393,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_of_paths_memory_should_plateau()
+    {
+        // A worklist of paths walked by its tail and refilled from `append`'s result lives on the
+        // reference-counted heap. Left in the arena, each refill was normalized onto the heap,
+        // copied back into the arena by the back edge, and neither copy was released.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildWorklistOfPathsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 8}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist of paths walked and refilled", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_accumulator_started_afresh_memory_should_plateau()
     {
         // `interleave(first :: [])(rest)` beside `interleave(first :: ":" :: acc)(rest)`: a self-call
@@ -11072,6 +11096,28 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildWorklistOfPathsProgram(int rounds)
+        => $$"""
+            let recursive walk (queue: List(List(Str))) (seen: List(Str)) (n: Int) =
+                match queue with
+                    | [] -> n + Ashes.Collection.List.length(seen)
+                    | path :: rest ->
+                        let current = Ashes.Text.join("")(path)
+                        in
+                            if n > 100
+                            then walk(rest)(seen)(n + 1)
+                            else walk(Ashes.Collection.List.append(rest)(if n < 2 then [["x"]] else []))(current :: seen)(n + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([["a"], ["b" + Ashes.Text.fromInt(n)]])([])(0))
 
             0
             |> rounds({{rounds}})

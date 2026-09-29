@@ -10654,13 +10654,21 @@ let tcoListCopyPlanOf (element: SemanticType) (state: CoreLoweringState) =
     then generalCopyPlanOf(SemList(element))(state)
     else argumentCopyPlanOf(SemList(element))(state)
 
+// Stage 0's `IsWalkedOrRefilledElement`: a walked-or-refilled list of strings, or of lists of
+// strings (a worklist of paths), whose heads are protected wherever they escape.
+let isWalkedOrRefilledElement (element: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(element) with
+        | SemString -> true
+        | SemList(inner) -> resolveType(state)(inner) == SemString
+        | _ -> false
+
 let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && (shape == TcoGrownConsShape || shape == TcoAccumulatorRebuildShape) || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && resolveType(state)(element) == SemString || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && (shape == TcoGrownConsShape || shape == TcoAccumulatorRebuildShape) || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
