@@ -2843,6 +2843,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_variant_node_holding_walked_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop growing a chain of variant nodes, each holding a head the loop walked out of a
+        // list of strings. The chain is normalized at the back edge: the arena node built for it
+        // retains its head until the copy takes its own reference, and releases it right after,
+        // since the walked cell (and the head's other reference with it) is released first.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildVariantNodeHoldingWalkedHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 11}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("variant node holding a walked head", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public void Worklist_front_whose_heads_reach_a_tree_only_as_keys_is_placed_on_the_reference_counted_heap()
     {
         // A worklist front walked and refilled while each walked head is marked in a tree. The
@@ -11292,6 +11317,36 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildVariantNodeHoldingWalkedHeadProgram(int rounds)
+        => $$"""
+            import Ashes.Text
+
+            type Chain =
+                | End
+                | Link(Str, Chain)
+
+            let recursive size (chain: Chain) =
+                match chain with
+                    | End -> 0
+                    | Link(_key, rest) -> 1 + size(rest)
+
+            let recursive grow (keys: List(Str)) (chain: Chain) =
+                match keys with
+                    | [] -> chain
+                    | key :: rest -> grow(rest)(Link(key)(chain))
+
+            let wide = "{{new string('w', 480)}}"
+
+            let run (seed: Int) = size(grow([wide + Ashes.Text.fromInt(seed), wide + "e", wide + "s"])(End)) + seed
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private const string EmptyListFieldUnderConsPatternProgram = """

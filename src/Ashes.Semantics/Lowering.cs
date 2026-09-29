@@ -1828,14 +1828,22 @@ public sealed partial class Lowering
 
     private int TcoBackEdgeNormalizeSuccessor(PendingTcoReset info, int index, TypeRef argType)
     {
+        List<(int Temp, TypeRef Type)> heldPastCopy = [];
         if (BackEdgeCopyBorrowsSuccessorChildren(info, index, argType))
         {
             WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
+            heldPastCopy = RetainsHeldPastTheCopy(info.ArgTemps[index], (TypeRef.TNamedType)argType, BackEdgeLoopParameters(info));
         }
 
-        return TcoBackEdgeNormalizeRuntimeManagedArg(
+        int normalizedTemp = TcoBackEdgeNormalizeRuntimeManagedArg(
             info.ArgTemps[index], argType, info.RuntimeManagedArgResults[index],
             info.RuntimeManagedPredecessorAliases[index], info.ConsumedListTail[index], info.ArgExpressions[index]);
+        foreach ((int temp, TypeRef type) in heldPastCopy)
+        {
+            EmitRuntimeManagedChildDrop(temp, type);
+        }
+
+        return normalizedTemp;
     }
 
     // Each loop parameter's slot beside its active flag at a back edge, -1 for one without.

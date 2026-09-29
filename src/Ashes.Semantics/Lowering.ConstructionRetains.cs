@@ -15,6 +15,9 @@ namespace Ashes.Semantics;
 //   its own before the loop parameter is released, so the construction's retain of a parameter
 //   read is withdrawn, provided the cell holds that retain's only reference and no path releases
 //   the parameter earlier.
+// - A retain such a copied successor holds of anything else (a head matched out of a list the loop
+//   releases before the back edge) keeps its child alive until the copy takes its own reference, and
+//   is released right after that copy.
 //
 // The retains are read back from the instructions that built the cell, which by the time a back
 // edge or a function's result is emitted carry their final, finalized form.
@@ -106,6 +109,46 @@ public sealed partial class Lowering
         }
 
         return reloadIndex - 6;
+    }
+
+    /// <summary>
+    /// The retains the arena cells reaching <paramref name="valueTemp"/> still hold once the
+    /// loop-parameter reads among them are withdrawn, each with its field's type: a head matched
+    /// out of a parameter the loop releases before the back edge (the walked cell of a list), kept
+    /// alive by the cell until the copy takes its own reference. Released right after that copy,
+    /// since the arena cell never releases anything.
+    /// </summary>
+    private List<(int Temp, TypeRef Type)> RetainsHeldPastTheCopy(int valueTemp, TypeRef.TNamedType named, IReadOnlyCollection<(int Slot, int ActiveSlot)> parameters)
+    {
+        List<(int Temp, TypeRef Type)> retains = [];
+        if (Environment.GetEnvironmentVariable("GRC_NO_RELEASEAFTERCOPY") is not null)
+        {
+            return retains;
+        }
+
+        HashSet<int> parameterSlots = [.. parameters.Select(parameter => parameter.Slot)];
+        foreach (int cell in ArenaCellsCarrying(valueTemp, parameterSlots))
+        {
+            int allocation = FindLastInstruction(instruction => instruction is IrInst.AllocAdt adt && adt.Target == cell);
+            if (allocation < 0
+                || named.Symbol.Constructors.FirstOrDefault(candidate => GetConstructorTag(candidate) == ((IrInst.AllocAdt)_inst[allocation]).Tag) is not { } constructor)
+            {
+                continue;
+            }
+
+            foreach (IrInst.SetAdtField field in _inst.OfType<IrInst.SetAdtField>().Where(field => field.Ptr == cell))
+            {
+                int retain = FindLastInstruction(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == field.Source);
+                if (retain >= 0
+                    && _inst[retain] is IrInst.RcDup { RuntimeManaged: true }
+                    && TempUseCount(field.Source, retain) == 1)
+                {
+                    retains.Add((field.Source, InstantiateConstructorParameterType(constructor, field.FieldIndex, named)));
+                }
+            }
+        }
+
+        return retains;
     }
 
     /// <summary>

@@ -5,6 +5,7 @@
 // children, and the construction's retains of loop-parameter reads are withdrawn. Every function
 // here takes the instructions of the function being lowered, most recent first.
 import Ashes.Collection.List.append
+import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
@@ -12,6 +13,7 @@ export (
     value constructionFieldSource,
     value constructionWordSource,
     value isUnrealizedConstructionRetain,
+    value retainsHeldPastTheCopy,
     value withdrawLoopParameterRetainsOfCopiedCells,
 )
 
@@ -240,6 +242,53 @@ let recursive arenaCellsCarrying (pending: List(Int)) (visited: List(Int)) (slot
                             else
                                 arenaCellsCarrying(append(storeSourcesOf(slot)(instructions)([]))(rest))(temp :: visited)(slots)(instructions)(cells)
                         | _ -> arenaCellsCarrying(rest)(temp :: visited)(slots)(instructions)(cells)
+
+// The tag of the arena cell `cellTemp`, allocated as a constructor's.
+let recursive arenaCellTag (cellTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = AllocAdt(target, tag, _fieldCount, _runtimeManaged, _tagless) } :: rest ->
+            if target == cellTemp
+            then Some(tag)
+            else arenaCellTag(cellTemp)(rest)
+        | _instruction :: rest -> arenaCellTag(cellTemp)(rest)
+
+// Whether `storedTemp` is a real retain the cell storing it holds the only reference to.
+let isSoleHeldRetain (storedTemp: Int) (instructions: List(IrInstruction)) =
+    match retainDefinitionOf(storedTemp)(instructions) with
+        | Some(IrInstruction { instruction = RcDup(_target, _source, true, _mayBeEmpty) } :: _rest) -> countTempUses(storedTemp)(instructions)(0) == 1
+        | _ -> false
+
+// The field retains of `cellTemp` with the cell's tag and each field's index, in field order.
+let recursive heldFieldRetains (cellTemp: Int) (tag: Int) (all: List(IrInstruction)) (instructions: List(IrInstruction)) (retains: List((Int, Int, Int))) =
+    match instructions with
+        | [] -> retains
+        | IrInstruction { instruction = SetAdtField(pointer, index, source, _tagless) } :: rest ->
+            if pointer == cellTemp && isSoleHeldRetain(source)(all)
+            then heldFieldRetains(cellTemp)(tag)(all)(rest)((source, tag, index) :: retains)
+            else heldFieldRetains(cellTemp)(tag)(all)(rest)(retains)
+        | _instruction :: rest -> heldFieldRetains(cellTemp)(tag)(all)(rest)(retains)
+
+let recursive heldRetainsOfCells (cells: List(Int)) (instructions: List(IrInstruction)) =
+    match cells with
+        | [] -> []
+        | cell :: rest ->
+            match arenaCellTag(cell)(instructions) with
+                | Some(tag) ->
+                    instructions
+                    |> heldRetainsOfCells(rest)
+                    |> append(heldFieldRetains(cell)(tag)(instructions)(instructions)([]))
+                | None -> heldRetainsOfCells(rest)(instructions)
+
+// Stage 0's `RetainsHeldPastTheCopy`: the retains the arena constructor cells reaching `valueTemp`
+// still hold once the loop-parameter reads among them are withdrawn, each as its temp beside its
+// cell's tag and its field's index. A head matched out of a parameter the loop releases before the
+// back edge is kept alive by the cell until the copy takes its own reference, and is released
+// right after that copy, since the arena cell never releases anything.
+let retainsHeldPastTheCopy (valueTemp: Int) (slots: List(Int)) (instructions: List(IrInstruction)) =
+    instructions |> heldRetainsOfCells([]
+    |> arenaCellsCarrying([valueTemp])([])(slots)(instructions)
+    |> reverse)
 
 let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
     match cells with

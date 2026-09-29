@@ -7938,6 +7938,94 @@ let recursive resetArgumentParameters (arguments: List(TcoResetArgument)) =
                 | (None, None, Some(activeSlot)) -> activeSlot
                 | _ -> -1) :: resetArgumentParameters(rest)
 
+let recursive lookupTypeVariablePair (variableId: Int) (pairs: List((Int, SemanticType))) =
+    match pairs with
+        | [] -> None
+        | (candidate, replacement) :: rest ->
+            if candidate == variableId
+            then Some(replacement)
+            else lookupTypeVariablePair(variableId)(rest)
+
+// A type with the given variables replaced; a function type is kept as it is, since a function
+// value answers "may contain" whatever its types.
+let recursive replaceTypeVariables (pairs: List((Int, SemanticType))) (semanticType: SemanticType) =
+    match semanticType with
+        | SemVariable(variableId) ->
+            match lookupTypeVariablePair(variableId)(pairs) with
+                | Some(replacement) -> replacement
+                | None -> semanticType
+        | SemList(element) ->
+            element
+            |> replaceTypeVariables(pairs)
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> map(replaceTypeVariables(pairs))
+            |> SemTuple
+        | SemNamed(symbolId, name, arguments) ->
+            arguments
+            |> map(replaceTypeVariables(pairs))
+            |> SemNamed(symbolId)(name)
+        | _ -> semanticType
+
+let constructorResultNameIs (typeName: Str) (layout: CoreConstructorLayout) =
+    match constructorResultName(layout) with
+        | Some(resultName) -> resultName == typeName
+        | None -> false
+
+let recursive typeVariablePairs (variables: List(SemanticType)) (arguments: List(SemanticType)) =
+    match (variables, arguments) with
+        | (SemVariable(variableId) :: restVariables, argument :: restArguments) -> (variableId, argument) :: typeVariablePairs(restVariables)(restArguments)
+        | (_variable :: restVariables, _argument :: restArguments) -> typeVariablePairs(restVariables)(restArguments)
+        | _ -> []
+
+let recursive typeAtIndex (index: Int) (types: List(SemanticType)) =
+    match types with
+        | [] -> None
+        | head :: rest ->
+            if index == 0
+            then Some(head)
+            else typeAtIndex(index - 1)(rest)
+
+// The type of field `index` of the constructor tagged `tag` of the named type, at its instantiation.
+let recursive constructorFieldTypeAt (typeName: Str) (arguments: List(SemanticType)) (tag: Int) (index: Int) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> None
+        | (CoreConstructorLayout { tag = candidateTag } as layout) :: rest ->
+            if candidateTag == tag && constructorResultNameIs(typeName)(layout)
+            then
+                match layoutFieldTypes(layout)(state) with
+                    | (fields, SemNamed(_symbolId, _name, variables)) ->
+                        match typeAtIndex(index)(fields) with
+                            | Some(fieldType) ->
+                                fieldType
+                                |> replaceTypeVariables(typeVariablePairs(variables)(arguments))
+                                |> Some
+                            | None -> None
+                    | (fields, _resultType) -> typeAtIndex(index)(fields)
+            else constructorFieldTypeAt(typeName)(arguments)(tag)(index)(rest)(state)
+
+// Stage 0's release of `RetainsHeldPastTheCopy` after an arena successor's back-edge copy: each
+// field retain the arena cell held for its head, released now that the copy holds its own.
+let recursive emitHeldRetainReleases (retains: List((Int, Int, Int))) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (retains, resolveType(state)(semanticType)) with
+        | ((temp, tag, index) :: rest, SemNamed(_symbolId, name, arguments)) ->
+            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorLayouts(state))(state) with
+                | Some(fieldType) ->
+                    state
+                    |> emitOwnedValueRelease(unlocatedInstruction)(temp)(fieldType)
+                    |> emitHeldRetainReleases(rest)(semanticType)
+                | None -> emitHeldRetainReleases(rest)(semanticType)(state)
+        | _ -> state
+
+let backEdgeHeldRetains (temp: Int) (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(frame) ->
+            if backEdgeCopyBorrows(semanticType)(expression)(state)
+            then retainsHeldPastTheCopy(temp)(frame.parameterSlots)(state.reversedInstructions)
+            else []
+        | None -> []
+
 // Stage 0's `TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs` for the list slots: the
 // pattern-bound tail of a consumed list is retained for the successor (null-tolerant, the tail
 // may be the empty list), a fresh runtime-managed cons cell already owns its reference, and a
@@ -8025,8 +8113,13 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                 |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                                 |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
                     else
-                        match emitBackEdgeReferenceOrCopy(temp)(semanticType)(emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression))(state) with
-                            | (copied, copyTemp) -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)(copied)
+                        let heldRetains = backEdgeHeldRetains(temp)(semanticType)(expression)(state)
+                        in
+                            match emitBackEdgeReferenceOrCopy(temp)(semanticType)(emitTcoBackEdgeAdtCopy(temp)(semanticType)(expression))(state) with
+                                | (copied, copyTemp) ->
+                                    copied
+                                    |> emitHeldRetainReleases(heldRetains)(semanticType)
+                                    |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
         | TcoResetArgument { managedStr = Some(activeSlot), parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
             if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
             then normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
@@ -10712,47 +10805,6 @@ let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(Core
                     else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
                 | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
 
-let recursive lookupTypeVariablePair (variableId: Int) (pairs: List((Int, SemanticType))) =
-    match pairs with
-        | [] -> None
-        | (candidate, replacement) :: rest ->
-            if candidate == variableId
-            then Some(replacement)
-            else lookupTypeVariablePair(variableId)(rest)
-
-// A type with the given variables replaced; a function type is kept as it is, since a function
-// value answers "may contain" whatever its types.
-let recursive replaceTypeVariables (pairs: List((Int, SemanticType))) (semanticType: SemanticType) =
-    match semanticType with
-        | SemVariable(variableId) ->
-            match lookupTypeVariablePair(variableId)(pairs) with
-                | Some(replacement) -> replacement
-                | None -> semanticType
-        | SemList(element) ->
-            element
-            |> replaceTypeVariables(pairs)
-            |> SemList
-        | SemTuple(elements) ->
-            elements
-            |> map(replaceTypeVariables(pairs))
-            |> SemTuple
-        | SemNamed(symbolId, name, arguments) ->
-            arguments
-            |> map(replaceTypeVariables(pairs))
-            |> SemNamed(symbolId)(name)
-        | _ -> semanticType
-
-let constructorResultNameIs (typeName: Str) (layout: CoreConstructorLayout) =
-    match constructorResultName(layout) with
-        | Some(resultName) -> resultName == typeName
-        | None -> false
-
-let recursive typeVariablePairs (variables: List(SemanticType)) (arguments: List(SemanticType)) =
-    match (variables, arguments) with
-        | (SemVariable(variableId) :: restVariables, argument :: restArguments) -> (variableId, argument) :: typeVariablePairs(restVariables)(restArguments)
-        | (_variable :: restVariables, _argument :: restArguments) -> typeVariablePairs(restVariables)(restArguments)
-        | _ -> []
-
 // Stage 0's `InstantiatedFieldType` over every constructor of a named type: each field at the
 // instantiation the type arguments give, so a field of the declaration's own type parameter is
 // the argument in its place rather than a value of any type.
@@ -12324,14 +12376,6 @@ let recursive parameterArgumentIndex (parameter: Str) (arguments: List(Expr)) (i
                     then Some(index)
                     else parameterArgumentIndex(parameter)(rest)(index + 1)
                 | _ -> parameterArgumentIndex(parameter)(rest)(index + 1)
-
-let recursive typeAtIndex (index: Int) (types: List(SemanticType)) =
-    match types with
-        | [] -> None
-        | semanticType :: rest ->
-            if index == 0
-            then Some(semanticType)
-            else typeAtIndex(index - 1)(rest)
 
 // The declared type of the constructor field the bare parameter is passed to in `expression`'s
 // own constructor application, when that field holds a string or a named type.
