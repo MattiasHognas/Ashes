@@ -3365,6 +3365,20 @@ let testAnnotatedNestedRecursionLeavesNothingPerRound shipped unit =
     |> annotatedNestedRecursionSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendAnnotatedNestedRecursionOneRound")("selfhost_backend_annotated_nested_recursion_one_round_e2e"))
 
+// A `let` bound to a match whose arms are the empty list and a rebuilt list owns the join: the
+// empty list takes nothing from the rebuilt list's freshness, so the binding releases the list at
+// its scope exit.
+let emptyListJoinLoopSource rounds = "let recursive loop (remaining: Int) (checksum: Int) =\n    if remaining == 0\n    then checksum\n    else\n        let observed =\n            let generated =\n                let reuseList =\n                    let element = 9\n                    in [element]\n                in\n                    match reuseList with\n                        | [] -> []\n                        | head :: tail -> head :: tail\n            in Ashes.Collection.List.length(generated)\n        in loop(remaining - 1)(checksum + observed)\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testEmptyListJoinLoopLeavesNothingPerRound shipped unit =
+    "selfhost_backend_empty_list_join_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> emptyListJoinLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendEmptyListJoinTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> emptyListJoinLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendEmptyListJoinOneRound")("selfhost_backend_empty_list_join_one_round_e2e"))
+
 // A handler arm inside a lambda resumes with a value let-bound outside the lambda, which the
 // lambda captures: the arm binds only its parameters and `resume`.
 let buildHandlerArmCaptureModule shipped name context = codegenShippedSource(shipped)("capability Source(a) =\n    | get : Unit -> a\n\nlet result =\n    (let captured = 8\n    in\n        ((given (unit: Unit) ->\n            handle perform Source.get(Unit) with\n                | Source.get(_) -> resume(captured)\n                | return(handled) -> handled + 34))(Unit))\n\nAshes.IO.print(result)")(name)(context)
@@ -5718,6 +5732,7 @@ let run shipped =
     |> testMapUpsertLoopLeavesNothingPerRound(shipped)
     |> testTupleStateLoopLeavesNothingPerRound(shipped)
     |> testAnnotatedNestedRecursionLeavesNothingPerRound(shipped)
+    |> testEmptyListJoinLoopLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
     |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)

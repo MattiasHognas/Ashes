@@ -15202,19 +15202,24 @@ let recursive definedByRetain (temp: Int) (instructions: List(IrInstruction)) =
 // or when it is the empty list literal of a list-typed join; newly produced only when the temp
 // itself was freshly produced. A branch returning a pattern binding of a loop parameter retained
 // it before the binding's scope releases it (stage 0's `IsRetainedPatternOwnerArm`): the arm hands
-// the join a reference of its own, not one the parameter owns.
+// the join a reference of its own, not one the parameter owns. The empty list literal owns no
+// cell, so it takes nothing from the join's freshness: a join of it and fresh lists is a fresh
+// list its `let` owns, as stage 0's `TrackLetOwnership` owns any reference-counted join that
+// borrows nothing.
 let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrowsParameter: Bool) (retainedParameterPart: Bool) (state: CoreLoweringState) =
-    MatchArmResult(
-        armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
-        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart,
-        armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
-        armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
-        armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
-        armFreshCell = constructsFreshCell(body)(state),
-        armStoreTemp = if armNeverReachesJoin(body)(state)
-        then -1
-        else finalTemp
-    )
+    (let emptyListArm = branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state)
+    in
+        MatchArmResult(
+            armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || emptyListArm,
+            armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart || emptyListArm,
+            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
+            armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
+            armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
+            armFreshCell = constructsFreshCell(body)(state),
+            armStoreTemp = if armNeverReachesJoin(body)(state)
+            then -1
+            else finalTemp
+        ))
 
 let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     (let borrowsParameter = armBorrowsLoopParameterOf(body)(state)
