@@ -2914,6 +2914,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_tuple_state_successor_borrows_pattern_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop whose `(List(Str), Int)` state is placed on the reference-counted heap passes on
+        // the state's tail in a fresh tuple. The back edge copies that tuple with references of its
+        // own, so a pattern-owner duplicate taken for the tail was never released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildTupleStateSuccessorBorrowsPatternTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple state successor borrowing a pattern tail", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_choice_accumulator_cell_borrows_pattern_head_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -11499,6 +11523,33 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTupleStateSuccessorBorrowsPatternTailProgram(int rounds)
+        => $$"""
+            let recursive parameters (reversed: List(Str)) (state: (List(Str), Int)) =
+                match state with
+                    | ("=" :: _, _count) -> (reversed, state)
+                    | (token :: tail, count) -> parameters(token :: reversed)((tail, count + 1))
+                    | ([], _count) -> (reversed, state)
+
+            let recursive countAll (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let tokens = [wide + "1", wide + "2", wide + "3", "=", wide + "4"]
+                    in
+                        match parameters([])((tokens, n)) with
+                            | (names, _after) -> rounds(n - 1)(total + countAll(names)(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

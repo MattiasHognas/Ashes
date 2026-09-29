@@ -33,6 +33,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new VariantNodeHoldingWalkedHeadTemplate());
         registry.Register(new GenericPairPruningTemplate());
         registry.Register(new HeaderTupleDestructuredTemplate());
+        registry.Register(new TupleStateSuccessorTemplate());
         registry.Register(new PassStateAndRewritePairTemplate());
         registry.Register(new ListParameterInTupleResultTemplate());
         registry.Register(new NestedGroupReplacedByHelperTemplate());

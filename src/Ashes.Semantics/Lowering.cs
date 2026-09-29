@@ -11548,7 +11548,10 @@ public sealed partial class Lowering
             // be retained, because the binding's own release still fires at the back edge.
             bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index);
             request = request with { TransfersRuntimeManagedChildren = !copiedSuccessor };
-            _backEdgeCopiedCell = copiedSuccessor && argument is Expr.Cons && CopiedCellBorrowsEnabled ? argument : null;
+            _backEdgeCopiedCell = CopiedCellBorrowsEnabled
+                && (copiedSuccessor && argument is Expr.Cons || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
+                ? argument
+                : null;
             request = request
                 .AddRuntime(
                     freshClosure,
@@ -11608,6 +11611,16 @@ public sealed partial class Lowering
     // shape: its back edge copies the successor with references of its own before the iteration's
     // owners are released, so an arena cell built for it borrows its children, and a retain stored
     // in that cell would never be released.
+    // A reference-counted loop parameter of a tuple type with an owned element: the back edge copies
+    // an arena successor tuple (EmitRuntimeManagedTcoTupleDeepCopy), each owned part retained by the
+    // copy, and releases the predecessor with its parts.
+    private bool BackEdgeCopiesTupleSuccessor(TcoContext tco, int index)
+        => index < tco.ParamSlots.Count
+            && tco.IsRuntimeManagedSlot(tco.ParamSlots[index])
+            && tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TTuple tuple
+            && !tuple.Elements.All(element => CanArenaReset(Prune(element)));
+
     private bool BackEdgeCopiesListSuccessor(TcoContext tco, int index)
         => Environment.GetEnvironmentVariable("GRC_NO_BORROWEDSUCCESSOR") is null
             && index < tco.ParamSlots.Count
@@ -15868,27 +15881,18 @@ public sealed partial class Lowering
             ? request with { TransfersRuntimeManagedChildren = true }
             : request;
 
-        var elements = new List<LoweredValue>(tuple.Elements.Count);
-        for (int i = 0; i < tuple.Elements.Count; i++)
-        {
-            Expr element = tuple.Elements[i];
-            LoweredValue loweredElement = LowerTupleElement(element, elementRequest);
-            UnifyTupleElementWithExpected(loweredElement.Type, expectedRequest, tuple.Elements.Count, i);
-            if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
-            {
-                loweredElement = NormalizeRuntimeManagedBytesValue(loweredElement);
-            }
-            LoweredValue materialized = MaterializeEscapingStringTupleElement(
-                element,
-                loweredElement,
-                request);
-            int ownedTemp = DuplicatePerceusPatternOwnerForAggregate(element, materialized.Temp);
-            elements.Add(CreateLoweredValue(ownedTemp, materialized.Type));
-            MarkResourceArgMoved(tuple.Elements[i]);
-        }
+        // A successor tuple the back edge copies borrows its parts, as a copied successor cell does
+        // (LowerConsTail): the copy takes references of its own before the iteration's owners are
+        // released, so a pattern owner's duplicate stored in an arena tuple would never be released.
+        bool copiedSuccessor = ReferenceEquals(tuple, _backEdgeCopiedCell);
+        List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor);
 
         int tupleTemp = NewTemp();
         bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request);
+        if (copiedSuccessor && runtimeManaged)
+        {
+            DuplicatePatternOwnerElements(tuple, elements);
+        }
         bool[] demoted = DemoteElementsBesideAbstractSibling(elements, runtimeManaged);
         MaterializeEscapingArenaTupleElements(
             tuple,
@@ -15908,6 +15912,50 @@ public sealed partial class Lowering
         return (
             tupleTemp,
             new TypeRef.TTuple(elements.Select(element => element.Type).ToList()));
+    }
+
+    // Each element lowered and met with its part of the expected type; a pattern owner stored in the
+    // tuple takes its duplicate, unless the tuple is a successor the back edge copies.
+    private List<LoweredValue> LowerTupleLitElementValues(
+        Expr.TupleLit tuple,
+        LoweredValueRequest request,
+        LoweredValueRequest elementRequest,
+        LoweredValueRequest expectedRequest,
+        bool copiedSuccessor)
+    {
+        var elements = new List<LoweredValue>(tuple.Elements.Count);
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            Expr element = tuple.Elements[i];
+            LoweredValue loweredElement = LowerTupleElement(element, elementRequest);
+            UnifyTupleElementWithExpected(loweredElement.Type, expectedRequest, tuple.Elements.Count, i);
+            if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
+            {
+                loweredElement = NormalizeRuntimeManagedBytesValue(loweredElement);
+            }
+            LoweredValue materialized = MaterializeEscapingStringTupleElement(
+                element,
+                loweredElement,
+                request);
+            int ownedTemp = copiedSuccessor
+                ? materialized.Temp
+                : DuplicatePerceusPatternOwnerForAggregate(element, materialized.Temp);
+            elements.Add(CreateLoweredValue(ownedTemp, materialized.Type));
+            MarkResourceArgMoved(tuple.Elements[i]);
+        }
+
+        return elements;
+    }
+
+    // A reference-counted tuple owns its parts whatever copies it, so each pattern owner it stores
+    // takes the duplicate a copied arena successor goes without.
+    private void DuplicatePatternOwnerElements(Expr.TupleLit tuple, List<LoweredValue> elements)
+    {
+        for (int i = 0; i < elements.Count; i++)
+        {
+            int ownedTemp = DuplicatePerceusPatternOwnerForAggregate(tuple.Elements[i], elements[i].Temp);
+            elements[i] = CreateLoweredValue(ownedTemp, elements[i].Type);
+        }
     }
 
     // A runtime-RC tuple owns its children (its drop releases them), and an escaping arena tuple

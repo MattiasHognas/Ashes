@@ -395,6 +395,45 @@ internal sealed class HeaderTupleDestructuredTemplate() : LeakCombinationTemplat
 }
 
 /// <summary>
+/// A loop threading a <c>(List(Str), Int)</c> state it matches directly, passing on the tail of the
+/// state's list in a fresh tuple and returning the state beside an accumulator.
+/// </summary>
+internal sealed class TupleStateSuccessorTemplate() : LeakCombinationTemplate(
+    "leak.tuple-state-successor", "tupleStateSuccessor", GeneratedFeature.Tuple, GeneratedFeature.TailCall, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string alias = names.Of("LeakState");
+        string parameters = names.Of("parameters");
+        string stop = names.Word();
+        IEnumerable<string> tokens = [.. Enumerable.Range(0, names.Between(1, 4)).Select(_ => names.Word()), stop, names.Word()];
+        string exitArm = names.Coin("literal-head-exit")
+            ? $$"""
+                        | ({{stop}} :: _, _count) -> (reversed, state)
+                        | (token :: tail, count) -> {{parameters}}(token :: reversed)((tail, count + 1))
+                """
+            : $$"""
+                        | (token :: tail, count) ->
+                            if token == {{stop}}
+                            then (reversed, state)
+                            else {{parameters}}(token :: reversed)((tail, count + 1))
+                """;
+        return $$"""
+            type alias {{alias}} = (List(Str), Int)
+
+            let recursive {{parameters}} (reversed: List(Str)) (state: {{alias}}) =
+                match state with
+            {{exitArm}}
+                    | ([], _count) -> (reversed, state)
+
+            let {{names.Entry}} (seed: Int) =
+                match {{parameters}}([])(([{{string.Join(", ", tokens)}}], seed)) with
+                    | (names, _after) -> Ashes.Collection.List.length(names)
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>
