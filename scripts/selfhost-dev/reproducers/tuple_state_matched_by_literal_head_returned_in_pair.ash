@@ -15,4 +15,6 @@ let recursive loop (remaining: Int) (checksum: Int) =
     then checksum
     else loop(remaining - 1)(checksum + run(2))
 
-Ashes.IO.print(loop(ROUNDS)(0))
+0
+|> loop(ROUNDS)
+|> Ashes.IO.print
