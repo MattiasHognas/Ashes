@@ -3365,6 +3365,20 @@ let testAnnotatedNestedRecursionLeavesNothingPerRound shipped unit =
     |> annotatedNestedRecursionSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendAnnotatedNestedRecursionOneRound")("selfhost_backend_annotated_nested_recursion_one_round_e2e"))
 
+// The same nested recursion without its annotation, inside a loop body that is lowered again:
+// the recursive member is lowered again as well once its body closes its own result, so its self
+// call asks for no arena result.
+let unannotatedNestedRecursionSource rounds = "let recursive loop (remaining: Int) (checksum: Int) =\n    if remaining == 0\n    then checksum\n    else\n        let observed =\n            let recursive render (items: List(Int)) =\n                match items with\n                    | [] -> \"]\"\n                    | head :: tail -> Ashes.Text.fromInt(head) + render(tail)\n            in render([-6, -8])\n        in loop(remaining - 1)(checksum + Ashes.Text.byteLength(observed))\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testUnannotatedNestedRecursionLeavesNothingPerRound shipped unit =
+    "selfhost_backend_unannotated_nested_recursion_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> unannotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnannotatedNestedRecursionTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> unannotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnannotatedNestedRecursionOneRound")("selfhost_backend_unannotated_nested_recursion_one_round_e2e"))
+
 // A `let` bound to a match whose arms are the empty list and a rebuilt list owns the join: the
 // empty list takes nothing from the rebuilt list's freshness, so the binding releases the list at
 // its scope exit.
@@ -5745,6 +5759,7 @@ let run shipped =
     |> testMapUpsertLoopLeavesNothingPerRound(shipped)
     |> testTupleStateLoopLeavesNothingPerRound(shipped)
     |> testAnnotatedNestedRecursionLeavesNothingPerRound(shipped)
+    |> testUnannotatedNestedRecursionLeavesNothingPerRound(shipped)
     |> testEmptyListJoinLoopLeavesNothingPerRound(shipped)
     |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
     |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)

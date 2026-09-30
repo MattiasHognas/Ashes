@@ -12625,6 +12625,26 @@ let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> 
                             then lowerFunctionBodyAgain(body)(prepare)(lower)(false)((entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply))
                             else first
 
+// A recursive member nested in a body that is being lowered again takes fresh type variables for
+// its own arrow, which the enclosing body's resolved substitution does not cover: stage 0 seeds
+// such a binding with the closed type its discovery pass inferred, wherever it is nested. So a
+// member whose body applies a mapped operator and closes its scope is lowered again here too; the
+// closures nested in it are still lowered once.
+let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
+    if stateResolvingCallsAgain(entered)
+    then
+        match entered
+        |> prepare
+        |> lower(body) with
+            | LoweredCoreValue { error = Some(_error) } as failed -> failed
+            | first ->
+                match close(first) with
+                    | LoweredCoreValue { state = closedState } ->
+                        if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
+                        then lowerFunctionBodyAgain(body)(prepare)(lower)(true)((entered with substitution = closedState.substitution, typeSupply = closedState.typeSupply))
+                        else first
+    else lowerFunctionBodyResolvingCalls(body)(prepare)(close)(lower)(entered)
+
 // A lambda lowered against an expected function type hands the expected result type on to its
 // body, as a recursive member does: a nested lambda of a curried chain then pins its own
 // parameter before the body is lowered, so a trait-mapped operator inside it sees the type the
@@ -18166,7 +18186,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> seedParameterFromConstructorFields(parameter)(parameterType)(body)
                         |> prepareRecursiveBodyState(name)(parameter)(parameterType)(captures)(selfBindings)(origin)
                         |> noteLetBoundFunction(label)(origin)
-                        |> lowerFunctionBodyResolvingCalls(labeled
+                        |> lowerRecursiveBodyResolvingCalls(labeled
                         |> stateRecursiveDeclarationSpan
                         |> sugarChainBody(body))(given (entered: CoreLoweringState) ->
                             entered

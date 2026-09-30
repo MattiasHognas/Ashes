@@ -434,6 +434,37 @@ internal sealed class TupleStateSuccessorTemplate() : LeakCombinationTemplate(
 }
 
 /// <summary>
+/// A recursive loop whose body binds an unannotated recursive <c>let</c> concatenating its own
+/// <c>Str</c> result, rendering a list the round builds.
+/// </summary>
+internal sealed class UnannotatedNestedRecursionConcatTemplate() : LeakCombinationTemplate(
+    "leak.unannotated-nested-recursion-concat", "unannotatedNestedRecursionConcat", GeneratedFeature.Let, GeneratedFeature.TailCall, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string walk = names.Of("walk");
+        string closing = names.Word();
+        string separator = names.Coin("separated") ? " + \",\"" : string.Empty;
+        string items = names.Ints(names.Between(1, 4), -9, 9);
+        return $$"""
+            let recursive {{walk}} (remaining: Int) (total: Int) =
+                if remaining == 0
+                then total
+                else
+                    let rendered =
+                        let recursive render (items: List(Int)) =
+                            match items with
+                                | [] -> {{closing}}
+                                | head :: tail -> Ashes.Text.fromInt(head){{separator}} + render(tail)
+                        in render({{items}})
+                    in {{walk}}(remaining - 1)(total + Ashes.Text.byteLength(rendered))
+
+            let {{names.Entry}} (seed: Int) = {{walk}}(2)(seed)
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>
