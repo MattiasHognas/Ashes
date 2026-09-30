@@ -551,9 +551,13 @@ let isArenaCopyOut (instruction: IrInstruction) =
 // A returned alias (an escaping cell or call result that embeds the owner) is a use whose "after"
 // is unreachable; the drop goes before the return, where lowering's escape handling has already
 // retained or copied what the result keeps.
+// A branch whose condition is an alias (a call's result, read only as a truth value or a tag) ends
+// its block: the drop goes before it, so every path out of the block takes it.
 let lifetimeInsertionIndex (instructions: List(IrInstruction)) (lastUse: Int) =
     match (listAt(instructions)(lastUse), listAt(instructions)(lastUse + 1)) with
         | (Some(IrInstruction { instruction = Return(_result) }), _) -> lastUse
+        | (Some(IrInstruction { instruction = JumpIfFalse(_condition, _target) }), _) -> lastUse
+        | (Some(IrInstruction { instruction = SwitchTag(_tag, _cases, _defaultLabel) }), _) -> lastUse
         | (Some(last), Some(IrInstruction { instruction = ReclaimArenaChunks(_saved, _preRestore, _loop) })) ->
             if isArenaCopyOut(last)
             then lastUse + 2

@@ -567,3 +567,47 @@ internal sealed class VariantNodeHoldingWalkedHeadTemplate() : LeakCombinationTe
             """;
     }
 }
+
+/// <summary>
+/// A loop over records testing a string field bound under a cons pattern with a curried library
+/// call and branching on the result: the call's result counts as a use of the field, last read by
+/// the branch, so the field's release must go before the branch for every arm to take it.
+/// </summary>
+internal sealed class PatternStringTestedByCurriedCallTemplate() : LeakCombinationTemplate(
+    "leak.pattern-string-tested-by-curried-call", "stringTest", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string box = names.Of("LeakBox");
+        string count = names.Of("countMatching");
+        string build = names.Of("boxesFrom");
+        IReadOnlyList<string> words = names.DistinctWords(names.Between(3, 5));
+        string labels = "[" + string.Join(", ", words.Select(word => word + " + \"x\"")) + "]";
+        string test = names.Pick(
+            "Ashes.Text.startsWith(label)(\"s\")",
+            "Ashes.Text.startsWith(\"s\")(label)",
+            "Ashes.Text.contains(label)(\"x\")");
+        string hit = names.Coin("hit-passes-count") ? $"{count}(rest)(total)" : $"{count}(rest)(total + 1)";
+        string miss = names.Coin("miss-passes-count") ? $"{count}(rest)(total)" : $"{count}(rest)(total + 2)";
+        return $$"""
+            type {{box}} =
+                | label: Str
+                | tag: Int
+
+            let recursive {{count}} (boxes: List({{box}})) (total: Int) =
+                match boxes with
+                    | [] -> total
+                    | {{box}} { label = label } :: rest ->
+                        if {{test}}
+                        then {{hit}}
+                        else {{miss}}
+
+            let recursive {{build}} (labels: List(Str)) (built: List({{box}})) =
+                match labels with
+                    | [] -> built
+                    | label :: rest -> {{build}}(rest)({{box}}(label = label + "", tag = 1) :: built)
+
+            let {{names.Entry}} (seed: Int) = {{count}}({{build}}({{labels}})([]))(0) + seed
+            """;
+    }
+}

@@ -537,7 +537,7 @@ let codegenInstructionKind cx builder kind state =
                                         | BytesSubView(target, bytes, start, count) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(count)
-                                            |> emitBytesSubView(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(start)(tempEnv))) :: tempEnv, terminated)
+                                            |> emitBytesSubView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(start)(tempEnv))) :: tempEnv, terminated)
                         // A Float value travels through the uniform `i64` word as its raw `f64`
                         // bits — bitcast to `double` around each operation and back for storage,
                         // `LlvmCodegen.cs`'s `LoadTempAsFloat` shape exactly; an `fcmp` result

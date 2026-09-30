@@ -288,35 +288,15 @@ let emitBytesSubText context function_ builder i64 i8 ptrType (arena: ArenaRunti
                     emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(buildAdd(builder)(srcAddr)(start)("bytes_sub_src_start_addr"))(copyLen)("bytes_sub")
 
 // `Bytes.subView(bytes)(start)(len)`: a zero-copy view `{len|VIEW, backingBytesAddr}` over the
-// clamped range in a fresh 16-byte RC payload — O(1), the backing must outlive the view exactly as
-// stage 0's `EmitBytesSubView` documents.
-let emitBytesSubView builder i64 i8 ptrType mallocFn mallocType bytesRef startVal lenVal =
+// clamped range in a 16-byte arena block, reclaimed with the bracket that allocated it — O(1),
+// stage 0's `EmitBytesSubView`. The view is never reference-counted: lowering treats it as a
+// borrowed view of its backing, so no release ever reaches it.
+let emitBytesSubView context function_ builder i64 i8 ptrType (arena: ArenaRuntime) bytesRef startVal lenVal =
     match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_subv") with
         | (srcLen, srcAddr) ->
             match emitBytesSubClamp(builder)(i64)(srcLen)(startVal)(lenVal)("bytes_subv") with
                 | (start, viewLen) ->
-                    let headerPtr = buildCall(builder)(mallocType)(mallocFn)([constInt(i64)(32u64)(false)])(1u32)("bytes_subv_header")
-                    in
-                        let _ =
-                            buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
-                        in
-                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_subv_size_ptr")
-                            in
-                                let _ =
-                                    buildStore(builder)(constInt(i64)(16u64)(false))(sizePtr)
-                                in
-                                    let taggedLen =
-                                        buildOr(builder)(viewLen)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 63))(false))("bytes_subv_tagged_len")
-                                    in
-                                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_subv_payload_ptr")
-                                        in
-                                            let _ = buildStore(builder)(taggedLen)(payloadPtr)
-                                            in
-                                                let ptrWordPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_subv_ptr_word")
-                                                in
-                                                    let _ =
-                                                        buildStore(builder)(buildAdd(builder)(srcAddr)(start)("bytes_subv_src_start"))(ptrWordPtr)
-                                                    in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_subv_result")
+                    emitArenaStringView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(srcAddr)(start)("bytes_subv_src_start"))(viewLen)("bytes_subv")
 
 // `Text.unconsText(text)`: `None` for the empty string, otherwise `Some((head, rest))` where
 // `head` is the first UTF-8 scalar's bytes (its width classed from the lead byte alone, clamped

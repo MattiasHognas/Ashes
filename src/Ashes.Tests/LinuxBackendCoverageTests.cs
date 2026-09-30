@@ -2843,6 +2843,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_pattern_string_tested_by_curried_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop tests each box's label, bound under a cons pattern, with a curried library call and
+        // branches on the result, whose last read is the branch itself. The label's release goes
+        // before the branch; after it, the release sat on the fallthrough arm alone.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildPatternStringTestedByCurriedCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("pattern string tested by a curried call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_node_holding_walked_head_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -11317,6 +11341,37 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(keys)(n - 1)(total + solve(keys)([])(Leaf)(10))
 
             Ashes.IO.print(rounds(["a", "b", "c"])({{rounds}})(0))
+            """;
+
+    private static string BuildPatternStringTestedByCurriedCallProgram(int rounds)
+        => $$"""
+            import Ashes.Text
+
+            type Box =
+                | label: Str
+                | tag: Int
+
+            let recursive countStarting (boxes: List(Box)) (count: Int) =
+                match boxes with
+                    | [] -> count
+                    | Box { label = label } :: rest ->
+                        if Ashes.Text.startsWith(label)("A")
+                        then countStarting(rest)(count + 1)
+                        else countStarting(rest)(count)
+
+            let recursive boxesFrom (labels: List(Str)) (built: List(Box)) =
+                match labels with
+                    | [] -> built
+                    | label :: rest -> boxesFrom(rest)(Box(label = label + "", tag = 1) :: built)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countStarting(boxesFrom(["A" + wide, "B" + wide, "A" + wide + "e", "M" + wide])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildVariantNodeHoldingWalkedHeadProgram(int rounds)

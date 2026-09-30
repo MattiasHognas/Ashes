@@ -395,6 +395,15 @@ internal static class PerceusLifetimePlacement
             return lastUse;
         }
 
+        // A branch whose condition is an alias (a call's result, read only as a truth value or a
+        // tag) ends its block: the drop goes before it, so every path out of the block takes it.
+        // After it, the drop would sit on the fallthrough path alone.
+        if (instructions[lastUse] is IrInst.JumpIfFalse or IrInst.SwitchTag
+            && Environment.GetEnvironmentVariable("GRC_NO_BRANCHUSEDROP") is null)
+        {
+            return lastUse;
+        }
+
         int insertionIndex = lastUse + 1;
         if (IsArenaCopyOut(instructions[lastUse])
             && insertionIndex < instructions.Count
