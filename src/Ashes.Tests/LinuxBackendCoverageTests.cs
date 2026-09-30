@@ -4393,6 +4393,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_call_result_onto_choice_accumulator_memory_should_plateau()
+    {
+        // `walk(rest)(join(p) :: seen)` beside `walk(rest)(seen)`: the back edge copies the successor
+        // with references of its own and the cell only borrows the call's owned result, which keeps
+        // an owner of its own, released once the successor holds its references. Without one, one
+        // string per cons was never released.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildCallResultOntoChoiceAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 7}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("call results consed onto a choice accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_of_paths_memory_should_plateau()
     {
         // A worklist of paths walked by its tail and refilled from `append`'s result lives on the
@@ -11096,6 +11121,26 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildCallResultOntoChoiceAccumulatorProgram(int rounds)
+        => $$"""
+            let recursive walkNames (queue: List(Str)) (seen: List(Str)) (n: Int) =
+                match queue with
+                    | [] -> n + Ashes.Collection.List.length(seen)
+                    | name :: rest ->
+                        if n > 2
+                        then walkNames(rest)(Ashes.Text.join("/")([name, "x"]) :: seen)(n + 1)
+                        else walkNames(rest)(seen)(n + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walkNames(["a", "b", "c", "d", "e" + Ashes.Text.fromInt(n)])([])(0))
 
             0
             |> rounds({{rounds}})

@@ -22,6 +22,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new LoopExitCellOntoParameterTemplate());
         registry.Register(new AccumulatorStartedAfreshTemplate());
         registry.Register(new WorklistOfPathsWalkedAndRefilledTemplate());
+        registry.Register(new CallResultOntoChoiceAccumulatorTemplate());
         registry.Register(new TupleResultWithMaybeTemplate());
         registry.Register(new NestedLetRecursiveHelperTemplate());
         registry.Register(new HelperReturnsListAndStateTemplate());

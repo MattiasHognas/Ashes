@@ -16347,6 +16347,25 @@ public sealed partial class Lowering
         return true;
     }
 
+    // The head of a successor cell the back edge copies, when it is a value produced right there (a
+    // call's owned result) rather than a read of an owner: the cell only borrows it and the copy takes
+    // a reference of its own, so the value keeps an owner of its own, released once the successor
+    // holds its references, as a `let` binding of it would be.
+    private void KeepCopiedCellFreshHeadOwned(Expr headExpression, LoweredValue head)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_COPIEDCELLFRESHHEAD") is not null
+            || headExpression is Expr.Var or Expr.QualifiedVar
+            || !IsNewlyProducedRcTemp(head.Temp))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
+    }
+
     private (int, TypeRef) LowerConsTail(
         Expr.Cons cons,
         LoweredValue head,
@@ -16372,6 +16391,11 @@ public sealed partial class Lowering
                 head.Type);
             tailTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Tail, tailTemp);
         }
+        else
+        {
+            KeepCopiedCellFreshHeadOwned(cons.Head, head);
+        }
+
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(head.Type, head.Temp))
         {

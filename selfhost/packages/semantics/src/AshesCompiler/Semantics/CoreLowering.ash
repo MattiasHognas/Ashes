@@ -19347,16 +19347,34 @@ let duplicatePatternOwnerConsParts (headExpression: Expr) (tailExpression: Expr)
                         | (tailDuplicated, tailDuplicate) -> (LoweredCoreValue(state = tailDuplicated, temp = headDuplicate, semanticType = headType, error = None), LoweredCoreValue(state = tailDuplicated, temp = tailDuplicate, semanticType = tailType, error = None))
         | _ -> (head, tail)
 
+// Stage 0's `KeepCopiedCellFreshHeadOwned`: the head of a successor cell the back edge copies, when
+// it is a value produced right there (a call's owned result) rather than a read of an owner, keeps
+// an owner of its own, released once the successor holds its references, as a `let` binding of it
+// would be. The cell only borrows it and the copy takes a reference of its own.
+let keepCopiedCellFreshHeadOwned (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    match (unspanArgument(headExpression), runtimeTempStateOf(headTemp)(state)) with
+        | (ExprVar(_name), _) -> state
+        | (ExprQualifiedVar(_owner, _field), _) -> state
+        | (_, Some(RuntimeNewlyProduced)) ->
+            match freshLocal(state) with
+                | FreshLocal { state = allocated, local = ownedSlot } ->
+                    allocated
+                    |> emit(StoreLocal(ownedSlot)(headTemp))
+                    |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(headType))
+        | _ -> state
+
 // A successor cell the back edge copies borrows its parts: the head keeps the tail's state, and
 // neither takes a duplicate.
-let borrowedConsParts (head: LoweredCoreValue) (tail: LoweredCoreValue) =
+let borrowedConsParts (headExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
-        | (LoweredCoreValue { error = None }, LoweredCoreValue { state = tailState, error = None }) -> ((head with state = tailState), tail)
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, error = None }) ->
+            let kept = keepCopiedCellFreshHeadOwned(headExpression)(headTemp)(headType)(tailState)
+            in ((head with state = kept), (tail with state = kept))
         | _ -> (head, tail)
 
 let consPartsFor (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     if request.borrowsCellParts
-    then borrowedConsParts(head)(tail)
+    then borrowedConsParts(headExpression)(head)(tail)
     else duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head)(tail)
 
 // The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
