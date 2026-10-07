@@ -325,7 +325,6 @@ let fixtures =
         "tco_record_blocked_by_sibling_keeps_field_retain_pending",
         "spine_cell_head_bound_by_let_releases_its_binding",
         "back_edge_helper_calling_unreachable_helper_is_called",
-        "tco_worklist_front_walked_or_refilled",
         "tco_pair_released_past_unnamed_successor",
         "loop_record_cell_keeps_one_reference_to_parameter_field",
         "phantom_result_variable_owned_tuple_result",
