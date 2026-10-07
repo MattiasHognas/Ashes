@@ -2638,12 +2638,18 @@ public sealed partial class Lowering
             : state.ObservedBesideResets[ordinal] ?? local;
     }
 
-    // A chain of cons cells ending in the empty list, none of whose heads reads a loop parameter.
-    // The empty list alone is left to the rules for emptied lists.
+    // A list literal with elements (`[first]`), or a chain of cons cells ending in the empty list,
+    // none of whose elements reads a loop parameter. The empty list alone is left to the rules for
+    // emptied lists.
     private static bool IsFreshResetList(Expr expression, IReadOnlyDictionary<string, int> parameterScope)
-        => expression is Expr.Cons cons
-            && !ReadsLoopParameter(cons.Head, parameterScope)
-            && (cons.Tail is Expr.ListLit { Elements.Count: 0 } || IsFreshResetList(cons.Tail, parameterScope));
+        => expression switch
+        {
+            Expr.ListLit { Elements.Count: > 0 } list => Environment.GetEnvironmentVariable("GRC_NO_RESETLITERAL") is null
+                && list.Elements.All(element => !ReadsLoopParameter(element, parameterScope)),
+            Expr.Cons cons => !ReadsLoopParameter(cons.Head, parameterScope)
+                && (cons.Tail is Expr.ListLit { Elements.Count: 0 } || IsFreshResetList(cons.Tail, parameterScope)),
+            _ => false,
+        };
 
     private static bool ResetSitesKeepGrownAccumulatorsEnabled
         => Environment.GetEnvironmentVariable("GRC_NO_RESETSITE") is null;

@@ -4393,6 +4393,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_accumulator_reset_by_literal_or_choice_memory_should_plateau()
+    {
+        // `go([first])(rest)` beside `go(first :: acc)(rest)`, and the same choice made inside one
+        // self-call's argument: the literal start leaves the accumulator a grown one, and the cells
+        // a chosen argument builds for a successor the back edge copies borrow their parts. Each
+        // used to keep one string per element that nothing released.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildAccumulatorResetByLiteralOrChoiceProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("accumulator reset by a literal or a choice", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_exit_cell_passed_to_call_memory_should_plateau()
     {
         // `| [] -> rev([])(first :: acc)`: the cell a loop's exit passes to a call that may keep it
@@ -11154,6 +11179,39 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildAccumulatorResetByLiteralOrChoiceProgram(int rounds)
+        => $$"""
+            let recursive collect (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive startWithLiteral (acc: List(Str)) (ps: List(Str)) =
+                match ps with
+                    | [] -> acc
+                    | first :: rest ->
+                        match acc with
+                            | [] -> startWithLiteral([first])(rest)
+                            | _ -> startWithLiteral(first :: acc)(rest)
+
+            let recursive chooseStart (acc: List(Str)) (ps: List(Str)) =
+                match ps with
+                    | [] -> acc
+                    | first :: rest ->
+                        chooseStart(match acc with
+                            | [] -> [first]
+                            | _ -> first :: acc)(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(startWithLiteral([])(collect(3)([]))) + Ashes.Collection.List.length(chooseStart([])(collect(3)([]))))
 
             0
             |> rounds({{rounds}})

@@ -3143,10 +3143,16 @@ let recursive aggregateRequestForwards expression =
         | other -> expectedTypeForwards(other)
 
 // A borrowing successor cell's flag reaches the cons itself, through its spans, and nothing else.
+// A successor cell's borrow of its parts reaches the cons the argument writes out, and the cons
+// cells at the arms of a choice argument (stage 0's `CollectChoiceArmCells`) through `if`, `match`
+// and `let` bodies.
 let consPartsRequestForwards (expression: Expr) =
     match expression with
         | ExprAt(_span, _inner) -> true
         | ExprCons(_head, _tail) -> true
+        | ExprIf(_condition, _thenBranch, _elseBranch) -> true
+        | ExprMatch(_value, _cases, _position) -> true
+        | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true
         | _ -> false
 
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
@@ -19657,6 +19663,11 @@ let ownedLiteralTail (runtimeManaged: Bool) (tailIsReferenceCounted: Bool) (tail
             | None -> (state, tailTemp)
     else (state, tailTemp)
 
+// The tail a list literal's element is normalized against: stage 0's
+// `NormalizeRuntimeManagedListElement` reads the request alone, so an element of a literal a grown
+// accumulator is started afresh with is normalized as the head of `first :: []` is.
+let literalElementTail = ExprList([])(false)
+
 let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) lower state =
     match elements with
         | [] ->
@@ -19667,6 +19678,7 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
             match state
             |> withConsumerRequest(listElementRequest(request)(Some(elementType))(transfers)(expression)(state))
             |> lower(expression)
+            |> normalizeRuntimeManagedConsHead(request)(expression)(literalElementTail)
             |> normalizePatternOwnerHead(request)(expression)
             |> retainListElement(request)(transfers)(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -23648,10 +23660,20 @@ let isConsExpression (expression: Expr) =
         | ExprCons(_head, _tail) -> true
         | _ -> false
 
+// An argument whose cells borrow their parts when the back edge copies the successor: a cons, or a
+// choice whose arms build cons cells.
+let buildsCopiedCells (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, _tail) -> true
+        | ExprIf(_condition, _thenBranch, _elseBranch) -> true
+        | ExprMatch(_value, _cases, _position) -> true
+        | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true
+        | _ -> false
+
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
     withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
     then tailSlot
-    else None), borrowsCellParts = copiesSuccessor && isConsExpression(argument)))(state)
+    else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument)))(state)
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
 // A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was

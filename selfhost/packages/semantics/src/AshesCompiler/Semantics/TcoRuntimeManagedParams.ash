@@ -399,10 +399,12 @@ let shapeIsEmptyList (expression: Expr) =
         | ExprList([], _isMultiline) -> true
         | _ -> false
 
-// Stage 0's `IsFreshResetList`: a chain of cons cells ending in the empty list, none of whose
-// heads reads a loop parameter; the empty list alone is left to the rules for emptied lists.
+// Stage 0's `IsFreshResetList`: a list literal with elements, or a chain of cons cells ending in
+// the empty list, none of whose elements reads a loop parameter; the empty list alone is left to
+// the rules for emptied lists.
 let recursive shapeIsResetList (expression: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(expression) with
+        | ExprList(element :: rest, _isMultiline) -> shapeElementsReadNoLoopParameter(element :: rest)(shadowed)(parameters)
         | ExprCons(head, tail) -> !shapeReadsLoopParameter(head)(shadowed)(parameters) && (shapeIsEmptyList(tail) || shapeIsResetList(tail)(shadowed)(parameters))
         | _ -> false
 

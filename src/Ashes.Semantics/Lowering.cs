@@ -580,6 +580,9 @@ public sealed partial class Lowering
     // its successor with references of its own: the cell borrows its head and tail.
     private Expr? _backEdgeCopiedCell;
 
+    // The cons cells at the arms of a choice argument whose successor the back edge copies.
+    private readonly HashSet<Expr> _backEdgeCopiedArmCells = new(ReferenceEqualityComparer.Instance);
+
     // The cons a loop returns onto one of its list parameters, while it is lowered.
     private Expr.Cons? _loopExitCell;
 
@@ -11560,10 +11563,7 @@ public sealed partial class Lowering
             // be retained, because the binding's own release still fires at the back edge.
             bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index);
             request = request with { TransfersRuntimeManagedChildren = !copiedSuccessor };
-            _backEdgeCopiedCell = CopiedCellBorrowsEnabled
-                && (copiedSuccessor && argument is Expr.Cons || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
-                ? argument
-                : null;
+            NoteBackEdgeCopiedCells(tco, index, argument, copiedSuccessor);
             request = request
                 .AddRuntime(
                     freshClosure,
@@ -11590,8 +11590,61 @@ public sealed partial class Lowering
         {
             _affineAppendCtx = savedAffineCtx;
             _backEdgeCopiedCell = null;
+            _backEdgeCopiedArmCells.Clear();
         }
     }
+
+    // The cells of a successor the back edge copies, which borrow their parts: the argument's own
+    // cons or tuple, or the cons cells at the arms of a choice argument.
+    private void NoteBackEdgeCopiedCells(TcoContext tco, int index, Expr argument, bool copiedSuccessor)
+    {
+        _backEdgeCopiedCell = CopiedCellBorrowsEnabled
+            && (copiedSuccessor && argument is Expr.Cons || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
+            ? argument
+            : null;
+        if (CopiedCellBorrowsEnabled && copiedSuccessor && Environment.GetEnvironmentVariable("GRC_NO_COPIEDARMCELLS") is null)
+        {
+            CollectChoiceArmCells(argument, _backEdgeCopiedArmCells);
+        }
+    }
+
+    // The cons cells a choice argument builds at its arms (`go(match acc with | [] -> [first]
+    // | _ -> first :: acc)`), through `if`, `match` and `let` bodies. A successor the back edge
+    // copies borrows their parts as it borrows those of a cons written as the argument itself.
+    private static void CollectChoiceArmCells(Expr expression, HashSet<Expr> cells)
+    {
+        switch (expression)
+        {
+            case Expr.If conditional:
+                CollectChoiceArmCell(conditional.Then, cells);
+                CollectChoiceArmCell(conditional.Else, cells);
+                break;
+            case Expr.Match match:
+                foreach (MatchCase matchCase in match.Cases)
+                {
+                    CollectChoiceArmCell(matchCase.Body, cells);
+                }
+
+                break;
+            case Expr.Let let:
+                CollectChoiceArmCell(let.Body, cells);
+                break;
+        }
+    }
+
+    private static void CollectChoiceArmCell(Expr arm, HashSet<Expr> cells)
+    {
+        if (arm is Expr.Cons)
+        {
+            cells.Add(arm);
+            return;
+        }
+
+        CollectChoiceArmCells(arm, cells);
+    }
+
+    private bool IsBackEdgeCopiedCell(Expr cons)
+        => ReferenceEquals(cons, _backEdgeCopiedCell) || _backEdgeCopiedArmCells.Contains(cons);
 
     // The parameter slot a tail self-call argument being lowered becomes, for the arena cells it
     // builds (see RetainRuntimeManagedTcoConstructorArguments).
@@ -16392,7 +16445,7 @@ public sealed partial class Lowering
         // A successor cell the back edge copies borrows its parts: the copy takes references of
         // its own before the iteration's owners are released, and a duplicate stored in the cell
         // would never be released.
-        if (!ReferenceEquals(cons, _backEdgeCopiedCell))
+        if (!IsBackEdgeCopiedCell(cons))
         {
             head = CreateLoweredValue(
                 DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp),
