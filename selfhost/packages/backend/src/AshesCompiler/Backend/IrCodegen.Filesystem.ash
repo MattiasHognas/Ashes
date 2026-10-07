@@ -1522,7 +1522,9 @@ let emitFileReadAllBytes context function_ i64 i8 ptrType builder arena mallocFn
 
 // `Ashes.IO.File.mmap(path)`: `open` → `lseek(SEEK_END)` → `mmap(NULL, len, PROT_READ,
 // MAP_PRIVATE, fd, 0)` → close → `Ok` of a zero-copy `Bytes` view `{len|VIEW, mappingAddr}` over
-// the program-lifetime mapping, stage 0's `EmitFileMmap` exactly: an empty file short-circuits to
+// the program-lifetime mapping, built in a 16-byte arena block like every other view (lowering
+// treats a view as borrowed from its backing, so no release ever reaches it), stage 0's
+// `EmitFileMmap` exactly: an empty file short-circuits to
 // `Ok` of an empty owned value (nothing to map), and a mapping failure (any result unsigned-above
 // `-4096`) reports the shared read-failed message.
 let emitFileMmap context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef =
@@ -1573,13 +1575,13 @@ let emitFileMmap context function_ i64 i8 ptrType builder arena mallocFn mallocT
                                                         |> (given (_) -> positionBuilderAtEnd(builder)(emptyBlock))
                                                         |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
                                                         |> (given (_) ->
-                                                            emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(constInt(i64)(8u64)(false))("file_mmap_empty_payload"))
-                                                        |> (given (emptyPtr) ->
-                                                            emptyPtr
-                                                            |> buildStore(builder)(constInt(i64)(0u64)(false))
-                                                            |> (given (_) -> buildPtrToInt(builder)(emptyPtr)(i64)("file_mmap_empty_ref")))
+                                                            emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(constInt(i64)(8u64)(false))("file_mmap_empty"))
                                                         |> (given (emptyRef) ->
-                                                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emptyRef)("file_mmap_empty_ok"))(resultSlot))
+                                                            "file_mmap_empty_len"
+                                                            |> storeWordAt(builder)(i64)(i8)(ptrType)(emptyRef)(0)(constInt(i64)(0u64)(false))
+                                                            |> (given (_) -> emptyRef))
+                                                        |> (given (emptyRef) ->
+                                                            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(emptyRef)("file_mmap_empty_ok"))(resultSlot))
                                                         |> (given (_) -> buildBr(builder)(continueBlock))
                                                     in
                                                         let mapped =
@@ -1591,25 +1593,16 @@ let emitFileMmap context function_ i64 i8 ptrType builder arena mallocFn mallocT
                                                             |> buildCondBr(builder)(buildICmp(builder)(intPredicateUgt)(mapped)(constInt(i64)(Ashes.Number.UInt.fromInt64(-4096))(false))("file_mmap_failed"))(closeErrorBlock)
                                                             |> (given (_) -> positionBuilderAtEnd(builder)(viewBlock))
                                                             |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
-                                                            |> (given (_) ->
-                                                                emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(constInt(i64)(16u64)(false))("file_mmap_view_payload"))
-                                                            |> (given (viewPtr) ->
-                                                                viewPtr
-                                                                |> buildStore(builder)(buildOr(builder)(length)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 63))(false))("file_mmap_tagged_len"))
-                                                                |> (given (_) ->
-                                                                    "file_mmap_addr_word"
-                                                                    |> gepBytes(builder)(i64)(i8)(viewPtr)(8)
-                                                                    |> buildStore(builder)(mapped))
-                                                                |> (given (_) -> buildPtrToInt(builder)(viewPtr)(i64)("file_mmap_view_ref")))
+                                                            |> (given (_) -> emitArenaStringView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mapped)(length)("file_mmap_view"))
                                                             |> (given (viewRef) ->
-                                                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(viewRef)("file_mmap_view_ok"))(resultSlot))
+                                                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(viewRef)("file_mmap_view_ok"))(resultSlot))
                                                             |> (given (_) -> buildBr(builder)(continueBlock))
                                                             |> (given (_) -> positionBuilderAtEnd(builder)(closeErrorBlock))
                                                             |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
                                                             |> (given (_) -> buildBr(builder)(errorBlock))
                                                             |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                                                             |> (given (_) ->
-                                                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileReadFailedCodes)("file_mmap_error_msg"))("file_mmap_error_result"))(resultSlot))
+                                                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileReadFailedCodes)("file_mmap_error_msg"))("file_mmap_error_result"))(resultSlot))
                                                             |> (given (_) -> buildBr(builder)(continueBlock))
                                                             |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                                                             |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("file_mmap_result_value")))

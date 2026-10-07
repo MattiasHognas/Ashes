@@ -3637,6 +3637,26 @@ let buildOptimizedIrExternalCallModule name context = codegenOptimizedRealSource
 
 let testRunStaticExecutableForExternalCallModule unit = assertProgramPrints(buildOptimizedIrExternalCallModule)("selfhostBackendRunExternalCall")("selfhost_backend_external_call_e2e")("5 0 0")
 
+// A file mapped once per iteration of a loop and read through the view, which is an arena block
+// over the program-lifetime mapping as stage 0 builds it (`emitArenaStringView`), not a
+// reference-counted cell no release reaches: `13` bytes per round, and the same live cells at
+// one round and three.
+let mmapViewSource rounds = "let recursive total (n: Int) (sum: Int) =\n    if n == 0\n    then sum\n    else\n        match Ashes.IO.File.mmap(\"selfhost_backend_mmap_in.txt\") with\n            | Ok(bytes) -> total(n - 1)(sum + Ashes.Byte.length(bytes))\n            | Error(_message) -> total(n - 1)(sum)\n\nmatch Ashes.IO.File.writeText(\"selfhost_backend_mmap_in.txt\")(\"hello, bytes!\") with\n    | Ok(_) -> Ashes.IO.print(Ashes.Text.fromInt(total(" + Ashes.Text.fromInt(rounds) + ")(0)))\n    | Error(message) -> Ashes.IO.print(message)"
+
+let buildOptimizedIrMmapViewModule name context =
+    codegenOptimizedRealSource(mmapViewSource(3))(name)(context)
+
+let testRunStaticExecutableForMmapViewModule unit = assertProgramPrints(buildOptimizedIrMmapViewModule)("selfhostBackendRunMmapView")("selfhost_backend_mmap_view_e2e")("39")
+
+let testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_mmap_view_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> mmapViewSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMmapViewThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> mmapViewSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMmapViewOneRound")("selfhost_backend_mmap_view_one_round_e2e"))
+
 // The same program with no arguments at all: the walk publishes the empty list.
 let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
@@ -5838,6 +5858,8 @@ let run shipped =
     |> testRunStaticExecutableForProgramArgsModule
     |> testRunStaticExecutableForProgramArgsEmptyModule
     |> testRunStaticExecutableForExternalCallModule
+    |> testRunStaticExecutableForMmapViewModule
+    |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

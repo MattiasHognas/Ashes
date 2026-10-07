@@ -668,3 +668,30 @@ internal sealed class PatternListPassedToBorrowingCallTemplate() : LeakCombinati
             """;
     }
 }
+
+/// <summary>
+/// A file mapped once per round and read through the view: the view is a borrowed window over
+/// the program-lifetime mapping that no release reaches, so the backend must build it in the
+/// arena rather than in a reference-counted cell of its own.
+/// </summary>
+internal sealed class MmapViewPerCallTemplate() : LeakCombinationTemplate(
+    "leak.mmap-view-per-call", "mmapView", GeneratedFeature.Match, GeneratedFeature.Call)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string path = names.Pick("leak_mmap_view.txt", "leak_mmap_input.txt");
+        string read = names.Pick(
+            "Ashes.Byte.length(bytes)",
+            "Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(0))",
+            "Ashes.Text.byteLength(Ashes.Byte.subText(bytes)(0)(3))");
+        return $$"""
+            let {{names.Entry}} (seed: Int) =
+                match Ashes.IO.File.writeText("{{path}}")("hello, bytes!") with
+                    | Ok(_) ->
+                        match Ashes.IO.File.mmap("{{path}}") with
+                            | Ok(bytes) -> {{read}} + seed
+                            | Error(_message) -> seed
+                    | Error(_message) -> seed
+            """;
+    }
+}
