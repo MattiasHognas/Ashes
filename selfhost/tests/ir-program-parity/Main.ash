@@ -372,9 +372,10 @@ let fixtures =
 // type at the loop entry and retains the argument outright, where this lowering keeps it
 // pending under the callee's accepts bit; it rejoins the comparison with the provisional
 // placement. The refill-only loop after it hands its back queue, placed at the loop entry, to the
-// helper that refills it: the compiler retains the argument outright and resets its placed
-// parameter at the back edge, where this lowering keeps the argument pending under the forced
-// flag; it rejoins the comparison with the provisional placement too.
+// helper that refills it: the compiler retains the argument outright, where this lowering keeps
+// the argument pending under the forced flag; it rejoins the comparison with the provisional
+// placement too. So does the worklist after it, whose back queue, grown and emptied, is placed at
+// the loop entry and handed to the reverse that refills the front.
 let elaboratedFixtures =
     [
         "parameter_reaches_result_record_update",
@@ -390,6 +391,7 @@ let elaboratedFixtures =
         "tco_string_parameter_kept_by_callee_error_result",
         "accumulate_and_reverse_producer",
         "tco_list_refilled_only_from_helper",
+        "tco_worklist_front_walked_or_refilled",
         "mutual_recursion"
     ]
 

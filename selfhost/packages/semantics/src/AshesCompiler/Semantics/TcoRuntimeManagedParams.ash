@@ -32,6 +32,7 @@ import AshesCompiler.Semantics.TcoAffineAppend.affineSelfAppendOrdinals
 export (
     type TcoArgumentShape(..),
     value runtimeManagedStrOrdinals,
+    value shapeIsFreshList,
     value tcoSelfCallShapes,
     value isTcoListShape,
     value selfCallOrdinalPassing,
@@ -451,9 +452,11 @@ let recursive shapeIsGrownCons (structural: Expr) (index: Int) (shadowed: List(S
                 | _ -> false
         | _ -> false
 
+// An empty list literal empties the parameter, which holds nothing older afterwards.
 let shapeIsHandedOnOrGrown (argument: Expr) (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
-    match shapeUnspan(argument) with
-        | ExprVar(name) ->
+    match (shapeUnspan(argument), shapeUnspan(structural)) with
+        | (_argument, ExprList([], _isMultiline)) -> true
+        | (ExprVar(name), _structural) ->
             if shapeResolveParameter(name)(shadowed)(parameters) == Some(index)
             then true
             else shapeIsGrownCons(structural)(index)(shadowed)(parameters)

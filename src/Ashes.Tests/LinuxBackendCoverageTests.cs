@@ -2867,6 +2867,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_back_grown_and_emptied_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist's back queue is grown by a cons of the front's head and emptied when it is
+        // reversed into the front. The queue lives on the reference-counted heap, so the cells of
+        // each step are released once the front walks past them.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithSourceLocations(BuildWorklistBackGrownAndEmptiedProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 60}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist back queue grown and emptied", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_pattern_list_passed_to_borrowing_call_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -11419,6 +11443,32 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countStarting(boxesFrom(["A" + wide, "B" + wide, "A" + wide + "e", "M" + wide])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistBackGrownAndEmptiedProgram(int rounds)
+        => $$"""
+            let recursive reverseAll (acc: List(Str)) (items: List(Str)) =
+                match items with
+                    | [] -> acc
+                    | head :: tail -> reverseAll(head :: acc)(tail)
+
+            let recursive solve (front: List(Str)) (back: List(Str)) (queued: Int) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> queued
+                            | _ -> solve(reverseAll([])(back))([])(queued)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then queued
+                        else solve(rest)(key :: back)(queued + 1)(fuel - 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + solve(["cinder", "ember"])([])(0)(60))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

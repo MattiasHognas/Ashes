@@ -7014,7 +7014,10 @@ let managedListArgumentCanReset (argument: TcoResetArgument) (state: CoreLowerin
         // A list of the contract's elements normalizes whatever the successor is: its new cells are
         // copied, its heads retained, its reference-counted tail shared.
         | (Some((_activeSlot, elementType)), TcoGrownConsShape) -> argument.argumentRuntime || isGeneralRcNamedType(elementType)(state)
-        | (Some((_activeSlot, elementType)), _shape) -> isGeneralRcNamedType(elementType)(state)
+        // Any other placed list survives a reset when its successor is built fresh this iteration
+        // (stage 0's `FreshListRebuild`): an empty or literal list, a call's result, or a cons
+        // chain onto one, which the back edge normalizes onto the reference-counted heap whole.
+        | (Some((_activeSlot, elementType)), _shape) -> isGeneralRcNamedType(elementType)(state) || shapeIsFreshList(argument.argumentExpression)
         | _ -> false
 
 // A runtime-managed `Str` slot survives a reset: its successor is the in-place append's

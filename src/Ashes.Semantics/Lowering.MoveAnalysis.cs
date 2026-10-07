@@ -2555,8 +2555,8 @@ public sealed partial class Lowering
             && (arenaSelfContainedListRebuild || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
     }
 
-    // A site that hands the parameter on as it is or conses onto it a head reading no loop
-    // parameter; a fresh list or a same-named rebinding is neither.
+    // A site that hands the parameter on as it is, conses onto it a head reading no loop parameter,
+    // or empties it; any other fresh list, or a same-named rebinding, is none of these.
     private static bool IsHandedOnOrGrownEdge(
         TcoSelfCallArgumentShape local,
         Expr structural,
@@ -2564,8 +2564,11 @@ public sealed partial class Lowering
     {
         return local == TcoSelfCallArgumentShape.UnchangedPassthrough
             || (local == TcoSelfCallArgumentShape.GrownCons
-                && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)));
+                && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)))
+            || (EmptiedAccumulatorsEnabled && structural is Expr.ListLit { Elements.Count: 0 });
     }
+
+    private static bool EmptiedAccumulatorsEnabled => Environment.GetEnvironmentVariable("GRC_NO_EMPTIEDACCUMULATOR") is null;
 
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
     // a call's result, or an empty list. A list only ever handed on, emptied or refilled holds

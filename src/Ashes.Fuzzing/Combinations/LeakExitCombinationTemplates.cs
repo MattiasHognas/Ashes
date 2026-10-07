@@ -319,3 +319,41 @@ internal sealed class WorklistBackOnlyRefilledTemplate() : LeakCombinationTempla
             """;
     }
 }
+
+/// <summary>
+/// A worklist whose back queue is grown by a cons of the front's head and emptied when it is
+/// reversed into the front: the back queue must live on the reference-counted heap for each
+/// step's cells to be released once the front walks past them.
+/// </summary>
+internal sealed class WorklistBackGrownAndEmptiedTemplate() : LeakCombinationTemplate(
+    "leak.worklist-back-grown-and-emptied", "worklistBackGrownAndEmptied", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string reverseAll = names.Of("reverseAll");
+        string solve = names.Of("solve");
+        IReadOnlyList<string> words = names.DistinctWords(names.Between(1, 3));
+        string keys = "[" + string.Join(", ", names.Coin("fresh-keys") ? words.Select(word => word + " + \"x\"") : words) + "]";
+        int fuel = names.Between(5, 12);
+        string refill = names.Coin("library-reverse") ? "Ashes.Collection.List.reverse(back)" : $"{reverseAll}([])(back)";
+        return $$"""
+            let recursive {{reverseAll}} (acc: List(Str)) (items: List(Str)) =
+                match items with
+                    | [] -> acc
+                    | head :: tail -> {{reverseAll}}(head :: acc)(tail)
+
+            let recursive {{solve}} (front: List(Str)) (back: List(Str)) (queued: Int) (fuel: Int) =
+                match front with
+                    | [] ->
+                        match back with
+                            | [] -> queued
+                            | _ -> {{solve}}({{refill}})([])(queued)(fuel)
+                    | key :: rest ->
+                        if fuel <= 0
+                        then queued
+                        else {{solve}}(rest)(key :: back)(queued + 1)(fuel - 1)
+
+            let {{names.Entry}} (seed: Int) = {{solve}}({{keys}})([])(0)({{LeakNames.Text(fuel)}}) + seed
+            """;
+    }
+}
