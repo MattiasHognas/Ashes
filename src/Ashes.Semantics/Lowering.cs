@@ -583,6 +583,10 @@ public sealed partial class Lowering
     // The cons a loop returns onto one of its list parameters, while it is lowered.
     private Expr.Cons? _loopExitCell;
 
+    // The cons a call argument writes out when the callee's result may reach it, while the argument
+    // is lowered: it leaves the loop through that result as the cell a loop returns does.
+    private Expr.Cons? _callArgumentCell;
+
     private static bool CopiedCellBorrowsEnabled => Environment.GetEnvironmentVariable("GRC_NO_COPIEDCELLBORROW") is null;
 
     // The parameter slot the tail self-call argument being lowered is stored into (-1 outside a
@@ -13191,9 +13195,12 @@ public sealed partial class Lowering
         }
 
         bool previousRetainCollection = BeginCallArgumentRetains(argumentRequest.TransfersRuntimeManagedChildren);
+        Expr.Cons? outerArgumentCell = _callArgumentCell;
+        _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren ? collectedArgs[i] as Expr.Cons : null;
         (int argTemp, TypeRef argType) =
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(collectedArgs[i], argumentRequest).AsPair();
+        _callArgumentCell = outerArgumentCell;
         EndCallArgumentRetains(previousRetainCollection);
         if (argumentRequest.TransfersRuntimeManagedChildren)
         {
@@ -16279,7 +16286,8 @@ public sealed partial class Lowering
             IsRecursiveProducerTail(cons.Tail) || tmcCandidate,
             LoweredValueRuntimeRepresentation.List);
         int parameterSlot = -1;
-        bool exitCell = !tmcCandidate && IsLoopExitCellOverParameter(cons, savedTailPos, out parameterSlot);
+        bool escapesThroughCall = ReferenceEquals(cons, _callArgumentCell) && Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELL") is null;
+        bool exitCell = !tmcCandidate && IsLoopExitCellOverParameter(cons, savedTailPos || escapesThroughCall, out parameterSlot);
         if (exitCell)
         {
             request = request.WithRuntimeListContext(tailBinding: null, tailShared: false, tcoTailSlot: parameterSlot);

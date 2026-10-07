@@ -4393,6 +4393,39 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_exit_cell_passed_to_call_memory_should_plateau()
+    {
+        // `| [] -> rev([])(first :: acc)`: the cell a loop's exit passes to a call that may keep it
+        // is reference-counted like the cell a loop returns, and the call's fresh argument is
+        // released after it. An arena cell there held a retain of its head, upgraded only after the
+        // call's frame had closed, that nothing released: one string per loop.
+        IrProgram ir = LowerProgramWithImports(BuildExitCellPassedToCallProgram(3));
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Origin is { Source.SourceName: "keepOdd" }
+            && function.Instructions.Any(instruction => instruction is IrInst.Jump { Target: var target }
+                && string.Equals(target, function.Label + "_body", StringComparison.Ordinal)));
+        loop.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: false })
+            .ShouldBe(0, "The exit's cell is reference-counted.");
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildExitCellPassedToCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("exit cell passed to a call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_call_result_onto_choice_accumulator_memory_should_plateau()
     {
         // `walk(rest)(join(p) :: seen)` beside `walk(rest)(seen)`: the back edge copies the successor
@@ -11121,6 +11154,36 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(interleave([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildExitCellPassedToCallProgram(int rounds)
+        => $$"""
+            let recursive collect (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive rev (acc: List(Str)) (xs: List(Str)) =
+                match xs with
+                    | [] -> acc
+                    | head :: tail -> rev(head :: acc)(tail)
+
+            let recursive keepOdd (acc: List(Str)) (ps: List(Str)) =
+                match ps with
+                    | [] -> rev([])(acc)
+                    | first :: rest ->
+                        match rest with
+                            | [] -> rev([])(first :: acc)
+                            | _ :: more -> keepOdd(acc)(more)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(keepOdd([])(collect(3)([]))) + 1)
 
             0
             |> rounds({{rounds}})
