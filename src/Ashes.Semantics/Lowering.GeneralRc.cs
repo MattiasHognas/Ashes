@@ -897,14 +897,25 @@ public sealed partial class Lowering
             _generalRcOwnedResultLabels.Add(label);
         }
 
-        // Any other result (a closure, a tuple) may still point into the owned values, which are
-        // then left to leak. The slots stay registered: loop back edges are emitted later.
-        if (contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp))
+        ReleaseOwnedSlotsBehindResult(
+            resultTemp,
+            contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp));
+        return resultTemp;
+    }
+
+    // A result that holds its own references releases every owned slot behind it. Any other result
+    // (a closure, a tuple) may still point into the owned values: only the ones no value flowing
+    // into the result is read from are released, the rest are left to leak. The slots stay
+    // registered: loop back edges are emitted later.
+    private void ReleaseOwnedSlotsBehindResult(int resultTemp, bool resultIndependent)
+    {
+        if (resultIndependent)
         {
             EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
+            return;
         }
 
-        return resultTemp;
+        EmitGeneralRcOwnedSlotDrops(OwnedSlotsOutOfResultReach(resultTemp, _generalRcOwnedSlots));
     }
 
     // A type variable of a function's result that is quantified by the function's scheme and occurs

@@ -60,6 +60,7 @@ import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
+import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
 import AshesCompiler.Semantics.FunctionOrigins.createAdtNormalizerOrigin
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
@@ -7940,6 +7941,23 @@ let emitGeneralRcOwnedSlotDrops (state: CoreLoweringState) =
     |> stateGeneralRcOwnedSlots
     |> reverse)(state)
 
+let recursive ownedSlotsOutside (reached: List(Int)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | ((_owner, slot, _semanticType) as owned) :: rest ->
+            if containsInt(slot)(reached)
+            then ownedSlotsOutside(reached)(rest)
+            else owned :: ownedSlotsOutside(reached)(rest)
+
+// Stage 0's `OwnedSlotsOutOfResultReach`: a result outside the contract's types may still point
+// into the function's owned values, so only the owned slots no value flowing into the result is
+// read from are released behind it; the others are left.
+let emitOwnedSlotDropsOutOfResultReach (resultTemp: Int) (state: CoreLoweringState) =
+    emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(state
+    |> stateGeneralRcOwnedSlots
+    |> reverse
+    |> ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions)))(state)
+
 let backEdgeCopyBorrows (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
         | NormalizerArgumentCopy(_named) -> true
@@ -9498,6 +9516,7 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                     | (true, Some(copy)) ->
                         match emitIndependentResultCopy(copy)(bodyTemp)(state) with
                             | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
+                    | (true, None) -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(state), bodyTemp)
                     | _ -> (state, bodyTemp)
 
 let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =

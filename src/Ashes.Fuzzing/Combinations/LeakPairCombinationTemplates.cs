@@ -465,6 +465,38 @@ internal sealed class UnannotatedNestedRecursionConcatTemplate() : LeakCombinati
 }
 
 /// <summary>
+/// A function whose result is a generic list builds an owned record from a call and only tests it:
+/// the record is out of the result's reach and is released at the return.
+/// </summary>
+internal sealed class GenericResultBesideOwnedRecordTemplate() : LeakCombinationTemplate(
+    "leak.generic-result-beside-owned-record", "genericResultBesideOwnedRecord", GeneratedFeature.Record, GeneratedFeature.Let, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string box = names.Of("LeakBox");
+        string make = names.Of("make");
+        string keep = names.Of("keepIfLarge");
+        string threshold = LeakNames.Text(names.Between(0, 3));
+        return $$"""
+            type {{box}} =
+                | items: List(Str)
+                | count: Int
+
+            let {{make}} (n: Int) = {{box}}(items = [{{names.Word()}} + Ashes.Text.fromInt(n), {{names.Word()}}], count = n)
+
+            let {{keep}} (value: a) (n: Int) =
+                let box = {{make}}(n)
+                in
+                    if box.count > {{threshold}}
+                    then [value, value]
+                    else []
+
+            let {{names.Entry}} (seed: Int) = Ashes.Collection.List.length({{keep}}(seed)(seed))
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>

@@ -3038,6 +3038,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_result_beside_owned_record_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returning a generic list builds an owned record it only tests. The record is
+        // out of the result's reach, so it is released at the return.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildGenericResultBesideOwnedRecordProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(rounds - 2) * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic result beside an owned record", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_state_successor_borrows_pattern_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12301,6 +12324,36 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(8))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildGenericResultBesideOwnedRecordProgram(int rounds)
+        => $$"""
+            type Box =
+                | items: List(Str)
+                | count: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (n: Int) = Box(items = [wide + Ashes.Text.fromInt(n), wide], count = n)
+
+            let keepIfLarge (value: a) (n: Int) =
+                let box = make(n)
+                in
+                    if box.count > 2
+                    then [value, value]
+                    else []
+
+            let recursive countAll (values: List(Int)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countAll(keepIfLarge(n)(n))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
