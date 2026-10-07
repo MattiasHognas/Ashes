@@ -7958,6 +7958,17 @@ let emitOwnedSlotDropsOutOfResultReach (resultTemp: Int) (state: CoreLoweringSta
     |> reverse
     |> ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions)))(state)
 
+// Whether the result reaches any owned slot of the function being finished.
+let resultReachesOwnedSlots (resultTemp: Int) (state: CoreLoweringState) =
+    (let slots = stateGeneralRcOwnedSlots(state)
+    in
+        let outside =
+            slots
+            |> ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))
+            |> ownedSlotsOf(stateActiveFunctionOrigin(state))
+        in
+            length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
+
 let backEdgeCopyBorrows (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
         | NormalizerArgumentCopy(_named) -> true
@@ -9491,6 +9502,26 @@ let resolvePhantomResultLayout (label: Str) (semanticType: SemanticType) (state:
                         | phantoms ->
                             contractLayoutOrSelf(substitutePhantomVariables(phantoms)(resolved))(semanticType)(state))
 
+// Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
+// parent can own and the runtime-managed deep copy reproduces without reaching a recursive type.
+let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest ->
+            heapRuntimeOwnedTupleElementLayout(element)(coverageEnvironment(state))([]) && allRuntimeOwnedCopyElements(rest)(state)
+
+// Stage 0's `MovesOwnedPartsIntoTupleResult`: a tuple result that holds a part of an owned value
+// is placed on the reference-counted heap at the return, each element the owned values hold
+// retained into it and the others copied, so the owned slots are released behind it and their
+// parts live on in the result. The copy plan, when the tuple qualifies.
+let ownedTupleResultPlan (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(bodyType) with
+        | SemTuple(elements) as tuple ->
+            if !containsUnresolvedLayout(tuple)(state) && allRuntimeOwnedCopyElements(elements)(state) && resultReachesOwnedSlots(bodyTemp)(state)
+            then argumentCopyPlanOf(tuple)(state)
+            else None
+        | _ -> None
+
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcFinishedResult(bodyTemp)(state)
     then (state, bodyTemp)
@@ -9516,7 +9547,15 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                     | (true, Some(copy)) ->
                         match emitIndependentResultCopy(copy)(bodyTemp)(state) with
                             | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
-                    | (true, None) -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(state), bodyTemp)
+                    | (true, None) ->
+                        match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
+                            | Some(plan) ->
+                                match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
+                                    | (copied, resultTemp) ->
+                                        (copied
+                                        |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                                        |> emitGeneralRcOwnedSlotDrops, resultTemp)
+                            | None -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(state), bodyTemp)
                     | _ -> (state, bodyTemp)
 
 let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
@@ -9537,7 +9576,11 @@ let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state
         | (true, Some(_plan)) -> true
         | _ -> false) || !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
         | Some(OwnedResultCopy(_plan)) -> true
-        | _ -> false)
+        | Some(ArenaResultCopy(_copyOut)) -> false
+        | None ->
+            match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
+                | Some(_plan) -> true
+                | None -> false)
 
 // Stage 0's `LowerLambdaCoreNormalizeRequestedArenaResult`: a callee whose result is
 // reference-counted can be invoked from a body that cannot own such a result (a generic function
@@ -9696,14 +9739,6 @@ let closeTmcChainLowered (label: Str) (lowered: LoweredCoreValue) =
 let tcoListElementSupported (element: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(element)(state) with
         | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
-
-// Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
-// parent can own and the runtime-managed deep copy reproduces without reaching a recursive type.
-let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state: CoreLoweringState) =
-    match elements with
-        | [] -> true
-        | element :: rest ->
-            heapRuntimeOwnedTupleElementLayout(element)(coverageEnvironment(state))([]) && allRuntimeOwnedCopyElements(rest)(state)
 
 // Stage 0's `IsPassthroughNormalizableParameterType`: the parameter types the passthrough arm
 // copies into an owned reference-counted graph. Strings stay out: their affine growth already

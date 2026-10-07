@@ -3061,6 +3061,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns a tuple holding a field of an owned record a call built. The tuple is
+        // placed on the reference-counted heap with the field retained, and the record released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildTupleResultHoldsOwnedRecordFieldProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple result holding an owned record's field", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_state_successor_borrows_pattern_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12354,6 +12377,35 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countAll(keepIfLarge(n)(n))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTupleResultHoldsOwnedRecordFieldProgram(int rounds)
+        => $$"""
+            type State =
+                | items: List(Str)
+                | count: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let step (s: State) = State(items = wide + Ashes.Text.fromInt(s.count) :: s.items, count = s.count + 1)
+
+            let summarize (s: State) =
+                let next = step(s)
+                in (next.items, next.count > 2)
+
+            let recursive countAll (values: List(Str)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match summarize(State(items = [wide + "x", wide + "y"], count = n)) with
+                        | (texts, _big) -> rounds(n - 1)(total + countAll(texts)(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

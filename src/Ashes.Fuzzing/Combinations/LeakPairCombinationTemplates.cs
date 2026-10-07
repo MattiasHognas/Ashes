@@ -497,6 +497,37 @@ internal sealed class GenericResultBesideOwnedRecordTemplate() : LeakCombination
 }
 
 /// <summary>
+/// A function returns a tuple holding a field of an owned record a call built: the tuple takes the
+/// field's reference and the record is released at the return.
+/// </summary>
+internal sealed class TupleResultHoldsOwnedPartTemplate() : LeakCombinationTemplate(
+    "leak.tuple-result-holds-owned-part", "tupleResultHoldsOwnedPart", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.Let, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string state = names.Of("LeakState");
+        string step = names.Of("step");
+        string summarize = names.Of("summarize");
+        string flag = names.Coin("count-flag") ? "next.count > 2" : "Ashes.Collection.List.length(next.items) > 1";
+        return $$"""
+            type {{state}} =
+                | items: List(Str)
+                | count: Int
+
+            let {{step}} (s: {{state}}) = {{state}}(items = {{names.Word()}} + Ashes.Text.fromInt(s.count) :: s.items, count = s.count + 1)
+
+            let {{summarize}} (s: {{state}}) =
+                let next = {{step}}(s)
+                in (next.items, {{flag}})
+
+            let {{names.Entry}} (seed: Int) =
+                match {{summarize}}({{state}}(items = {{names.Words(names.Between(1, 3))}}, count = seed)) with
+                    | (texts, _flag) -> Ashes.Collection.List.length(texts)
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>

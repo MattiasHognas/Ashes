@@ -891,6 +891,12 @@ public sealed partial class Lowering
             resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain, loopTco);
             _generalRcIndependentResultTemp = resultTemp;
         }
+        else if (MovesOwnedPartsIntoTupleResult(bodyTemp, pruned))
+        {
+            resultTemp = EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
+            MarkRuntimeManagedTemp(resultTemp);
+            _generalRcIndependentResultTemp = resultTemp;
+        }
 
         if (contractResult)
         {

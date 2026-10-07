@@ -21,6 +21,26 @@ public sealed partial class Lowering
         return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot))];
     }
 
+    private static bool OwnedTupleResultEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_OWNEDTUPLERESULT") is null;
+
+    /// <summary>
+    /// Whether a tuple result that holds a part of an owned value is placed on the
+    /// reference-counted heap at the return: each element the owned values hold is retained into
+    /// it, the others copied, so the owned slots are released behind it and their parts live on in
+    /// the result, as a move. A tuple a runtime-managed parent can own outright qualifies; one with
+    /// an element of unresolved layout does not.
+    /// </summary>
+    private bool MovesOwnedPartsIntoTupleResult(int bodyTemp, TypeRef resultType)
+        => OwnedTupleResultEnabled
+            && ResultReachedOwnedSlotsEnabled
+            && _generalRcOwnedSlots.Count > 0
+            && resultType is TypeRef.TTuple tuple
+            && !IsRuntimeManagedResultTemp(bodyTemp)
+            && !ContainsUnresolvedLayoutType(tuple, [])
+            && CanRuntimeManageOwnedTupleType(tuple)
+            && OwnedSlotsOutOfResultReach(bodyTemp, _generalRcOwnedSlots).Count < _generalRcOwnedSlots.Count;
+
     /// <summary>
     /// The local slots a value can have been read from or stored into: following, backwards from the temp, a
     /// slot's every store, a cell's every stored field, and every operand of any other instruction,
