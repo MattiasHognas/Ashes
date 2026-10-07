@@ -14525,6 +14525,8 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
     }
 
+    private static bool EmittedBorrowedCallsEnabled => Environment.GetEnvironmentVariable("GRC_NO_EMITTEDBORROWCALL") is null;
+
     private bool IsKnownRuntimeNormalizedFunctionArgument(Expr rootExpr, int argumentIndex)
     {
         if (!TryResolveKnownFunctionLabel(rootExpr, out string label))
@@ -14566,7 +14568,9 @@ public sealed partial class Lowering
         Emit(callInstruction);
         if (borrowsArgument)
         {
-            _borrowedArgumentCalls.Add(callInstruction);
+            // Emit may re-create the instruction with its source location; placement looks the
+            // call up by reference, so the one in the instruction list is the one recorded.
+            _borrowedArgumentCalls.Add(_inst[^1] is IrInst.CallClosure emitted && EmittedBorrowedCallsEnabled ? emitted : callInstruction);
         }
 
         // Emit may re-create the instruction with its source location, so the emitted one is kept.

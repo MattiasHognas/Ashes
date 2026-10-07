@@ -2867,6 +2867,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_pattern_list_passed_to_borrowing_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop searches each box's item list, bound under a cons pattern, with a helper that
+        // only reads it and returns early with what it found. The call borrows the list, which
+        // stays live past it, so the call takes no duplicate of the list that nothing releases.
+        // Lowered with source locations: the borrowing call is recorded as the located
+        // instruction the lowering emits, which placement looks up.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithSourceLocations(BuildPatternListPassedToBorrowingCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 483}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("pattern list passed to a borrowing call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_node_holding_walked_head_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -8236,6 +8262,29 @@ public sealed class LinuxBackendCoverageTests
         return ir;
     }
 
+    // A standalone program lowered with its source context, as the CLI lowers it: every emitted
+    // instruction carries its source location.
+    private static IrProgram LowerProgramWithSourceLocations(string source)
+    {
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>");
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(
+            diagnostics,
+            new HashSet<string>(parsed.ImportNames, StringComparer.Ordinal),
+            parsed.ImportAliases,
+            layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+        IrProgram ir = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+        return ir;
+    }
+
     private static IrProgram LowerProgram(string source)
     {
         var diagnostics = new Diagnostics();
@@ -11370,6 +11419,50 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countStarting(boxesFrom(["A" + wide, "B" + wide, "A" + wide + "e", "M" + wide])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildPatternListPassedToBorrowingCallProgram(int rounds)
+        => $$"""
+            type Item =
+                | itemName: Str
+                | weight: Int
+
+            type Box =
+                | label: Str
+                | items: List(Item)
+
+            let recursive find (name: Str) (items: List(Item)) =
+                match items with
+                    | [] -> None
+                    | item :: rest ->
+                        if item.itemName == name
+                        then Some(item.itemName + "!")
+                        else find(name)(rest)
+
+            let recursive scan name (boxes: List(Box)) =
+                match boxes with
+                    | [] -> None
+                    | Box { items = items } :: rest ->
+                        match find(name)(items) with
+                            | Some(found) -> Some(found)
+                            | None -> scan(name)(rest)
+
+            let recursive boxesFrom (labels: List(Str)) (built: List(Box)) =
+                match labels with
+                    | [] -> built
+                    | label :: rest -> boxesFrom(rest)(Box(label = label + "", items = [Item(itemName = label + "x", weight = 1)]) :: built)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match scan("A" + wide + "x")(boxesFrom(["A" + wide, "B" + wide, "C" + wide, "D" + wide, "M" + wide])([])) with
+                        | Some(found) -> rounds(n - 1)(total + Ashes.Text.byteLength(found))
+                        | None -> rounds(n - 1)(total)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

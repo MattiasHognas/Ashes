@@ -1383,7 +1383,7 @@ function lambda_13  [SourceFunction from reversed]
     Return                Source=4   (tco_record_head_consed_into_sibling_accumulator.ash:29:1)
 
 function _start_main  [ProgramEntry]
-  locals=36 temps=97
+  locals=36 temps=95
     LoadConstInt          Target=0 Value=0   (tco_record_head_consed_into_sibling_accumulator.ash:11:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_record_head_consed_into_sibling_accumulator.ash:11:1)
     StoreLocal            Slot=0 Source=1   (tco_record_head_consed_into_sibling_accumulator.ash:11:1)
@@ -1418,7 +1418,6 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=18 Slot=1   (tco_record_head_consed_into_sibling_accumulator.ash:36:7)
     LoadLocal             Target=19 Slot=10   (tco_record_head_consed_into_sibling_accumulator.ash:36:13)
     Borrow                Target=20 SourceTemp=19
-    RcDup                 Target=95 SourceTemp=20   (tco_record_head_consed_into_sibling_accumulator.ash:36:7)
     CallClosure           Target=21 ClosureTemp=18 ArgTemp=20   (tco_record_head_consed_into_sibling_accumulator.ash:36:7)
     LoadConstInt          Target=22 Value=0   (tco_record_head_consed_into_sibling_accumulator.ash:36:24)
     CallClosure           Target=23 ClosureTemp=21 ArgTemp=22   (tco_record_head_consed_into_sibling_accumulator.ash:36:7)
@@ -1445,7 +1444,6 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=37 Slot=2   (tco_record_head_consed_into_sibling_accumulator.ash:37:106)
     LoadLocal             Target=38 Slot=10   (tco_record_head_consed_into_sibling_accumulator.ash:37:118)
     Borrow                Target=39 SourceTemp=38
-    RcDup                 Target=96 SourceTemp=39   (tco_record_head_consed_into_sibling_accumulator.ash:37:106)
     CallClosure           Target=40 ClosureTemp=37 ArgTemp=39   (tco_record_head_consed_into_sibling_accumulator.ash:37:106)
     LoadConstInt          Target=41 Value=3   (tco_record_head_consed_into_sibling_accumulator.ash:37:129)
     LoadMemOffset         Target=42 BasePtr=40 OffsetBytes=16   (tco_record_head_consed_into_sibling_accumulator.ash:37:106)

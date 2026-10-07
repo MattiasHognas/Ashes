@@ -1598,7 +1598,7 @@ function lambda_25  [SourceFunction from firstNames]
     Return                Source=111   (rc_child_of_call_argument_kept_by_callee_result.ash:70:1)
 
 function _start_main  [ProgramEntry]
-  locals=54 temps=93
+  locals=54 temps=92
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (rc_child_of_call_argument_kept_by_callee_result.ash:18:1)
@@ -1677,7 +1677,6 @@ function _start_main  [ProgramEntry]
     LoadMemOffset         Target=44 BasePtr=41 OffsetBytes=16   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
     LoadConstInt          Target=45 Value=63   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
     ShrInt                Target=46 Left=44 Right=45   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
-    RcDup                 Target=92 SourceTemp=43   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
     CallClosure           Target=47 ClosureTemp=41 ArgTemp=43   (rc_child_of_call_argument_kept_by_callee_result.ash:79:47)
     RestoreArenaState     CursorLocalSlot=32 EndLocalSlot=33 PreRestoreEndSlot=34
     ReclaimArenaChunks    SavedEndSlot=33 PreRestoreEndSlot=34

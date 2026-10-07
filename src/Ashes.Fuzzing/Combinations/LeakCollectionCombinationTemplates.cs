@@ -611,3 +611,60 @@ internal sealed class PatternStringTestedByCurriedCallTemplate() : LeakCombinati
             """;
     }
 }
+
+/// <summary>
+/// A loop over records searches each record's list field, bound under a cons pattern, with a
+/// helper that only reads it, and returns early with what the search found: the field stays live
+/// past the call, and the borrowing call must not take a duplicate of it that nothing releases.
+/// </summary>
+internal sealed class PatternListPassedToBorrowingCallTemplate() : LeakCombinationTemplate(
+    "leak.pattern-list-passed-to-borrowing-call", "borrowSearch", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string item = names.Of("LeakItem");
+        string box = names.Of("LeakBox");
+        string find = names.Of("findItem");
+        string scan = names.Of("scanBoxes");
+        string build = names.Of("boxesFrom");
+        IReadOnlyList<string> words = names.DistinctWords(names.Between(2, 4));
+        string labels = "[" + string.Join(", ", words) + "]";
+        string target = names.Coin("search-hits") ? words[^1] + " + \"x\"" : "\"absent\"";
+        string found = names.Pick("Some(found)", "Some(found + \"!\")");
+        return $$"""
+            type {{item}} =
+                | itemName: Str
+                | weight: Int
+
+            type {{box}} =
+                | label: Str
+                | items: List({{item}})
+
+            let recursive {{find}} (name: Str) (items: List({{item}})) =
+                match items with
+                    | [] -> None
+                    | entry :: rest ->
+                        if entry.itemName == name
+                        then Some(entry.itemName + "!")
+                        else {{find}}(name)(rest)
+
+            let recursive {{scan}} name (boxes: List({{box}})) =
+                match boxes with
+                    | [] -> None
+                    | {{box}} { items = items } :: rest ->
+                        match {{find}}(name)(items) with
+                            | Some(found) -> {{found}}
+                            | None -> {{scan}}(name)(rest)
+
+            let recursive {{build}} (labels: List(Str)) (built: List({{box}})) =
+                match labels with
+                    | [] -> built
+                    | label :: rest -> {{build}}(rest)({{box}}(label = label + "", items = [{{item}}(itemName = label + "x", weight = 1)]) :: built)
+
+            let {{names.Entry}} (seed: Int) =
+                match {{scan}}({{target}})({{build}}({{labels}})([])) with
+                    | Some(found) -> Ashes.Text.byteLength(found) + seed
+                    | None -> seed
+            """;
+    }
+}

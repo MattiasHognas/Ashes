@@ -567,7 +567,7 @@ function lambda_12  [SourceFunction from texts]
     Return                Source=32   (parameter_reaches_result_record_update.ash:15:1)
 
 function lambda_13  [SourceFunction from describe]
-  locals=15 temps=30
+  locals=15 temps=29
     LoadLocal             Target=0 Slot=1   (parameter_reaches_result_record_update.ash:21:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (parameter_reaches_result_record_update.ash:21:5)
@@ -582,7 +582,6 @@ function lambda_13  [SourceFunction from describe]
     LoadMemOffset         Target=7 BasePtr=4 OffsetBytes=16   (parameter_reaches_result_record_update.ash:22:37)
     LoadConstInt          Target=8 Value=63   (parameter_reaches_result_record_update.ash:22:37)
     ShrInt                Target=9 Left=7 Right=8   (parameter_reaches_result_record_update.ash:22:37)
-    RcDup                 Target=29 SourceTemp=6   (parameter_reaches_result_record_update.ash:22:37)
     CallClosure           Target=10 ClosureTemp=4 ArgTemp=6   (parameter_reaches_result_record_update.ash:22:37)
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8

@@ -791,6 +791,10 @@ type CoreLoweringState =
     // result slot, and the unreachable no-match default stores into it last, so the reload's
     // representation read back off the slot is the default's rather than the arms'.
     | joinRepresentations: List((Maybe(IrFunctionOrigin), Int, Bool, Bool))
+    // The closure calls that only borrow their argument, by the label of the function holding
+    // the call and the call's result temp: lifetime placement gives them no compensating
+    // duplicate of an owner that stays live past the call, which nothing would release.
+    | borrowedCalls: List((Str, Int))
     | programState: CoreProgramState
     | functionState: CoreFunctionState
     | ownerState: CoreOwnerState
@@ -2173,6 +2177,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         reuseTokens = [],
         valuePlacements = [],
         joinRepresentations = [],
+        borrowedCalls = [],
         programState = CoreProgramState(
             constructorLayouts = constructorLayouts,
             coverageTypes = coverageEnvironmentOf(constructorLayouts),
@@ -5805,7 +5810,7 @@ let restoreOuterFrame outer bodyState =
                 current
                 |> withStatePredictedRuntimeManagedResultLabels(statePredictedRuntimeManagedResultLabels(bodyState))
                 |> withStateCurryStage(stateCurryStage(bodyState)))
-            |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements, joinRepresentations = bodyState.joinRepresentations)
+            |> (given (current: CoreLoweringState) -> current with valuePlacements = bodyState.valuePlacements, joinRepresentations = bodyState.joinRepresentations, borrowedCalls = bodyState.borrowedCalls)
             |> (given (current: CoreLoweringState) ->
                 current
                 |> withStateSpecializingReuseLabel(stateSpecializingReuseLabel(bodyState))
@@ -13731,6 +13736,16 @@ let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int
                                 (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
     else (state, argumentFlagTemp)
 
+// Stage 0's `_borrowedArgumentCalls`: a call that only borrows its argument, recorded by the
+// function it is emitted into (the program entry outside every lifted function) and its result.
+let recordBorrowedCall (borrows: Bool) (target: Int) (state: CoreLoweringState) =
+    if borrows
+    then
+        match stateActiveFunctionOrigin(state) with
+            | Some(IrFunctionOrigin { generatedLabel = label }) -> state with borrowedCalls = (label, target) :: state.borrowedCalls
+            | None -> state with borrowedCalls = ("_start_main", target) :: state.borrowedCalls
+    else state
+
 let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) (readsResult: Bool) (resultNormalizedOwned: Bool) unifiedState =
     match prepareCallArgument(handOff)(handsFreshArgumentOverUnderAdoption(context)(handOff))(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
         | (preparedState, passedTemp, argumentFlagTemp, handedOver) ->
@@ -13745,6 +13760,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                     CoreCallStage(
                                         lowered = wordState
                                         |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
+                                        |> recordBorrowedCall(handOff.borrowsOnly)(target)
                                         |> success(target)(resolveType(unifiedState)(resultType)),
                                         consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(handedOver)(consumed),
                                         resultFlagTemp = resultFlagTemp,
@@ -26814,7 +26830,7 @@ let buildProgram lowered =
                                                         capabilityHandlerGlobals = capabilityHandlerGlobalCount(state),
                                                         traitEvidence = emptyTraitEvidenceAnnotations
                                                     )
-                                                    |> placeLifetimes
+                                                    |> placeLifetimes(state.borrowedCalls)
                                                     |> Some,
                                                     semanticType = resolveType(state)(semanticType),
                                                     error = None,

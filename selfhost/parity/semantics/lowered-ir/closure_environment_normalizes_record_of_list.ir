@@ -704,7 +704,7 @@ function lambda_12  [SourceFunction from weigh]
     Return                Source=4   (closure_environment_normalizes_record_of_list.ash:18:1)
 
 function lambda_14  [SourceFunction from describe]
-  locals=14 temps=21
+  locals=14 temps=20
     LoadLocal             Target=0 Slot=1   (closure_environment_normalizes_record_of_list.ash:24:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (closure_environment_normalizes_record_of_list.ash:24:5)
@@ -716,7 +716,6 @@ function lambda_14  [SourceFunction from describe]
     LoadEnv               Target=4 Index=0   (closure_environment_normalizes_record_of_list.ash:25:37)
     LoadLocal             Target=5 Slot=5   (closure_environment_normalizes_record_of_list.ash:25:43)
     Borrow                Target=6 SourceTemp=5
-    RcDup                 Target=20 SourceTemp=6   (closure_environment_normalizes_record_of_list.ash:25:37)
     CallClosure           Target=7 ClosureTemp=4 ArgTemp=6   (closure_environment_normalizes_record_of_list.ash:25:37)
     LoadConstInt          Target=8 Value=0   (closure_environment_normalizes_record_of_list.ash:25:50)
     CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (closure_environment_normalizes_record_of_list.ash:25:37)

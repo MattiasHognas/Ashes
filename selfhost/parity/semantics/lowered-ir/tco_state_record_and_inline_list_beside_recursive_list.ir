@@ -574,7 +574,7 @@ function lambda_11  [SourceFunction from lowerOne]
     Return                Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
 
 function lambda_21  [ClosureHelper from loop]
-  locals=65 temps=204
+  locals=65 temps=203
     LoadEnv               Target=0 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
     StoreLocal            Slot=2 Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
     LoadEnv               Target=1 Index=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
@@ -685,7 +685,6 @@ function lambda_21  [ClosureHelper from loop]
     Borrow                Target=34 SourceTemp=33
     LoadLocal             Target=35 Slot=27   (tco_state_record_and_inline_list_beside_recursive_list.ash:38:25)
     Borrow                Target=36 SourceTemp=35
-    RcDup                 Target=203 SourceTemp=36   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
     CallClosure           Target=37 ClosureTemp=34 ArgTemp=36   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
     SaveArenaState        CursorLocalSlot=31 EndLocalSlot=32
     LoadEnv               Target=38 Index=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:16)

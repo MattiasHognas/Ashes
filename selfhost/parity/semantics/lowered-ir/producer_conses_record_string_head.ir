@@ -617,7 +617,7 @@ function lambda_4  [SourceFunction from countLists]
     Return                Source=4   (producer_conses_record_string_head.ash:27:1)
 
 function _start_main  [ProgramEntry]
-  locals=26 temps=92
+  locals=26 temps=90
     LoadConstInt          Target=0 Value=0   (producer_conses_record_string_head.ash:12:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (producer_conses_record_string_head.ash:12:1)
     StoreLocal            Slot=0 Source=1   (producer_conses_record_string_head.ash:12:1)
@@ -682,7 +682,6 @@ function _start_main  [ProgramEntry]
     LoadMemOffset         Target=33 BasePtr=30 OffsetBytes=16   (producer_conses_record_string_head.ash:34:46)
     LoadConstInt          Target=34 Value=63   (producer_conses_record_string_head.ash:34:46)
     ShrInt                Target=35 Left=33 Right=34   (producer_conses_record_string_head.ash:34:46)
-    RcDup                 Target=90 SourceTemp=32   (producer_conses_record_string_head.ash:34:46)
     CallClosure           Target=36 ClosureTemp=30 ArgTemp=32   (producer_conses_record_string_head.ash:34:46)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
@@ -732,7 +731,6 @@ function _start_main  [ProgramEntry]
     LoadMemOffset         Target=60 BasePtr=57 OffsetBytes=16   (producer_conses_record_string_head.ash:34:109)
     LoadConstInt          Target=61 Value=63   (producer_conses_record_string_head.ash:34:109)
     ShrInt                Target=62 Left=60 Right=61   (producer_conses_record_string_head.ash:34:109)
-    RcDup                 Target=91 SourceTemp=59   (producer_conses_record_string_head.ash:34:109)
     CallClosure           Target=63 ClosureTemp=57 ArgTemp=59   (producer_conses_record_string_head.ash:34:109)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=19

@@ -1393,7 +1393,7 @@ function __rcdrop_record_16  [RuntimeManagedAdtDropper]
     Return                Source=16   (aggregate_borrowing_owner_kept_by_callee.ash:32:1)
 
 function lambda_13  [SourceFunction from parseProgram]
-  locals=42 temps=119
+  locals=42 temps=118
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (aggregate_borrowing_owner_kept_by_callee.ash:33:18)
@@ -1506,7 +1506,6 @@ function lambda_13  [SourceFunction from parseProgram]
     LoadMemOffset         Target=49 BasePtr=46 OffsetBytes=16   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     LoadConstInt          Target=50 Value=63   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     ShrInt                Target=51 Left=49 Right=50   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
-    RcDup                 Target=118 SourceTemp=48   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     CallClosure           Target=52 ClosureTemp=46 ArgTemp=48   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     StoreLocal            Slot=29 Source=52   (aggregate_borrowing_owner_kept_by_callee.ash:38:48)
     RestoreArenaState     CursorLocalSlot=26 EndLocalSlot=27 PreRestoreEndSlot=28
