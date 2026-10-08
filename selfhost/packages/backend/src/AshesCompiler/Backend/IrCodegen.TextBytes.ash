@@ -899,7 +899,7 @@ let emitBytesAllocate context function_ i64 i8 builder allocateDynamic lengthVal
 // byte in order (`EmitBytesFromList`'s exact shape; cons layout head at 0, tail at 8, nil = 0).
 // `reversed` fills from the end while still walking `listRef` head-to-tail — the fused form of
 // `Byte.fromList(List.reverse(xs))`, which never builds the reversed list.
-let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocType reversed listRef =
+let emitBytesFromList context function_ i64 i8 ptrType builder allocateDynamic reversed listRef =
     (let countSlot = buildEntryAlloca(builder)(i64)("bfl_count")
     in
         let curSlot = buildEntryAlloca(builder)(i64)("bfl_cur")
@@ -956,75 +956,63 @@ let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocTy
                                                                                                     in
                                                                                                         let length = buildLoad(builder)(i64)(countSlot)("bfl_length")
                                                                                                         in
-                                                                                                            let totalSize =
-                                                                                                                buildAdd(builder)(length)(constInt(i64)(24u64)(false))("bfl_total")
+                                                                                                            let payloadPtr =
+                                                                                                                allocateDynamic(buildAdd(builder)(length)(constInt(i64)(8u64)(false))("bfl_size"))("bfl")
                                                                                                             in
-                                                                                                                let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("bfl_header")
+                                                                                                                let _ = buildStore(builder)(length)(payloadPtr)
                                                                                                                 in
-                                                                                                                    let _ =
-                                                                                                                        buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                                                                                                                    let dataPtr = gepBytes(builder)(i64)(i8)(payloadPtr)(8)("bfl_data")
                                                                                                                     in
-                                                                                                                        let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bfl_size_ptr")
+                                                                                                                        let _ =
+                                                                                                                            buildStore(builder)(buildPtrToInt(builder)(payloadPtr)(i64)("bfl_payload_value"))(resultSlot)
                                                                                                                         in
-                                                                                                                            let _ =
-                                                                                                                                buildStore(builder)(buildAdd(builder)(length)(constInt(i64)(8u64)(false))("bfl_size"))(sizePtr)
+                                                                                                                            let _ = buildStore(builder)(listRef)(curSlot)
                                                                                                                             in
-                                                                                                                                let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bfl_payload")
+                                                                                                                                let _ =
+                                                                                                                                    buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
                                                                                                                                 in
-                                                                                                                                    let _ = buildStore(builder)(length)(payloadPtr)
+                                                                                                                                    let _ = buildBr(builder)(fillCheckBlock)
                                                                                                                                     in
-                                                                                                                                        let dataPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bfl_data")
+                                                                                                                                        let _ = positionBuilderAtEnd(builder)(fillCheckBlock)
                                                                                                                                         in
-                                                                                                                                            let _ =
-                                                                                                                                                buildStore(builder)(buildPtrToInt(builder)(payloadPtr)(i64)("bfl_payload_value"))(resultSlot)
+                                                                                                                                            let curFill = buildLoad(builder)(i64)(curSlot)("bfl_cur_fill")
                                                                                                                                             in
-                                                                                                                                                let _ = buildStore(builder)(listRef)(curSlot)
+                                                                                                                                                let fillDone =
+                                                                                                                                                    buildICmp(builder)(intPredicateEq)(curFill)(constInt(i64)(0u64)(false))("bfl_fill_done")
                                                                                                                                                 in
-                                                                                                                                                    let _ =
-                                                                                                                                                        buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
+                                                                                                                                                    let _ = buildCondBr(builder)(fillDone)(doneBlock)(fillBodyBlock)
                                                                                                                                                     in
-                                                                                                                                                        let _ = buildBr(builder)(fillCheckBlock)
+                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(fillBodyBlock)
                                                                                                                                                         in
-                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(fillCheckBlock)
+                                                                                                                                                            let fillCellPtr = buildIntToPtr(builder)(curFill)(ptrType)("bfl_fill_cell")
                                                                                                                                                             in
-                                                                                                                                                                let curFill = buildLoad(builder)(i64)(curSlot)("bfl_cur_fill")
+                                                                                                                                                                let headVal = buildLoad(builder)(i64)(fillCellPtr)("bfl_head")
                                                                                                                                                                 in
-                                                                                                                                                                    let fillDone =
-                                                                                                                                                                        buildICmp(builder)(intPredicateEq)(curFill)(constInt(i64)(0u64)(false))("bfl_fill_done")
+                                                                                                                                                                    let idx = buildLoad(builder)(i64)(idxSlot)("bfl_idx_value")
                                                                                                                                                                     in
-                                                                                                                                                                        let _ = buildCondBr(builder)(fillDone)(doneBlock)(fillBodyBlock)
+                                                                                                                                                                        let destIndex =
+                                                                                                                                                                            if reversed
+                                                                                                                                                                            then
+                                                                                                                                                                                buildSub(builder)(buildSub(builder)(length)(constInt(i64)(1u64)(false))("bfl_len_m1"))(idx)("bfl_rev_idx")
+                                                                                                                                                                            else idx
                                                                                                                                                                         in
-                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(fillBodyBlock)
+                                                                                                                                                                            let elemPtr = buildGEP(builder)(i8)(dataPtr)([destIndex])(1u32)("bfl_elem")
                                                                                                                                                                             in
-                                                                                                                                                                                let fillCellPtr = buildIntToPtr(builder)(curFill)(ptrType)("bfl_fill_cell")
+                                                                                                                                                                                let _ =
+                                                                                                                                                                                    buildStore(builder)(buildTrunc(builder)(headVal)(i8)("bfl_byte"))(elemPtr)
                                                                                                                                                                                 in
-                                                                                                                                                                                    let headVal = buildLoad(builder)(i64)(fillCellPtr)("bfl_head")
+                                                                                                                                                                                    let _ =
+                                                                                                                                                                                        buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bfl_idx_next"))(idxSlot)
                                                                                                                                                                                     in
-                                                                                                                                                                                        let idx = buildLoad(builder)(i64)(idxSlot)("bfl_idx_value")
+                                                                                                                                                                                        let fillTailPtr = gepBytes(builder)(i64)(i8)(fillCellPtr)(8)("bfl_fill_tail_ptr")
                                                                                                                                                                                         in
-                                                                                                                                                                                            let destIndex =
-                                                                                                                                                                                                if reversed
-                                                                                                                                                                                                then
-                                                                                                                                                                                                    buildSub(builder)(buildSub(builder)(length)(constInt(i64)(1u64)(false))("bfl_len_m1"))(idx)("bfl_rev_idx")
-                                                                                                                                                                                                else idx
+                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                buildStore(builder)(buildLoad(builder)(i64)(fillTailPtr)("bfl_fill_tail"))(curSlot)
                                                                                                                                                                                             in
-                                                                                                                                                                                                let elemPtr = buildGEP(builder)(i8)(dataPtr)([destIndex])(1u32)("bfl_elem")
+                                                                                                                                                                                                let _ = buildBr(builder)(fillCheckBlock)
                                                                                                                                                                                                 in
-                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                        buildStore(builder)(buildTrunc(builder)(headVal)(i8)("bfl_byte"))(elemPtr)
-                                                                                                                                                                                                    in
-                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                            buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bfl_idx_next"))(idxSlot)
-                                                                                                                                                                                                        in
-                                                                                                                                                                                                            let fillTailPtr = gepBytes(builder)(i64)(i8)(fillCellPtr)(8)("bfl_fill_tail_ptr")
-                                                                                                                                                                                                            in
-                                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                                    buildStore(builder)(buildLoad(builder)(i64)(fillTailPtr)("bfl_fill_tail"))(curSlot)
-                                                                                                                                                                                                                in
-                                                                                                                                                                                                                    let _ = buildBr(builder)(fillCheckBlock)
-                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
-                                                                                                                                                                                                                        in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
+                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                                                                                    in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
 
 // A fixed ASCII line written from a stack buffer via the raw `write` syscall followed by exit 1 —
 // the generalized form of the `Bytes.get` panic (`EmitPanic`/`EmitBytesGuard`'s observable shape).
@@ -1170,15 +1158,15 @@ let emitBytesCheckedRange context function_ i64 i8 builder bufferLength offset l
 
 // A fresh RC copy of a Bytes value (`EmitBytesCopyOnWrite` with the reuse path always off: every
 // selfhost dispatch arm passes reuse = false, so the result never aliases the input).
-let emitBytesCopyOnWrite builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bytesRef name =
+let emitBytesCopyOnWrite builder i64 ptrType copyPlaced bytesRef name =
     match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name + "_src") with
-        | (len, srcAddr) -> emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(srcAddr)(len)(name)
+        | (len, srcAddr) -> copyPlaced(srcAddr)(len)(name)
 
 // `Byte.copyRange(bytes)(offset)(source)(sourceOffset)(length)`: both ranges checked, the
 // destination copied fresh, then one `memcpy` of the range. The fresh copy never aliases the
 // source buffer, so stage 0's same-buffer scratch path is unreachable here and the direct copy
 // suffices (`EmitBytesCopyRange`/`EmitBytesRangeCopy`).
-let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
+let emitBytesCopyRange context function_ i64 i8 ptrType builder copyPlaced memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
     (let destLen = emitStringLengthValue(builder)(i64)(ptrType)(destRef)("bytes_copyrange_dest_len")
     in
         let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(destLen)(destOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 100, 101, 115, 116, 105, 110, 97, 116, 105, 111, 110, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_dest")
@@ -1187,7 +1175,7 @@ let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocT
             in
                 let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(sourceLen)(sourceOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 115, 111, 117, 114, 99, 101, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_source")
                 in
-                    let result = emitBytesCopyOnWrite(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(destRef)("bytes_copyrange")
+                    let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(destRef)("bytes_copyrange")
                     in
                         match emitStringParts(builder)(i64)(ptrType)(result)("bytes_copyrange_result") with
                             | (_resultLen, resultAddr) ->
@@ -1204,13 +1192,13 @@ let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocT
 
 // `Byte.set`/`setU16Le`/`setU32Le`/`setU64Le`: range checked, the input copied fresh, then the
 // little-endian byte stores at the offset (`EmitBytesSetUnsigned`).
-let emitBytesSetUnsigned context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType width panicCodes bytesRef offset value name =
+let emitBytesSetUnsigned context function_ i64 i8 ptrType builder copyPlaced width panicCodes bytesRef offset value name =
     (let bufferLength = emitStringLengthValue(builder)(i64)(ptrType)(bytesRef)(name + "_len")
     in
         let _ =
             emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(bufferLength)(offset)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(panicCodes)(name)
         in
-            let result = emitBytesCopyOnWrite(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bytesRef)(name)
+            let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(bytesRef)(name)
             in
                 match emitStringParts(builder)(i64)(ptrType)(result)(name + "_result") with
                     | (_resultLen, resultAddr) ->

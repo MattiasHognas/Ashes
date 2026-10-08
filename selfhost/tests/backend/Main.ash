@@ -3672,6 +3672,21 @@ let testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit 
     |> builtinResultsSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBuiltinResultsOneRound")("selfhost_backend_builtin_results_one_round_e2e"))
 
+// A loop building bytes from a list, setting them and copying a range into a fresh buffer once per
+// round: each result is placed where its instruction's ownership flag says, an arena value when
+// the lowering does not manage it rather than a reference-counted cell no release reaches, so the
+// live cells are the same at one round and three.
+let bytesResultsSource rounds = "let recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        let listed = Ashes.Byte.fromList([1u8, 2u8, 3u8])\n        in\n            let written = Ashes.Byte.setU16Le(Ashes.Byte.set(listed)(0)(7u8))(1)(9u16)\n            in\n                let copied = Ashes.Byte.copyRange(Ashes.Byte.allocate(4))(1)(written)(0)(3)\n                in rounds(n - 1)(total + Ashes.Byte.length(copied))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testBytesResultLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_bytes_results_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> bytesResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBytesResultsThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> bytesResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBytesResultsOneRound")("selfhost_backend_bytes_results_one_round_e2e"))
+
 // A pairwise loop handing each head on as the next round's `Str` parameter: the head's
 // pattern-owner duplicate is promoted to a real retain once the pattern root is placed, so the
 // back edge stores it as the owned successor it is and takes no second reference, and the live
@@ -5906,6 +5921,7 @@ let run shipped =
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testBytesResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
