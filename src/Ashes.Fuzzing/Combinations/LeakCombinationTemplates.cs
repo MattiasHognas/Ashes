@@ -19,6 +19,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new MappedNullaryEnumListTemplate());
         registry.Register(new ConsChainAccumulatorTemplate());
         registry.Register(new ParameterConsedOntoAccumulatorTemplate());
+        registry.Register(new PairwiseHeadHandedOnTemplate());
         registry.Register(new LoopExitCellOntoParameterTemplate());
         registry.Register(new AccumulatorStartedAfreshTemplate());
         registry.Register(new WorklistOfPathsWalkedAndRefilledTemplate());

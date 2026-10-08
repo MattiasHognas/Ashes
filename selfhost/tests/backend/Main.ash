@@ -3672,6 +3672,21 @@ let testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit 
     |> builtinResultsSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBuiltinResultsOneRound")("selfhost_backend_builtin_results_one_round_e2e"))
 
+// A pairwise loop handing each head on as the next round's `Str` parameter: the head's
+// pattern-owner duplicate is promoted to a real retain once the pattern root is placed, so the
+// back edge stores it as the owned successor it is and takes no second reference, and the live
+// cells are the same at one round and three.
+let pairwiseParameterSource rounds = "let recursive collect (n: Int) (acc: List(Str)) =\n    if n == 0\n    then acc\n    else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)\n\nlet recursive pairs (prev: Str) (acc: List(Str)) (ps: List(Str)) =\n    match ps with\n        | [] -> acc\n        | first :: rest -> pairs(first)(prev :: first :: acc)(rest)\n\nlet recursive count (xs: List(Str)) (total: Int) =\n    match xs with\n        | [] -> total\n        | _ :: tail -> count(tail)(total + 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + count(pairs(Ashes.Text.fromInt(n))([])(collect(3)([])))(0))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_pairwise_parameter_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> pairwiseParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendPairwiseParameterThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> pairwiseParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendPairwiseParameterOneRound")("selfhost_backend_pairwise_parameter_one_round_e2e"))
+
 // The same program with no arguments at all: the walk publishes the empty list.
 let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
@@ -5876,6 +5891,7 @@ let run shipped =
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

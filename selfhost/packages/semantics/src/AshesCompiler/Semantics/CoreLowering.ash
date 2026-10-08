@@ -7007,13 +7007,11 @@ let recursive lookupManagedStrSlot (slot: Int) (entries: List((Int, Int))) =
             then Some(activeSlot)
             else lookupManagedStrSlot(slot)(rest)
 
-// A `Str` successor's runtime placement is read again once the frame's placements are final
-// (stage 0's `TcoBackEdgeRefreshRuntimeManagedParams`): the affine append promoted at
-// finalization produced it on the reference-counted heap after the back edge was scheduled.
-let strArgumentRuntime (slot: Int) (temp: Int) (scheduled: Bool) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
-    match lookupManagedStrSlot(slot)(managedStrs) with
-        | Some(_activeSlot) -> scheduled || isRuntimeTemp(temp)(state)
-        | None -> scheduled
+// A successor's runtime placement is read again once the frame's placements are final (stage 0's
+// `TcoBackEdgeRefreshRuntimeManagedParams`, for every argument): the affine append promoted at
+// finalization produced a `Str` on the reference-counted heap after the back edge was scheduled,
+// and the pattern-owner duplicate a placed pattern root promotes is a real retain from then on.
+let refreshedArgumentRuntime (temp: Int) (scheduled: Bool) (state: CoreLoweringState) = scheduled || isRuntimeTemp(temp)(state)
 
 // A position the accumulator-rebuild route may place: one no single shape describes, or a list
 // handed on and replaced by a call's result, whose own route places only strings and scalars.
@@ -7032,7 +7030,7 @@ let resetArgumentShape (shape: TcoArgumentShape) (ordinal: Int) (managedList: Ma
 let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (expressions: List(Expr)) (managed: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match (slots, types, temps, oldTemps, runtime, shapes, expressions) with
         | (slot :: restSlots, argumentType :: restTypes, temp :: restTemps, oldTemp :: restOld, isRuntime :: restRuntime, shape :: restShapes, expression :: restExpressions) ->
-            TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = strArgumentRuntime(slot)(temp)(isRuntime)(managedStrs)(state), shape = resetArgumentShape(shape)(ordinal)(lookupRuntimeManagedListSlot(slot)(managed))(state), managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts), managedStr = lookupManagedStrSlot(slot)(managedStrs), argumentExpression = expression) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(restExpressions)(managed)(managedAdts)(managedStrs)(state)
+            TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = refreshedArgumentRuntime(temp)(isRuntime)(state), shape = resetArgumentShape(shape)(ordinal)(lookupRuntimeManagedListSlot(slot)(managed))(state), managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts), managedStr = lookupManagedStrSlot(slot)(managedStrs), argumentExpression = expression) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(restExpressions)(managed)(managedAdts)(managedStrs)(state)
         | _ -> []
 
 let isResourceHandle (semanticType: SemanticType) (state: CoreLoweringState) =
