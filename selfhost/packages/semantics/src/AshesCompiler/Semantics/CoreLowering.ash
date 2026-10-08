@@ -13470,10 +13470,14 @@ let recursive provenanceFunctionsOf (summaries: List(ReachSummary)) (functions: 
         | [] -> reverse(functions)
         | ReachSummary { function = ReachFunction { key = key, name = name, parameters = parameters, body = body, scope = scope } } :: rest -> provenanceFunctionsOf(rest)(ProvenanceFunction(key = key, name = name, parameters = parameters, body = body, scope = scope) :: functions)
 
-// Stage 0's `IsRuntimeRcFreshBuiltinProducer` over the fresh-string builtins the lowering knows.
+// Stage 0's `IsRuntimeRcFreshBuiltinProducer`: a fully applied call to a builtin declared to produce a
+// fresh reference-counted value of any kind, a string, a byte buffer or a big integer.
 let isFreshBuiltinProducer (expression: Expr) (state: CoreLoweringState) =
-    match freshStringBuiltinCallKind(expression)(state) with
-        | Some(_kind) -> true
+    match qualifiedCallRoot(expression)(0) with
+        | Some((moduleName, memberName, argumentCount)) ->
+            match builtinLayout(moduleName)(memberName)(state) with
+                | Some(CoreBuiltinLayout { kind = kind } as layout) -> isFreshRcBuiltinKind(kind) && argumentCount == builtinArity(layout)
+                | None -> false
         | None -> false
 
 // Stage 0's `ComputeFunctionResultProvenanceFixpoint`: the RC-eligibility verdict of every
@@ -15001,8 +15005,10 @@ let emitHandedOverArgumentRelease (temp: Int) (valueType: SemanticType) (adoptio
 // result kept nothing and the callee's adoption is the whole question. Without this, the bit alone keeps
 // every reference a reference-counted result could conceivably hold, which never releases the argument
 // at all for a producer whose result shares none of it.
+// A reference-counted cell owns every part it points at, so only a result that may hold a value of
+// any type (a closure, or a still-unresolved type) keeps the reference without one of its own.
 let handedOverArgumentResultFlag (resultType: SemanticType) (argumentType: SemanticType) (resultCopyFlagTemp: Int) (state: CoreLoweringState) =
-    if callResultMayContainArgumentType(resultType)(argumentType)([])(state)
+    if callResultMayContainArgumentType(resultType)(argumentType)([])(state) && callResultMayContainArgumentType(resultType)(SemNever)([])(state)
     then resultCopyFlagTemp
     else -1
 
@@ -21362,9 +21368,11 @@ let releaseConsumedBuiltinOperand (consumedOperand: Maybe(Int)) (state: CoreLowe
         | Some(operand) -> releaseConsumedOperand(operand)(state)
         | None -> state
 
-// A fresh-string builtin that honored the runtime request produced a reference-counted string.
-let markFreshStringResult (kind: CoreBuiltinKind) (runtimeManaged: Bool) (lowered: LoweredCoreValue) =
-    if runtimeManaged && isFreshStringBuiltinKind(kind)
+// A fresh-string builtin that honored the runtime request produced a reference-counted string;
+// `Byte.allocate` and the pure byte updates always produce a reference-counted buffer, as stage 0
+// marks them runtime-managed.
+let markFreshBuiltinResult (kind: CoreBuiltinKind) (runtimeManaged: Bool) (lowered: LoweredCoreValue) =
+    if runtimeManaged && isFreshStringBuiltinKind(kind) || isAlwaysRuntimeBytesBuiltinKind(kind)
     then markLoweredRuntimeTemp(lowered)
     else lowered
 
@@ -21393,7 +21401,7 @@ let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreL
             match emitTcoDeepCopy(temp)(resolved)(state) with
                 | (copied, resultTemp) -> success(resultTemp)(resolved)(copied)
 
-let emitBuiltin layout resultType lower runtimeManaged lowered =
+let emitBuiltin layout resultType lower runtimeManaged reuseInput lowered =
     match (layout, lowered) with
         | (_, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (CoreBuiltinLayout { kind = CoreInternalDeepCopy }, LoweredCoreValues { state = state, temps = temp :: [], semanticTypes = semanticType :: [], error = None }) -> lowerInternalDeepCopy(temp)(semanticType)(state)
@@ -21402,16 +21410,17 @@ let emitBuiltin layout resultType lower runtimeManaged lowered =
                 | CoreLoweringState { nextTemp = nextTemp } ->
                     semanticTypes
                     |> resolveCoreTypes(state)
-                    |> emitCoreBuiltin(kind)(runtimeManaged)(nextTemp)(temps)
+                    |> emitCoreBuiltinReusing(kind)(runtimeManaged)(reuseInput)(nextTemp)(temps)
                     |> finishBuiltinEmission(resultType)(lower)(consumedBuiltinOperand(kind)(temps))(state)
-                    |> markFreshStringResult(kind)(runtimeManaged)
+                    |> markFreshBuiltinResult(kind)(runtimeManaged)
 
-let emitTypedBuiltin layout resultType lower runtimeManaged (lowered: LoweredCoreValues) typedState =
+let emitTypedBuiltin layout resultType lower runtimeManaged reuseInput (lowered: LoweredCoreValues) typedState =
     emitBuiltin(
         layout,
         resultType,
         lower,
         runtimeManaged,
+        reuseInput,
         lowered with state = typedState
     )
 
@@ -21447,6 +21456,38 @@ let acceptBuiltinArgumentWidths kind expected actual state =
                 | _ -> expected
         | _ -> expected
 
+let isNewlyProducedRuntimeTemp (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false
+
+// Stage 0's `NormalizeBytesForPureUpdate` and `CanReusePureBytesUpdateInput`: the buffer a pure
+// byte update writes is copied onto the reference-counted heap unless it already lives there, and
+// the update writes in place into a fresh buffer (a newly produced value no binding reads, or the
+// copy itself), which it takes over. Answers the lowered buffer and whether the update reuses it.
+let normalizeBytesUpdateInput (argument: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> (lowered, false)
+        | LoweredCoreValue { state = state, temp = temp } ->
+            if childIsRuntimeManaged(argument)(temp)(state)
+            then (lowered, isVariableArgument(argument) == false && isNewlyProducedRuntimeTemp(temp)(state))
+            else
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = copy } -> ((lowered with state = rcNormalizationCopyOut(copy)(temp)(-1)(allocated), temp = copy), true)
+
+// A builtin's arguments lowered in order; a pure byte update normalizes its buffer right after
+// lowering it, before its other arguments, where stage 0 normalizes it. Answers the lowered values
+// and whether the update reuses its buffer.
+let lowerBuiltinValues (kind: CoreBuiltinKind) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    match (isBytesUpdateBuiltinKind(kind), arguments) with
+        | (true, first :: rest) ->
+            match state
+            |> lower(first)
+            |> normalizeBytesUpdateInput(first) with
+                | (LoweredCoreValue { state = failedState, error = Some(error) }, _reuseInput) -> (failedCoreValues(failedState)(error), false)
+                | (LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None }, reuseInput) -> (lowerCoreValuesInto(rest)(lower)(nextState)([temp])([semanticType]), reuseInput)
+        | _ -> (lowerCoreValues(arguments)(lower)(state), false)
+
 let finishBuiltinArity arguments lower runtimeManaged shape expectedArity actualArity =
     match shape with
         | CoreBuiltinShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType } ->
@@ -21464,16 +21505,16 @@ let finishBuiltinArity arguments lower runtimeManaged shape expectedArity actual
             else
                 match state
                 |> clearConsumerRequest
-                |> lowerCoreValues(arguments)(lower) with
-                    | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                    | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
+                |> lowerBuiltinValues(layout.kind)(arguments)(lower) with
+                    | (LoweredCoreValues { state = failedState, error = Some(error) }, _reuseInput) -> failure(failedState)(error)
+                    | (LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered, reuseInput) ->
                         let boundParameterTypes =
                             match layout with
                                 | CoreBuiltinLayout { kind = builtinKind } -> acceptBuiltinArgumentWidths(builtinKind)(parameterTypes)(actualTypes)(valuesState)
                         in
                             match bindCoreValueTypes(boundParameterTypes)(actualTypes)(valuesState) with
                                 | (failedState, Some(error)) -> failure(failedState)(error)
-                                | (typedState, None) -> emitTypedBuiltin(layout)(resultType)(lower)(runtimeManaged)(lowered)(typedState)
+                                | (typedState, None) -> emitTypedBuiltin(layout)(resultType)(lower)(runtimeManaged)(reuseInput)(lowered)(typedState)
 
 let finishBuiltinArguments arguments lower runtimeManaged shape =
     match shape with

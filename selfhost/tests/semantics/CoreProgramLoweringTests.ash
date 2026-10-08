@@ -760,8 +760,47 @@ let expectCapturedParameterTypeSurvivesLocalLambdaGeneralization unit =
         |> Ashes.Text.contains(text)
         |> test.assertEqual(true))
 
+let recursive countLinesContaining (opcode: Str) (needle: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> 0
+        | line :: rest ->
+            if Ashes.Text.contains(line)(opcode) && Ashes.Text.contains(line)(needle)
+            then 1 + countLinesContaining(opcode)(needle)(rest)
+            else countLinesContaining(opcode)(needle)(rest)
+
+// A pure byte update always produces a reference-counted buffer, as stage 0 marks it. A buffer
+// read through a binding that still owns it is borrowed, so the update copies it; a fresh one (the
+// result of `allocate` or of another update, or the copy that moves an arena buffer from
+// `fromList` onto the counted heap) is written in place.
+let expectBytesUpdatesReuseFreshBuffers unit =
+    "let recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        let listed = Ashes.Byte.fromList([1u8, 2u8, 3u8])\n        in\n            let written = Ashes.Byte.setU16Le(Ashes.Byte.set(listed)(0)(7u8))(1)(9u16)\n            in\n                let copied = Ashes.Byte.copyRange(Ashes.Byte.allocate(4))(1)(written)(0)(3)\n                in\n                    let kept = Ashes.Byte.setU32Le(copied)(0)(5u32)\n                    in rounds(n - 1)(total + Ashes.Byte.length(kept) + Ashes.Byte.length(copied))\n\nAshes.IO.print(rounds(3)(0))"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> countLinesContaining("    Bytes")("ReuseInput=true RuntimeManaged=true")
+            |> test.assertEqual(3))
+        |> (given (_) ->
+            lines
+            |> countLinesContaining("CopyOutArena")("Purpose=RcNormalization")
+            |> test.assertEqual(1))
+        |> (given (_) ->
+            lines
+            |> countLinesContaining("BytesAllocate")("RuntimeManaged=true")
+            |> test.assertEqual(1))
+        |> (given (_) ->
+            lines
+            |> countLinesContaining("BytesSetU32Le")("RuntimeManaged=true")
+            |> test.assertEqual(1))
+        |> (given (_) ->
+            lines
+            |> countLinesContaining("BytesSetU32Le")("ReuseInput=true")
+            |> test.assertEqual(0)))
+
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectBytesUpdatesReuseFreshBuffers
     |> expectLongTrailingChainUnderOwnedLetLowers
     |> expectEqualityPinnedLaterInTheBodyComparesStrings
     |> expectEqualityPinnedAfterTheLambdaComparesStrings

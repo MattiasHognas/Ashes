@@ -1156,17 +1156,53 @@ let emitBytesCheckedRange context function_ i64 i8 builder bufferLength offset l
                                                 let _ = emitBytesPanicLine(builder)(i64)(i8)(panicCodes)
                                                 in positionBuilderAtEnd(builder)(validBlock))
 
-// A fresh RC copy of a Bytes value (`EmitBytesCopyOnWrite` with the reuse path always off: every
-// selfhost dispatch arm passes reuse = false, so the result never aliases the input).
-let emitBytesCopyOnWrite builder i64 ptrType copyPlaced bytesRef name =
-    match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name + "_src") with
-        | (len, srcAddr) -> copyPlaced(srcAddr)(len)(name)
+// The buffer a checked update writes (`EmitBytesCopyOnWrite`): the input itself when the lowering
+// hands over a fresh one to reuse, otherwise a copy placed by the instruction's flag.
+let emitBytesCopyOnWrite builder i64 ptrType copyPlaced (reuse: Bool) bytesRef name =
+    if reuse
+    then bytesRef
+    else
+        match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name + "_src") with
+            | (len, srcAddr) -> copyPlaced(srcAddr)(len)(name)
+
+// The range copy of `Byte.copyRange` (`EmitBytesRangeCopy`): a destination reused in place may be
+// the source buffer itself, so the same buffer goes through an arena scratch copy and distinct
+// buffers take one direct `memcpy`.
+let emitBytesRangeCopy context function_ i64 ptrType builder (arena: ArenaRuntime) memcpyFn memcpyType resultRef sourceRef destination source length =
+    (let overlapBlock = appendBasicBlock(context)(function_)("bytes_copyrange_overlap_safe")
+    in
+        let directBlock = appendBasicBlock(context)(function_)("bytes_copyrange_direct")
+        in
+            let doneBlock = appendBasicBlock(context)(function_)("bytes_copyrange_done")
+            in
+                let sameBuffer = buildICmp(builder)(intPredicateEq)(resultRef)(sourceRef)("bytes_copyrange_same_buffer")
+                in
+                    let _ = buildCondBr(builder)(sameBuffer)(overlapBlock)(directBlock)
+                    in
+                        let _ = positionBuilderAtEnd(builder)(overlapBlock)
+                        in
+                            let scratchSize =
+                                alignArenaSizeDynamic(builder)(i64)(buildAdd(builder)(length)(constInt(i64)(8u64)(false))("bytes_copyrange_scratch_size"))("bytes_copyrange_scratch_aligned")
+                            in
+                                let scratch =
+                                    buildIntToPtr(builder)(emitArenaAllocDynamic(context)(function_)(builder)(i64)(arena)(scratchSize)("bytes_copyrange_scratch"))(ptrType)("bytes_copyrange_scratch_ptr")
+                                in
+                                    let _ = buildCall(builder)(memcpyType)(memcpyFn)([scratch, source, length])(3u32)("bytes_copyrange_to_scratch")
+                                    in
+                                        let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, scratch, length])(3u32)("bytes_copyrange_from_scratch")
+                                        in
+                                            let _ = buildBr(builder)(doneBlock)
+                                            in
+                                                let _ = positionBuilderAtEnd(builder)(directBlock)
+                                                in
+                                                    let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, source, length])(3u32)("bytes_copyrange_copy")
+                                                    in
+                                                        let _ = buildBr(builder)(doneBlock)
+                                                        in positionBuilderAtEnd(builder)(doneBlock))
 
 // `Byte.copyRange(bytes)(offset)(source)(sourceOffset)(length)`: both ranges checked, the
-// destination copied fresh, then one `memcpy` of the range. The fresh copy never aliases the
-// source buffer, so stage 0's same-buffer scratch path is unreachable here and the direct copy
-// suffices (`EmitBytesCopyRange`/`EmitBytesRangeCopy`).
-let emitBytesCopyRange context function_ i64 i8 ptrType builder copyPlaced memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
+// destination reused or copied, then the range copied (`EmitBytesCopyRange`).
+let emitBytesCopyRange context function_ i64 i8 ptrType builder (arena: ArenaRuntime) copyPlaced (reuse: Bool) memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
     (let destLen = emitStringLengthValue(builder)(i64)(ptrType)(destRef)("bytes_copyrange_dest_len")
     in
         let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(destLen)(destOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 100, 101, 115, 116, 105, 110, 97, 116, 105, 111, 110, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_dest")
@@ -1175,7 +1211,7 @@ let emitBytesCopyRange context function_ i64 i8 ptrType builder copyPlaced memcp
             in
                 let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(sourceLen)(sourceOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 115, 111, 117, 114, 99, 101, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_source")
                 in
-                    let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(destRef)("bytes_copyrange")
+                    let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(reuse)(destRef)("bytes_copyrange")
                     in
                         match emitStringParts(builder)(i64)(ptrType)(result)("bytes_copyrange_result") with
                             | (_resultLen, resultAddr) ->
@@ -1187,18 +1223,18 @@ let emitBytesCopyRange context function_ i64 i8 ptrType builder copyPlaced memcp
                                             let source =
                                                 buildIntToPtr(builder)(buildAdd(builder)(srcAddr)(sourceOffset)("bytes_copyrange_src_addr"))(ptrType)("bytes_copyrange_source_start")
                                             in
-                                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, source, length])(3u32)("bytes_copyrange_copy")
+                                                let _ = emitBytesRangeCopy(context)(function_)(i64)(ptrType)(builder)(arena)(memcpyFn)(memcpyType)(result)(sourceRef)(destination)(source)(length)
                                                 in result)
 
-// `Byte.set`/`setU16Le`/`setU32Le`/`setU64Le`: range checked, the input copied fresh, then the
+// `Byte.set`/`setU16Le`/`setU32Le`/`setU64Le`: range checked, the input reused or copied, then the
 // little-endian byte stores at the offset (`EmitBytesSetUnsigned`).
-let emitBytesSetUnsigned context function_ i64 i8 ptrType builder copyPlaced width panicCodes bytesRef offset value name =
+let emitBytesSetUnsigned context function_ i64 i8 ptrType builder copyPlaced (reuse: Bool) width panicCodes bytesRef offset value name =
     (let bufferLength = emitStringLengthValue(builder)(i64)(ptrType)(bytesRef)(name + "_len")
     in
         let _ =
             emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(bufferLength)(offset)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(panicCodes)(name)
         in
-            let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(bytesRef)(name)
+            let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(reuse)(bytesRef)(name)
             in
                 match emitStringParts(builder)(i64)(ptrType)(result)(name + "_result") with
                     | (_resultLen, resultAddr) ->
