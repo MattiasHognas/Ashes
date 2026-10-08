@@ -307,14 +307,17 @@ let join (separator: Str) (parts: List(Str)) =
         let recursive interleaveGo (acc: List(Str)) (ps: List(Str)) =
             match ps with
                 | [] -> rev([])(acc)
-                | part :: rest -> interleaveGo(part :: separator :: acc)(rest)
+                | first :: rest ->
+                    match acc with
+                        | [] -> interleaveGo(first :: [])(rest)
+                        | _ -> interleaveGo(first :: separator :: acc)(rest)
         in
             let recursive pairwiseGo (acc: List(Str)) (ps: List(Str)) =
                 match ps with
                     | [] -> rev([])(acc)
                     | first :: rest ->
                         match rest with
-                            | [] -> pairwiseGo(first :: acc)([])
+                            | [] -> rev([])(first :: acc)
                             | second :: more ->
                                 let merged = first + second
                                 in pairwiseGo(merged :: acc)(more)
@@ -330,9 +333,6 @@ let join (separator: Str) (parts: List(Str)) =
                                     |> pairwiseGo([])
                                     |> reduce
                 in
-                    match parts with
-                        | [] -> ""
-                        | first :: rest ->
-                            rest
-                            |> interleaveGo([first])
-                            |> reduce)
+                    parts
+                    |> interleaveGo([])
+                    |> reduce)
