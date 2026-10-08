@@ -341,6 +341,10 @@ public sealed partial class Lowering
         // the same one-time entry insertion point as the other TCO ownership setup.
         public HashSet<int> RuntimeManagedClosureSlotsNeedingEntryInitialization { get; } = [];
 
+        // Synthetic slots of parameters no expression in the body reads: nothing captured them, so
+        // they hold no argument at entry, only the successors the back edge stores.
+        public HashSet<int> UnreadParamSlots { get; } = [];
+
         public bool TryGetRuntimeManagedActiveSlot(int slot, out int activeSlot)
         {
             activeSlot = -1;

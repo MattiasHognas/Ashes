@@ -9466,6 +9466,7 @@ public sealed partial class Lowering
             {
                 int hiddenSlot = NewLocal();
                 tco.ParamSlots.Add(hiddenSlot);
+                tco.UnreadParamSlots.Add(hiddenSlot);
                 int emptyValue = NewTemp();
                 Emit(new IrInst.LoadConstInt(emptyValue, 0));
                 Emit(new IrInst.StoreLocal(hiddenSlot, emptyValue));
@@ -10097,6 +10098,17 @@ public sealed partial class Lowering
                 }
                 continue;
             }
+
+            // An unread parameter's slot holds no argument (zero) until the first back edge stores
+            // its successor, so it starts inactive: nothing to normalize, nothing to release.
+            if (tco.UnreadParamSlots.Contains(slot) && UnreadParamSlotsStartInactive)
+            {
+                int inactiveTemp = NewTemp();
+                Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
+                Emit(new IrInst.StoreLocal(tco.RuntimeManagedParamActiveSlots[slot], inactiveTemp));
+                continue;
+            }
+
             int sourceTemp = NewTemp();
             Emit(new IrInst.LoadLocal(sourceTemp, slot));
             int normalizedTemp = slot == 1
@@ -10118,6 +10130,9 @@ public sealed partial class Lowering
         _inst.RemoveRange(generatedStart, generatedCount);
         _inst.InsertRange(insertIndex, generated);
     }
+
+    private static bool UnreadParamSlotsStartInactive
+        => Environment.GetEnvironmentVariable("GRC_NO_UNREADPARAMINACTIVE") is null;
 
     private int EmitRuntimeManagedTcoArgumentNormalization(int sourceTemp, TypeRef type)
     {
