@@ -29,11 +29,15 @@ import Ashes.Collection.List.length
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.ExprMentions.exprReadsName
 import AshesCompiler.Semantics.TcoAffineAppend.affineSelfAppendOrdinals
+// The positions every self-call hands on, conses onto, or replaces with a call's result or a part
+// matched out of one, no single shape describing them, stage 0's `AccumulatorRebuild` there: a list
+// of the contract's values at such a position is an accumulator.
 export (
     type TcoArgumentShape(..),
     value runtimeManagedStrOrdinals,
     value shapeIsFreshList,
     value tcoSelfCallShapes,
+    value tcoAccumulatorRebuildOrdinals,
     value isTcoListShape,
     value selfCallOrdinalPassing,
     value tcoSelfCallParameterFlow,
@@ -52,8 +56,9 @@ export (
 // choice between handing the parameter on and consing onto it, the parameter's consumed tail at
 // some self-calls and a call's result at others (a worklist walked and refilled), the parameter
 // handed on at some self-calls and a fresh list at the others, a call's result among them (a list
-// replaced by a helper's result in one arm) or not, or anything else — a different shape at some
-// self-call, a fresh rebuild, or a value the walk does not classify.
+// replaced by a helper's result in one arm) or not, an accumulator the self-calls hand on, cons
+// onto, or replace with a call's result or a part matched out of one, or anything else — a
+// different shape at some self-call, a fresh rebuild, or a value the walk does not classify.
 type TcoArgumentShape =
     | TcoPassThroughShape
     | TcoGrownConsShape
@@ -63,6 +68,7 @@ type TcoArgumentShape =
     | TcoWalkedOrRefilledShape
     | TcoRefilledFreshListShape
     | TcoHandedOnFreshListShape
+    | TcoAccumulatorRebuildShape
     | TcoOtherShape
     deriving {Eq, Show}
 
@@ -517,45 +523,87 @@ let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: 
                             in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill, everyFreshOrHandedOn && (fresh || local == TcoPassThroughShape))) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
         | _ -> walks
 
+// Per parameter position, whether every self-call so far passed an accumulator edge (the parameter
+// itself, a cons onto it, a call's result, or a name a match bound out of a call's result) and
+// whether any of them rebuilt the parameter, stage 0's `AccumulatorEdges` and `AnyRebuildEdge`.
+let recursive shapeObserveAccumulators (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (callParts: List(Str)) (accumulators: List((Bool, Bool))) =
+    match (arguments, accumulators) with
+        | (argument :: restArguments, (everyEdge, anyRebuild) :: restAccumulators) ->
+            (let local = shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters)
+            in
+                let passesParameterItself =
+                    match shapeUnspan(argument) with
+                        | ExprVar(name) -> shapeResolveParameter(name)(shadowed)(parameters) != None || shapeLookupTailOwner(name)(tailOwners) != None
+                        | _ -> false
+                in
+                    let edge =
+                        local == TcoPassThroughShape || local == TcoGrownConsShape || local != TcoConsumedTailShape && (match parameters
+                        |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
+                        |> shapeUnspan with
+                            | ExprCall(_function, _argument, _sugar, _layout) -> true
+                            | ExprVar(part) -> !passesParameterItself && shapeContainsName(part)(callParts)
+                            | _ -> false)
+                    in (everyEdge && edge, anyRebuild || local != TcoPassThroughShape)) :: shapeObserveAccumulators(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(restAccumulators)
+        | _ -> accumulators
+
 type ShapeWalk =
     | observed: List(Maybe(TcoArgumentShape))
     | choices: List((Bool, Bool, Bool))
     | walks: List((Bool, Bool, Bool, Bool))
+    | accumulators: List((Bool, Bool))
     | sawSelfCall: Bool
 
-let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (walk: ShapeWalk) =
+let recursive shapeWithoutNames (names: List(Str)) (parts: List(Str)) =
+    match parts with
+        | [] -> []
+        | part :: rest ->
+            if shapeContainsName(part)(names)
+            then shapeWithoutNames(names)(rest)
+            else part :: shapeWithoutNames(names)(rest)
+
+// The call-result parts in an arm's body: the arm's own names are parts when the match is over a
+// call's result, and shadow any part of the same name otherwise.
+let shapeArmCallParts (scrutinee: Expr) (names: List(Str)) (callParts: List(Str)) =
+    match shapeUnspan(scrutinee) with
+        | ExprCall(_function, _argument, _sugar, _layout) ->
+            callParts
+            |> shapeWithoutNames(names)
+            |> append(names)
+        | _ -> shapeWithoutNames(names)(callParts)
+
+let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match expression with
-        | ExprAt(_span, inner) -> shapeWalk(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(walk)
+        | ExprAt(_span, inner) -> shapeWalk(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(callParts)(walk)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             walk
-            |> shapeWalk(self)(parameters)(thenBranch)(shadowed)(tailOwners)(letValues)
-            |> shapeWalk(self)(parameters)(elseBranch)(shadowed)(tailOwners)(letValues)
+            |> shapeWalk(self)(parameters)(thenBranch)(shadowed)(tailOwners)(letValues)(callParts)
+            |> shapeWalk(self)(parameters)(elseBranch)(shadowed)(tailOwners)(letValues)(callParts)
         | ExprMatch(value, cases, _position) ->
-            shapeWalkCases(self)(parameters)(shapeScrutineeOrdinal(value)(shadowed)(parameters))(cases)(shadowed)(tailOwners)(letValues)(walk)
+            shapeWalkCases(self)(parameters)(value)(shapeScrutineeOrdinal(value)(shadowed)(parameters))(cases)(shadowed)(tailOwners)(letValues)(callParts)(walk)
         | ExprLet(name, value, body, [], _annotation, _requirements) ->
-            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))((name, value) :: letValues)(walk)
+            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))((name, value) :: letValues)(shapeWithoutNames([name])(callParts))(walk)
         | ExprLet(name, _value, body, _parameters, _annotation, _requirements) ->
-            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(walk)
+            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(shapeWithoutNames([name])(callParts))(walk)
         | ExprLetResult(name, _value, body) ->
-            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(walk)
+            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(shapeWithoutNames([name])(callParts))(walk)
         | ExprLetRecursive(name, _value, body, _parameters, _annotation, _requirements) ->
-            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(walk)
-        | ExprCall(_function, _argument, _sugar, _layout) -> shapeWalkCall(self)(parameters)(expression)(shadowed)(tailOwners)(letValues)(walk)
+            shapeWalk(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(shapeWithoutNames([name])(callParts))(walk)
+        | ExprCall(_function, _argument, _sugar, _layout) -> shapeWalkCall(self)(parameters)(expression)(shadowed)(tailOwners)(letValues)(callParts)(walk)
         | _ -> walk
-and shapeWalkCases (self: Str) (parameters: List(Str)) (scrutinee: Maybe(Int)) (cases: List((Pattern, Expr, Maybe(Expr)))) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (walk: ShapeWalk) =
+and shapeWalkCases (self: Str) (parameters: List(Str)) (value: Expr) (scrutinee: Maybe(Int)) (cases: List((Pattern, Expr, Maybe(Expr)))) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match cases with
         | [] -> walk
         | (pattern, body, _guard) :: rest ->
             walk
             |> shapeWalk(self)(parameters)(body)(append(shapePatternNames(pattern)([]))(shadowed))(tailOwners
             |> shapeRemoveTailOwners(shapePatternNames(pattern)([]))
-            |> append(shapeCaseTailOwners(pattern)(scrutinee)))(shapeRemoveLetValues(shapePatternNames(pattern)([]))(letValues))
-            |> shapeWalkCases(self)(parameters)(scrutinee)(rest)(shadowed)(tailOwners)(letValues)
-and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (walk: ShapeWalk) =
+            |> append(shapeCaseTailOwners(pattern)(scrutinee)))(shapeRemoveLetValues(shapePatternNames(pattern)([]))(letValues))(shapeArmCallParts(value)(shapePatternNames(pattern)([]))(callParts))
+            |> shapeWalkCases(self)(parameters)(value)(scrutinee)(rest)(shadowed)(tailOwners)(letValues)(callParts)
+and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match shapeCallSpine(expression)([]) with
         | (ExprVar(callee), arguments) ->
             if callee == self && !shapeContainsName(self)(shadowed) && length(arguments) == length(parameters)
-            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.walks), sawSelfCall = true)
+            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), sawSelfCall = true)
             else walk
         | _ -> walk
 
@@ -605,27 +653,52 @@ let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (ch
         | (None :: rest, _choice :: restChoices, _walk :: restWalks) -> TcoOtherShape :: shapeResolveObserved(rest)(restChoices)(restWalks)
         | _ -> []
 
+// The positions no single shape describes whose every self-call hands the parameter on, conses
+// onto it, or replaces it with a call's result or a part matched out of one, some rebuilding it,
+// stage 0's `AccumulatorRebuild`: a fact of its own, which holds beside whatever the other rules
+// resolve such a position to.
+let recursive accumulatorRebuildOrdinalsOf (observed: List(Maybe(TcoArgumentShape))) (accumulators: List((Bool, Bool))) (ordinal: Int) =
+    match (observed, accumulators) with
+        | (Some(TcoOtherShape) :: rest, (true, true) :: restAccumulators) -> ordinal :: accumulatorRebuildOrdinalsOf(rest)(restAccumulators)(ordinal + 1)
+        | (_shape :: rest, _accumulator :: restAccumulators) -> accumulatorRebuildOrdinalsOf(rest)(restAccumulators)(ordinal + 1)
+        | _ -> []
+
+let recursive shapeInitialAccumulators (count: Int) =
+    if count == 0
+    then []
+    else (true, false) :: shapeInitialAccumulators(count - 1)
+
 let recursive shapeAllOther (count: Int) =
     if count == 0
     then []
     else TcoOtherShape :: shapeAllOther(count - 1)
 
-// The shape of every parameter position of the loop function `self` over `parameters` (the whole
-// curried chain, in order) with the innermost body `body`; every position is `TcoOtherShape` when
-// the body has no exact tail self-call.
-let tcoSelfCallShapes (self: Str) (parameters: List(Str)) (body: Expr) =
-    match shapeWalk(self)(parameters)(body)([])([])([])(ShapeWalk(observed = parameters
+let shapeWalkOf (self: Str) (parameters: List(Str)) (body: Expr) =
+    shapeWalk(self)(parameters)(body)([])([])([])([])(ShapeWalk(observed = parameters
     |> length
     |> shapeInitial, choices = parameters
     |> length
     |> shapeInitialChoices, walks = parameters
     |> length
-    |> shapeInitialWalks, sawSelfCall = false)) with
+    |> shapeInitialWalks, accumulators = parameters
+    |> length
+    |> shapeInitialAccumulators, sawSelfCall = false))
+
+// The shape of every parameter position of the loop function `self` over `parameters` (the whole
+// curried chain, in order) with the innermost body `body`; every position is `TcoOtherShape` when
+// the body has no exact tail self-call.
+let tcoSelfCallShapes (self: Str) (parameters: List(Str)) (body: Expr) =
+    match shapeWalkOf(self)(parameters)(body) with
         | ShapeWalk { observed = observed, choices = choices, walks = walks, sawSelfCall = true } -> shapeResolveObserved(observed)(choices)(walks)
         | _ ->
             parameters
             |> length
             |> shapeAllOther
+
+let tcoAccumulatorRebuildOrdinals (self: Str) (parameters: List(Str)) (body: Expr) =
+    match shapeWalkOf(self)(parameters)(body) with
+        | ShapeWalk { observed = observed, accumulators = accumulators, sawSelfCall = true } -> accumulatorRebuildOrdinalsOf(observed)(accumulators)(0)
+        | _ -> []
 
 // The shapes under which a list-typed parameter may live on the reference-counted heap: grown by
 // a cons per iteration, consumed through its own pattern-bound tail, or grown by a cons in some

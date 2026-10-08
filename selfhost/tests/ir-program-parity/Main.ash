@@ -245,6 +245,9 @@ let recursive printEach (lines: List(Str)) =
 // successor names nothing bound from the pair, so the earlier pair is released at the back edge.
 // choice_accumulator_cell_borrows_pattern_head grows a choice accumulator the back edge copies by a
 // cons of a pattern-bound head: the cell borrows its head and takes no pattern-owner duplicate.
+// tco_list_refilled_only_from_helper hands its back queue, placed at the loop entry, to the helper
+// that refills it before any back edge: the read is a reference-counted owner, retained for the
+// callee outright rather than kept pending until the loop is finalized.
 let fixtures =
     [
         "simple_arith",
@@ -330,7 +333,8 @@ let fixtures =
         "phantom_result_variable_owned_tuple_result",
         "choice_accumulator_cell_borrows_pattern_head",
         "inline_annotation_type_variable_generic_loop",
-        "phantom_result_variable_recursive_loop_exit"
+        "phantom_result_variable_recursive_loop_exit",
+        "tco_list_refilled_only_from_helper"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
@@ -366,15 +370,10 @@ let fixtures =
 // parameters at the loop entry, so the forced retain of the argument survives finalization,
 // where this lowering keeps them in the arena and zeroes the flag; it rejoins the comparison
 // once the string parameter admission follows the compiler. The accumulate-and-reverse
-// producer after it hands its annotated list accumulator to a generic reverse before the
-// back edges that would admit it are lowered: the compiler places the parameter from its
-// type at the loop entry and retains the argument outright, where this lowering keeps it
-// pending under the callee's accepts bit; it rejoins the comparison with the provisional
-// placement. The refill-only loop after it hands its back queue, placed at the loop entry, to the
-// helper that refills it: the compiler retains the argument outright, where this lowering keeps
-// the argument pending under the forced flag; it rejoins the comparison with the provisional
-// placement too. So does the worklist after it, whose back queue, grown and emptied, is placed at
-// the loop entry and handed to the reverse that refills the front.
+// producer after it lowers as the compiler does, its accumulator read as an owner placed at the
+// loop entry, but for one source location: the compiler synthesizes the variant's dropper under
+// the span of `reverse(acc)`, where this lowering synthesizes it with no location; it rejoins the
+// comparison once droppers carry the span of the site that first needs them.
 let elaboratedFixtures =
     [
         "parameter_reaches_result_record_update",
@@ -389,8 +388,6 @@ let elaboratedFixtures =
         "record_update_successor_of_loop_parameter",
         "tco_string_parameter_kept_by_callee_error_result",
         "accumulate_and_reverse_producer",
-        "tco_list_refilled_only_from_helper",
-        "tco_worklist_front_walked_or_refilled",
         "mutual_recursion"
     ]
 
