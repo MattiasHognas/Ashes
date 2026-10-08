@@ -6,7 +6,9 @@ namespace Ashes.Fuzzing.Combinations;
 /// A loop whose exit passes a cell consed onto one of its list parameters to a call that may keep
 /// it (<c>| [] -&gt; rev([])(first :: acc)</c>), the pairwise pass of <c>Text.join</c> as first
 /// written. An arena cell there retained its head through a marker the loop's placement upgraded
-/// only after the call's frame had closed, so nothing released it.
+/// only after the call's frame had closed, so nothing released it. A callee the loop captures (a
+/// <c>let recursive</c> reverse beside it, as in <c>join</c>) has no result-reach summary to say it keeps the
+/// argument, and the cell leaked the same.
 /// </summary>
 internal sealed class ExitCellPassedToCallTemplate() : LeakCombinationTemplate(
     "leak.exit-cell-passed-to-call", "exitCellCall", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
@@ -18,7 +20,7 @@ internal sealed class ExitCellPassedToCallTemplate() : LeakCombinationTemplate(
         string rev = names.Of("reverseParts");
         string loop = names.Of("exitThroughCall");
         string word = names.Word();
-        string loopDeclaration = names.Variant("exit", 3) switch
+        string loopDeclaration = names.Variant("exit", 4) switch
         {
             0 => $$"""
                 let recursive {{loop}} (acc: List(Str)) (parts: List(Str)) =
@@ -38,11 +40,27 @@ internal sealed class ExitCellPassedToCallTemplate() : LeakCombinationTemplate(
                                 | [] -> Ashes.Collection.List.reverse(first :: acc)
                                 | _ :: more -> {{loop}}(acc)(more)
                 """,
-            _ => $$"""
+            2 => $$"""
                 let recursive {{loop}} (acc: List(Str)) (parts: List(Str)) =
                     match parts with
                         | [] -> {{rev}}([])({{word}} :: acc)
                         | part :: rest -> {{loop}}((part + {{word}}) :: acc)(rest)
+                """,
+            _ => $$"""
+                let {{loop}} (start: List(Str)) (parts: List(Str)) =
+                    (let recursive back (acc: List(Str)) (xs: List(Str)) =
+                        match xs with
+                            | [] -> acc
+                            | head :: tail -> back(head :: acc)(tail)
+                    in
+                        let recursive go (acc: List(Str)) (ps: List(Str)) =
+                            match ps with
+                                | [] -> back([])(acc)
+                                | first :: rest ->
+                                    match rest with
+                                        | [] -> back([])(first :: acc)
+                                        | second :: more -> go((first + second) :: acc)(more)
+                        in go(start)(parts))
                 """,
         };
         return $$"""

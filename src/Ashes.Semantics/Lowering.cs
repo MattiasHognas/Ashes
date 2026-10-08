@@ -586,8 +586,11 @@ public sealed partial class Lowering
     // The cons a loop returns onto one of its list parameters, while it is lowered.
     private Expr.Cons? _loopExitCell;
 
-    // The cons a call argument writes out when the callee's result may reach it, while the argument
-    // is lowered: it leaves the loop through that result as the cell a loop returns does.
+    // The cons a call argument writes out, while the argument is lowered. It leaves the loop through
+    // the call as the cell a loop returns does: the callee keeps it in its result or borrows it, and
+    // either way a reference-counted cell is released after the call unless the result keeps it,
+    // where an arena cell kept the references its parts took (a pattern owner's, upgraded only after
+    // the call) that nothing released.
     private Expr.Cons? _callArgumentCell;
 
     private static bool CopiedCellBorrowsEnabled => Environment.GetEnvironmentVariable("GRC_NO_COPIEDCELLBORROW") is null;
@@ -13249,7 +13252,9 @@ public sealed partial class Lowering
 
         bool previousRetainCollection = BeginCallArgumentRetains(argumentRequest.TransfersRuntimeManagedChildren);
         Expr.Cons? outerArgumentCell = _callArgumentCell;
-        _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren ? collectedArgs[i] as Expr.Cons : null;
+        _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren || Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLANYCALL") is null
+            ? collectedArgs[i] as Expr.Cons
+            : null;
         (int argTemp, TypeRef argType) =
             TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
             ?? LowerExpr(collectedArgs[i], argumentRequest).AsPair();

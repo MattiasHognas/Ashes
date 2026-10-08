@@ -1,4 +1,4 @@
-// expect: 1,3,5|12,34,5
+// expect: 1,3,5|12,34,5|12,34,5
 let recursive rev (acc: List(Str)) (xs: List(Str)) =
     match xs with
         | [] -> acc
@@ -20,6 +20,21 @@ let recursive pairwise (acc: List(Str)) (ps: List(Str)) =
                 | [] -> Ashes.Collection.List.reverse(first :: acc)
                 | second :: more -> pairwise(first + second :: acc)(more)
 
+let nestedPairs (parts: List(Str)) =
+    (let recursive back (acc: List(Str)) (xs: List(Str)) =
+        match xs with
+            | [] -> acc
+            | head :: tail -> back(head :: acc)(tail)
+    in
+        let recursive go (acc: List(Str)) (ps: List(Str)) =
+            match ps with
+                | [] -> back([])(acc)
+                | first :: rest ->
+                    match rest with
+                        | [] -> back([])(first :: acc)
+                        | second :: more -> go(first + second :: acc)(more)
+        in go([])(parts))
+
 let recursive collect (n: Int) (acc: List(Str)) =
     if n == 0
     then acc
@@ -27,4 +42,4 @@ let recursive collect (n: Int) (acc: List(Str)) =
 
 let parts = collect(5)([])
 
-Ashes.IO.print(Ashes.Text.join(",")(keepOdd([])(parts)) + "|" + Ashes.Text.join(",")(pairwise([])(parts)))
+Ashes.IO.print(Ashes.Text.join(",")(keepOdd([])(parts)) + "|" + Ashes.Text.join(",")(pairwise([])(parts)) + "|" + Ashes.Text.join(",")(nestedPairs(parts)))
