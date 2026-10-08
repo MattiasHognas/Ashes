@@ -590,7 +590,8 @@ public sealed partial class Lowering
     // the call as the cell a loop returns does: the callee keeps it in its result or borrows it, and
     // either way a reference-counted cell is released after the call unless the result keeps it,
     // where an arena cell kept the references its parts took (a pattern owner's, upgraded only after
-    // the call) that nothing released.
+    // the call) that nothing released. A call whose result type holds no reference to a list
+    // (`MayHoldListCell`) only borrows the cell, and it stays the plain cell.
     private Expr.Cons? _callArgumentCell;
 
     private static bool CopiedCellBorrowsEnabled => Environment.GetEnvironmentVariable("GRC_NO_COPIEDCELLBORROW") is null;
@@ -13249,6 +13250,13 @@ public sealed partial class Lowering
         return null;
     }
 
+    // Whether a call's result of this type could keep a list cell its argument wrote: a scalar or a
+    // string holds no reference to a list, so a cell passed to a call answering one is only
+    // borrowed and stays the plain cell the loop builds.
+    private bool MayHoldListCell(TypeRef type)
+        => Prune(type) is not (TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt
+            or TypeRef.TStr or TypeRef.TRune or TypeRef.TBytes or TypeRef.TBool or TypeRef.TNever);
+
     private (int Temp, TypeRef Type) LowerCallArgumentValue(
         Expr rootExpr,
         List<Expr> collectedArgs,
@@ -13269,7 +13277,8 @@ public sealed partial class Lowering
 
         bool previousRetainCollection = BeginCallArgumentRetains(argumentRequest.TransfersRuntimeManagedChildren);
         Expr.Cons? outerArgumentCell = _callArgumentCell;
-        _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren || Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLANYCALL") is null
+        _callArgumentCell = argumentRequest.TransfersRuntimeManagedChildren
+            || (Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLANYCALL") is null && MayHoldListCell(funType.Ret))
             ? collectedArgs[i] as Expr.Cons
             : null;
         (int argTemp, TypeRef argType) =

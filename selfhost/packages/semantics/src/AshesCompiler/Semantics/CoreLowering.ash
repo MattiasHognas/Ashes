@@ -14499,6 +14499,21 @@ let stopCollectingCallArgumentRetains (lowered: LoweredCoreValue) =
 // self-hosted formatter's own `formatTypeExpression` over a capability row formats wrongly when
 // the retain is skipped. Over-retaining where the caller's binding outlives the call is a leak,
 // which is the safe side of the trade.
+// Stage 0's `MayHoldListCell`: a scalar or a string holds no reference to a list, so a cell passed
+// to a call answering one is only borrowed and stays the plain cell the loop builds.
+let mayHoldListCell (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemInt -> false
+        | SemUInt(_bits) -> false
+        | SemFloat -> false
+        | SemBigInt -> false
+        | SemString -> false
+        | SemRune -> false
+        | SemBytes -> false
+        | SemBool -> false
+        | SemNever -> false
+        | _ -> true
+
 // Stage 0's `_callArgumentCell`: a cons written as a call's argument leaves the loop through the
 // call, as the cell a loop returns does, so it is asked for as one; a reference-counted cell is
 // released after the call unless the callee's result keeps it. Only a cons onto a variable: the
@@ -14525,7 +14540,7 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
                     |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
                     |> collectCallArgumentRetains(transfers == false && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
-                    |> withEscapingArgumentCell(argument)(transfers == false)
+                    |> withEscapingArgumentCell(argument)(transfers == false && mayHoldListCell(resultType)(deferredState))
                     |> lower(argument)
                     |> stopCollectingCallArgumentRetains
                     |> retainTransferredChild(argument)(transfers)
