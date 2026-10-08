@@ -2445,7 +2445,8 @@ let assertLooksLikeAssembly bytes label =
 // not a bare `ret` — a real, separate claim from `assertLooksLikeAssembly`'s label-only check.
 // The module also carries the arena runtime's helper functions, which return normally, so only
 // the entry function's own body is checked: the entry is the module's first function, so its
-// body is everything before the `.Lfunc_end0` marker.
+// body is everything before the `.Lfunc_end0:` label. The label is matched with its colon: LLVM 23
+// also names `.Lfunc_end0` in the `.prefalign` directive ahead of the entry body.
 let assertEndsInSyscallExit bytes =
     (let text =
         bytes
@@ -2453,7 +2454,7 @@ let assertEndsInSyscallExit bytes =
         |> Ashes.Byte.subText(bytes)(0)
     in
         let entryText =
-            match Ashes.Text.split(text)(".Lfunc_end0") with
+            match Ashes.Text.split(text)(".Lfunc_end0:") with
                 | entry :: _ -> entry
                 | [] -> text
         in

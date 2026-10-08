@@ -8,6 +8,9 @@ run_suite() {
     dotnet run -c Release --no-build --project src/Ashes.Cli -- compile --project "selfhost/tests/$name/ashes.json" > "$T/suite-$name.build" 2>&1
     bin=$(ls "selfhost/tests/$name/out/" 2>/dev/null | head -1)
     if [ -z "$bin" ]; then echo "$name COMPILE FAILED: $(grep -E 'ASH|rror' "$T/suite-$name.build" | head -2 | cut -c1-200)"; return; fi
+    # The backend suite calls libLLVM at run time and finds it through its $ORIGIN RUNPATH: the bundled
+    # copy and its dependencies go beside it, as stage 0 loads them, rather than the system library.
+    if [ "$name" = "backend" ]; then cp runtimes/linux-x64/lib*.so* "selfhost/tests/$name/out/"; fi
     "selfhost/tests/$name/out/$bin" "$@" > "$T/suite-$name.out" 2>&1
     code=$?
     echo "$name exit=$code fails=$(grep -ci 'fail' "$T/suite-$name.out") last=$(tail -1 "$T/suite-$name.out" | cut -c1-90)"
