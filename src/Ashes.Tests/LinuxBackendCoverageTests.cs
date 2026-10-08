@@ -4585,6 +4585,30 @@ public sealed class LinuxBackendCoverageTests
 
 
     [Test]
+    public async Task Linux_backend_record_consed_onto_call_result_list_memory_should_plateau()
+    {
+        // A record consed onto a function's reference-counted list result outside any recursion: the
+        // cell is reference-counted too, so the list it holds is released with it.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildRecordConsedOntoCallResultListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record consed onto a call result list", samples, maxRssKb: 16_000);
+    }
+
+
+    [Test]
     public async Task Linux_backend_exit_cell_passed_to_captured_callee_memory_should_plateau()
     {
         // The pairwise pass of `join` as first written: the exit passes its cell to a `let
@@ -11498,6 +11522,36 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countLive(stepLive([3, 2]))(0))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+
+    private static string BuildRecordConsedOntoCallResultListProgram(int rounds)
+        => $$"""
+            type LeakLive =
+                | block: Int
+                | liveIn: Bool
+
+            let recursive build (n: Int) =
+                if n == 0
+                then []
+                else LeakLive(block = n, liveIn = true) :: build(n - 1)
+
+            let wrap (n: Int) = LeakLive(block = n, liveIn = false) :: build(n)
+
+            let recursive countLive (entries: List(LeakLive)) (total: Int) =
+                match entries with
+                    | [] -> total
+                    | LeakLive { liveIn = true } :: rest -> countLive(rest)(total + 1)
+                    | _ :: rest -> countLive(rest)(total)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countLive(wrap(3))(0))
 
             0
             |> rounds({{rounds}})

@@ -20134,6 +20134,49 @@ let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType:
         | (ExprCons(_head, _tail), Some(_slot)) -> withConsumerRequest((request with expectedType = Some(SemList(headType))))(state)
         | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
 
+// Stage 0's `OwnHeadOfCellOverFreshTail`: a cons onto a fresh reference-counted tail (a call's owned
+// result, `entry :: build(n)`) builds a reference-counted cell, the list counterpart of a
+// constructor owning a fresh child. The cell takes the tail over, and the head takes a reference
+// of its own when it is reference-counted or a copy when it lies in the arena. A live arena
+// list-cell reuse token beats it, as it beats the recursive producer's request: a reuse
+// specialization's self call hands back a result stage 0 does not count as fresh, and its cell
+// is rebuilt in place.
+let noListCellReuseToken (tokens: List(CoreReuseToken)) =
+    match takeListCellReuseToken(tokens) with
+        | Some(_found) -> false
+        | None -> true
+
+let freshCallTail (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
+    (match unspanArgument(tailExpression) with
+        | ExprCall(_function, _argument, _isSugar, _layout) -> true
+        | _ -> false) && (match runtimeTempStateOf(tailTemp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false)
+
+let cellRequestOf (request: ConsumerRequest) = request with runtimeList = true
+
+let ownHeadOfCellOverFreshTail (request: ConsumerRequest) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
+    match (head, tail) with
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
+            if canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshCallTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
+            then
+                if headType
+                |> resolveType(tailState)
+                |> isCopyTypeSemantic
+                then (cellRequestOf(request), head, tail)
+                else
+                    match generalCopyPlanOf(headType)(tailState) with
+                        | Some(plan) ->
+                            match emitGuardedDeepCopy(headTemp)(plan)(tailState) with
+                                | (copied, ownedTemp) ->
+                                    let marked = markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)(copied)
+                                    in
+                                        let ownedHead = head with state = marked, temp = ownedTemp
+                                        in (cellRequestOf(request), ownedHead, (tail with state = marked))
+                        | None -> (request, head, tail)
+            else (request, head, tail)
+        | _ -> (request, head, tail)
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -20141,11 +20184,13 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
             match headState
             |> consTailRequest(request)(tailExpression)(headType)
             |> lower(tailExpression)
-            |> consPartsFor(request)(headExpression)(tailExpression)(head) with
-                | (duplicatedHead, duplicatedTail) ->
-                    duplicatedTail
-                    |> retainConsTail(request)(transfers)(headExpression)(tailExpression)(duplicatedHead)
-                    |> finishCons(request)(headExpression)(tailExpression)(duplicatedHead)
+            |> ownHeadOfCellOverFreshTail(request)(tailExpression)(head) with
+                | (cellRequest, ownedHead, loweredTail) ->
+                    match consPartsFor(cellRequest)(headExpression)(tailExpression)(ownedHead)(loweredTail) with
+                        | (duplicatedHead, duplicatedTail) ->
+                            duplicatedTail
+                            |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
+                            |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
 let expectedListElementType state =

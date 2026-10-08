@@ -16489,7 +16489,7 @@ public sealed partial class Lowering
         LoweredValueRequest tailRequest = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null
             ? request.WithExpectedType(listType)
             : LoweredValueRequest.None.WithExpectedType(listType);
-        var (tailTemp, tailType) = LowerExpr(cons.Tail, tailRequest);
+        var (tailTemp, tailType) = LowerConsTailValue(cons, tailRequest, ref head, ref request);
 
         // A successor cell the back edge copies borrows its parts: the copy takes references of
         // its own before the iteration's owners are released, and a duplicate stored in the cell

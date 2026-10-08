@@ -23,6 +23,56 @@ public sealed partial class Lowering
             && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
             && runtimeManaged;
 
+    private (int Temp, TypeRef Type) LowerConsTailValue(
+        Expr.Cons cons,
+        LoweredValueRequest tailRequest,
+        ref LoweredValue head,
+        ref LoweredValueRequest request)
+    {
+        (int tailTemp, TypeRef tailType) = LowerExpr(cons.Tail, tailRequest).AsPair();
+        (head, request) = OwnHeadOfCellOverFreshTail(cons, head, tailTemp, tailType, request);
+        return (tailTemp, tailType);
+    }
+
+    /// <summary>
+    /// A cons onto a fresh reference-counted tail (a call's owned result, `entry :: build(n)`) builds
+    /// a reference-counted cell, the list counterpart of a constructor owning a fresh child: an arena
+    /// cell never releases what it holds, so the tail would be left with no owner once the cell's
+    /// normalization takes a reference of its own. The cell takes the tail over, and the head takes
+    /// a reference of its own when it is reference-counted or a copy when it lies in the arena.
+    /// </summary>
+    private (LoweredValue Head, LoweredValueRequest Request) OwnHeadOfCellOverFreshTail(
+        Expr.Cons cons,
+        LoweredValue head,
+        int tailTemp,
+        TypeRef tailType,
+        LoweredValueRequest request)
+    {
+        TypeRef headType = Prune(head.Type);
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_FRESHTAILCELL") is not null
+            || !CanTestRepresentation
+            || request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || cons.Tail is not Expr.Call
+            || !IsNewlyProducedRcTemp(tailTemp)
+            || IsBackEdgeCopiedCell(cons)
+            || ContainsUnresolvedLayoutType(tailType, [])
+            || ContainsUnresolvedLayoutType(headType, [])
+            || !(CanArenaReset(headType) || IsRuntimeManagedResultTemp(head.Temp) || CanNormalizeIntoOwnedRuntimeValue(headType)))
+        {
+            return (head, request);
+        }
+
+        if (!CanArenaReset(headType))
+        {
+            int ownedHeadTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, headType);
+            MarkRuntimeManagedTemp(ownedHeadTemp);
+            head = CreateLoweredValue(ownedHeadTemp, head.Type);
+        }
+
+        return (head, request.AddRuntime(true, LoweredValueRuntimeRepresentation.List));
+    }
+
     private void LinkLambdaLabel(string label, Expr.Lambda lambda)
     {
         LinkCurryStage(label, lambda);

@@ -72,6 +72,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new PairwiseConcatAccumulatorTemplate());
         registry.Register(new PipedClosuresConsRecordTemplate());
         registry.Register(new PipedLambdaReturnsCallResultTemplate());
+        registry.Register(new ConsOntoFreshCallResultTemplate());
     }
 }
 
