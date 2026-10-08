@@ -4560,6 +4560,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_piped_lambda_returning_call_result_list_memory_should_plateau()
+    {
+        // A lambda applied in a pipe returns a recursive producer's reference-counted list, which
+        // the function piping into it hands on as its result: the call of the lambda owns it, so
+        // the caller releases it.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildPipedLambdaReturningCallResultListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("piped lambda returning a call result list", samples, maxRssKb: 16_000);
+    }
+
+
+    [Test]
     public async Task Linux_backend_exit_cell_passed_to_captured_callee_memory_should_plateau()
     {
         // The pairwise pass of `join` as first written: the exit passes its cell to a `let
@@ -11446,6 +11471,39 @@ public sealed class LinuxBackendCoverageTests
             |> rounds({{rounds}})
             |> Ashes.IO.print
             """;
+
+    private static string BuildPipedLambdaReturningCallResultListProgram(int rounds)
+        => $$"""
+            type LeakLive =
+                | block: Int
+                | liveIn: Bool
+
+            let recursive build (n: Int) =
+                if n == 0
+                then []
+                else LeakLive(block = n, liveIn = true) :: build(n - 1)
+
+            let recursive stepLive (remaining: List(Int)) =
+                match remaining with
+                    | [] -> []
+                    | block :: rest -> block |> (given (m) -> build(m))
+
+            let recursive countLive (entries: List(LeakLive)) (total: Int) =
+                match entries with
+                    | [] -> total
+                    | LeakLive { liveIn = true } :: rest -> countLive(rest)(total + 1)
+                    | _ :: rest -> countLive(rest)(total)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countLive(stepLive([3, 2]))(0))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
 
     private static string BuildExitCellPassedToCapturedCalleeProgram(int rounds)
         => $$"""

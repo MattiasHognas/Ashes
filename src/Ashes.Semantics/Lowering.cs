@@ -679,6 +679,9 @@ public sealed partial class Lowering
     // shadowing precise while allowing a direct let alias to retain call-result ownership provenance.
     private Dictionary<int, string> _knownFunctionLabelsBySlot = new();
     private Dictionary<int, string> _knownFunctionLabelsByEnvIndex = new();
+    // The label each lambda expression was last lowered to, so a lambda applied where it is written
+    // (a pipe stage) is a callee whose compiled result the call can read.
+    private readonly Dictionary<Expr.Lambda, string> _appliedLambdaLabels = new(ReferenceEqualityComparer.Instance);
     private string _lastLoweredLambdaLabel = "";
     private bool _lastLoweredLambdaEmptyEnv;
     private int _depth0LambdaCount;
@@ -7094,7 +7097,7 @@ public sealed partial class Lowering
         if (LowerLambdaCoreReuseSharedTraitMethod(sharedTraitMethodKey, captures, envPtrTemp, stackAllocateClosure, request) is { } sharedClosureTemp) return (sharedClosureTemp, funTy);
 
         string label = MarkGeneralRcInProgress(forcedLabel ?? $"lambda_{_nextLambdaId++}", retTy);
-        LinkCurryStage(label, lam);
+        LinkLambdaLabel(label, lam);
         var (placementFrame, savedFrame, argSlot) = LowerLambdaCoreEnterFunction(
             lam, label, paramTy, free, captures, knownCaptureLabels, selfName, selfType, selfAliases, recursiveGroup, originSeed);
 
@@ -12609,7 +12612,8 @@ public sealed partial class Lowering
         UnifyExpectedType(currentType, request);
         RecordOrPinCallResultType(rootExpr, collectedArgs.Count, currentType);
         TypeRef callResultType = ResolveCallPhantomResultLayout(rootExpr, collectedArgs.Count, Prune(currentType));
-        bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
+        bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType)
+            || AppliedLambdaResultRuntimeManaged(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
         CopyOutKind callResultCopyKind = GetCallCopyOutKind(callResultType, out _, out IrInst.ListHeadCopyKind callResultHeadCopy);

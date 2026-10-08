@@ -71,6 +71,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FixpointComparesRebuiltListTemplate());
         registry.Register(new PairwiseConcatAccumulatorTemplate());
         registry.Register(new PipedClosuresConsRecordTemplate());
+        registry.Register(new PipedLambdaReturnsCallResultTemplate());
     }
 }
 

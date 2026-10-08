@@ -13629,6 +13629,9 @@ type CoreCallContext =
     | expectedResult: Maybe(SemanticType)
     // The declared scheme of a callee named by a plain variable.
     | calleeScheme: Maybe(TypeScheme)
+    // The label a lambda applied where it is written (a pipe stage) is lowered to: the spine's
+    // callee is the lambda itself, whose compiled result the call reads.
+    | appliedLambdaLabel: Maybe(Str)
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -14265,6 +14268,27 @@ let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: Seman
 // holds or of a heap type without any copy-out (such a result can only have left the callee's
 // window by being RC).
 let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = knownResultRuntimeManaged(facts)(resultType)(state) || calleeCompiledResultRuntimeManaged(facts)(state) && (isRuntimeManageableResultType(resultType)(state) || resultSurvivesReset(resultType)(state) == false && hasCallCopyOut(resultType)(state) == false)
+
+// Stage 0's `AppliedLambdaResultRuntimeManaged`: a lambda applied where it is written is a known
+// callee, lowered just before the call, so the call result takes the ownership its body decided:
+// a body returning a reference-counted value hands it over owned, as a named function's does.
+let appliedLambdaResultRuntimeManaged (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    match context.appliedLambdaLabel with
+        | Some(label) ->
+            resultSurvivesReset(resultType)(state) == false && isRuntimeManageableResultType(resultType)(state) && (match state
+            |> stateFunctionReturnedClosureLabels
+            |> innermostStageLabel(context.argumentCount - 1)(label) with
+                | Some(stage) ->
+                    match state
+                    |> stateBodyRuntimeManagedByLabel
+                    |> Ashes.Collection.Map.getStr(stage) with
+                        | Some(runtimeManaged) -> runtimeManaged
+                        | None -> false
+                | None -> false)
+        | None -> false
+
+// The call result's known ownership: the callee's facts, or an applied lambda's compiled body.
+let contextResultRuntimeManaged (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) = callResultRuntimeManaged(context.facts)(resultType)(state) || appliedLambdaResultRuntimeManaged(context)(resultType)(state)
 
 // Stage 0's `IsNormalizableUncoveredRecord`: a single-constructor named type with no call copy-out
 // that the entry normalization's copy re-establishes.
@@ -15144,7 +15168,7 @@ let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType)
         if resultSurvivesReset(resolveType(state)(resultType))(state)
         then (true, -1)
         else
-            if callResultRuntimeManaged(context.facts)(resultType)(state)
+            if contextResultRuntimeManaged(context)(resultType)(state)
             then (!stableReuse && calleeCompiledResultRuntimeManaged(context.facts)(state), -1)
             else (!stableReuse && hasCallCopyOut(resultType)(state), resultFlagTemp))
 
@@ -15200,7 +15224,7 @@ let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticTyp
                     ))([])(stage.consumedArguments)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if callResultRuntimeManaged(context.facts)(resultType)(state)
+    if contextResultRuntimeManaged(context)(resultType)(state)
     then markRuntimeTemp(temp)(RuntimeNewlyProduced)(state)
     else state
 
@@ -15768,6 +15792,13 @@ let calleeDisplayName (root: Expr) =
         | ExprQualifiedVar(moduleName, name) -> Some(moduleName + "." + name)
         | _ -> None
 
+// The label the spine's callee is lowered to when it is a lambda written where it is applied: the
+// callee is lowered first, under the next lambda number.
+let appliedLambdaLabelOf (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprLambda(_parameter, _body, _annotation) -> Some("lambda_" + Ashes.Text.fromInt(state.nextLambdaId))
+        | _ -> None
+
 let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(SemanticType)) (state: CoreLoweringState) =
     (let selfCallee = isSelfCallee(spine)(state)
     in
@@ -15779,7 +15810,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             calleeName = calleeDisplayName(spine.root),
             argumentCount = coreListLength(spine.arguments),
             expectedResult = expected,
-            calleeScheme = calleeSchemeOf(spine)(state)
+            calleeScheme = calleeSchemeOf(spine)(state),
+            appliedLambdaLabel = appliedLambdaLabelOf(spine)(state)
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless
@@ -15811,7 +15843,7 @@ let resultCopyCopiesElements (semanticType: SemanticType) (state: CoreLoweringSt
 let resultAlreadySettled (context: CoreCallContext) (stage: CoreCallStage) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     isRuntimeTemp(temp)(state) || stage.resultNormalized || stage.resultDeepCopied || context.selfCallee && (match stateSpecializingReuseLabel(state) with
         | Some(_label) -> true
-        | None -> false) || callResultRuntimeManaged(context.facts)(semanticType)(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || resultCopyCopiesElements(semanticType)(state)
+        | None -> false) || contextResultRuntimeManaged(context)(semanticType)(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || resultCopyCopiesElements(semanticType)(state)
 
 // Stage 0's `OwnResultBeforeArgumentRelease`: a consumed argument whose parts the callee's arena
 // result may still name would be released spine-only, stranding every part the result did not

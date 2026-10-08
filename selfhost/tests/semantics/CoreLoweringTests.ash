@@ -1535,11 +1535,11 @@ let expectNestedLambdaDoesNotInheritOuterRuntimeOwners unit =
     in
         Unit
         |> (given (_) ->
-            "    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=11"
+            "    RcDrop                SourceTemp=7 TypeName=String OwnerSlot=10"
             |> linesContainExactly(lines)
             |> test.assertEqual(true))
         |> (given (_) ->
-            "    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=11 RuntimeManaged=true"
+            "    RcDrop                SourceTemp=7 TypeName=String OwnerSlot=10 RuntimeManaged=true"
             |> linesContainExactly(lines)
             |> test.assertEqual(false)))
 
