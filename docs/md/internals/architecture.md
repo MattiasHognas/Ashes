@@ -1392,6 +1392,16 @@ copy, and no reference is taken for the tuple. Likewise, a loop parameter kept i
 back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
 the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
 
+When such a tuple is a function's result, its contract elements (an owned call result, a borrowed
+parameter, a part of an owned value) point into values the function would otherwise have to leave
+unreleased. A caller that names the function and knows the tuple's concrete type asks for those
+parts through bit 2 of the hidden ownership word (see [ir.md](ir.md)). The function then gives each
+contract element of its arena result a reference of its own, where the element is stored when every
+cell the result can be is known, at the return otherwise, and releases every owned value no other
+element reaches; the caller copies the tuple out and releases the handed-over references behind its
+copy. A caller that cannot name the function (a closure parameter) does not ask, and the function
+then releases only the owned values out of its result's reach.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:
 exactly those, read back from the instructions that built the cell, so a child the construction only

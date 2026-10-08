@@ -61,6 +61,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
+import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemps
 import AshesCompiler.Semantics.FunctionOrigins.createAdtNormalizerOrigin
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
@@ -492,6 +493,9 @@ type CoreProgramState =
     // The functions whose compiled result is owned under the contract: each normalizes a result of
     // the contract's types at its return, so a caller that names one takes the result over as it is.
     | generalRcOwnedResultLabels: List(Str)
+    // The functions whose generic tuple result hands its contract elements over when a caller asks,
+    // by label: the element indices whose references the caller takes.
+    | tupleResultPartLabels: MapTree(Str, List(Int))
     | letLambdaLabels: MapTree(Str, Str)
     // The lambda identity (`lambdaIdentityOf`) recorded under each let-bound function's name,
     // resolving its whole-program result-reach summary among same-named functions.
@@ -1051,6 +1055,14 @@ let stateGeneralRcOwnedResultLabels (state: CoreLoweringState) =
 let withStateGeneralRcOwnedResultLabels value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with generalRcOwnedResultLabels = value))
+
+let stateTupleResultPartLabels (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.tupleResultPartLabels)
+
+let withStateTupleResultPartLabels value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with tupleResultPartLabels = value))
 
 let stateHeapLayoutFactsByType (state: CoreLoweringState) =
     (let group = state.programState
@@ -2208,6 +2220,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             patternOwnerSites = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
             generalRcOwnedResultLabels = [],
+            tupleResultPartLabels = Ashes.Collection.Map.empty,
             normalizableRecordTypes = Ashes.Collection.Map.empty,
             letLambdaLabels = Ashes.Collection.Map.empty,
             letLambdaIdentities = Ashes.Collection.Map.empty,
@@ -5814,6 +5827,8 @@ let restoreOuterFrame outer bodyState =
                 withStateBodyRuntimeManagedByLabel(stateBodyRuntimeManagedByLabel(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStateGeneralRcOwnedResultLabels(stateGeneralRcOwnedResultLabels(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
+                withStateTupleResultPartLabels(stateTupleResultPartLabels(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStateFunctionReturnedClosureLabels(stateFunctionReturnedClosureLabels(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
@@ -9619,6 +9634,306 @@ let releaseFreshChildrenOfCopiedArenaTuple (bodyTemp: Int) (bodyType: SemanticTy
                     releaseTupleChildrenAt(bodyTemp)(freshTupleChildOffsets(cell)(elementTypes)(reverse(state.reversedInstructions))(state))(state)
         | _ -> state
 
+// Stage 0's `TupleResultParts`: the contract elements of a tuple result type with an element of
+// unresolved layout, by index.
+let recursive contractElementIndices (elements: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
+    match elements with
+        | [] -> []
+        | element :: rest ->
+            if isGeneralRcValueType(element)(state)
+            then index :: contractElementIndices(rest)(index + 1)(state)
+            else contractElementIndices(rest)(index + 1)(state)
+
+// The elements of a tuple type that hold no pointer (an integer, a flag).
+let recursive scalarElementIndices (elements: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
+    match elements with
+        | [] -> []
+        | element :: rest ->
+            if resultSurvivesReset(element)(state)
+            then index :: scalarElementIndices(rest)(index + 1)(state)
+            else scalarElementIndices(rest)(index + 1)(state)
+
+let tupleScalarElements (bodyType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(bodyType) with
+        | SemTuple(elements) -> scalarElementIndices(elements)(0)(state)
+        | _ -> []
+
+let tupleResultParts (bodyType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(bodyType) with
+        | SemTuple(elements) ->
+            if containsUnresolvedLayout(SemTuple(elements))(state)
+            then contractElementIndices(elements)(0)(state)
+            else []
+        | _ -> []
+
+// Stage 0's `EmitSkipUnlessReferenceCounted`: jumps to `skipLabel` unless the value is present and
+// reference-counted.
+let emitSkipUnlessReferenceCounted (valueTemp: Int) (skipLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = allocated, temp = zeroTemp } ->
+            allocated
+            |> emit(LoadConstInt(zeroTemp)(0))
+            |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+            |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
+            |> emit(IsReferenceCounted(zeroTemp + 2)(valueTemp))
+            |> emit(JumpIfFalse(zeroTemp + 2)(skipLabel))
+
+// Stage 0's `EmitRetainIfReferenceCounted`.
+let emitRetainIfReferenceCounted (valueTemp: Int) (state: CoreLoweringState) =
+    match freshLabel("tuple_part_not_counted")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            match labelled
+            |> emitSkipUnlessReferenceCounted(valueTemp)(skipLabel)
+            |> freshTemp with
+                | FreshTemp { state = allocated, temp = retainTemp } ->
+                    allocated
+                    |> emit(RcDup(retainTemp)(valueTemp)(true)(false))
+                    |> emit(Label(skipLabel))
+
+// Stage 0's `EmitJumpUnlessTuplePartsRequested`: jumps to `keepLabel` unless the caller set bit 2
+// of the hidden ownership word, asking for the result's contract parts.
+let emitJumpUnlessTuplePartsRequested (keepLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(5)(state) with
+        | FreshTemp { state = allocated, temp = wordTemp } ->
+            allocated
+            |> emit(LoadArgumentOwnership(wordTemp))
+            |> emit(LoadConstInt(wordTemp + 1)(2))
+            |> emit(ShrInt(wordTemp + 2)(wordTemp)(wordTemp + 1))
+            |> emit(LoadConstInt(wordTemp + 3)(1))
+            |> emit(AndInt(wordTemp + 4)(wordTemp + 2)(wordTemp + 3))
+            |> emit(JumpIfFalse(wordTemp + 4)(keepLabel))
+
+// The same, falling through only when the result is an arena cell as well.
+let emitJumpUnlessTuplePartsRequestedOf (resultTemp: Int) (keepLabel: Str) (state: CoreLoweringState) =
+    match state
+    |> emitJumpUnlessTuplePartsRequested(keepLabel)
+    |> freshLabel("tuple_parts_arena_result") with
+        | FreshLabel { state = labelled, label = arenaLabel } ->
+            match freshTemp(labelled) with
+                | FreshTemp { state = allocated, temp = countedTemp } ->
+                    allocated
+                    |> emit(IsReferenceCounted(countedTemp)(resultTemp))
+                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                    |> emit(Jump(keepLabel))
+                    |> emit(Label(arenaLabel))
+
+let recursive storedSourcesOf (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot == slot
+            then source :: storedSourcesOf(slot)(rest)
+            else storedSourcesOf(slot)(rest)
+        | _ :: rest -> storedSourcesOf(slot)(rest)
+
+// Stage 0's `ArenaCellsOfResult`: the arena cells a result can be, the cell itself or every cell
+// stored into the locals it is loaded from (the placeholder a back edge writes aside); None when
+// anything else can reach it. `forward` is the function's instructions in order.
+let recursive arenaCellsReaching (pending: List(Int)) (visited: List(Int)) (cells: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> Some(cells)
+        | temp :: rest ->
+            if containsInt(temp)(visited)
+            then arenaCellsReaching(rest)(visited)(cells)(forward)(state)
+            else
+                match definitionOfTemp(temp)(state.reversedInstructions) with
+                    | Some(Alloc(_target, _size, false)) -> arenaCellsReaching(rest)(temp :: visited)(temp :: cells)(forward)(state)
+                    | Some(LoadConstInt(_target, 0)) -> arenaCellsReaching(rest)(temp :: visited)(cells)(forward)(state)
+                    | Some(LoadLocal(_target, slot)) ->
+                        arenaCellsReaching(append(storedSourcesOf(slot)(forward))(rest))(temp :: visited)(cells)(forward)(state)
+                    | _ -> None
+
+// Stage 0's `IsReadOutOfOwnedValue`: whether every value pending is an owned value, a borrowed
+// one, or a part read out of either through locals, fields and borrows.
+let recursive readOutOfOwnedValue (pending: List(Int)) (ownedSlots: List(Int)) (visited: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> true
+        | temp :: rest ->
+            if containsInt(temp)(visited)
+            then readOutOfOwnedValue(rest)(ownedSlots)(visited)(forward)(state)
+            else
+                match definitionOfTemp(temp)(state.reversedInstructions) with
+                    | Some(LoadEnv(_target, _index)) -> readOutOfOwnedValue(rest)(ownedSlots)(temp :: visited)(forward)(state)
+                    | Some(LoadMemOffset(_target, basePtr, _offset)) -> readOutOfOwnedValue(basePtr :: rest)(ownedSlots)(temp :: visited)(forward)(state)
+                    | Some(GetAdtField(_target, pointer, _field, _tagless)) -> readOutOfOwnedValue(pointer :: rest)(ownedSlots)(temp :: visited)(forward)(state)
+                    | Some(Borrow(_target, source)) -> readOutOfOwnedValue(source :: rest)(ownedSlots)(temp :: visited)(forward)(state)
+                    | Some(LoadLocal(_target, slot)) ->
+                        if containsInt(slot)(ownedSlots)
+                        then readOutOfOwnedValue(rest)(ownedSlots)(temp :: visited)(forward)(state)
+                        else
+                            readOutOfOwnedValue(append(storedSourcesOf(slot)(forward))(rest))(ownedSlots)(temp :: visited)(forward)(state)
+                    | _ -> false
+
+let recursive ownedSlotNumbers (slots: List((Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | (slot, _semanticType) :: rest -> slot :: ownedSlotNumbers(rest)
+
+let isFreshRuntimeTemp (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false
+
+let isTuplePartOffset (offset: Int) (parts: List(Int)) = offset - offset / 8 * 8 == 0 && containsInt(offset / 8)(parts)
+
+// Stage 0's `OwnedSlotsReleasedBehindTupleParts`, over the instructions in order with their
+// positions: the values that pin owned slots (every other element of the result's cells, and a
+// part that is fresh or not read out of an owned value), and the positions of the part stores of
+// a value other than a fresh one, whose stored value is retained under the request.
+let recursive tuplePartStores (instructions: List(IrInstruction)) (position: Int) (cells: List(Int)) (parts: List(Int)) (scalars: List(Int)) (ownedSlots: List(Int)) (forward: List(IrInstruction)) (state: CoreLoweringState) (pinning: List(Int)) (retained: List((Int, Int))) =
+    match instructions with
+        | [] -> (reverse(pinning), reverse(retained))
+        | IrInstruction { instruction = StoreMemOffset(basePtr, offset, source) } :: rest ->
+            if containsInt(basePtr)(cells) == false
+            then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(pinning)(retained)
+            else
+                if isTuplePartOffset(offset)(parts) == false
+                then
+                    if isTuplePartOffset(offset)(scalars)
+                    then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(pinning)(retained)
+                    else tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(source :: pinning)(retained)
+                else
+                    let fresh = isFreshRuntimeTemp(source)(state)
+                    in
+                        let nextRetained =
+                            if fresh
+                            then retained
+                            else (position, source) :: retained
+                        in
+                            if fresh
+                            then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(source :: pinning)(nextRetained)
+                            else
+                                if readOutOfOwnedValue([source])(ownedSlots)([])(forward)(state)
+                                then tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(pinning)(nextRetained)
+                                else tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(source :: pinning)(nextRetained)
+        | _ :: rest -> tuplePartStores(rest)(position + 1)(cells)(parts)(scalars)(ownedSlots)(forward)(state)(pinning)(retained)
+
+// The retain spliced behind one part store: the stored value is retained when the caller asked for
+// the parts. Emitted on its own, most recent first.
+let emitTuplePartRetain (source: Int) (state: CoreLoweringState) =
+    match freshLabel("tuple_part_not_requested")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            labelled
+            |> emitJumpUnlessTuplePartsRequested(skipLabel)
+            |> emitRetainIfReferenceCounted(source)
+            |> emit(Label(skipLabel))
+
+let recursive emitTuplePartRetains (stores: List((Int, Int))) (state: CoreLoweringState) (spliced: List((Int, List(IrInstruction)))) =
+    match stores with
+        | [] -> (state, spliced)
+        | (position, source) :: rest ->
+            let emitted = emitTuplePartRetain(source)((state with reversedInstructions = []))
+            in emitTuplePartRetains(rest)((emitted with reversedInstructions = state.reversedInstructions))((position, emitted.reversedInstructions) :: spliced)
+
+let recursive splicedAt (position: Int) (spliced: List((Int, List(IrInstruction)))) =
+    match spliced with
+        | [] -> []
+        | (at, instructions) :: rest ->
+            if at == position
+            then instructions
+            else splicedAt(position)(rest)
+
+// Rebuilds the most-recent-first instructions with each splice placed right behind the store at
+// its position.
+let recursive spliceBehindStores (reversedInstructions: List(IrInstruction)) (position: Int) (spliced: List((Int, List(IrInstruction)))) =
+    match reversedInstructions with
+        | [] -> []
+        | instruction :: rest ->
+            append(splicedAt(position)(spliced))(instruction :: spliceBehindStores(rest)(position - 1)(spliced))
+
+// Stage 0's `RetainTuplePartStoresWhenRequested`.
+let retainTuplePartStoresWhenRequested (stores: List((Int, Int))) (state: CoreLoweringState) =
+    match emitTuplePartRetains(stores)(state)([]) with
+        | (emitted, []) -> emitted
+        | (emitted, spliced) -> emitted with reversedInstructions = spliceBehindStores(emitted.reversedInstructions)(length(emitted.reversedInstructions) - 1)(spliced)
+
+let recursive emitTuplePartRetainsAtReturn (resultTemp: Int) (parts: List(Int)) (state: CoreLoweringState) =
+    match parts with
+        | [] -> state
+        | part :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = childTemp } ->
+                    allocated
+                    |> emit(LoadMemOffset(childTemp)(resultTemp)(part * 8))
+                    |> emitRetainIfReferenceCounted(childTemp)
+                    |> emitTuplePartRetainsAtReturn(resultTemp)(rest)
+
+// Stage 0's `TryReleaseOwnedSlotsHandingOverTupleParts`: the return of a function whose result is
+// a generic tuple with contract elements. When the caller asks for the parts and the result is an
+// arena cell, each part holds a reference of its own and the owned values only the parts read out
+// of are released behind them; otherwise only the owned values out of the result's reach are. When
+// every cell the result can be is known (outside a loop), a part takes its reference where it is
+// stored: a fresh value's is the cell's already, any other value is retained under the request.
+// The hand-over plan: the owned slots released when the parts are handed over, the state with the
+// part retains spliced in, and whether every cell the result can be is known.
+let tuplePartsHandOverPlan (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) (registered: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (kept: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    (let forward = reverse(state.reversedInstructions)
+    in
+        let cells =
+            match stateTcoLoopFrame(state) with
+                | Some(_frame) -> None
+                | None -> arenaCellsReaching([resultTemp])([])([])(forward)(state)
+        in
+            match cells with
+                | Some(first :: others) ->
+                    match tuplePartStores(forward)(0)(first :: others)(parts)(scalars)([]
+                    |> ownedSlotsOf(stateActiveFunctionOrigin(state))(registered)
+                    |> ownedSlotNumbers)(forward)(state)([])([]) with
+                        | (pinning, retained) ->
+                            (ownedSlotsOutside(localSlotsReachingTemps(pinning)(state.reversedInstructions))(registered), retainTuplePartStoresWhenRequested(retained)(state), true)
+                | _ -> (kept, state, false))
+
+let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) (state: CoreLoweringState) =
+    (let origin = stateActiveFunctionOrigin(state)
+    in
+        let registered =
+            state
+            |> stateGeneralRcOwnedSlots
+            |> reverse
+        in
+            let kept =
+                ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)
+            in
+                match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
+                    | (handedOver, spliced, cellsKnown) ->
+                        match freshLabel("tuple_parts_not_requested")(spliced) with
+                            | FreshLabel { state = keepState, label = keepLabel } ->
+                                match freshLabel("tuple_parts_handed_over")(keepState) with
+                                    | FreshLabel { state = doneState, label = doneLabel } ->
+                                        doneState
+                                        |> emitJumpUnlessTuplePartsRequestedOf(resultTemp)(keepLabel)
+                                        |> (given (requested: CoreLoweringState) ->
+                                            if cellsKnown
+                                            then requested
+                                            else emitTuplePartRetainsAtReturn(resultTemp)(parts)(requested))
+                                        |> emitGeneralRcOwnedSlotDropsOf(origin)(handedOver)
+                                        |> emit(Jump(doneLabel))
+                                        |> emit(Label(keepLabel))
+                                        |> emitGeneralRcOwnedSlotDropsOf(origin)(kept)
+                                        |> emit(Label(doneLabel))
+                                        |> (given (finished: CoreLoweringState) ->
+                                            withStateTupleResultPartLabels(finished
+                                            |> stateTupleResultPartLabels
+                                            |> Ashes.Collection.Map.setStr(label)(parts))(finished)))
+
+// The return of a function whose result is outside the contract's types and holds no part of
+// a generic tuple: an independent copy, a move onto the heap, or the owned slots out of reach.
+let finishGeneralRcFunctionResultOutsideContract (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
+        | (true, Some(copy)) ->
+            match emitIndependentResultCopy(copy)(bodyTemp)(state) with
+                | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
+        | (true, None) ->
+            match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
+                | Some(plan) ->
+                    match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
+                        | (copied, resultTemp) ->
+                            (copied
+                            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                            |> emitGeneralRcOwnedSlotDrops, resultTemp)
+                | None -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(state), bodyTemp)
+        | _ -> (state, bodyTemp)
+
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcFinishedResult(bodyTemp)(state)
     then (state, bodyTemp)
@@ -9642,20 +9957,10 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
             if resultSurvivesReset(bodyType)(state) || isRuntimeTemp(bodyTemp)(state)
             then (emitGeneralRcOwnedSlotDrops(state), bodyTemp)
             else
-                match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
-                    | (true, Some(copy)) ->
-                        match emitIndependentResultCopy(copy)(bodyTemp)(state) with
-                            | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
-                    | (true, None) ->
-                        match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
-                            | Some(plan) ->
-                                match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
-                                    | (copied, resultTemp) ->
-                                        (copied
-                                        |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
-                                        |> emitGeneralRcOwnedSlotDrops, resultTemp)
-                            | None -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(state), bodyTemp)
-                    | _ -> (state, bodyTemp)
+                match tupleResultParts(bodyType)(state) with
+                    | [] -> finishGeneralRcFunctionResultOutsideContract(bodyTemp)(bodyType)(state)
+                    | parts ->
+                        (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
 
 let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(resolvePhantomResultLayout(label)(bodyType)(state))(state)
@@ -14029,6 +14334,40 @@ let recordBorrowedCall (borrows: Bool) (target: Int) (state: CoreLoweringState) 
             | None -> state with borrowedCalls = ("_start_main", target) :: state.borrowedCalls
     else state
 
+// Stage 0's `CalleeTupleResultParts`: the parts a known function hands over when its generic tuple
+// result is asked for, reached along the returned-closure chain one hop per application past the
+// first.
+let calleeTupleResultParts (context: CoreCallContext) (state: CoreLoweringState) =
+    match context.facts with
+        | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
+            match state
+            |> stateFunctionReturnedClosureLabels
+            |> innermostStageLabel(count - 1)(label) with
+                | Some(stageLabel) ->
+                    state
+                    |> stateTupleResultPartLabels
+                    |> Ashes.Collection.Map.getStr(stageLabel)
+                | None -> None
+        | _ -> None
+
+// Stage 0's `EmitTupleResultPartsRequestWord`: bit 2 of the hidden ownership word asks the callee
+// for its tuple result's contract parts, the request constant on the left of the word.
+let emitTupleResultPartsRequestWord (context: CoreCallContext) (wordTemp: Int) (state: CoreLoweringState) =
+    match calleeTupleResultParts(context)(state) with
+        | None -> (state, wordTemp)
+        | Some(_parts) ->
+            match freshTemp(state) with
+                | FreshTemp { state = requestState, temp = requestTemp } ->
+                    let loaded =
+                        emit(LoadConstInt(requestTemp)(4))(requestState)
+                    in
+                        if wordTemp < 0
+                        then (loaded, requestTemp)
+                        else
+                            match freshTemp(loaded) with
+                                | FreshTemp { state = joinedState, temp = joinedTemp } ->
+                                    (emit(OrInt(joinedTemp)(requestTemp)(wordTemp))(joinedState), joinedTemp)
+
 let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) (readsResult: Bool) (resultNormalizedOwned: Bool) unifiedState =
     match prepareCallArgument(handOff)(handsFreshArgumentOverUnderAdoption(context)(handOff))(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
         | (preparedState, passedTemp, argumentFlagTemp, handedOver) ->
@@ -14037,7 +14376,9 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                     match freshTemp(flaggedState) with
                         | FreshTemp { state = targetState, temp = target } ->
                             match if arity == 1
-                            then emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState)
+                            then
+                                match emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState) with
+                                    | (arenaState, arenaWord) -> emitTupleResultPartsRequestWord(context)(arenaWord)(arenaState)
                             else (targetState, argumentFlagTemp) with
                                 | (wordState, wordTemp) ->
                                     CoreCallStage(
@@ -15033,54 +15374,184 @@ let emitClosureReturnsGeneralRcOwnedFlag (closureTemp: Int) (state: CoreLowering
             |> emit(LoadConstInt(packedTemp + 3)(1))
             |> emit(AndInt(packedTemp + 4)(packedTemp + 2)(packedTemp + 3)), packedTemp + 4)
 
+// The tuple-parts request constant of the ownership word `word` a call passes: the word itself or
+// the left operand of the `OrInt` joining it to the rest; -1 when the call asked for no parts.
+let recursive tuplePartsRequestConstant (word: Int) (joined: Bool) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = OrInt(target, request, _rest) } :: rest ->
+            if target == word
+            then
+                if joined
+                then -1
+                else tuplePartsRequestConstant(request)(true)(rest)
+            else tuplePartsRequestConstant(word)(joined)(rest)
+        | IrInstruction { instruction = LoadConstInt(target, value) } :: rest ->
+            if target == word
+            then
+                if value == 4
+                then word
+                else -1
+            else tuplePartsRequestConstant(word)(joined)(rest)
+        | IrInstruction { instruction = instruction } :: rest ->
+            if instruction
+            |> getDefinedTemps
+            |> containsInt(word)
+            then -1
+            else tuplePartsRequestConstant(word)(joined)(rest)
+
+let recursive callTuplePartsRequest (resultTemp: Int) (budget: Int) (instructions: List(IrInstruction)) =
+    if budget == 0
+    then -1
+    else
+        match instructions with
+            | [] -> -1
+            | IrInstruction { instruction = CallClosure(target, _closure, _argument, word) } :: rest ->
+                if target == resultTemp
+                then
+                    if word < 0
+                    then -1
+                    else tuplePartsRequestConstant(word)(false)(rest)
+                else callTuplePartsRequest(resultTemp)(budget - 1)(rest)
+            | _ :: rest -> callTuplePartsRequest(resultTemp)(budget - 1)(rest)
+
+let recursive zeroRequestConstant (request: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = LoadConstInt(target, _value) } as instruction) :: rest ->
+            if target == request
+            then (instruction with instruction = LoadConstInt(target)(0)) :: rest
+            else instruction :: zeroRequestConstant(request)(rest)
+        | instruction :: rest -> instruction :: zeroRequestConstant(request)(rest)
+
+// Stage 0's `TakeTupleResultPartsRequest`: the parts the call producing `resultTemp` asked for, or
+// None; a withdrawn request is cleared in the call's ownership word, so the callee keeps its own
+// references.
+let takeTupleResultPartsRequest (context: CoreCallContext) (resultTemp: Int) (withdraw: Bool) (state: CoreLoweringState) =
+    (let request = callTuplePartsRequest(resultTemp)(64)(state.reversedInstructions)
+    in
+        if request < 0
+        then (state, None)
+        else
+            if withdraw
+            then ((state with reversedInstructions = zeroRequestConstant(request)(state.reversedInstructions)), None)
+            else (state, calleeTupleResultParts(context)(state)))
+
+let recursive loadHandedOverTupleParts (resultTemp: Int) (parts: List(Int)) (state: CoreLoweringState) (temps: List(Int)) =
+    match parts with
+        | [] -> (state, reverse(temps))
+        | part :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = partTemp } ->
+                    loadHandedOverTupleParts(resultTemp)(rest)(emit(LoadMemOffset(partTemp)(resultTemp)(part * 8))(allocated))(partTemp :: temps)
+
+let recursive releaseHandedOverTuplePartList (parts: List(Int)) (partTemps: List(Int)) (elementTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (parts, partTemps) with
+        | (part :: restParts, partTemp :: restTemps) ->
+            match freshLabel("tuple_part_kept")(state) with
+                | FreshLabel { state = labelled, label = skipLabel } ->
+                    labelled
+                    |> emitSkipUnlessReferenceCounted(partTemp)(skipLabel)
+                    |> emitOwnedValueChildDrop(partTemp)(nthElementType(part)(elementTypes))
+                    |> emit(Label(skipLabel))
+                    |> releaseHandedOverTuplePartList(restParts)(restTemps)(elementTypes)
+        | _ -> state
+
+// Stage 0's `ReleaseHandedOverTupleParts`: after a call's tuple result is copied out of the arena,
+// the references the callee handed over with the parts are released, the copy holding its own.
+let releaseHandedOverTupleParts (resultTemp: Int) (semanticType: SemanticType) (parts: List(Int)) (partTemps: List(Int)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemTuple(elementTypes) ->
+            match freshLabel("tuple_parts_arena")(state) with
+                | FreshLabel { state = arenaState, label = arenaLabel } ->
+                    match freshLabel("tuple_parts_done")(arenaState) with
+                        | FreshLabel { state = doneState, label = doneLabel } ->
+                            match freshTemp(doneState) with
+                                | FreshTemp { state = allocated, temp = countedTemp } ->
+                                    allocated
+                                    |> emit(IsReferenceCounted(countedTemp)(resultTemp))
+                                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                                    |> emit(Jump(doneLabel))
+                                    |> emit(Label(arenaLabel))
+                                    |> releaseHandedOverTuplePartList(parts)(partTemps)(elementTypes)
+                                    |> emit(Label(doneLabel))
+        | _ -> state
+
+// The normalizing copy of a call's contract result, with the parts the callee handed over read
+// before it and released after it.
+let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe(List(Int))) (state: CoreLoweringState) =
+    match handedParts with
+        | None ->
+            match emitGuardedDeepCopy(temp)(plan)(state) with
+                | (copied, copyTemp) ->
+                    emit(StoreLocal(ownedSlot)(copyTemp))(copied)
+        | Some(parts) ->
+            match loadHandedOverTupleParts(temp)(parts)(state)([]) with
+                | (loaded, partTemps) ->
+                    match emitGuardedDeepCopy(temp)(plan)(loaded) with
+                        | (copied, copyTemp) ->
+                            copied
+                            |> emit(StoreLocal(ownedSlot)(copyTemp))
+                            |> releaseHandedOverTupleParts(temp)(semanticType)(parts)(partTemps)
+
+// Stage 0's withdrawal in `LowerCallRestoreArenaFor`: a call result that is not copied out under
+// the contract takes no parts over.
+let withdrawTuplePartsRequestOutsideContract (context: CoreCallContext) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if isGeneralRcValueType(semanticType)(state)
+    then state
+    else
+        match takeTupleResultPartsRequest(context)(temp)(true)(state) with
+            | (withdrawn, _parts) -> withdrawn
+
 // Stage 0's `LowerGeneralRcCallResult`: a call result of the contract's types is owned by the
 // caller once the call's window is reset. It is taken over as it is from a callee known to return
 // it owned; from a closure it cannot name it is taken over when the closure's header says its
 // function returns it owned; and it is normalized otherwise, since a generic callee's result may
 // borrow its arguments' parts. The value is kept in an owned slot and handed on without a
 // runtime-managed fact.
+let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe(List(Int))) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match if returnsOwned
+    then (state, -1)
+    else
+        match closureOfCallResult(temp)(64)(state.reversedInstructions) with
+            | Some(closureTemp) -> emitClosureReturnsGeneralRcOwnedFlag(closureTemp)(state)
+            | None -> (state, -1) with
+        | (flagged, ownedFlagTemp) ->
+            match freshLocal(flagged) with
+                | FreshLocal { state = slottedOwned, local = ownedSlot } ->
+                    match saveGeneralRcOwnedPredecessor(ownedSlot)(slottedOwned) with
+                        | (slotted, predecessorSlot) ->
+                            let restored =
+                                slotted
+                                |> emit(StoreLocal(ownedSlot)(temp))
+                                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                            in
+                                let owned =
+                                    match (returnsOwned, generalCopyPlanOf(semanticType)(restored)) with
+                                        | (false, Some(plan)) ->
+                                            match freshLabel("general_rc_result_owned")(restored) with
+                                                | FreshLabel { state = labelled, label = ownedLabel } ->
+                                                    labelled
+                                                    |> emitOwnedFlagTest(ownedFlagTemp)(ownedLabel)
+                                                    |> emitCallResultCopyTakingParts(temp)(semanticType)(plan)(ownedSlot)(handedParts)
+                                                    |> emit(Label(ownedLabel))
+                                        | _ -> restored
+                                in
+                                    match owned
+                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                                    |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
+                                    |> freshTemp with
+                                        | FreshTemp { state = loaded, temp = resultTemp } ->
+                                            loaded
+                                            |> emit(LoadLocal(resultTemp)(ownedSlot))
+                                            |> success(resultTemp)(semanticType)
+
 let lowerGeneralRcCallResultOwned (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state)
     in
-        match if returnsOwned
-        then (state, -1)
-        else
-            match closureOfCallResult(temp)(64)(state.reversedInstructions) with
-                | Some(closureTemp) -> emitClosureReturnsGeneralRcOwnedFlag(closureTemp)(state)
-                | None -> (state, -1) with
-            | (flagged, ownedFlagTemp) ->
-                match freshLocal(flagged) with
-                    | FreshLocal { state = slottedOwned, local = ownedSlot } ->
-                        match saveGeneralRcOwnedPredecessor(ownedSlot)(slottedOwned) with
-                            | (slotted, predecessorSlot) ->
-                                let restored =
-                                    slotted
-                                    |> emit(StoreLocal(ownedSlot)(temp))
-                                    |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-                                in
-                                    let owned =
-                                        match (returnsOwned, generalCopyPlanOf(semanticType)(restored)) with
-                                            | (false, Some(plan)) ->
-                                                match freshLabel("general_rc_result_owned")(restored) with
-                                                    | FreshLabel { state = labelled, label = ownedLabel } ->
-                                                        match labelled
-                                                        |> emitOwnedFlagTest(ownedFlagTemp)(ownedLabel)
-                                                        |> emitGuardedDeepCopy(temp)(plan) with
-                                                            | (copied, copyTemp) ->
-                                                                copied
-                                                                |> emit(StoreLocal(ownedSlot)(copyTemp))
-                                                                |> emit(Label(ownedLabel))
-                                            | _ -> restored
-                                    in
-                                        match owned
-                                        |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-                                        |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
-                                        |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
-                                        |> freshTemp with
-                                            | FreshTemp { state = loaded, temp = resultTemp } ->
-                                                loaded
-                                                |> emit(LoadLocal(resultTemp)(ownedSlot))
-                                                |> success(resultTemp)(semanticType))
+        match takeTupleResultPartsRequest(context)(temp)(returnsOwned)(state) with
+            | (requestState, handedParts) -> lowerGeneralRcCallResultTakingParts(returnsOwned)(handedParts)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(requestState))
 
 // A result of the contract's types is owned by the caller once the call is lowered, so a request
 // for an arena result the call made while its type was unresolved (a phantom in it) is withdrawn
@@ -15096,6 +15567,7 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp, resultNormalizedOwned = normalizedOwned } ->
             match state
             |> pinDeferredSelfCallResult(semanticType)
+            |> withdrawTuplePartsRequestOutsideContract(context)(temp)(semanticType)
             |> freshLocal with
                 | FreshLocal { state = allocated, local = preRestoreSlot } ->
                     if !isGeneralRcValueType(semanticType)(allocated) && (isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated))

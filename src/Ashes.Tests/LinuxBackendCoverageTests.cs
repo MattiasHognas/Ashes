@@ -3084,6 +3084,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_tuple_result_contract_part_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic function returns a tuple pairing its type parameter's value with a contract
+        // list, built per arm from a call, a borrowed parameter, a fresh list or an owned record's
+        // field. The caller asks for the list, so the callee hands it over and releases its owned
+        // values, and the caller's copy takes the handed-over reference.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildGenericTupleResultContractPartProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic tuple result handing a contract part over", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_phantom_tuple_result_fresh_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12429,6 +12454,52 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match summarize(State(items = [wide + "x", wide + "y"], count = n)) with
                         | (texts, _big) -> rounds(n - 1)(total + countAll(texts)(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildGenericTupleResultContractPartProgram(int rounds)
+        => $$"""
+            type Item =
+                | name: Str
+                | n: Int
+
+            type Box =
+                | items: List(Item)
+                | count: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (k: Int) = [Item(name = wide + Ashes.Text.fromInt(k), n = k)]
+
+            let makeBox (k: Int) = Box(items = make(k + 1), count = k)
+
+            let pick value (k: Int) (supplied: List(Item)) =
+                let built = makeBox(k)
+                in
+                    if k > 3
+                    then (value, make(k))
+                    else
+                        if k > 2
+                        then (value, supplied)
+                        else
+                            if k > 1
+                            then (value, [Item(name = wide + Ashes.Text.fromInt(k), n = k)])
+                            else (value, built.items)
+
+            let recursive countAll (values: List(Item)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let supplied = make(n + 7)
+                    in
+                        match pick(n)(n - n / 5 * 5)(supplied) with
+                            | (_m, items) -> rounds(n - 1)(total + countAll(items)(0) + countAll(supplied)(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

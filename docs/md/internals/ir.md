@@ -270,7 +270,14 @@ caller transferred a retained runtime-managed argument, which an RC-normalizing 
 instead of copying. Bit 1 set means the caller cannot own a runtime-managed result: a generic
 body applying a closure parameter has no static layout for the result and its own caller
 deep-copies the whole result out later, so a callee whose result is reference-counted deep-copies
-it into the arena (`ArenaResultBoundary`) and releases the original before returning.
+it into the arena (`ArenaResultBoundary`) and releases the original before returning. Bit 2
+set asks a function whose result is a generic tuple (an element of unresolved layout beside
+contract-typed ones) for the tuple's contract parts: when its result is an arena cell, each
+contract element holds a reference of its own (an owned value's moves in, a borrowed one is
+retained, a fresh one keeps the reference the cell took), the owned values behind them are
+released, and the caller, which knows the concrete type, releases those references once its
+copy of the tuple holds its own. A caller asks only a function it names whose compiled body
+honors the request; any other call leaves the bit clear.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

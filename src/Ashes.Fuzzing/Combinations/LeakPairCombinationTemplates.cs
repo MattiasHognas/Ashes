@@ -565,6 +565,61 @@ internal sealed class PhantomTupleResultFreshRecordTemplate() : LeakCombinationT
 }
 
 /// <summary>
+/// A generic function returns a tuple pairing a value of its own type parameter with a contract
+/// list: a call's result, a borrowed parameter, a fresh list or a field of an owned record, picked
+/// per arm. Its caller asks for the contract part and takes it over.
+/// </summary>
+internal sealed class GenericTupleResultContractPartTemplate() : LeakCombinationTemplate(
+    "leak.generic-tuple-result-contract-part", "genericTupleResultContractPart", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.Let, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string item = names.Of("LeakItem");
+        string box = names.Of("LeakBox");
+        string make = names.Of("make");
+        string makeBox = names.Of("makeBox");
+        string pair = names.Of("pairWith");
+        string[] arms =
+        [
+            $"(value, {make}(k))",
+            "(value, supplied)",
+            $"(value, [{item}(name = {names.Word()} + Ashes.Text.fromInt(k), n = k)])",
+            "(value, built.items)",
+        ];
+        string first = arms[names.Between(0, arms.Length - 1)];
+        string second = arms[names.Between(0, arms.Length - 1)];
+        string threshold = LeakNames.Text(names.Between(0, 3));
+        string value = names.Coin("list-value") ? "[seed, seed]" : "seed";
+        return $$"""
+            type {{item}} =
+                | name: Str
+                | n: Int
+
+            type {{box}} =
+                | items: List({{item}})
+                | count: Int
+
+            let {{make}} (k: Int) = [{{item}}(name = {{names.Word()}} + Ashes.Text.fromInt(k), n = k)]
+
+            let {{makeBox}} (k: Int) = {{box}}(items = {{make}}(k + 1), count = k)
+
+            let {{pair}} value (k: Int) (supplied: List({{item}})) =
+                let built = {{makeBox}}(k)
+                in
+                    if k > {{threshold}}
+                    then {{first}}
+                    else {{second}}
+
+            let {{names.Entry}} (seed: Int) =
+                let supplied = {{make}}(seed + 7)
+                in
+                    match {{pair}}({{value}})(seed)(supplied) with
+                        | (_kept, items) -> Ashes.Collection.List.length(items) + Ashes.Collection.List.length(supplied)
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>

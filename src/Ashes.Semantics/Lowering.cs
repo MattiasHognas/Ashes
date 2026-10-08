@@ -12672,6 +12672,8 @@ public sealed partial class Lowering
         bool runtimeManagedResult,
         int runtimeManagedResultFlagTemp)
     {
+        // A result that is not copied out under the contract takes no parts over.
+        TakeTupleResultPartsRequest(currentTemp, withdraw: true);
         int resultTemp = LowerCallRestoreArena(
             callWmCursorSlot,
             callWmEndSlot,
@@ -13345,6 +13347,7 @@ public sealed partial class Lowering
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
             RequestsArenaResult(funType.Ret),
+            i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
     }
@@ -13653,6 +13656,7 @@ public sealed partial class Lowering
         int argumentIndex,
         bool needsResultOwnership,
         bool requestsArenaResult,
+        int[]? tupleResultParts,
         bool resultNormalizedOwned,
         int closureTemp,
         int argumentTemp,
@@ -13712,7 +13716,7 @@ public sealed partial class Lowering
         }
 
         int target = NewTemp();
-        EmitClosureCall(target, closureTemp, argumentTemp, borrowsOnly, runtimeManagedArgumentFlagTemp, requestsArenaResult);
+        EmitClosureCall(target, closureTemp, argumentTemp, borrowsOnly, runtimeManagedArgumentFlagTemp, requestsArenaResult, tupleResultParts);
         return rcStatus == AccessorArgumentRcStatus.NotRc
             ? target
             : RetainAccessorCallResult(target, rcStatus, pendingSlot);
@@ -14633,11 +14637,18 @@ public sealed partial class Lowering
         int argumentTemp,
         bool borrowsArgument,
         int runtimeManagedArgumentFlagTemp = -1,
-        bool requestsArenaResult = false)
+        bool requestsArenaResult = false,
+        int[]? tupleResultParts = null)
     {
         if (requestsArenaResult)
         {
             runtimeManagedArgumentFlagTemp = EmitArenaResultRequestWord(runtimeManagedArgumentFlagTemp);
+        }
+
+        int tupleResultPartsRequestTemp = -1;
+        if (tupleResultParts is not null)
+        {
+            runtimeManagedArgumentFlagTemp = EmitTupleResultPartsRequestWord(runtimeManagedArgumentFlagTemp, out tupleResultPartsRequestTemp);
         }
 
         var callInstruction = new IrInst.CallClosure(
@@ -14657,6 +14668,11 @@ public sealed partial class Lowering
         if (requestsArenaResult && _inst[^1] is IrInst.CallClosure emittedCall)
         {
             _arenaResultRequestingCalls.Add(emittedCall);
+        }
+
+        if (tupleResultParts is not null && _inst[^1] is IrInst.CallClosure requestingCall)
+        {
+            _tupleResultPartsRequests[requestingCall] = (tupleResultPartsRequestTemp, tupleResultParts);
         }
     }
 

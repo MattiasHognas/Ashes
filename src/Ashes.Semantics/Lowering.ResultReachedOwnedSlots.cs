@@ -145,7 +145,9 @@ public sealed partial class Lowering
     /// and stopping at an instruction whose value carries no pointer into another value (a
     /// constant, a comparison or arithmetic, a string built fresh).
     /// </summary>
-    private HashSet<int> LocalSlotsReachingTemp(int temp)
+    private HashSet<int> LocalSlotsReachingTemp(int temp) => LocalSlotsReachingTemps([temp]);
+
+    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps)
     {
         var definitions = new Dictionary<int, List<IrInst>>();
         var slotStores = new Dictionary<int, List<int>>();
@@ -157,8 +159,7 @@ public sealed partial class Lowering
 
         var slots = new HashSet<int>();
         var visited = new HashSet<int>();
-        var pending = new Stack<int>();
-        pending.Push(temp);
+        var pending = new Stack<int>(temps);
         while (pending.Count > 0)
         {
             int current = pending.Pop();

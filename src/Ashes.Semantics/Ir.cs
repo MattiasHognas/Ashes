@@ -738,7 +738,9 @@ public abstract record IrInst
     /// already runtime-managed argument, so an RC-normalizing function entry may adopt it instead
     /// of deep-copying it; unknown and arena-managed calls pass a clear bit. Bit 1 set means the
     /// caller cannot own a reference-counted result (its result type has no static layout there)
-    /// and asks for an arena-placed one (<see cref="CopyOutPurpose.ArenaResultBoundary"/>). The
+    /// and asks for an arena-placed one (<see cref="CopyOutPurpose.ArenaResultBoundary"/>). Bit 2
+    /// set asks a function whose result is a generic tuple to hand the contract elements of an
+    /// arena result over with references of their own. The
     /// word is an ordinary temp at the call site; readers mask the bit they need.
     /// </summary>
     public sealed record LoadArgumentOwnership(int Target) : IrInst;

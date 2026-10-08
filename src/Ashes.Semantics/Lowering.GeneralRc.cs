@@ -813,6 +813,7 @@ public sealed partial class Lowering
         bool calleeReturnsOwned)
     {
         CancelArenaResultRequest(currentTemp);
+        int[]? handedParts = TakeTupleResultPartsRequest(currentTemp, withdraw: calleeReturnsOwned);
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
@@ -831,7 +832,10 @@ public sealed partial class Lowering
                 Emit(new IrInst.Label(normalizeLabel));
             }
 
+            int[] partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
+            ReleaseHandedOverTupleParts(currentTemp, callResultType, handedParts, partTemps);
+
             Emit(new IrInst.Label(ownedLabel));
         }
 
@@ -903,9 +907,12 @@ public sealed partial class Lowering
             _generalRcOwnedResultLabels.Add(label);
         }
 
-        ReleaseOwnedSlotsBehindResult(
-            resultTemp,
-            contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp));
+        bool resultIndependent = contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp);
+        if (resultIndependent || !TryReleaseOwnedSlotsHandingOverTupleParts(label, resultTemp, pruned, loopTco is not null))
+        {
+            ReleaseOwnedSlotsBehindResult(resultTemp, resultIndependent);
+        }
+
         return resultTemp;
     }
 

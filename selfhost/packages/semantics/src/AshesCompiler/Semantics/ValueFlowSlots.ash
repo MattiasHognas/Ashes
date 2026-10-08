@@ -8,6 +8,7 @@ import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 export (
     value localSlotsReachingTemp,
+    value localSlotsReachingTemps,
 )
 
 type ValueFlowIndex =
@@ -161,9 +162,11 @@ let recursive indexReversedInstructions (instructions: List(IrInstruction)) (ind
             |> indexReversedInstructions(rest)
 
 // The instructions are the function's own, most recent first; the index keeps no order.
-let localSlotsReachingTemp (temp: Int) (reversedInstructions: List(IrInstruction)) =
+let localSlotsReachingTemps (temps: List(Int)) (reversedInstructions: List(IrInstruction)) =
     (let index = indexReversedInstructions(reversedInstructions)(ValueFlowIndex(definitions = Ashes.Collection.Map.empty, slotStores = Ashes.Collection.Map.empty, cellStores = Ashes.Collection.Map.empty))
     in
-        match walkValueFlow([temp])(Ashes.Collection.Map.empty)(index)([]) with
+        match walkValueFlow(temps)(Ashes.Collection.Map.empty)(index)([]) with
             | (slots, visited) ->
                 slotsStoringVisited(Ashes.Collection.Map.toList(index.slotStores))(visited)(slots))
+
+let localSlotsReachingTemp (temp: Int) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTemps([temp])(reversedInstructions)
