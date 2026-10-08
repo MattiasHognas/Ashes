@@ -352,6 +352,12 @@ type CoreTcoLoop =
     | callFlow: List((Str, Int, Str, List(Bool)))
     | callFlowPending: Bool
     | emitsLoop: Bool
+    // Every chain parameter's type in parameter order, recorded as its lambda is entered (stage 0's
+    // `TcoContext.ParamTypes`).
+    | parameterTypes: List(SemanticType)
+    // The synthetic slot of every parameter the body never reads, with that parameter's type (stage 0's
+    // `TcoContext.UnreadParamSlots`): nothing captured it, so it holds no argument at the loop entry.
+    | unreadSlots: List((Int, SemanticType))
 
 // The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
 // back edge jumps to, the parameter slots it stores into (parameter order), the per-iteration
@@ -6129,9 +6135,28 @@ let emitPlainTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
                     |> unlocatedInstruction(ReclaimArenaChunks(reset.arenaEndSlot)(preRestoreSlot)(false))
                 else released)
 
+let recursive unreadLoopSlotType (slot: Int) (unreadSlots: List((Int, SemanticType))) =
+    match unreadSlots with
+        | [] -> None
+        | (candidate, parameterType) :: rest ->
+            if candidate == slot
+            then Some(parameterType)
+            else unreadLoopSlotType(slot)(rest)
+
+// The resolved type of a local slot: its binding's, or for a loop slot no binding names (a
+// parameter the body never reads) its parameter's.
 let recursive slotResolvedType (slot: Int) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
     match bindings with
-        | [] -> None
+        | [] ->
+            match stateTcoLoop(state) with
+                | Some(loop) ->
+                    match unreadLoopSlotType(slot)(loop.unreadSlots) with
+                        | Some(parameterType) ->
+                            parameterType
+                            |> resolveType(state)
+                            |> Some
+                        | None -> None
+                | None -> None
         | CoreBinding { location = CoreLocal(candidate), scheme = TypeScheme { body = bindingType } } :: rest ->
             if candidate == slot
             then
@@ -11030,11 +11055,32 @@ let emitTcoActiveFlagStore (activeSlot: Maybe(Int)) (state: CoreLoweringState) =
                     |> emit(LoadConstInt(activeTemp)(1))
                     |> emit(StoreLocal(slot)(activeTemp))
 
+let emitTcoInactiveFlagStore (activeSlot: Maybe(Int)) (state: CoreLoweringState) =
+    match activeSlot with
+        | None -> state
+        | Some(slot) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = inactiveTemp } ->
+                    allocated
+                    |> emit(LoadConstInt(inactiveTemp)(0))
+                    |> emit(StoreLocal(slot)(inactiveTemp))
+
+let isUnreadLoopSlot (slot: Int) (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(loop) -> unreadLoopSlotType(slot)(loop.unreadSlots) != None
+        | None -> false
+
 // Each entry names the parameter slot, the copy a borrowed argument needs, and the active flag a
-// list slot sets once its own reference is established.
+// list slot sets once its own reference is established. An unread parameter's slot holds no
+// argument (zero) until the first back edge stores its successor, so it starts inactive: nothing
+// to normalize, nothing to release.
 let recursive emitTcoParamEntryNormalizations (entries: List((Int, ArgumentCopyPlan, Maybe(Int)))) (state: CoreLoweringState) =
     match entries with
         | [] -> state
+        | (slot, _plan, activeSlot) :: rest when isUnreadLoopSlot(slot)(state) ->
+            state
+            |> emitTcoInactiveFlagStore(activeSlot)
+            |> emitTcoParamEntryNormalizations(rest)
         | (slot, plan, activeSlot) :: rest ->
             match freshTemp(state) with
                 | FreshTemp { state = allocated, temp = sourceTemp } ->
@@ -12408,7 +12454,7 @@ and collectCtorMatchedScrutineesInCases (parameters: List(Str)) (cases: List((Pa
 // and the nested-worker ones (`loopRoutableSpecializationCandidates`): stage 0 excludes a
 // multi-parameter self-recursive candidate (`_freshCompositionOnlySpecializable`), since only the
 // fresh-composition call site can supply its earlier arguments.
-let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (candidates: List((Str, List(Str), Expr))) =
+let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (candidates: List((Str, List(Str), Expr))) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
         let parameters = parameter :: collectLambdaParamNames([])(body)
@@ -12437,17 +12483,19 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool)
                             body = innermost,
                             callFlow = [],
                             callFlowPending = false,
-                            emitsLoop = emitsLoop
+                            emitsLoop = emitsLoop,
+                            parameterTypes = [parameterType],
+                            unreadSlots = []
                         ))
                     else None)
 
 // A single recursive binding's loop is emitted as stage 0's loop; a mutual-recursion group
 // member keeps the loop context for its tail self-call arguments but stays a call until the
 // group dispatch is ported.
-let enterRecursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) =
+let enterRecursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) =
     withStateTcoLoop(state
     |> stateSpecializationCandidates
-    |> recursiveTcoLoop(name)(parameter)(body)(emitsLoop)(stateConstructorLayouts(state)))(state)
+    |> recursiveTcoLoop(name)(parameter)(parameterType)(body)(emitsLoop)(stateConstructorLayouts(state)))(state)
 
 let recursive isChainParameterName (name: Str) (names: List(Str)) =
     match names with
@@ -12475,6 +12523,16 @@ let recursive bindChainParameterSlots (names: List(Str)) (parameter: Str) (bindi
             else bindChainParameterSlots(names)(parameter)(rest)(state)
         | _ :: rest -> bindChainParameterSlots(names)(parameter)(rest)(state)
 
+// A synthetic slot joins the loop's unread slots with its parameter's type, which the placement
+// reads in place of a binding's (stage 0's `UnreadParamSlots` beside `ParamTypes`).
+let withUnreadLoopSlot (slot: Int) (ordinal: Int) (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(loop) ->
+            match typeAtIndex(ordinal)(loop.parameterTypes) with
+                | Some(parameterType) -> withStateTcoLoop(Some((loop with unreadSlots = (slot, parameterType) :: loop.unreadSlots)))(state)
+                | None -> state
+        | None -> state
+
 // Stage 0's `LowerLambdaCoreBuildTcoParamSlots`: the back edge's parameter slots in parameter
 // order; a shadowed earlier occurrence of a duplicate name, or a parameter the body never reads,
 // gets a zeroed synthetic slot nothing observes.
@@ -12492,6 +12550,7 @@ let recursive buildLoopParameterSlots (names: List(Str)) (reversedSlots: List(In
                                     tempState
                                     |> emit(LoadConstInt(temp)(0))
                                     |> emit(StoreLocal(slot)(temp))
+                                    |> withUnreadLoopSlot(slot)(length(reversedSlots))
                                     |> buildLoopParameterSlots(rest)(slot :: reversedSlots)
 
 // The reservation slot pair of every affine accumulator, zeroed so no string matches a
@@ -12894,11 +12953,11 @@ let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
 
 // A lambda entered inside a loop function: the next curried parameter's lambda stays in the loop
 // (one fewer to enter); any other lambda is a nested closure whose body leaves it.
-let enterLambdaTcoLoop (state: CoreLoweringState) =
+let enterLambdaTcoLoop (parameterType: SemanticType) (state: CoreLoweringState) =
     match stateTcoLoop(state) with
         | Some(CoreTcoLoop { pendingCurried = pending } as context) ->
             if pending > 0
-            then withStateTcoLoop(Some((context with pendingCurried = pending - 1)))(state)
+            then withStateTcoLoop(Some((context with pendingCurried = pending - 1, parameterTypes = append(context.parameterTypes)([parameterType]))))(state)
             else withStateTcoLoop(None)(state)
         | None -> state
 
@@ -13268,7 +13327,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
             |> lowerFunctionBodyResolvingCalls(body)(given (entered: CoreLoweringState) ->
                 entered
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
-                |> enterLambdaTcoLoop
+                |> enterLambdaTcoLoop(parameterType)
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
                 |> withPassthroughParameter(parameter)(body)(parameterType)
                 |> predictRuntimeManagedResult("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
@@ -19032,7 +19091,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> sugarChainBody(body))(given (entered: CoreLoweringState) ->
                             entered
                             |> refreshSelfResultDeferral(name)
-                            |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
+                            |> enterRecursiveTcoLoop(name)(parameter)(parameterType)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
                             |> withPassthroughParameter(parameter)(body)(parameterType)
                             |> predictRuntimeManagedResult(label)(parameterType)

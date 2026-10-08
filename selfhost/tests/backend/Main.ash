@@ -3687,6 +3687,21 @@ let testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped u
     |> pairwiseParameterSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendPairwiseParameterOneRound")("selfhost_backend_pairwise_parameter_one_round_e2e"))
 
+// Loops whose bodies never read one of their parameters (a `Str` handed a walked head or a fresh
+// concatenation, a list handed the walked tail): the parameter's slot is placed by its declared
+// type, starts inactive with no argument to normalize, and releases each stored successor at the
+// next back edge or the exit, so the live cells are the same at one round and three.
+let unreadParameterSource rounds = "let recursive collect (n: Int) (acc: List(Str)) =\n    if n == 0\n    then acc\n    else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)\n\nlet recursive pairs (previous: Str) (acc: List(Str)) (ps: List(Str)) =\n    match ps with\n        | [] -> acc\n        | first :: rest -> pairs(first)(first :: acc)(rest)\n\nlet recursive skipLast (seen: List(Str)) (acc: List(Str)) (ps: List(Str)) =\n    match ps with\n        | [] -> acc\n        | first :: rest -> skipLast(rest)(first :: acc)(rest)\n\nlet recursive mark (label: Str) (count: Int) (ps: List(Str)) =\n    match ps with\n        | [] -> count\n        | first :: rest -> mark(first + \"!\")(count + 1)(rest)\n\nlet recursive count (xs: List(Str)) (total: Int) =\n    match xs with\n        | [] -> total\n        | _ :: tail -> count(tail)(total + 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        let parts = collect(3)([])\n        in rounds(n - 1)(total + count(pairs(Ashes.Text.fromInt(n))([])(parts))(0) + count(skipLast([])([])(parts))(0) + mark(\"\")(0)(parts))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_unread_parameter_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> unreadParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnreadParameterThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> unreadParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnreadParameterOneRound")("selfhost_backend_unread_parameter_one_round_e2e"))
+
 // The same program with no arguments at all: the walk publishes the empty list.
 let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
@@ -5892,6 +5907,7 @@ let run shipped =
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with
