@@ -23,6 +23,41 @@ public sealed partial class Lowering
             && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
             && runtimeManaged;
 
+    /// <summary>
+    /// A call through a captured self (`stepLive(base)(rest)` inside a lambda the recursive binding's
+    /// body applies) reaches a function whose body is still being lowered, so its result's placement
+    /// is not known yet. For a list only the recursive deep copy expresses, the call reads the
+    /// callee's returns bit: a reference-counted result is taken over as it is, an arena one is
+    /// copied, and the caller owns the result on both paths.
+    /// </summary>
+    private bool CapturedSelfListResultOwnedAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_CAPTUREDSELFRESULT") is not null
+            || rootExpr is not Expr.Var callee
+            || Lookup(callee.Name) is not (Binding.Env or Binding.EnvScheme)
+            || Prune(resultType) is not TypeRef.TList list
+            || CanArenaReset(Prune(list.Element))
+            || ContainsUnresolvedLayoutType(resultType, [])
+            || !CanEmitRuntimeManagedListElementDeepCopy(list.Element)
+            || !TryResolveKnownFunctionLabel(rootExpr, out string label))
+        {
+            return false;
+        }
+
+        for (int index = 1; index < argumentCount; index++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
+            {
+                return false;
+            }
+
+            label = nextLabel;
+        }
+
+        return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal);
+    }
+
     private (int Temp, TypeRef Type) LowerConsTailValue(
         Expr.Cons cons,
         LoweredValueRequest tailRequest,

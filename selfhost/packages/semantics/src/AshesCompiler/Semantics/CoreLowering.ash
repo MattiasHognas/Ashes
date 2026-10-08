@@ -14345,15 +14345,39 @@ let calleeReturnsGeneralRcOwned (context: CoreCallContext) (state: CoreLoweringS
                 | None -> false
         | _ -> false)
 
+// Stage 0's `CapturedSelfListResultOwnedAtRunTime`: a call through a captured self (the recursive
+// binding reached through a lambda's environment) reaches a body still being lowered, so for a
+// list only the recursive deep copy expresses the call reads the callee's returns bit: a
+// reference-counted result is taken over as it is, an arena one is copied, and the caller owns
+// the result on both paths.
+let capturedSelfListResultOwnedAtRunTime (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    (match context.calleeName with
+        | Some(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreEnvironment(_index) }) ->
+                    state
+                    |> stateRecursiveGroupNames
+                    |> containsLabel(name)
+                | _ -> false
+        | None -> false) && containsUnresolvedLayout(resultType)(state) == false && (match resolveType(state)(resultType) with
+        | SemList(element) ->
+            resultSurvivesReset(element)(state) == false && (match argumentCopyPlanOf(element)(state) with
+                | Some(_plan) -> true
+                | None -> false)
+        | _ -> false)
+
 let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     if hasCallCopyOut(resultType)(state)
     then (state, true, false)
     else
-        if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
-        then (state, false, false)
+        if capturedSelfListResultOwnedAtRunTime(context)(resultType)(state)
+        then (state, true, false)
         else
-            match isNormalizableUncoveredRecord(resultType)(state) with
-                | (asked, normalizable) -> (asked, normalizable, normalizable)
+            if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
+            then (state, false, false)
+            else
+                match isNormalizableUncoveredRecord(resultType)(state) with
+                    | (asked, normalizable) -> (asked, normalizable, normalizable)
 
 // The last application of a spine reads the callee's returns bit when the result's ownership
 // is not statically known and its type is read at run time, stage 0's `needsResultOwnership`.
@@ -15351,8 +15375,8 @@ let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagT
 // Stage 0's `LowerUncoveredCallResultCopyOut` deep-copy case: a list result with no call
 // copy-out, from a callee whose declared result element is one of its own quantified variables,
 // whose element does not survive the arena reset but has a deep-copy plan.
-let genericListDeepCopyPlanOf (context: CoreCallContext) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if context.resultElementQuantified
+let genericListDeepCopyPlanOf (context: CoreCallContext) (readsFlag: Bool) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if context.resultElementQuantified || readsFlag
     then
         match resolveType(state)(semanticType) with
             | SemList(element) ->
@@ -15361,6 +15385,13 @@ let genericListDeepCopyPlanOf (context: CoreCallContext) (semanticType: Semantic
                 else argumentCopyPlanOf(element)(state)
             | _ -> None
     else None
+
+// Stage 0's `LowerCallDeepCopyOutListResult` with a returns bit: the result is owned on both paths,
+// the reference-counted one taken over as it is and the arena one rebuilt with references of its own.
+let markFlaggedDeepCopyOwned (flagTemp: Int) (resultTemp: Int) (state: CoreLoweringState) =
+    if flagTemp >= 0
+    then markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
+    else state
 
 let closedCallStage (stage: CoreCallStage) (normalized: Bool) (deepCopied: Bool) (lowered: LoweredCoreValue) = stage with lowered = lowered, resultNormalized = normalized, resultDeepCopied = deepCopied
 
@@ -15688,7 +15719,7 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                                             |> success(resultTemp)(semanticType)
                                             |> closedCallStage(stage)(true)(false)
                                 | (None, _) ->
-                                    match (flagTemp >= 0 && normalizedOwned, argumentCopyPlanOf(semanticType)(allocated), genericListDeepCopyPlanOf(context)(semanticType)(allocated)) with
+                                    match (flagTemp >= 0 && normalizedOwned, argumentCopyPlanOf(semanticType)(allocated), genericListDeepCopyPlanOf(context)(flagTemp >= 0)(semanticType)(allocated)) with
                                         | (true, Some(plan), _elementPlan) ->
                                             match emitConditionalNormalizeResult(plan)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
                                                 | (closed, resultTemp) ->
@@ -15701,6 +15732,7 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                                                 | (closed, resultTemp) ->
                                                     closed
                                                     |> withStateGenericDeepCopiedListTemps(resultTemp :: stateGenericDeepCopiedListTemps(closed))
+                                                    |> markFlaggedDeepCopyOwned(flagTemp)(resultTemp)
                                                     |> success(resultTemp)(semanticType)
                                                     |> closedCallStage(stage)(true)(true)
                                         | _ ->

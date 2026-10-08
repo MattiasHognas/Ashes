@@ -13377,7 +13377,8 @@ public sealed partial class Lowering
                     && CalleeReturnsGeneralRcOwned(rootExpr, argumentCount, resultType)
                     && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
                     && !CompiledResultRuntimeManaged(rootExpr, argumentCount))
-                || IsSpecializedListResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
+                || IsSpecializedListResultOwnedAtRunTime(rootExpr, argumentCount, resultType)
+                || CapturedSelfListResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
             _ => false,
         };
 
@@ -14727,7 +14728,7 @@ public sealed partial class Lowering
                 runtimeManagedResultFlagTemp);
         }
 
-        if (calleeResultElementIsGeneric
+        if ((calleeResultElementIsGeneric || runtimeManagedResultFlagTemp >= 0)
             && Prune(callResultType) is TypeRef.TList deepCopyResultList
             && !CanArenaReset(Prune(deepCopyResultList.Element))
             && CanEmitRuntimeManagedListElementDeepCopy(deepCopyResultList.Element))
