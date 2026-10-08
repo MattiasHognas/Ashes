@@ -3884,9 +3884,10 @@ let duplicatePatternOwnerTemp (child: Expr) (temp: Int) (state: CoreLoweringStat
                     then (state, temp)
                     else
                         match freshTemp(state) with
-                            | FreshTemp { state = allocated, temp = duplicate } -> (allocated
-                            |> emit(RcDup(duplicate)(temp)(false)(false))
-                            |> forwardRuntimeTemp(temp)(duplicate), duplicate)
+                            | FreshTemp { state = allocated, temp = duplicate } ->
+                                (allocated
+                                |> emit(RcDup(duplicate)(temp)(false)(false))
+                                |> forwardRuntimeTemp(temp)(duplicate), duplicate)
                 | None -> (state, temp)
         | _ -> (state, temp)
 
@@ -13284,6 +13285,10 @@ type CoreArgumentHandOff =
     // it, with the result owned on every path: the caller keeps the reference and releases it after
     // the call unless the result is that argument, instead of giving it up for good.
     | keptWholeUnderOwnedResult: Bool
+    // Stage 0 passes the argument borrowed, so lifetime placement gives the call no compensating
+    // duplicate of an owner that stays live past it. A named binding of the contract's types is
+    // borrowed even where the hand-off itself cannot change (`borrowsOnly` skips the type test there).
+    | borrowsForPlacement: Bool
 
 // Stage 0's `IsBorrowedRetainableParameterType`: a string, or a type the parameter passthrough
 // normalizes, whose retained reference the caller can release outright.
@@ -13313,6 +13318,7 @@ let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argum
                     in
                         CoreArgumentHandOff(
                             borrowsOnly = contractBorrow || calleeBorrows,
+                            borrowsForPlacement = contractBorrow || calleeBorrows || isVariableArgument(argument) && isGeneralRcValueType(argumentType)(state),
                             fresh = fresh,
                             runtimeArgument = runtimeArgument || rootSlot != None,
                             mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
@@ -13763,7 +13769,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                                     CoreCallStage(
                                         lowered = wordState
                                         |> emit(CallClosure(target)(functionTemp)(passedTemp)(wordTemp))
-                                        |> recordBorrowedCall(handOff.borrowsOnly)(target)
+                                        |> recordBorrowedCall(handOff.borrowsForPlacement)(target)
                                         |> success(target)(resolveType(unifiedState)(resultType)),
                                         consumedArguments = consumedArgumentsWith(context)(argumentFlagTemp)(handOff)(argumentTemp)(argumentType)(handedOver)(consumed),
                                         resultFlagTemp = resultFlagTemp,
