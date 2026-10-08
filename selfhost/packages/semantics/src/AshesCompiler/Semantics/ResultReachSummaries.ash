@@ -1727,9 +1727,9 @@ let recursive addDependents (function: Str) (dependencies: List((Str, Bool))) (d
     match dependencies with
         | [] -> dependents
         | (dependency, _present) :: rest ->
-            (match Ashes.Collection.Map.getStr(dependency)(dependents) with
-                | Some(existing) -> Ashes.Collection.Map.setStr(dependency)(function :: existing)(dependents)
-                | None -> Ashes.Collection.Map.setStr(dependency)([function])(dependents)) |> addDependents(function)(rest)
+            dependents
+            |> Ashes.Collection.Map.upsertStr(dependency)([function])(given (existing: List(Str)) -> function :: existing)
+            |> addDependents(function)(rest)
 
 let recursive dependentsOf (registry: ReachRegistry) (functions: List(ReachFunction)) (dependents: MapTree(Str, List(Str))) =
     match functions with

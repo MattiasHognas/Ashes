@@ -129,25 +129,25 @@ let recursive adjacencyOf (nodes: List(ProvenanceFunctionNode)) (adj: Adjacency)
     match nodes with
         | [] -> adj
         | ProvenanceFunctionNode { functionName = name, forwardTargets = targets } :: tail ->
-            (match Ashes.Collection.Map.getStr(name)(adj) with
-                | Some(_existing) -> adj
-                | None -> Ashes.Collection.Map.setStr(name)(targets)(adj)) |> adjacencyOf(tail)
+            adj
+            |> Ashes.Collection.Map.upsertStr(name)(targets)(given (existing) -> existing)
+            |> adjacencyOf(tail)
 
 let recursive factsOf (nodes: List(ProvenanceFunctionNode)) (facts: MapTree(Str, NodeFacts)) =
     match nodes with
         | [] -> facts
         | ProvenanceFunctionNode { functionName = name, hasDirectEligibleResult = d, hasRejectedResult = r, consideredArmCount = a, directBytesProvenances = b, hasUnknownBytesResult = u } :: tail ->
-            (match Ashes.Collection.Map.getStr(name)(facts) with
-                | Some(_existing) -> facts
-                | None -> Ashes.Collection.Map.setStr(name)(NodeFacts(factDirect = d, factRejected = r, factArms = a, factBytes = b, factUnknownBytes = u))(facts)) |> factsOf(tail)
+            facts
+            |> Ashes.Collection.Map.upsertStr(name)(NodeFacts(factDirect = d, factRejected = r, factArms = a, factBytes = b, factUnknownBytes = u))(given (existing) -> existing)
+            |> factsOf(tail)
 
 let recursive unambiguousOf (nodes: List(ProvenanceFunctionNode)) (targets: MapTree(Str, Maybe(Str))) =
     match nodes with
         | [] -> targets
         | ProvenanceFunctionNode { functionName = name, unambiguousForwardTarget = unambiguous } :: tail ->
-            (match Ashes.Collection.Map.getStr(name)(targets) with
-                | Some(_existing) -> targets
-                | None -> Ashes.Collection.Map.setStr(name)(unambiguous)(targets)) |> unambiguousOf(tail)
+            targets
+            |> Ashes.Collection.Map.upsertStr(name)(unambiguous)(given (existing) -> existing)
+            |> unambiguousOf(tail)
 
 // The reverse adjacency Kosaraju's second pass walks: every function naming `target` among its
 // forward targets, in node order and once per node. Built once over the nodes in reverse, so
@@ -159,9 +159,9 @@ let recursive addPredecessor (name: Str) (targets: List(Str)) (added: NameSet) (
             if containsName(target)(added)
             then addPredecessor(name)(rest)(added)(predecessors)
             else
-                (match Ashes.Collection.Map.getStr(target)(predecessors) with
-                    | Some(existing) -> Ashes.Collection.Map.setStr(target)(name :: existing)(predecessors)
-                    | None -> Ashes.Collection.Map.setStr(target)([name])(predecessors)) |> addPredecessor(name)(rest)(Ashes.Collection.Map.setStr(target)(true)(added))
+                predecessors
+                |> Ashes.Collection.Map.upsertStr(target)([name])(given (existing) -> name :: existing)
+                |> addPredecessor(name)(rest)(Ashes.Collection.Map.setStr(target)(true)(added))
 
 let recursive predecessorsOf (reversedNodes: List(ProvenanceFunctionNode)) (predecessors: Adjacency) =
     match reversedNodes with
@@ -238,9 +238,9 @@ let recursive addMemberIds (members: List(Str)) (currentId: Int) (ids: MapTree(S
     match members with
         | [] -> ids
         | member :: rest ->
-            (match Ashes.Collection.Map.getStr(member)(ids) with
-                | Some(_existing) -> ids
-                | None -> Ashes.Collection.Map.setStr(member)(currentId)(ids)) |> addMemberIds(rest)(currentId)
+            ids
+            |> Ashes.Collection.Map.upsertStr(member)(currentId)(given (existing) -> existing)
+            |> addMemberIds(rest)(currentId)
 
 let recursive componentIdsOf (components: List(List(Str))) (currentId: Int) (ids: MapTree(Str, Int)) =
     match components with

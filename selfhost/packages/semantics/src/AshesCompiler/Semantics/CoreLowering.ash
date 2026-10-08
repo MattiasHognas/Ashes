@@ -27037,12 +27037,12 @@ let recursive reachSummariesByName (summaries: List(ReachSummary)) (byName: MapT
     match summaries with
         | [] -> byName
         | (ReachSummary { function = ReachFunction { name = name } } as summary) :: rest ->
-            (match Ashes.Collection.Map.getStr(name)(byName) with
-                | Some(existing) ->
-                    if isTopLevelSummary(existing) || isTopLevelSummary(summary) == false
-                    then byName
-                    else Ashes.Collection.Map.setStr(name)(summary)(byName)
-                | None -> Ashes.Collection.Map.setStr(name)(summary)(byName)) |> reachSummariesByName(rest)
+            byName
+            |> Ashes.Collection.Map.upsertStr(name)(summary)(given (existing: ReachSummary) ->
+                if isTopLevelSummary(existing) || isTopLevelSummary(summary) == false
+                then existing
+                else summary)
+            |> reachSummariesByName(rest)
 
 // Seeds the state with the whole-program result-reach summaries and their two indexes.
 let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState) =
