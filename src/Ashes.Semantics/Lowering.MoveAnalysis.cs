@@ -2742,9 +2742,9 @@ public sealed partial class Lowering
 
     // The last tail of a cons that grows a list by one cell (`head :: tail`) or, a chain written
     // out, by several (`first :: separator :: acc`): the accumulator the cells are consed onto.
-    // Anything else has none. A chain grows the accumulator only when none of its heads reads a
-    // loop parameter (ClassifyTcoSelfCallArgument): such a head is placed as its parameter is,
-    // and a cell over it may have to stay in the arena.
+    // Anything else has none. A chain grows the accumulator whatever its heads read, as one cell
+    // does: a head reading a loop parameter (`first :: separator :: acc`) is retained into its
+    // reference-counted cell, which an arena cell would have kept with nothing to release it.
     private static Expr? GrownConsChainTail(Expr expression)
     {
         if (expression is not Expr.Cons cons)
@@ -2763,6 +2763,9 @@ public sealed partial class Lowering
 
     private static bool ConsChainsGrowAccumulators
         => Environment.GetEnvironmentVariable("GRC_NO_CONSCHAIN") is null;
+
+    private static bool ConsChainHeadsMayReadParameters
+        => Environment.GetEnvironmentVariable("GRC_NO_CHAINPARAMHEAD") is null;
 
     // The heads of a cons chain, outermost first.
     private static IEnumerable<Expr> ConsChainHeads(Expr expression)
@@ -2795,6 +2798,7 @@ public sealed partial class Lowering
             && parameterScope.TryGetValue(consTail.Name, out int tailParameterOrdinal)
             && tailParameterOrdinal == ordinal
             && (structural is Expr.Cons { Tail: Expr.Var }
+                || ConsChainHeadsMayReadParameters
                 || ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)))
             ? TcoSelfCallArgumentShape.GrownCons
         : expressionFreshness.TryGetValue(structural, out bool fresh) && fresh

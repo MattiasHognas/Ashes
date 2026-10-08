@@ -4418,6 +4418,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_cons_chain_head_reading_loop_parameter_memory_should_plateau()
+    {
+        // A chain consed onto a list accumulator whose heads read loop parameters, a separator passed
+        // on unchanged and the previous part, each beside a part matched out of the walked list. The
+        // accumulator is reference-counted, so the parts it retains are released with it.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildConsChainHeadReadingLoopParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 12}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons chain head reading a loop parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_exit_cell_passed_to_captured_callee_memory_should_plateau()
     {
         // The pairwise pass of `join` as first written: the exit passes its cell to a `let
@@ -11236,6 +11260,35 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(startWithLiteral([])(collect(3)([]))) + Ashes.Collection.List.length(chooseStart([])(collect(3)([]))))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildConsChainHeadReadingLoopParameterProgram(int rounds)
+        => $$"""
+            let recursive collect (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive interleave (separator: Str) (acc: List(Str)) (ps: List(Str)) =
+                match ps with
+                    | [] -> acc
+                    | first :: rest -> interleave(separator)(first :: separator :: acc)(rest)
+
+            let recursive pairs (previous: Str) (acc: List(Str)) (ps: List(Str)) =
+                match ps with
+                    | [] -> acc
+                    | first :: rest -> pairs(first)(previous :: first :: acc)(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let parts = collect(3)([])
+                    in rounds(n - 1)(total + Ashes.Collection.List.length(interleave(",")([])(parts)) + Ashes.Collection.List.length(pairs(Ashes.Text.fromInt(n))([])(parts)))
 
             0
             |> rounds({{rounds}})

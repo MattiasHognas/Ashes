@@ -338,13 +338,6 @@ let recursive shapeReadsLoopParameter (expression: Expr) (shadowed: List(Str)) (
         | [] -> false
         | parameter :: rest -> !shapeContainsName(parameter)(shadowed) && exprReadsName(parameter)(expression) || shapeReadsLoopParameter(expression)(shadowed)(rest)
 
-// A chain grows the accumulator only when none of its heads reads a loop parameter, stage 0's
-// condition in `ClassifyTcoSelfCallArgument`.
-let recursive shapeChainHeadsReadNoParameter (expression: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
-    match shapeUnspan(expression) with
-        | ExprCons(head, tail) -> !shapeReadsLoopParameter(head)(shadowed)(parameters) && shapeChainHeadsReadNoParameter(tail)(shadowed)(parameters)
-        | _ -> true
-
 let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
     match shapeUnspan(argument) with
         | ExprVar(name) ->
@@ -363,7 +356,7 @@ let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwn
                 | ExprCons(_inner, innerTail) ->
                     match shapeConsChainTail(innerTail) with
                         | ExprVar(name) ->
-                            if shapeResolveParameter(name)(shadowed)(parameters) == Some(index) && shapeChainHeadsReadNoParameter(argument)(shadowed)(parameters)
+                            if shapeResolveParameter(name)(shadowed)(parameters) == Some(index)
                             then TcoGrownConsShape
                             else TcoOtherShape
                         | last ->
