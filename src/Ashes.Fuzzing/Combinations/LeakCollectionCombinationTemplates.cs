@@ -695,3 +695,46 @@ internal sealed class MmapViewPerCallTemplate() : LeakCombinationTemplate(
             """;
     }
 }
+
+/// <summary>
+/// A builtin answering a <c>Result</c>, a <c>Maybe</c> or a tuple once per round: the result cell,
+/// its error message and the text or bytes inside are arena values (a message a constant global)
+/// that lowering never releases, so the backend must not build them as reference-counted cells.
+/// </summary>
+internal sealed class BuiltinResultsPerCallTemplate() : LeakCombinationTemplate(
+    "leak.builtin-results-per-call", "builtinResult", GeneratedFeature.Match, GeneratedFeature.Call)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string body = names.Variant("builtin", 4) switch
+        {
+            0 => """
+                match Ashes.IO.File.writeText("leak_builtin_results.txt")("hello") with
+                        | Ok(_) ->
+                            match Ashes.IO.File.readText("leak_builtin_results.txt") with
+                                | Ok(text) -> Ashes.Text.byteLength(text) + seed
+                                | Error(message) -> Ashes.Text.byteLength(message) + seed
+                        | Error(_message) -> seed
+                """,
+            1 => """
+                match Ashes.IO.Environment.get("HOME") with
+                        | Ok(Some(value)) -> Ashes.Text.byteLength(value) + seed
+                        | Ok(None) -> seed
+                        | Error(message) -> Ashes.Text.byteLength(message) + seed
+                """,
+            2 => """
+                match Ashes.IO.Environment.temporaryDirectory(Unit) with
+                        | Ok(directory) -> Ashes.Text.byteLength(directory) + seed
+                        | Error(message) -> Ashes.Text.byteLength(message) + seed
+                """,
+            _ => """
+                match Ashes.Byte.scanHash(Ashes.Byte.fromText("Hamburg;12.0"))(59)(0) with
+                        | (index, _hash) -> index + seed
+                """,
+        };
+        return $$"""
+            let {{names.Entry}} (seed: Int) =
+                {{body}}
+            """;
+    }
+}

@@ -180,7 +180,7 @@ let emitSpawnBuildArgv context function_ i64 i8 ptrType builder arena mallocFn m
 // `fork` and both sides: the child rewires its stdio over the pipe ends and `execve`s with the
 // parent environment (`__ashes_envp`, captured by the entry function from the initial stack); the
 // parent closes the child-side ends and wraps `{stdinW, stdoutR, stderrR, pid}` in `Ok`.
-let emitSpawnForkExec context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType envpGlobal scratch exeCstr fds =
+let emitSpawnForkExec context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType envpGlobal scratch exeCstr fds =
     match fds with
         | (stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd) ->
             let childBlock = appendBasicBlock(context)(function_)("spawn_child")
@@ -228,14 +228,14 @@ let emitSpawnForkExec context function_ i64 i8 ptrType builder mallocFn mallocTy
                                         buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(pid)(constInt(i64)(0u64)(false))("spawn_fork_failed_flag"))(forkFailedBlock)(parentBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(forkFailedBlock))
                                     |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(processSpawnForkFailedCodes)("spawn_fork_err_msg"))("spawn_fork_err"))(scratch.spawnResultSlot))
+                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(processSpawnForkFailedCodes)("spawn_fork_err_msg"))("spawn_fork_err"))(scratch.spawnResultSlot))
                                     |> (given (_) -> buildBr(builder)(spawnDoneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(parentBlock))
                                     |> (given (_) -> emitLinuxClose(builder)(i64)(stdinReadFd))
                                     |> (given (_) -> emitLinuxClose(builder)(i64)(stdoutWriteFd))
                                     |> (given (_) -> emitLinuxClose(builder)(i64)(stderrWriteFd))
                                     |> (given (_) ->
-                                        emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(constInt(i64)(32u64)(false))("spawn_proc"))
+                                        buildIntToPtr(builder)(emitArenaAlloc(context)(function_)(builder)(i64)(arena)(32)("spawn_proc"))(ptrType)("spawn_proc_ptr"))
                                     |> (given (procPtr) ->
                                         procPtr
                                         |> buildStore(builder)(stdinWriteFd)
@@ -253,7 +253,7 @@ let emitSpawnForkExec context function_ i64 i8 ptrType builder mallocFn mallocTy
                                             |> buildStore(builder)(pid))
                                         |> (given (_) -> buildPtrToInt(builder)(procPtr)(i64)("spawn_proc_ref")))
                                     |> (given (procRef) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(procRef)("spawn_ok"))(scratch.spawnResultSlot))
+                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(procRef)("spawn_ok"))(scratch.spawnResultSlot))
                                     |> (given (_) -> buildBr(builder)(spawnDoneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(spawnDoneBlock))
                                     |> (given (_) -> buildLoad(builder)(i64)(scratch.spawnResultSlot)("spawn_result_value"))
@@ -288,7 +288,7 @@ let emitSpawnProcess context function_ i64 i8 i32 ptrType builder arena mallocFn
                                     match emitProcessPipeFds(builder)(i64)(i8)(i32)(scratch.spawnStdoutPipe)("spawn_stdout") with
                                         | (stdoutReadFd, stdoutWriteFd) ->
                                             match emitProcessPipeFds(builder)(i64)(i8)(i32)(scratch.spawnStderrPipe)("spawn_stderr") with
-                                                | (stderrReadFd, stderrWriteFd) -> emitSpawnForkExec(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(envpGlobal)(scratch)(exeCstr)((stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd)))
+                                                | (stderrReadFd, stderrWriteFd) -> emitSpawnForkExec(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(envpGlobal)(scratch)(exeCstr)((stdinReadFd, stdinWriteFd, stdoutReadFd, stdoutWriteFd, stderrReadFd, stderrWriteFd)))
 
 // `Ashes.IO.Process.writeStdin(process)(text)`: a partial-write-safe loop over the child's stdin
 // pipe (a pipe accepts at most a buffer's worth per `write`), stopping on any non-positive
@@ -337,7 +337,7 @@ let emitProcessWriteStdin context function_ i64 i8 ptrType builder arena process
 // `EmitProcessReadLine` exactly, its own overflow panic message included. Distinct from
 // `emitReadLineFromFd` deliberately: the stdin reader mirrors stage 0's stdin path (which
 // batches through a persistent module-global ring there), this one stage 0's process path.
-let emitProcessReadLine context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType readStdout processRef =
+let emitProcessReadLine context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType readStdout processRef =
     (let prefix =
         if readStdout
         then "proc_rdout"
@@ -422,20 +422,13 @@ let emitProcessReadLine context function_ i64 i8 ptrType builder mallocFn malloc
                                                                             |> (given (_) -> positionBuilderAtEnd(builder)(finishSomeBlock))
                                                                             |> (given (_) -> buildLoad(builder)(i64)(lenSlot)(prefix + "_final_len"))
                                                                             |> (given (finalLen) ->
-                                                                                emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(buffer)(i64)(prefix + "_buf_addr"))(finalLen)(prefix + "_string"))
-                                                                            |> (given (stringRef) ->
-                                                                                let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)(prefix + "_some")
-                                                                                in
-                                                                                    let _ =
-                                                                                        prefix + "_some_field"
-                                                                                        |> gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(someValue)(ptrType)(prefix + "_some_ptr"))(8)
-                                                                                        |> buildStore(builder)(stringRef)
-                                                                                    in someValue)
+                                                                                emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(buffer)(i64)(prefix + "_buf_addr"))(finalLen)(prefix + "_string"))
+                                                                            |> (given (stringRef) -> emitArenaSome(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(stringRef)(prefix + "_some"))
                                                                             |> (given (someValue) -> buildStore(builder)(someValue)(resultSlot))
                                                                             |> (given (_) -> buildBr(builder)(continueBlock))
                                                                             |> (given (_) -> positionBuilderAtEnd(builder)(returnNoneBlock))
                                                                             |> (given (_) ->
-                                                                                buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)(prefix + "_none"))(resultSlot))
+                                                                                buildStore(builder)(emitArenaNone(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(prefix + "_none"))(resultSlot))
                                                                             |> (given (_) -> buildBr(builder)(continueBlock))
                                                                             |> (given (_) -> positionBuilderAtEnd(builder)(overflowBlock))
                                                                             |> (given (_) -> emitProcessPanicMessage(builder)(i64)(i8)(processReadLineTooLongCodes)(prefix))

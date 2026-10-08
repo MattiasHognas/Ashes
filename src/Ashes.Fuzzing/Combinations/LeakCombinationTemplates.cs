@@ -39,6 +39,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new PatternStringTestedByCurriedCallTemplate());
         registry.Register(new PatternListPassedToBorrowingCallTemplate());
         registry.Register(new MmapViewPerCallTemplate());
+        registry.Register(new BuiltinResultsPerCallTemplate());
         registry.Register(new GenericPairPruningTemplate());
         registry.Register(new HeaderTupleDestructuredTemplate());
         registry.Register(new TupleStateSuccessorTemplate());

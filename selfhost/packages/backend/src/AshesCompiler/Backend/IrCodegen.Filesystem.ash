@@ -319,7 +319,7 @@ let emitReadLineReadAndInspect i64 i8 builder fd scratch blocks =
 // `finishSomeBlock` copies the buffer into a fresh heap string and wraps it, `returnNoneBlock`
 // stores `None`, and `overflowBlock` panics — all four store into `resultSlot` (or never return)
 // and jump to `continueBlock`.
-let emitReadLineFinish i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType scratch blocks =
+let emitReadLineFinish context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType scratch blocks =
     (let _ = positionBuilderAtEnd(builder)(blocks.eofBlock)
     in
         let lenAtEof = buildLoad(builder)(i64)(scratch.lenSlot)("read_line_len_at_eof")
@@ -333,28 +333,23 @@ let emitReadLineFinish i64 i8 ptrType builder mallocFn mallocType memcpyFn memcp
                     in
                         let finalLen = buildLoad(builder)(i64)(scratch.lenSlot)("read_line_final_len")
                         in
-                            let stringRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch.bufferAddr)(finalLen)("read_line_string")
+                            let stringRef = emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(scratch.bufferAddr)(finalLen)("read_line_string")
                             in
-                                let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("read_line_some")
+                                let someValue = emitArenaSome(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(stringRef)("read_line_some")
                                 in
-                                    let someFieldPtr =
-                                        gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(someValue)(ptrType)("read_line_some_ptr"))(8)("read_line_some_field_ptr")
+                                    let _ = buildStore(builder)(someValue)(scratch.resultSlot)
                                     in
-                                        let _ = buildStore(builder)(stringRef)(someFieldPtr)
+                                        let _ = buildBr(builder)(blocks.continueBlock)
                                         in
-                                            let _ = buildStore(builder)(someValue)(scratch.resultSlot)
+                                            let _ = positionBuilderAtEnd(builder)(blocks.returnNoneBlock)
                                             in
-                                                let _ = buildBr(builder)(blocks.continueBlock)
+                                                let _ =
+                                                    buildStore(builder)(emitArenaNone(context)(function_)(builder)(i64)(i8)(ptrType)(arena)("read_line_none"))(scratch.resultSlot)
                                                 in
-                                                    let _ = positionBuilderAtEnd(builder)(blocks.returnNoneBlock)
+                                                    let _ = buildBr(builder)(blocks.continueBlock)
                                                     in
-                                                        let _ =
-                                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("read_line_none"))(scratch.resultSlot)
-                                                        in
-                                                            let _ = buildBr(builder)(blocks.continueBlock)
-                                                            in
-                                                                let _ = positionBuilderAtEnd(builder)(blocks.overflowBlock)
-                                                                in emitReadLinePanicMessage(builder)(i64)(i8))
+                                                        let _ = positionBuilderAtEnd(builder)(blocks.overflowBlock)
+                                                        in emitReadLinePanicMessage(builder)(i64)(i8))
 
 // `Ashes.IO.readLine`: one line from stdin as `Option(Str)`, `None` only at EOF with nothing left
 // unread. Bytes are read one at a time via a raw `read` syscall (no read-ahead buffering — stage
@@ -365,7 +360,7 @@ let emitReadLineFinish i64 i8 ptrType builder mallocFn mallocType memcpyFn memcp
 // fixed 64 KiB stack buffer — safe even inside a `musttail`-driven loop, since each call's frame
 // (and its alloca) is reused by the very next tail call rather than piling up. A line at or past
 // that capacity panics rather than silently truncating, matching stage 0's own overflow contract.
-let emitReadLineFromFd context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType fd =
+let emitReadLineFromFd context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType fd =
     (let scratch = emitReadLineScratch(builder)(i64)(i8)
     in
         let blocks = emitReadLineBlocks(context)(function_)
@@ -374,14 +369,14 @@ let emitReadLineFromFd context function_ i64 i8 ptrType builder mallocFn mallocT
             |> buildStore(builder)(constInt(i64)(0u64)(false))
             |> (given (_) -> buildBr(builder)(blocks.loopBlock))
             |> (given (_) -> emitReadLineReadAndInspect(i64)(i8)(builder)(fd)(scratch)(blocks))
-            |> (given (_) -> emitReadLineFinish(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch)(blocks))
+            |> (given (_) -> emitReadLineFinish(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch)(blocks))
             |> (given (_) -> positionBuilderAtEnd(builder)(blocks.continueBlock))
             |> (given (_) -> buildLoad(builder)(i64)(scratch.resultSlot)("read_line_result_value")))
 
-let emitReadLine context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType =
+let emitReadLine context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType =
     false
     |> constInt(i64)(0u64)
-    |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+    |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
 
 let emitUtf8ByteInRange builder i64 byteVal minVal maxVal name =
     buildAnd(builder)(buildICmp(builder)(intPredicateUge)(byteVal)(constInt(i64)(Ashes.Number.UInt.fromInt64(minVal))(false))(name + "_ge"))(buildICmp(builder)(intPredicateUle)(byteVal)(constInt(i64)(Ashes.Number.UInt.fromInt64(maxVal))(false))(name + "_le"))(name)
@@ -553,7 +548,7 @@ let emitFilesystemStatusResult context function_ i64 i8 ptrType builder arena ma
                     |> (given (_) -> buildBr(builder)(continueBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                     |> (given (_) ->
-                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(codes)(prefix + "_error_msg"))(prefix + "_error"))(resultSlot))
+                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(codes)(prefix + "_error_msg"))(prefix + "_error"))(resultSlot))
                     |> (given (_) -> buildBr(builder)(continueBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_status_value")))
@@ -1039,11 +1034,11 @@ let emitDirectoryEntriesResultBlocks context function_ prefix =
     )
 
 // The success half of the result build: walk the sorted array from the end so each prepend leaves
-// `array[0]` at the final list's head, copying every C-string name into a fresh RC-managed `Str`
-// and every cons cell into a fresh RC-managed 16-byte `[head][tail]` payload (the same layout
-// `BytesFromList`'s reading side documents: `nil` is `0`, `cons` is head at `+0`/tail at `+8`
-// past an ordinary RC header). Each name copy and finally the array itself go back to `free`.
-let emitDirectoryEntriesBuildList builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType freeFn freeType dirExt array listSlot indexSlot resultSlot blocks prefix =
+// `array[0]` at the final list's head, copying every C-string name into an arena `Str` and every
+// cons cell into a 16-byte arena `[head][tail]` block (`nil` is `0`), as stage 0's
+// `EmitDirectoryEntriesResult` places them. Each name copy and finally the array itself go back
+// to `free`.
+let emitDirectoryEntriesBuildList context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType freeFn freeType dirExt array listSlot indexSlot resultSlot blocks prefix =
     (let nextIndex =
         blocks.deBuildCheckBlock
         |> positionBuilderAtEnd(builder)
@@ -1061,9 +1056,10 @@ let emitDirectoryEntriesBuildList builder i64 i8 ptrType mallocFn mallocType mem
                 prefix + "_name_len"
                 |> buildCall(builder)(dirExt.strlenType)(dirExt.strlenFn)([namePtr])(1u32)
                 |> (given (nameLen) ->
-                    emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(namePtr)(i64)(prefix + "_name_addr"))(nameLen)(prefix + "_string"))
+                    emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(namePtr)(i64)(prefix + "_name_addr"))(nameLen)(prefix + "_string"))
             in
-                let consPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)(prefix + "_cons")
+                let consPtr =
+                    buildIntToPtr(builder)(emitArenaAlloc(context)(function_)(builder)(i64)(arena)(16)(prefix + "_cons"))(ptrType)(prefix + "_cons_ptr")
                 in
                     consPtr
                     |> buildStore(builder)(stringRef)
@@ -1079,12 +1075,12 @@ let emitDirectoryEntriesBuildList builder i64 i8 ptrType mallocFn mallocType mem
                     |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deOkBlock))
                     |> (given (_) -> buildCall(builder)(freeType)(freeFn)([array])(1u32)(""))
                     |> (given (_) ->
-                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(buildLoad(builder)(i64)(listSlot)(prefix + "_list"))(prefix + "_ok"))(resultSlot))
+                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(buildLoad(builder)(i64)(listSlot)(prefix + "_list"))(prefix + "_ok"))(resultSlot))
                     |> (given (_) -> buildBr(builder)(blocks.deDoneBlock)))
 
 // The failure half: free every collected name copy and the array, then pick between the two error
 // texts on the stored status (`2` marks the invalid-UTF-8 case).
-let emitDirectoryEntriesCleanup builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType freeFn freeType array status indexSlot resultSlot blocks prefix =
+let emitDirectoryEntriesCleanup context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType freeFn freeType array status indexSlot resultSlot blocks prefix =
     (let cleanupNext =
         blocks.deCleanupCheckBlock
         |> positionBuilderAtEnd(builder)
@@ -1102,12 +1098,12 @@ let emitDirectoryEntriesCleanup builder i64 i8 ptrType mallocFn mallocType memcp
         |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deErrorBlock))
         |> (given (_) -> buildCall(builder)(freeType)(freeFn)([array])(1u32)(""))
         |> (given (_) ->
-            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(buildSelect(builder)(buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(2u64)(false))(prefix + "_invalid_utf8"))(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryEntriesInvalidUtf8Codes)(prefix + "_invalid_msg"))(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryEntriesFailedCodes)(prefix + "_failed_msg"))(prefix + "_error_text"))(prefix + "_error"))(resultSlot))
+            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(buildSelect(builder)(buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(2u64)(false))(prefix + "_invalid_utf8"))(emitAsciiLiteralString(context)(builder)(i64)(i8)(directoryEntriesInvalidUtf8Codes)(prefix + "_invalid_msg"))(emitAsciiLiteralString(context)(builder)(i64)(i8)(directoryEntriesFailedCodes)(prefix + "_failed_msg"))(prefix + "_error_text"))(prefix + "_error"))(resultSlot))
         |> (given (_) -> buildBr(builder)(blocks.deDoneBlock)))
 
 // The result build: sort the collected names deterministically (`qsort` + the `strcmp` comparator
 // trampoline), then either the list build or the cleanup/error path, converging on `deDoneBlock`.
-let emitDirectoryEntriesResult context function_ i64 i8 i32 ptrType builder mallocFn mallocType memcpyFn memcpyType freeFn freeType dirExt compareFn arraySlot countSlot statusSlot finishBlock prefix =
+let emitDirectoryEntriesResult context function_ i64 i8 i32 ptrType builder arena mallocFn mallocType memcpyFn memcpyType freeFn freeType dirExt compareFn arraySlot countSlot statusSlot finishBlock prefix =
     (let blocks = emitDirectoryEntriesResultBlocks(context)(function_)(prefix)
     in
         let array =
@@ -1133,8 +1129,8 @@ let emitDirectoryEntriesResult context function_ i64 i8 i32 ptrType builder mall
                                 |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deSortBlock))
                                 |> (given (_) -> buildCall(builder)(dirExt.qsortType)(dirExt.qsortFn)([array, count, constInt(i64)(8u64)(false), compareFn])(4u32)(""))
                                 |> (given (_) -> buildBr(builder)(blocks.deBuildCheckBlock))
-                                |> (given (_) -> emitDirectoryEntriesBuildList(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(dirExt)(array)(listSlot)(indexSlot)(resultSlot)(blocks)(prefix))
-                                |> (given (_) -> emitDirectoryEntriesCleanup(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(array)(status)(indexSlot)(resultSlot)(blocks)(prefix))
+                                |> (given (_) -> emitDirectoryEntriesBuildList(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(dirExt)(array)(listSlot)(indexSlot)(resultSlot)(blocks)(prefix))
+                                |> (given (_) -> emitDirectoryEntriesCleanup(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(array)(status)(indexSlot)(resultSlot)(blocks)(prefix))
                                 |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deDoneBlock))
                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result")))
 
@@ -1185,7 +1181,7 @@ let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder 
                                                     prefix
                                                     |> emitDirectoryEntriesLoop(context)(function_)(i64)(i8)(i32)(ptrType)(builder)(dirExt)(appendFn)(appendFnType)(arraySlot)(countSlot)(statusSlot)(dir)(loopBlock)(closeBlock)
                                                     |> (given (_) -> emitDirectoryEntriesClose(builder)(i64)(i32)(ptrType)(dirExt)(dir)(statusSlot)(closeBlock)(finishBlock)(prefix))
-                                                    |> (given (_) -> emitDirectoryEntriesResult(context)(function_)(i64)(i8)(i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(dirExt)(compareFn)(arraySlot)(countSlot)(statusSlot)(finishBlock)(prefix)))
+                                                    |> (given (_) -> emitDirectoryEntriesResult(context)(function_)(i64)(i8)(i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(dirExt)(compareFn)(arraySlot)(countSlot)(statusSlot)(finishBlock)(prefix)))
 
 // `Ashes.IO.Directory.removeTree(path)`: `lstat` first — a missing path is `Ok(Unit)` only when
 // `errno` says `ENOENT`, anything else is a real failure — then libc's `nftw` post-order walk
@@ -1268,19 +1264,19 @@ let emitFileOpen context function_ i64 i8 ptrType builder arena mallocFn mallocT
                         |> buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(fd)(constInt(i64)(0u64)(false))("file_open_failed"))(errorBlock)
                         |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                         |> (given (_) ->
-                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(fd)("file_open_ok_result"))(resultSlot))
+                            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(fd)("file_open_ok_result"))(resultSlot))
                         |> (given (_) -> buildBr(builder)(continueBlock))
                         |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                         |> (given (_) ->
-                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileOpenErrorCodes)("file_open_error_msg"))("file_open_error_result"))(resultSlot))
+                            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(fileOpenErrorCodes)("file_open_error_msg"))("file_open_error_result"))(resultSlot))
                         |> (given (_) -> buildBr(builder)(continueBlock))
                         |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                         |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("file_open_result_value")))
 
 // `Ashes.IO.File.readChunk(handle)(count)`: one `read` syscall of up to `count` bytes into a fresh
-// RC string sized by the caller's count; `n < 0` is `Error`, `n == 0` (EOF) an empty-string `Ok`,
+// arena string sized by the caller's count; `n < 0` is `Error`, `n == 0` (EOF) an empty-string `Ok`,
 // exactly stage 0's `EmitFileReadChunk`.
-let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType handleVal countVal =
+let emitFileReadChunk context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType handleVal countVal =
     (let resultSlot = buildEntryAlloca(builder)(i64)("file_chunk_result")
     in
         let okBlock = appendBasicBlock(context)(function_)("file_chunk_ok")
@@ -1292,7 +1288,7 @@ let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocTy
                     let payloadPtr =
                         "file_chunk_payload_size"
                         |> buildAdd(builder)(countVal)(constInt(i64)(8u64)(false))
-                        |> (given (payloadSize) -> emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(payloadSize)("file_chunk"))
+                        |> (given (payloadSize) -> emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(false)(payloadSize)("file_chunk"))
                     in
                         let stringRef = buildPtrToInt(builder)(payloadPtr)(i64)("file_chunk_string")
                         in
@@ -1306,11 +1302,11 @@ let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocTy
                                 |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                                 |> (given (_) -> buildStore(builder)(nRead)(payloadPtr))
                                 |> (given (_) ->
-                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(stringRef)("file_chunk_ok_result"))(resultSlot))
+                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(stringRef)("file_chunk_ok_result"))(resultSlot))
                                 |> (given (_) -> buildBr(builder)(continueBlock))
                                 |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                                 |> (given (_) ->
-                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileReadChunkErrorCodes)("file_chunk_error_msg"))("file_chunk_error_result"))(resultSlot))
+                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(fileReadChunkErrorCodes)("file_chunk_error_msg"))("file_chunk_error_result"))(resultSlot))
                                 |> (given (_) -> buildBr(builder)(continueBlock))
                                 |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("file_chunk_result_value")))
@@ -1321,7 +1317,7 @@ let emitFileClose context function_ builder i64 i8 ptrType arena mallocFn malloc
     handleVal
     |> emitLinuxClose(builder)(i64)
     |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)("file_close_unit"))
-    |> (given (unitValue) -> emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(unitValue)("file_close_ok"))
+    |> (given (unitValue) -> emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(unitValue)("file_close_ok"))
 
 // "Ashes.IO.File.readText() failed" — stage 0's `FileReadFailedMessage`, shared by `readText`,
 // `readAllBytes`, and `mmap` exactly as stage 0 shares the one constant across the read family.
@@ -1419,13 +1415,13 @@ let emitFileReadMeasure builder i64 fd capped blocks prefix =
 // `readAllocBlock`: a fresh RC payload of `length + 8` bytes with the length word stored up front.
 // The read loop then fills `[stringRef + 8, stringRef + 8 + length)` one `read` at a time until
 // `remaining` hits zero; `n <= 0` (error or premature EOF) bails to `readCloseErrorBlock`.
-let emitFileReadLoop builder i64 i8 mallocFn mallocType fd length remainingSlot cursorSlot blocks prefix =
+let emitFileReadLoop context function_ builder i64 i8 ptrType arena mallocFn mallocType fd length remainingSlot cursorSlot blocks prefix =
     (let _ = positionBuilderAtEnd(builder)(blocks.readAllocBlock)
     in
         let payloadPtr =
             prefix + "_payload_size"
             |> buildAdd(builder)(length)(constInt(i64)(8u64)(false))
-            |> (given (payloadSize) -> emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(payloadSize)(prefix))
+            |> (given (payloadSize) -> emitPlacedPayloadPtrDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(false)(payloadSize)(prefix))
         in
             let stringRef = buildPtrToInt(builder)(payloadPtr)(i64)(prefix + "_string")
             in
@@ -1463,7 +1459,7 @@ let emitFileReadLoop builder i64 i8 mallocFn mallocType fd length remainingSlot 
 // `readFinishBlock`: `readText` validates the payload as UTF-8 before wrapping it (`readInvalidBlock`
 // closes the fd and reports stage 0's invalid-UTF-8 message); `readAllBytes` wraps unconditionally.
 // Every error path funnels through `readCloseErrorBlock` (close, then the shared read-failed message).
-let emitFileReadFinish context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType fd validateUtf8 stringRef length resultSlot blocks prefix =
+let emitFileReadFinish context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType fd validateUtf8 stringRef length resultSlot blocks prefix =
     (let _ = positionBuilderAtEnd(builder)(blocks.readFinishBlock)
     in
         let _ =
@@ -1480,19 +1476,19 @@ let emitFileReadFinish context function_ i64 i8 ptrType builder mallocFn mallocT
             |> positionBuilderAtEnd(builder)
             |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
             |> (given (_) ->
-                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(stringRef)(prefix + "_ok_result"))(resultSlot))
+                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(stringRef)(prefix + "_ok_result"))(resultSlot))
             |> (given (_) -> buildBr(builder)(blocks.readContinueBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(blocks.readInvalidBlock))
             |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
             |> (given (_) ->
-                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileReadInvalidUtf8Codes)(prefix + "_invalid_msg"))(prefix + "_invalid_result"))(resultSlot))
+                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(fileReadInvalidUtf8Codes)(prefix + "_invalid_msg"))(prefix + "_invalid_result"))(resultSlot))
             |> (given (_) -> buildBr(builder)(blocks.readContinueBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(blocks.readCloseErrorBlock))
             |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
             |> (given (_) -> buildBr(builder)(blocks.readErrorBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(blocks.readErrorBlock))
             |> (given (_) ->
-                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileReadFailedCodes)(prefix + "_error_msg"))(prefix + "_error_result"))(resultSlot))
+                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(fileReadFailedCodes)(prefix + "_error_msg"))(prefix + "_error_result"))(resultSlot))
             |> (given (_) -> buildBr(builder)(blocks.readContinueBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(blocks.readContinueBlock))
             |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
@@ -1513,8 +1509,8 @@ let emitFileReadWhole context function_ i64 i8 ptrType builder arena mallocFn ma
                     in
                         let length = emitFileReadMeasure(builder)(i64)(fd)(validateUtf8)(blocks)(prefix)
                         in
-                            let stringRef = emitFileReadLoop(builder)(i64)(i8)(mallocFn)(mallocType)(fd)(length)(remainingSlot)(cursorSlot)(blocks)(prefix)
-                            in emitFileReadFinish(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fd)(validateUtf8)(stringRef)(length)(resultSlot)(blocks)(prefix))
+                            let stringRef = emitFileReadLoop(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(fd)(length)(remainingSlot)(cursorSlot)(blocks)(prefix)
+                            in emitFileReadFinish(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fd)(validateUtf8)(stringRef)(length)(resultSlot)(blocks)(prefix))
 
 let emitFileReadText context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef = emitFileReadWhole(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)(pathRef)("file_read_text")
 

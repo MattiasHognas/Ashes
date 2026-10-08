@@ -142,6 +142,7 @@ export (
     value getInlineAsm,
     value buildAlloca,
     value buildEntryAlloca,
+    value builderModule,
     value buildStore,
     value buildLoad,
     value setVolatile,
@@ -267,6 +268,7 @@ external LLVMGetInlineAsm(LLVMTypeRef, Str, u64, Str, u64, Bool, Bool, u32, Bool
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
 external LLVMGetInsertBlock(LLVMBuilderRef) -> LLVMBasicBlockRef = "LLVMGetInsertBlock@libLLVM.so"
 external LLVMGetBasicBlockParent(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetBasicBlockParent@libLLVM.so"
+external LLVMGetGlobalParent(LLVMValueRef) -> LLVMModuleRef = "LLVMGetGlobalParent@libLLVM.so"
 external LLVMGetEntryBasicBlock(LLVMValueRef) -> LLVMBasicBlockRef = "LLVMGetEntryBasicBlock@libLLVM.so"
 external LLVMGetFirstInstruction(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetFirstInstruction@libLLVM.so"
 external LLVMPositionBuilder(LLVMBuilderRef, LLVMBasicBlockRef, LLVMValueRef) -> void = "LLVMPositionBuilder@libLLVM.so"
@@ -572,6 +574,13 @@ let buildAlloca builder type_ name = LLVMBuildAlloca(builder)(type_)(name)
 let getInsertBlock builder = LLVMGetInsertBlock(builder)
 
 let getBasicBlockParent block = LLVMGetBasicBlockParent(block)
+
+// The module owning the function the builder is positioned in.
+let builderModule builder =
+    builder
+    |> getInsertBlock
+    |> getBasicBlockParent
+    |> (given (function_) -> LLVMGetGlobalParent(function_))
 
 let getEntryBasicBlock function = LLVMGetEntryBasicBlock(function)
 

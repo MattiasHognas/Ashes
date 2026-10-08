@@ -3657,6 +3657,21 @@ let testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
     |> mmapViewSource
     |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMmapViewOneRound")("selfhost_backend_mmap_view_one_round_e2e"))
 
+// A loop writing, reading back and looking up an environment variable once per round: each
+// builtin's `Result`, the `Maybe` inside `Environment.get`'s, the read text and the value are
+// arena values as stage 0 builds them, not reference-counted cells no release reaches, so the
+// live cells are the same at one round and three.
+let builtinResultsSource rounds = "let recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        match Ashes.IO.File.writeText(\"selfhost_backend_builtin_results.txt\")(\"x\") with\n            | Error(_message) -> rounds(n - 1)(total)\n            | Ok(_written) ->\n                match Ashes.IO.File.readText(\"selfhost_backend_builtin_results.txt\") with\n                    | Error(_message) -> rounds(n - 1)(total)\n                    | Ok(text) ->\n                        match Ashes.IO.Environment.get(\"HOME\") with\n                            | Ok(_home) -> rounds(n - 1)(total + Ashes.Text.byteLength(text))\n                            | Error(_message) -> rounds(n - 1)(total)\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_builtin_results_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> builtinResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBuiltinResultsThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> builtinResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBuiltinResultsOneRound")("selfhost_backend_builtin_results_one_round_e2e"))
+
 // The same program with no arguments at all: the walk publishes the empty list.
 let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
@@ -5860,6 +5875,7 @@ let run shipped =
     |> testRunStaticExecutableForExternalCallModule
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

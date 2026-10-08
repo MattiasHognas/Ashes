@@ -595,10 +595,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(value)
                                             |> emitBigIntToString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(bigIntRuntimeOf(bigIntRuntime))(mallocFn)(mallocType)(freeFn)(freeType)(managed)) :: tempEnv, terminated)
-                                        | BigIntToInt(target, value, _managed) ->
+                                        | BigIntToInt(target, value, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitBigIntToInt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                            |> emitBigIntToInt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
                                         | BigIntFromString(target, value, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(value)
@@ -624,14 +624,14 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(text)
                                             |> emitTextUncons(context)(function_)(i64)(i8)(ptrType)(builder)(emitPlacedUnconsString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed))(emitPlacedUnconsTuple(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(false))(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
-                                        | TextParseInt(target, text, _managed) ->
+                                        | TextParseInt(target, text, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(text)
-                                            |> emitTextParseInt(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
-                                        | TextParseFloat(target, text, _managed) ->
+                                            |> emitTextParseInt(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
+                                        | TextParseFloat(target, text, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(text)
-                                            |> emitTextParseFloat(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                            |> emitTextParseFloat(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
                                         | BytesSingleton(target, byte, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(byte)
@@ -684,11 +684,11 @@ let codegenInstructionKind cx builder kind state =
                                         | BytesScanHash(target, bytes, needle, from) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(from)
-                                            |> emitBytesScanHash(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(needle)(tempEnv))) :: tempEnv, terminated)
-                                        | TextToHex(target, value, _managed) ->
+                                            |> emitBytesScanHash(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(lookupTemp(cx)(bytes)(tempEnv))(lookupTemp(cx)(needle)(tempEnv))) :: tempEnv, terminated)
+                                        | TextToHex(target, value, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(value)
-                                            |> emitTextToHex(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                            |> emitTextToHex(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)) :: tempEnv, terminated)
                                         | ConcatStr(target, left, right, managed) ->
                                             let result =
                                                 emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(
@@ -1253,7 +1253,7 @@ let codegenInstructionKind cx builder kind state =
                         // `Ashes.IO.readLine` — one line from stdin as `Option(Str)`, `None` only
                         // at EOF with nothing left unread.
                                         | ReadLine(target) ->
-                                            let resultValue = emitReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            let resultValue = emitReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                         // `Ashes.IO.Console` — raw stdin mode over `TCGETS`/`TCSETS`, `ppoll` on stdin,
                         // and the monotonic clock.
@@ -1267,7 +1267,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(timeout)
-                                                |> emitConsolePoll(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitConsolePoll(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | MonotonicMillis(target) ->
                                             let resultValue = emitMonotonicMillis(builder)(i64)(i8)
@@ -1310,13 +1310,13 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(count)
-                                                |> emitFileReadChunk(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(fileHandle)(tempEnv))
+                                                |> emitFileReadChunk(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(fileHandle)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileReadLine(target, fileHandle) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(fileHandle)
-                                                |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileClose(target, fileHandle) ->
                                             let resultValue =
@@ -1340,7 +1340,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(length)
-                                                |> emitCopyFfiBytes(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(pointer)(tempEnv))
+                                                |> emitCopyFfiBytes(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupTemp(cx)(pointer)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileMmap(target, path) ->
                                             let resultValue =
@@ -1390,13 +1390,13 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(process)
-                                                |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)
+                                                |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | ProcessReadStderrLine(target, process) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupTemp(cx)(process)
-                                                |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)
+                                                |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | ProcessWaitForExit(target, process) ->
                                             let resultValue =

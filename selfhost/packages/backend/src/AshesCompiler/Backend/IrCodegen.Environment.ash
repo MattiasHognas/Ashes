@@ -62,13 +62,13 @@ let emitEnvironmentRawGet context function_ builder i64 i8 ptrType arena mallocF
 
 let emitEnvironmentRawGetNamed context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType dirExt nameCodes prefix =
     prefix + "_name_str"
-    |> emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(nameCodes)
+    |> emitAsciiLiteralString(context)(builder)(i64)(i8)(nameCodes)
     |> (given (nameRef) -> emitEnvironmentRawGet(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(nameRef)(prefix))
 
 // Wrap `length` bytes at `bufferPtr` as `Ok(Str)` after a whole-buffer UTF-8 check — with `failed`
 // short-circuiting to `Error(read-failed)` and an invalid buffer landing on `Error(invalid-UTF-8)`,
 // stage 0's `EmitEnvironmentUtf8Result` block for block.
-let emitEnvironmentUtf8Result context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType bufferPtr length failed prefix =
+let emitEnvironmentUtf8Result context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType bufferPtr length failed prefix =
     (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
     in
         let validateBlock = appendBasicBlock(context)(function_)(prefix + "_validate")
@@ -89,17 +89,17 @@ let emitEnvironmentUtf8Result context function_ i64 i8 ptrType builder mallocFn 
                                 buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(valid)(constInt(i64)(0u64)(false))(prefix + "_valid"))(successBlock)(invalidBlock))
                             |> (given (_) -> positionBuilderAtEnd(builder)(successBlock))
                             |> (given (_) ->
-                                emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(bufferPtr)(i64)(prefix + "_bytes_addr"))(length)(prefix + "_string"))
+                                emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(bufferPtr)(i64)(prefix + "_bytes_addr"))(length)(prefix + "_string"))
                             |> (given (value) ->
-                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(value)(prefix + "_ok"))(resultSlot))
+                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(value)(prefix + "_ok"))(resultSlot))
                             |> (given (_) -> buildBr(builder)(doneBlock))
                             |> (given (_) -> positionBuilderAtEnd(builder)(failureBlock))
                             |> (given (_) ->
-                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentReadFailedCodes)(prefix + "_failed_msg"))(prefix + "_failed"))(resultSlot))
+                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentReadFailedCodes)(prefix + "_failed_msg"))(prefix + "_failed"))(resultSlot))
                             |> (given (_) -> buildBr(builder)(doneBlock))
                             |> (given (_) -> positionBuilderAtEnd(builder)(invalidBlock))
                             |> (given (_) ->
-                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentInvalidUtf8Codes)(prefix + "_invalid_msg"))(prefix + "_invalid"))(resultSlot))
+                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentInvalidUtf8Codes)(prefix + "_invalid_msg"))(prefix + "_invalid"))(resultSlot))
                             |> (given (_) -> buildBr(builder)(doneBlock))
                             |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                             |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
@@ -167,7 +167,7 @@ let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder ar
                 then
                     let pathCstr =
                         prefix + "_path"
-                        |> emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentProcSelfExeCodes)
+                        |> emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentProcSelfExeCodes)
                         |> (given (pathRef) -> emitStringToArenaCString(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path_c"))
                     in
                         let written = buildCall(builder)(dirExt.readlinkType)(dirExt.readlinkFn)([pathCstr, bufferPtr, constInt(i64)(4096u64)(false)])(3u32)(prefix + "_readlink")
@@ -184,7 +184,7 @@ let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder ar
                                 if wantExecutable
                                 then emitParentPathLength(context)(function_)(i64)(i8)(builder)(bufferPtr)(safeLength)(prefix + "_parent")
                                 else safeLength
-                            in emitEnvironmentUtf8Result(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferPtr)(length)(failed)(prefix))
+                            in emitEnvironmentUtf8Result(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferPtr)(length)(failed)(prefix))
 
 let emitEnvironmentCurrentDirectory context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt = emitEnvironmentPlatformDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(false)
 
@@ -192,7 +192,7 @@ let emitEnvironmentExecutableDirectory context function_ i64 i8 ptrType builder 
 
 // One candidate env value: UTF-8-validate it, append the static `suffixCodes` when non-empty
 // (`HOME` + `/.cache`), and store `Ok` — stage 0's `EmitEnvironmentFallbackValue`.
-let emitEnvironmentFallbackValue context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType valuePtr length suffixCodes resultSlot invalidBlock doneBlock prefix =
+let emitEnvironmentFallbackValue context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType valuePtr length suffixCodes resultSlot invalidBlock doneBlock prefix =
     (let validBlock = appendBasicBlock(context)(function_)(prefix + "_valid")
     in
         let value =
@@ -202,16 +202,16 @@ let emitEnvironmentFallbackValue context function_ i64 i8 ptrType builder malloc
                 buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(valid)(constInt(i64)(0u64)(false))(prefix + "_is_valid"))(validBlock)(invalidBlock))
             |> (given (_) -> positionBuilderAtEnd(builder)(validBlock))
             |> (given (_) ->
-                emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(valuePtr)(i64)(prefix + "_value_addr"))(length)(prefix + "_string"))
+                emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(valuePtr)(i64)(prefix + "_value_addr"))(length)(prefix + "_string"))
         in
             let suffixed =
                 match suffixCodes with
                     | [] -> value
-                    | _ -> emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([value, emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(suffixCodes)(prefix + "_suffix")])
+                    | _ -> emitPlacedStringConcatN(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)([value, emitAsciiLiteralString(context)(builder)(i64)(i8)(suffixCodes)(prefix + "_suffix")])
             in
                 suffixed
                 |> (given (final) ->
-                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(final)(prefix + "_ok"))(resultSlot))
+                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(final)(prefix + "_ok"))(resultSlot))
                 |> (given (_) -> buildBr(builder)(doneBlock)))
 
 // `temporaryDirectory`/`cacheDirectory`: try `preferredCodes` as an env variable; on unset/empty
@@ -244,7 +244,7 @@ let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder ar
                                             preferredOkBlock
                                             |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(preferredLength)(constInt(i64)(0u64)(false))(prefix + "_preferred_empty"))(fallbackBlock)
                                             |> (given (_) -> positionBuilderAtEnd(builder)(preferredOkBlock))
-                                            |> (given (_) -> emitEnvironmentFallbackValue(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(preferred)(preferredLength)([])(resultSlot)(invalidBlock)(doneBlock)(prefix + "_preferred")))
+                                            |> (given (_) -> emitEnvironmentFallbackValue(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(preferred)(preferredLength)([])(resultSlot)(invalidBlock)(doneBlock)(prefix + "_preferred")))
                                     in
                                         let _ = positionBuilderAtEnd(builder)(fallbackBlock)
                                         in
@@ -252,9 +252,9 @@ let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder ar
                                                 match suffixCodes with
                                                     | [] ->
                                                         prefix + "_fallback_literal"
-                                                        |> emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fallbackCodes)
+                                                        |> emitAsciiLiteralString(context)(builder)(i64)(i8)(fallbackCodes)
                                                         |> (given (literal) ->
-                                                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(literal)(prefix + "_fallback_ok"))(resultSlot))
+                                                            buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(literal)(prefix + "_fallback_ok"))(resultSlot))
                                                         |> (given (_) -> buildBr(builder)(doneBlock))
                                                     | _ ->
                                                         let fallbackValueBlock = appendBasicBlock(context)(function_)(prefix + "_fallback_value")
@@ -266,16 +266,16 @@ let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder ar
                                                                 |> buildCondBr(builder)(emitEnvironmentPtrIsNull(builder)(i64)(fallback)(prefix + "_fallback_missing"))(missingBlock)
                                                                 |> (given (_) -> positionBuilderAtEnd(builder)(fallbackValueBlock))
                                                                 |> (given (_) -> emitEnvironmentStrlen(builder)(dirExt)(fallback)(prefix + "_fallback_length"))
-                                                                |> (given (fallbackLength) -> emitEnvironmentFallbackValue(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fallback)(fallbackLength)(suffixCodes)(resultSlot)(invalidBlock)(doneBlock)(prefix + "_fallback")))
+                                                                |> (given (fallbackLength) -> emitEnvironmentFallbackValue(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fallback)(fallbackLength)(suffixCodes)(resultSlot)(invalidBlock)(doneBlock)(prefix + "_fallback")))
                                             in
                                                 missingBlock
                                                 |> positionBuilderAtEnd(builder)
                                                 |> (given (_) ->
-                                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentReadFailedCodes)(prefix + "_missing_msg"))(prefix + "_missing_err"))(resultSlot))
+                                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentReadFailedCodes)(prefix + "_missing_msg"))(prefix + "_missing_err"))(resultSlot))
                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(invalidBlock))
                                                 |> (given (_) ->
-                                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentInvalidUtf8Codes)(prefix + "_invalid_msg"))(prefix + "_invalid_err"))(resultSlot))
+                                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentInvalidUtf8Codes)(prefix + "_invalid_msg"))(prefix + "_invalid_err"))(resultSlot))
                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
@@ -310,7 +310,7 @@ let emitEnvironmentGet context function_ i64 i8 ptrType builder arena mallocFn m
                                             |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(nameLength)(constInt(i64)(0u64)(false))("env_get_empty_name"))(invalidNameBlock)
                                             |> (given (_) -> positionBuilderAtEnd(builder)(invalidNameBlock))
                                             |> (given (_) ->
-                                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentEmptyNameCodes)("env_get_empty_msg"))("env_get_empty_err"))(resultSlot))
+                                                buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentEmptyNameCodes)("env_get_empty_msg"))("env_get_empty_err"))(resultSlot))
                                             |> (given (_) -> buildBr(builder)(doneBlock))
                                             |> (given (_) -> positionBuilderAtEnd(builder)(lookupBlock))
                                             |> (given (_) -> emitEnvironmentRawGet(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(dirExt)(nameRef)("env_get"))
@@ -319,9 +319,9 @@ let emitEnvironmentGet context function_ i64 i8 ptrType builder arena mallocFn m
                                                 valueBlock
                                                 |> buildCondBr(builder)(emitEnvironmentPtrIsNull(builder)(i64)(value)("env_get_is_missing"))(missingBlock)
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(missingBlock))
-                                                |> (given (_) -> emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("env_get_none"))
+                                                |> (given (_) -> emitArenaNone(context)(function_)(builder)(i64)(i8)(ptrType)(arena)("env_get_none"))
                                                 |> (given (noneValue) ->
-                                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(noneValue)("env_get_none_ok"))(resultSlot))
+                                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(noneValue)("env_get_none_ok"))(resultSlot))
                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(valueBlock))
                                                 |> (given (_) -> emitEnvironmentStrlen(builder)(dirExt)(value)("env_get_value_length"))
@@ -330,21 +330,14 @@ let emitEnvironmentGet context function_ i64 i8 ptrType builder arena mallocFn m
                                                 |> buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(emitValidateUtf8(context)(function_)(i64)(i8)(builder)(value)(valueLength)("env_get_utf8"))(constInt(i64)(0u64)(false))("env_get_utf8_valid"))(validBlock)
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(validBlock))
                                                 |> (given (_) ->
-                                                    emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(value)(i64)("env_get_value_addr"))(valueLength)("env_get_string"))
-                                                |> (given (stringValue) ->
-                                                    let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("env_get_some")
-                                                    in
-                                                        let _ =
-                                                            "env_get_some_field"
-                                                            |> gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(someValue)(ptrType)("env_get_some_ptr"))(8)
-                                                            |> buildStore(builder)(stringValue)
-                                                        in someValue)
+                                                    emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(value)(i64)("env_get_value_addr"))(valueLength)("env_get_string"))
+                                                |> (given (stringValue) -> emitArenaSome(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(stringValue)("env_get_some"))
                                                 |> (given (someValue) ->
-                                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(someValue)("env_get_some_ok"))(resultSlot))
+                                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(someValue)("env_get_some_ok"))(resultSlot))
                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(invalidUtf8Block))
                                                 |> (given (_) ->
-                                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(environmentInvalidUtf8Codes)("env_get_invalid_msg"))("env_get_invalid_err"))(resultSlot))
+                                                    buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(environmentInvalidUtf8Codes)("env_get_invalid_msg"))("env_get_invalid_err"))(resultSlot))
                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("env_get_result_value")))
