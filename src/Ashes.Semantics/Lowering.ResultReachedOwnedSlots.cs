@@ -41,6 +41,104 @@ public sealed partial class Lowering
             && CanRuntimeManageOwnedTupleType(tuple)
             && OwnedSlotsOutOfResultReach(bodyTemp, _generalRcOwnedSlots).Count < _generalRcOwnedSlots.Count;
 
+    private static bool ArenaTupleChildMoveEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENATUPLECHILDMOVE") is null;
+
+    /// <summary>
+    /// A result built as an arena tuple whose layout was unresolved when it was built (a phantom
+    /// element read as <c>Never</c> only at the return) holds the references of the
+    /// reference-counted values freshly produced into it: the arena cell took them and can release
+    /// nothing. Once the tuple is copied onto the reference-counted heap, which takes references of
+    /// its own, those references are released, so the fresh values move into the copy.
+    /// </summary>
+    private void ReleaseFreshChildrenOfCopiedArenaTuple(int bodyTemp, TypeRef type)
+    {
+        if (!ArenaTupleChildMoveEnabled || Prune(type) is not TypeRef.TTuple tuple)
+        {
+            return;
+        }
+
+        int cell = SoleArenaCellOf(bodyTemp);
+        if (cell < 0)
+        {
+            return;
+        }
+
+        foreach (IrInst instruction in _inst.ToList())
+        {
+            if (instruction is not IrInst.StoreMemOffset { BasePtr: var basePtr, OffsetBytes: var offset, Source: var source }
+                || basePtr != cell
+                || offset % 8 != 0
+                || offset / 8 >= tuple.Elements.Count)
+            {
+                continue;
+            }
+
+            TypeRef elementType = Prune(tuple.Elements[offset / 8]);
+            if (CanArenaReset(elementType) || !IsNewlyProducedRcTemp(source))
+            {
+                continue;
+            }
+
+            int childTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(childTemp, bodyTemp, offset));
+            EmitRuntimeManagedChildDrop(childTemp, elementType);
+        }
+    }
+
+    // The arena cell a value is, directly or through the one store into a local that is not the
+    // placeholder a back edge writes; -1 otherwise.
+    private int SoleArenaCellOf(int temp)
+    {
+        IrInst? definition = DefinitionOf(temp);
+        if (definition is IrInst.Alloc { RuntimeManaged: false })
+        {
+            return temp;
+        }
+
+        if (definition is not IrInst.LoadLocal load)
+        {
+            return -1;
+        }
+
+        int cell = -1;
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.StoreLocal store || store.Slot != load.Slot)
+            {
+                continue;
+            }
+
+            IrInst? stored = DefinitionOf(store.Source);
+            if (stored is IrInst.LoadConstInt { Value: 0 })
+            {
+                continue;
+            }
+
+            if (stored is not IrInst.Alloc { RuntimeManaged: false } || cell >= 0)
+            {
+                return -1;
+            }
+
+            cell = store.Source;
+        }
+
+        return cell;
+    }
+
+    private IrInst? DefinitionOf(int temp)
+    {
+        for (int i = _inst.Count - 1; i >= 0; i--)
+        {
+            if (StateMachineTransform.GetDefinedTemps(_inst[i]).Contains(temp))
+            {
+                return _inst[i];
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// The local slots a value can have been read from or stored into: following, backwards from the temp, a
     /// slot's every store, a cell's every stored field, and every operand of any other instruction,

@@ -9522,6 +9522,103 @@ let ownedTupleResultPlan (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLo
             else None
         | _ -> None
 
+let recursive definitionOfTemp (temp: Int) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> None
+        | IrInstruction { instruction = instruction } :: rest ->
+            if instruction
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then Some(instruction)
+            else definitionOfTemp(temp)(rest)
+
+let isArenaTupleCell (instruction: Maybe(IrInstructionKind)) =
+    match instruction with
+        | Some(Alloc(_target, _size, false)) -> true
+        | _ -> false
+
+let isBackEdgePlaceholder (instruction: Maybe(IrInstructionKind)) =
+    match instruction with
+        | Some(LoadConstInt(_target, 0)) -> true
+        | _ -> false
+
+// The one arena cell stored into `slot`, the placeholder a back edge writes aside; -1 otherwise.
+let recursive soleArenaCellStoredIn (slot: Int) (instructions: List(IrInstruction)) (all: List(IrInstruction)) (cell: Int) =
+    match instructions with
+        | [] -> cell
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot != slot
+            then soleArenaCellStoredIn(slot)(rest)(all)(cell)
+            else
+                match definitionOfTemp(source)(all) with
+                    | definition ->
+                        if isBackEdgePlaceholder(definition)
+                        then soleArenaCellStoredIn(slot)(rest)(all)(cell)
+                        else
+                            if isArenaTupleCell(definition) && cell < 0
+                            then soleArenaCellStoredIn(slot)(rest)(all)(source)
+                            else -1
+        | _ :: rest -> soleArenaCellStoredIn(slot)(rest)(all)(cell)
+
+// Stage 0's `SoleArenaCellOf`: the arena cell a value is, directly or through the one store into a
+// local that is not the placeholder a back edge writes; -1 otherwise.
+let soleArenaCellOf (temp: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(temp)(state.reversedInstructions) with
+        | Some(LoadLocal(_target, slot)) -> soleArenaCellStoredIn(slot)(state.reversedInstructions)(state.reversedInstructions)(-1)
+        | definition ->
+            if isArenaTupleCell(definition)
+            then temp
+            else -1
+
+let recursive nthElementType (index: Int) (types: List(SemanticType)) =
+    match types with
+        | [] -> SemInt
+        | head :: rest ->
+            if index == 0
+            then head
+            else nthElementType(index - 1)(rest)
+
+let recursive freshTupleChildOffsets (cell: Int) (elementTypes: List(SemanticType)) (instructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = StoreMemOffset(basePtr, offset, source) } :: rest ->
+            if basePtr == cell && offset >= 0 && offset - offset / 8 * 8 == 0 && offset / 8 < length(elementTypes) && (match runtimeTempStateOf(source)(state) with
+                | Some(RuntimeNewlyProduced) -> true
+                | _ -> false)
+            then (offset, nthElementType(offset / 8)(elementTypes)) :: freshTupleChildOffsets(cell)(elementTypes)(rest)(state)
+            else freshTupleChildOffsets(cell)(elementTypes)(rest)(state)
+        | _ :: rest -> freshTupleChildOffsets(cell)(elementTypes)(rest)(state)
+
+let recursive releaseTupleChildrenAt (bodyTemp: Int) (children: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | (offset, elementType) :: rest ->
+            if resultSurvivesReset(elementType)(state)
+            then releaseTupleChildrenAt(bodyTemp)(rest)(state)
+            else
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = childTemp } ->
+                        allocated
+                        |> emit(LoadMemOffset(childTemp)(bodyTemp)(offset))
+                        |> emitOwnedValueChildDrop(childTemp)(elementType)
+                        |> releaseTupleChildrenAt(bodyTemp)(rest)
+
+// Stage 0's `ReleaseFreshChildrenOfCopiedArenaTuple`: a result built as an arena tuple whose
+// layout was unresolved when it was built holds the references of the reference-counted values
+// freshly produced into it, which the arena cell can never release. Once the tuple is copied onto
+// the reference-counted heap with references of its own, those are released: the fresh values
+// move into the copy.
+let releaseFreshChildrenOfCopiedArenaTuple (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(bodyType) with
+        | SemTuple(elementTypes) ->
+            let cell = soleArenaCellOf(bodyTemp)(state)
+            in
+                if cell < 0
+                then state
+                else
+                    releaseTupleChildrenAt(bodyTemp)(freshTupleChildOffsets(cell)(elementTypes)(reverse(state.reversedInstructions))(state))(state)
+        | _ -> state
+
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcFinishedResult(bodyTemp)(state)
     then (state, bodyTemp)
@@ -9533,7 +9630,9 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                 | Some(plan) ->
                     match if producedOwned
                     then emitOwnedResultOrCopy(bodyTemp)(plan)(state)
-                    else emitGuardedDeepCopy(bodyTemp)(plan)(state) with
+                    else
+                        match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
+                            | (copied, copyTemp) -> (releaseFreshChildrenOfCopiedArenaTuple(bodyTemp)(bodyType)(copied), copyTemp) with
                         | (copied, resultTemp) ->
                             (copied
                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)

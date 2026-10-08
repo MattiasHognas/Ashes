@@ -528,6 +528,43 @@ internal sealed class TupleResultHoldsOwnedPartTemplate() : LeakCombinationTempl
 }
 
 /// <summary>
+/// A function returns a tuple of a freshly built record, an integer and <c>None</c>, whose element
+/// type is a phantom: the tuple is built in the arena and copied onto the heap at the return, and
+/// the fresh record moves into the copy.
+/// </summary>
+internal sealed class PhantomTupleResultFreshRecordTemplate() : LeakCombinationTemplate(
+    "leak.phantom-tuple-result-fresh-record", "phantomTupleResultFreshRecord", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.Adt, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string state = names.Of("LeakState");
+        string build = names.Of("build");
+        string exit = $"({state}(counter = acc, items = [acc, acc + 1]), acc + 1, None)";
+        string body = names.Coin("loop-exit")
+            ? $$"""
+                let recursive {{build}} (n: Int) (acc: Int) =
+                    if n == 0
+                    then {{exit}}
+                    else {{build}}(n - 1)(acc + n)
+                """
+            : $$"""
+                let {{build}} (n: Int) (acc: Int) = {{exit}}
+                """;
+        return $$"""
+            type {{state}} =
+                | counter: Int
+                | items: List(Int)
+
+            {{body}}
+
+            let {{names.Entry}} (seed: Int) =
+                match {{build}}({{LeakNames.Text(names.Between(1, 4))}})(seed) with
+                    | (record, m, _h) -> record.counter + m
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>

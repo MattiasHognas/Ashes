@@ -3084,6 +3084,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_phantom_tuple_result_fresh_record_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop exits with a tuple of a fresh record, an integer and `None`. The tuple is built in
+        // the arena and copied onto the heap at the return, and the fresh record moves into the copy.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildPhantomTupleResultFreshRecordProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("phantom tuple result holding a fresh record", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_state_successor_borrows_pattern_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12406,6 +12429,29 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match summarize(State(items = [wide + "x", wide + "y"], count = n)) with
                         | (texts, _big) -> rounds(n - 1)(total + countAll(texts)(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildPhantomTupleResultFreshRecordProgram(int rounds)
+        => $$"""
+            type State =
+                | label: Str
+                | items: List(Int)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let recursive build (n: Int) (acc: Int) =
+                if n == 0
+                then (State(label = wide + Ashes.Text.fromInt(acc), items = [acc, acc + 1]), 2, None)
+                else build(n - 1)(acc + n)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match build(3)(n) with
+                        | (_state, m, _h) -> rounds(n - 1)(total + m)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

@@ -1199,9 +1199,15 @@ public sealed partial class Lowering
             WithdrawLoopParameterRetainsOfCopiedCells(bodyTemp, LoopParametersOf(loopTco));
         }
 
-        int resultTemp = contractResult && Environment.GetEnvironmentVariable("GRC_NO_KEEP") is null && (closesProducerChain || IsNewlyProducedRcTemp(bodyTemp) || IsNormalizedJoinTemp(bodyTemp))
+        bool keeps = contractResult && Environment.GetEnvironmentVariable("GRC_NO_KEEP") is null && (closesProducerChain || IsNewlyProducedRcTemp(bodyTemp) || IsNormalizedJoinTemp(bodyTemp));
+        int resultTemp = keeps
             ? EmitOwnedResultOrCopy(bodyTemp, pruned)
             : EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
+        if (!keeps)
+        {
+            ReleaseFreshChildrenOfCopiedArenaTuple(bodyTemp, pruned);
+        }
+
         MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
