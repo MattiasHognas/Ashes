@@ -12,8 +12,9 @@
 #   ./scripts/init-local-ci.sh --with-hooks   # also wire pre-commit/pre-push
 #   ./scripts/init-local-ci.sh --all          # everything
 #   ./scripts/init-local-ci.sh --skip-deps    # assume podman/just already installed
+#   ./scripts/init-local-ci.sh --with-arm64-image # also build optional ARM64 host image
 #
-# Flags: --skip-deps --skip-images --skip-provision --with-hooks --all -h
+# Flags: --skip-deps --skip-images --skip-provision --with-hooks --with-arm64-image --all -h
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,13 +23,14 @@ cd "$REPO_ROOT"
 CI_ENGINE="${CI_ENGINE:-podman}"
 
 # --- options ---------------------------------------------------------------
-do_deps=1 do_images=1 do_provision=1 do_hooks=0
+do_deps=1 do_images=1 do_provision=1 do_hooks=0 do_arm64_image=0
 for arg in "$@"; do
   case "$arg" in
     --skip-deps) do_deps=0 ;;
     --skip-images) do_images=0 ;;
     --skip-provision) do_provision=0 ;;
     --with-hooks) do_hooks=1 ;;
+    --with-arm64-image) do_arm64_image=1 ;;
     --all) do_hooks=1 ;;
     -h | --help)
       sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
@@ -58,8 +60,8 @@ need_root() { [[ -n "$SUDO" || "$(id -u)" -eq 0 ]]; }
 install_deps() {
   step "Installing host prerequisites (podman, just, rootless plumbing)"
 
-  # qemu-user-static + binfmt let the arm64 CI leg run a genuine aarch64 container
-  # under emulation (see ensure_binfmt / docs/md/guide/local-ci.md).
+  # qemu-user-static + binfmt execute ARM64 outputs from the native x64 compiler.
+  # The full ARM64 compiler container is optional (just images-arm64).
   if have pacman; then
     need_root || die "need root/sudo to install packages"
     $SUDO pacman -S --needed --noconfirm podman just slirp4netns fuse-overlayfs shadow qemu-user-static qemu-user-static-binfmt || die "pacman install failed"
@@ -111,10 +113,9 @@ verify_engine() {
 }
 
 # --- arm64 binfmt handler --------------------------------------------------
-# The arm64 CI leg runs a real aarch64 container, emulated by the host's
-# qemu-aarch64 binfmt_misc handler. The handler MUST carry the F (fix-binary)
-# flag — that's what lets emulation reach into the container and survive the
-# compiler's nested exec of its arm64 output. See docs/md/guide/local-ci.md.
+# The x64 CI container runs generated ARM64 executables through the host's
+# qemu-aarch64 binfmt_misc handler. The F (fix-binary) flag makes the host
+# interpreter available inside the container. See docs/md/guide/local-ci.md.
 binfmt_ok() {
   local h=/proc/sys/fs/binfmt_misc/qemu-aarch64
   [[ -r "$h" ]] && grep -q '^flags:.*F' "$h"
@@ -148,6 +149,12 @@ if [[ "$do_images" == 1 ]]; then
   step "Building runner images (just images)"
   just images
   ok "images built"
+fi
+
+if [[ "$do_arm64_image" == 1 ]]; then
+  step "Building optional ARM64-host image (just images-arm64)"
+  just images-arm64
+  ok "ARM64-host image built"
 fi
 
 if [[ "$do_provision" == 1 ]]; then

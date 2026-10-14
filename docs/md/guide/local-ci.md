@@ -8,8 +8,8 @@ steps in `.github/workflows/{pull-request,push-to-main,release}.yaml`.
 
 - GitHub Actions runs are slow and tie CI to GitHub.
 - Local runs give a fast inner loop and decouple CI from the git host.
-- Each architecture runs in its own image: **linux-x64** natively, **linux-arm64**
-  under `qemu`, **win-x64** under `wine`.
+- The x64 base image compiles both Linux targets; generated **linux-arm64** programs
+  run under QEMU, while **win-x64** runs under Wine.
 
 ## Fresh machine — one command
 
@@ -39,7 +39,8 @@ cat /proc/sys/fs/binfmt_misc/qemu-aarch64   # want: flags: ...F
 Then build the images and fetch the native libs:
 
 ```sh
-just images       # build ashes-ci-{base,arm64,win}
+just images       # build ashes-ci-{base,win}
+just images-arm64 # optional: full ARM64-host image
 just provision    # download LLVM native libs into runtimes/
 ```
 
@@ -79,33 +80,36 @@ runs the same per-leg body as the full matrix (including the arm64 emulation
 env); fmt stability is arch-independent and is only verified by the full
 `just matrix`.
 
-### linux-arm64 runs the full suite under emulation
+### linux-arm64 cross-compiles with the native x64 compiler
 
-All three legs run the **full** suite (examples + tests) — there is no compile-only
-mode. The arm64 leg mirrors GitHub's native `ubuntu-24.04-arm` leg, only emulated:
-its runner image (`ashes-ci-arm64`) is a **genuine aarch64 image** (built
-`--platform linux/arm64` from .NET's `runtime-deps`), so every binary inside it —
-`bash`, `git`, the arm64 `ashes`, and the arm64 programs `ashes` itself compiles and
-execs — is aarch64 and is run transparently by the host's **qemu-user-static
-binfmt_misc handler**.
+The local `linux-arm64` matrix leg runs the **linux-x64 Ashes CLI** inside
+`ashes-ci-base` with `ashes test --target linux-arm64 --pipeline both tests`.
+LLVM and the .NET compiler stay native on the x64 host; the generated ARM64 ELF
+test executables run via the host's `qemu-aarch64-static` binfmt_misc handler.
 
-This works only because that handler is registered with the **`F` (fix-binary)**
-flag: the kernel opens `/usr/bin/qemu-aarch64-static` at registration time and holds
-the fd, so emulation reaches into the container (which ships no qemu of its own) and —
-crucially — survives nested `exec`. An explicit `qemu-aarch64 <bin>` wrapper, by
-contrast, can't follow the compiler's `exec` of its output — which is why the earlier
-design was compile-only.
-
-`scripts/init-local-ci.sh` installs `qemu-user-static` + binfmt and verifies the
-handler. Check it yourself:
+The base image installs the ARM64 glibc loader and runtime libraries alongside
+its x64 tooling. The host still needs `qemu-user-static` and the registered
+`F` (fix-binary) binfmt handler:
 
 ```sh
 cat /proc/sys/fs/binfmt_misc/qemu-aarch64    # want: flags: ...F
+just images
+just matrix-one linux-arm64
 ```
 
-The arm64 leg disables tiered compilation (`DOTNET_TieredCompilation=0`): qemu-user
-mis-emulates the JIT's multi-threaded on-stack replacement, which would SIGSEGV the
-emulated compiler. The native x64 leg exercises the tiered JIT.
+The full ARM64-host image is optional: `just images-arm64` or
+`./scripts/init-local-ci.sh --with-arm64-image`. Normal bootstrap and `--all`
+do not build it.
+
+The optional `ashes-ci-arm64` image and the published `linux-arm64` compiler are
+retained so the ARM64 **host compiler itself** can still be validated separately.
+The routine local matrix no longer exercises an emulated ARM64 .NET runtime or
+ARM64 LLVM; this is a deliberate coverage distinction. For release validation
+of the ARM64 compiler bundle, run it on a native ARM64 host or explicitly in
+the retained ARM64 container.
+
+The generated ARM64 programs remain emulated, so runtime-heavy tests may still
+be slow. The change specifically avoids emulating the compiler/toolchain itself.
 
 ## Triggers
 

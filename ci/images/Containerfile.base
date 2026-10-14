@@ -48,6 +48,22 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && test -x /usr/bin/time \
     && clang --version
 
+# Allow the native x64 Ashes compiler to execute its ARM64 output through the
+# host's qemu-aarch64 binfmt handler without emulating .NET or LLVM.
+# Debian/Ubuntu multiarch provides the ARM64 ELF loader and glibc for dynamically
+# linked Ashes executables. No ARM64 compiler runs in this image.
+# Ubuntu hosts x86 packages on archive.ubuntu.com and ARM64 packages on
+# ports.ubuntu.com. Scope the default sources to amd64 before adding ports.
+RUN sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources \
+    && printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: noble noble-updates noble-security\nComponents: main universe\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+       > /etc/apt/sources.list.d/ubuntu-arm64.sources \
+    && dpkg --add-architecture arm64
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libc6:arm64 libgcc-s1:arm64 libstdc++6:arm64 \
+    && test -f /lib/ld-linux-aarch64.so.1
+
 # Node via NodeSource (resolves the latest within NODE_MAJOR). Node 25+ no longer
 # bundles corepack, so install it separately, then enable the pinned pnpm shim.
 ARG PNPM_VERSION=11.9.0
