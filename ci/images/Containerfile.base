@@ -48,6 +48,17 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && test -x /usr/bin/time \
     && clang --version
 
+# Allow the native x64 Ashes compiler to execute its ARM64 output through the
+# host's qemu-aarch64 binfmt handler without emulating .NET or LLVM.
+# Debian/Ubuntu multiarch provides the ARM64 ELF loader and glibc for dynamically
+# linked Ashes executables. No ARM64 compiler runs in this image.
+RUN dpkg --add-architecture arm64
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libc6:arm64 libgcc-s1:arm64 libstdc++6:arm64 \
+    && test -f /lib/ld-linux-aarch64.so.1
+
 # Node via NodeSource (resolves the latest within NODE_MAJOR). Node 25+ no longer
 # bundles corepack, so install it separately, then enable the pinned pnpm shim.
 ARG PNPM_VERSION=11.9.0
