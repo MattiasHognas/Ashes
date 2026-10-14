@@ -1,7 +1,8 @@
 # Local containerized CI/CD for Ashes — see docs/md/guide/local-ci.md.
 #
 # Quick start:
-#   just images          # build the three runner images (once)
+#   just images          # build base and Wine runners (once)
+#   just images-arm64    # optional full ARM64 host image
 #   just provision       # fetch LLVM native libs into runtimes/ (once / on bump)
 #   just ci-quick        # fast build + test
 #   just fuzz            # deterministic bounded compiler fuzz suite
@@ -26,13 +27,15 @@ init *args:
 
 # --- Container images ------------------------------------------------------
 
-# Build the base, arm64, and win runner images. Routine linux-arm64 matrix tests
-# use x64 Ashes in the base image and emulate only its generated programs.
-# Keep the full ARM64 image for native-host compiler verification as needed.
+# Build the base and Wine images. ARM64 output is cross-compiled in base.
+# Use images-arm64 only for optional ARM64-host compiler verification.
 images:
     {{engine}} build -t ashes-ci-base:latest --build-arg NODE_MAJOR={{node_major}} -f ci/images/Containerfile.base ci/images
-    {{engine}} build -t ashes-ci-arm64:latest --platform=linux/arm64 -f ci/images/Containerfile.arm64 ci/images
     {{engine}} build -t ashes-ci-win:latest --build-arg BASE_IMAGE=ashes-ci-base:latest -f ci/images/Containerfile.win ci/images
+
+# Optional full ARM64 host image for ARM64 compiler verification.
+images-arm64:
+    {{engine}} build -t ashes-ci-arm64:latest --platform=linux/arm64 -f ci/images/Containerfile.arm64 ci/images
 
 # Populate runtimes/ with LLVM native libs (run after `just images`; re-run on LLVM bump).
 # Caches the downloaded apt archives (incl. the large libLLVM .deb) in
