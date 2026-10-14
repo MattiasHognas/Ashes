@@ -8,8 +8,8 @@ steps in `.github/workflows/{pull-request,push-to-main,release}.yaml`.
 
 - GitHub Actions runs are slow and tie CI to GitHub.
 - Local runs give a fast inner loop and decouple CI from the git host.
-- Each architecture runs in its own image: **linux-x64** natively, **linux-arm64**
-  under `qemu`, **win-x64** under `wine`.
+- The x64 base image compiles both Linux targets; generated **linux-arm64** programs
+  run under QEMU, while **win-x64** runs under Wine.
 
 ## Fresh machine — one command
 
@@ -39,7 +39,8 @@ cat /proc/sys/fs/binfmt_misc/qemu-aarch64   # want: flags: ...F
 Then build the images and fetch the native libs:
 
 ```sh
-just images       # build ashes-ci-{base,arm64,win}
+just images       # build ashes-ci-{base,win}
+just images-arm64 # optional: full ARM64-host image
 just provision    # download LLVM native libs into runtimes/
 ```
 
@@ -96,7 +97,11 @@ just images
 just matrix-one linux-arm64
 ```
 
-The `ashes-ci-arm64` image and the published `linux-arm64` compiler are
+The full ARM64-host image is optional: `just images-arm64` or
+`./scripts/init-local-ci.sh --with-arm64-image`. Normal bootstrap and `--all`
+do not build it.
+
+The optional `ashes-ci-arm64` image and the published `linux-arm64` compiler are
 retained so the ARM64 **host compiler itself** can still be validated separately.
 The routine local matrix no longer exercises an emulated ARM64 .NET runtime or
 ARM64 LLVM; this is a deliberate coverage distinction. For release validation
