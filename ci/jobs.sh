@@ -248,7 +248,7 @@ _matrix_one() {
     CLI='$cli'
 
     echo '--- Running tests ($runner)...'
-    \$CLI test --target \$target --pipeline both tests
+    \$CLI test --target $target --pipeline both tests
   "
 }
 
