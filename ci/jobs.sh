@@ -236,33 +236,19 @@ publish_cli() {
 
 # Shared body for one matrix arch: exercise the test suite. fmt stability is
 # checked separately, once, by _matrix_fmt (it's arch-independent).
-# $1 = runner image, $2 = CLI invocation (path to the ashes binary, possibly with
-# an emulator prefix). Runs the test suite, executing produced binaries directly:
-# x64 natively, arm64 via the host qemu-user-static binfmt handler (the arm64 image
-# is a real aarch64 image), win-x64 via Wine.
+# $1 = runner image, $2 = CLI invocation, $3 = emitted target RID.
+# Linux ARM64 uses the native x64 compiler; only generated ARM64 programs run via QEMU.
 _matrix_one() {
-  local runner="$1" cli="$2"
+  local runner="$1" cli="$2" target="$3"
   run_in "$runner" "
     set -euo pipefail
     git config --global --add safe.directory /work
     chmod +x artifacts/ashes/*/ashes 2>/dev/null || true
 
-    # The arm64 leg runs under qemu-user (TCG) emulation. Tiered compilation spins
-    # up background JIT threads whose on-stack replacement / code-patching qemu
-    # mis-emulates, producing a deterministic SIGSEGV during the first real compile
-    # (codegen is fine under -strace, which serializes threads). Disabling it makes
-    # the emulated compiler stable; the native x64 leg still exercises the tiered
-    # JIT. Globalization runs in invariant mode to keep the emulated leg focused on
-    # codegen (the x64 leg exercises full ICU).
-    if [ '$runner' = arm64 ]; then
-      export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
-      export DOTNET_TieredCompilation=0
-    fi
-
     CLI='$cli'
 
     echo '--- Running tests ($runner)...'
-    \$CLI test --pipeline both tests
+    \$CLI test --target $target --pipeline both tests
   "
 }
 
@@ -323,24 +309,19 @@ matrix() {
   # Three legs (linux-x64, linux-arm64, win-x64) run the full suite; the fourth
   # (win-arm64) is compile-and-link only — a Windows-on-ARM PE cannot be executed on
   # the x64 CI host, so it just cross-compiles and checks the PE machine field. The
-  # arm64 leg executes its binaries inside a genuine aarch64 container
-  # (ashes-ci-arm64), emulated transparently by the host's qemu-user-static
-  # binfmt_misc handler — which must be registered with the F (fix-binary) flag so
-  # emulation crosses into the container and survives the compiler's nested exec of
-  # its output. `scripts/init-local-ci.sh` sets this up; see docs/md/guide/local-ci.md.
-  # If the handler is missing, the arm64 leg fails with "Exec format error".
+  # ARM64 output is compiled by native x64 Ashes and run with host binfmt/QEMU.
   local logdir
   logdir="$(mktemp -d)"
   local -a names=(linux-x64 linux-arm64 win-x64 win-arm64)
   local -a pids=()
 
-  _matrix_one base "./artifacts/ashes/linux-x64/ashes" \
+  _matrix_one base "./artifacts/ashes/linux-x64/ashes" linux-x64 \
     >"$logdir/linux-x64.log" 2>&1 &
   pids+=("$!")
-  _matrix_one arm64 "./artifacts/ashes/linux-arm64/ashes" \
+  _matrix_one base "./artifacts/ashes/linux-x64/ashes" linux-arm64 \
     >"$logdir/linux-arm64.log" 2>&1 &
   pids+=("$!")
-  _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" \
+  _matrix_one win "wine ./artifacts/ashes/win-x64/ashes.exe" win-x64 \
     >"$logdir/win-x64.log" 2>&1 &
   pids+=("$!")
   # win-arm64 is a compile-and-link-only leg (no run leg; see _matrix_win_arm64's
@@ -398,7 +379,7 @@ matrix_one() {
   local runner cli
   case "$rid" in
     linux-x64)   runner=base;  cli="./artifacts/ashes/linux-x64/ashes" ;;
-    linux-arm64) runner=arm64; cli="./artifacts/ashes/linux-arm64/ashes" ;;
+    linux-arm64) runner=base;  cli="./artifacts/ashes/linux-x64/ashes" ;;
     win-x64)     runner=win;   cli="wine ./artifacts/ashes/win-x64/ashes.exe" ;;
     *)
       echo "matrix_one: unknown arch '$rid' (expected linux-x64|linux-arm64|win-x64|win-arm64)" >&2
@@ -406,12 +387,14 @@ matrix_one() {
       ;;
   esac
 
+  local compiler_rid="$rid"
+  [[ "$rid" == linux-arm64 ]] && compiler_rid=linux-x64
   run_in base "
     set -e
-    dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime $rid --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/$rid
+    dotnet publish src/Ashes.Cli/Ashes.Cli.csproj --configuration Release --runtime $compiler_rid --self-contained true -p:PublishSingleFile=true -o artifacts/ashes/$compiler_rid
   "
 
-  _matrix_one "$runner" "$cli"
+  _matrix_one "$runner" "$cli" "$rid"
 }
 
 # --- Composite pipelines ---------------------------------------------------
