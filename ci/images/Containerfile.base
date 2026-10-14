@@ -52,7 +52,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # host's qemu-aarch64 binfmt handler without emulating .NET or LLVM.
 # Debian/Ubuntu multiarch provides the ARM64 ELF loader and glibc for dynamically
 # linked Ashes executables. No ARM64 compiler runs in this image.
-RUN dpkg --add-architecture arm64
+# Ubuntu hosts x86 packages on archive.ubuntu.com and ARM64 packages on
+# ports.ubuntu.com. Scope the default sources to amd64 before adding ports.
+RUN sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources \
+    && printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: noble noble-updates noble-security\nComponents: main universe\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+       > /etc/apt/sources.list.d/ubuntu-arm64.sources \
+    && dpkg --add-architecture arm64
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
