@@ -6301,9 +6301,9 @@ public sealed partial class Lowering
             : NewTypeVar();
         RecordLocalDebugInfo(slot, letRecursive.Name, recursiveType);
 
-        _scopes.Push(_scopes.Peek().SetItem(
-            letRecursive.Name,
-            new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive))));
+        var self = new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive));
+        _letRecursiveSelfLocals.Add(self);
+        _scopes.Push(_scopes.Peek().SetItem(letRecursive.Name, self));
         return recursiveType;
     }
 
@@ -9247,12 +9247,12 @@ public sealed partial class Lowering
         _scopes.Push(scope.ToImmutableSortedDictionary(StringComparer.Ordinal));
     }
 
-    private static Binding CreateCapturedBinding(Binding binding, int environmentIndex)
+    private Binding CreateCapturedBinding(Binding binding, int environmentIndex)
     {
         // A constrained polymorphic binding can cross more than one nested closure boundary.
         // Preserve its complete scheme rather than degrading a later capture to the body type,
         // otherwise applying it in the innermost closure silently loses its evidence.
-        return binding switch
+        Binding captured = binding switch
         {
             Binding.Scheme scheme => new Binding.EnvScheme(
                 environmentIndex,
@@ -9264,6 +9264,24 @@ public sealed partial class Lowering
                 scheme.DefinitionSpan),
             _ => new Binding.Env(environmentIndex, binding.Type, binding.DefinitionSpan),
         };
+
+        // A capture of a function's own name (its `let recursive` local or its self binding) is that
+        // function too.
+        if (binding is Binding.Self || _letRecursiveSelfLocals.Contains(binding))
+        {
+            _letRecursiveSelfLocals.Add(captured);
+        }
+
+        if (binding is Binding.Self self)
+        {
+            _selfCaptureLabels[captured] = self.FuncLabel;
+        }
+        else if (_selfCaptureLabels.TryGetValue(binding, out string? capturedLabel))
+        {
+            _selfCaptureLabels[captured] = capturedLabel;
+        }
+
+        return captured;
     }
 
     private void LowerLambdaCoreSeedScopeBindings(Dictionary<string, Binding> scope, Expr.Lambda lam, string label, TypeRef paramTy, int argSlot)

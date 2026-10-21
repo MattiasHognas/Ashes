@@ -3084,6 +3084,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_recursive_phantom_list_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A recursive builder conses tuples built from an owned record's fields onto its own
+        // result, beside a `None` of a type nothing reaches. Read with that type as `Never`, the
+        // result is one of the contract's types: the builder owns it and releases the record.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecursivePhantomListResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("recursive builder with a phantom list result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_demoted_fields_beside_generic_value_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12721,6 +12745,40 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match summarize(State(items = [wide + "x", wide + "y"], count = n)) with
                         | (texts, _big) -> rounds(n - 1)(total + countAll(texts)(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecursivePhantomListResultProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Group(List(Node))
+
+            type Derived =
+                | pattern: Node
+                | fields: List(Str)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let derive (n: Int) = Derived(pattern = Group([Leaf(wide + Ashes.Text.fromInt(n))]), fields = [wide + Ashes.Text.fromInt(n)])
+
+            let recursive cases (n: Int) =
+                if n == 0
+                then []
+                else
+                    match derive(n) with
+                        | Derived { pattern = p, fields = f } -> (Group([p]), f, None) :: cases(n - 1)
+
+            let recursive countAll (values: List((Node, List(Str), Maybe(Int)))) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countAll(cases(3))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

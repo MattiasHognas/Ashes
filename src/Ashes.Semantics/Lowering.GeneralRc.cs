@@ -1023,6 +1023,7 @@ public sealed partial class Lowering
     private HashSet<int> VariablesHeldBesideFunction(string label)
     {
         HashSet<int> held = [];
+        HashSet<string> selfNames = SelfNamesReaching(label);
         if (_ambientRow is not null)
         {
             FtvType(_ambientRow, held);
@@ -1030,14 +1031,14 @@ public sealed partial class Lowering
 
         if (_scopes.Count > 0)
         {
-            AddScopeFtvBesideSelf(_scopes.Peek(), label, held);
+            AddScopeFtvBesideSelf(_scopes.Peek(), label, held, selfNames);
         }
 
         if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
         {
             foreach (ImmutableSortedDictionary<string, Binding> scope in enclosing)
             {
-                AddScopeFtvBesideSelf(scope, label, held);
+                AddScopeFtvBesideSelf(scope, label, held, selfNames);
             }
         }
 
@@ -1055,14 +1056,62 @@ public sealed partial class Lowering
         return held;
     }
 
+    private static bool RecursivePhantomRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_RECURSIVEPHANTOM") is null;
+
+    // The names the function `label` (or a curry stage returning it) is bound to as itself.
+    private HashSet<string> SelfNamesReaching(string label)
+    {
+        HashSet<string> names = new(StringComparer.Ordinal);
+        if (!RecursivePhantomRuleEnabled)
+        {
+            return names;
+        }
+
+        IEnumerable<ImmutableSortedDictionary<string, Binding>> scopes = _scopes.Count > 0 ? [_scopes.Peek()] : [];
+        if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
+        {
+            scopes = scopes.Concat(enclosing);
+        }
+
+        foreach (ImmutableSortedDictionary<string, Binding> scope in scopes)
+        {
+            foreach ((string name, Binding binding) in scope)
+            {
+                if ((binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
+                    || (_selfCaptureLabels.TryGetValue(binding, out string? capturedLabel) && CurryChainReaches(capturedLabel, label)))
+                {
+                    names.Add(name);
+                }
+            }
+        }
+
+        return names;
+    }
+
+    // The locals `let recursive` binds its function's own name to while the function is lowered.
+    private readonly HashSet<object> _letRecursiveSelfLocals = new(ReferenceEqualityComparer.Instance);
+
+    // The captures of a function's self binding, with the function they capture.
+    private readonly Dictionary<object, string> _selfCaptureLabels = new(ReferenceEqualityComparer.Instance);
+
     private TypeRef ContractLayoutOrSelf(TypeRef substituted, TypeRef original)
         => IsGeneralRcValueType(substituted) ? substituted : original;
 
-    private void AddScopeFtvBesideSelf(ImmutableSortedDictionary<string, Binding> scope, string label, HashSet<int> held)
+    // The `let recursive` binding of one of `selfNames` (a name the function calls itself by, in
+    // the scope the function was created in), or a closure's capture of it, holds the function itself, so its type names the
+    // result's variables without holding a value of them, and is skipped like the function's own
+    // self binding.
+    private void AddScopeFtvBesideSelf(
+        ImmutableSortedDictionary<string, Binding> scope,
+        string label,
+        HashSet<int> held,
+        HashSet<string> selfNames)
     {
-        foreach (Binding binding in scope.Values)
+        foreach ((string name, Binding binding) in scope)
         {
-            if (binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
+            if ((binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
+                || (selfNames.Contains(name) && _letRecursiveSelfLocals.Contains(binding)))
             {
                 continue;
             }
@@ -1132,6 +1181,8 @@ public sealed partial class Lowering
             Binding.Scheme scheme => SubstituteSchemePhantoms(scheme.S, argumentCount, callResultType),
             Binding.EnvScheme environmentScheme => SubstituteSchemePhantoms(environmentScheme.S, argumentCount, callResultType),
             Binding.Self self => ResolvePhantomResultLayout(self.FuncLabel, callResultType),
+            Binding.Env captured when RecursivePhantomRuleEnabled && _selfCaptureLabels.TryGetValue(captured, out string? capturedLabel)
+                => ResolvePhantomResultLayout(capturedLabel, callResultType),
             _ => callResultType,
         };
     }

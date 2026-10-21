@@ -51,6 +51,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new TupleResultHoldsOwnedPartTemplate());
         registry.Register(new PhantomTupleResultFreshRecordTemplate());
         registry.Register(new GenericTupleResultContractPartTemplate());
+        registry.Register(new RecursivePhantomListResultTemplate());
         registry.Register(new DemotedFieldBesideGenericValueTemplate());
         registry.Register(new PassStateAndRewritePairTemplate());
         registry.Register(new ListParameterInTupleResultTemplate());

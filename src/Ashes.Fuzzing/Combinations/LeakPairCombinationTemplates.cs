@@ -620,6 +620,49 @@ internal sealed class GenericTupleResultContractPartTemplate() : LeakCombination
 }
 
 /// <summary>
+/// A recursive builder conses a tuple per step onto its own result: a node built from an owned
+/// record's fields, a field taken as it is, and an empty slot of a type nothing reaches (a `None`
+/// or `[]` of the function's own variable). The result is one of the contract's types once that
+/// variable reads as `Never`.
+/// </summary>
+internal sealed class RecursivePhantomListResultTemplate() : LeakCombinationTemplate(
+    "leak.recursive-phantom-list-result", "recursivePhantomListResult", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.RecursiveFunction, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string node = names.Of("LeakNode");
+        string leaf = names.Of("LeakLeaf");
+        string group = names.Of("LeakGroup");
+        string derived = names.Of("LeakDerived");
+        string derive = names.Of("derive");
+        string cases = names.Of("cases");
+        string empty = names.Coin("empty-list") ? "[]" : "None";
+        string head = names.Coin("wrapped-head") ? $"{group}([p])" : "p";
+        string steps = LeakNames.Text(names.Between(1, 4));
+        return $$"""
+            type {{node}} =
+                | {{leaf}}(Str)
+                | {{group}}(List({{node}}))
+
+            type {{derived}} =
+                | pattern: {{node}}
+                | fields: List(Str)
+
+            let {{derive}} (n: Int) = {{derived}}(pattern = {{group}}([{{leaf}}({{names.Word()}} + Ashes.Text.fromInt(n))]), fields = [{{names.Word()}} + Ashes.Text.fromInt(n)])
+
+            let recursive {{cases}} (n: Int) =
+                if n == 0
+                then []
+                else
+                    match {{derive}}(n) with
+                        | {{derived}} { pattern = p, fields = f } -> ({{head}}, f, {{empty}}) :: {{cases}}(n - 1)
+
+            let {{names.Entry}} (seed: Int) = Ashes.Collection.List.length({{cases}}({{steps}})) + seed
+            """;
+    }
+}
+
+/// <summary>
 /// A generic function pairs a value of its own type parameter with the string-list fields of a
 /// record a call returned: the arena tuples beside the generic value take independent copies of
 /// the fields, so the record is released behind the result.

@@ -9494,18 +9494,40 @@ let recursive curryChainReaches (depth: Int) (current: Str) (label: Str) (pairs:
                 | Some(next) -> curryChainReaches(depth - 1)(next)(label)(pairs)
                 | None -> false
 
+// The names the function `label` (or a curry stage returning it) is bound to as itself.
+let recursive selfNamesReaching (label: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> []
+        | CoreBinding { name = name, location = CoreSelf(selfLabel, _size) } :: rest ->
+            if state
+            |> stateFunctionReturnedClosureLabels
+            |> curryChainReaches(64)(selfLabel)(label)
+            then name :: selfNamesReaching(label)(rest)(state)
+            else selfNamesReaching(label)(rest)(state)
+        | _ :: rest -> selfNamesReaching(label)(rest)(state)
+
 // The bindings that hold a result's variables: every one in scope but the function's own self
-// reference, which names them itself.
-let recursive bindingsBesideSelf (label: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+// reference, which names them itself, and a closure's capture of that self reference (one of
+// `selfNames`, stage 0's capture of a self binding).
+let recursive bindingsBesideSelfNamed (label: Str) (selfNames: List(Str)) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
     match bindings with
         | [] -> []
         | (CoreBinding { location = CoreSelf(selfLabel, _size) } as binding) :: rest ->
             if state
             |> stateFunctionReturnedClosureLabels
             |> curryChainReaches(64)(selfLabel)(label)
-            then bindingsBesideSelf(label)(rest)(state)
-            else binding :: bindingsBesideSelf(label)(rest)(state)
-        | binding :: rest -> binding :: bindingsBesideSelf(label)(rest)(state)
+            then bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
+            else binding :: bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
+        | (CoreBinding { name = name, location = CoreEnvironment(_index) } as binding) :: rest ->
+            if containsLabel(name)(selfNames)
+            then bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
+            else binding :: bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
+        | binding :: rest -> binding :: bindingsBesideSelfNamed(label)(selfNames)(rest)(state)
+
+let bindingsBesideSelf (label: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    bindingsBesideSelfNamed(label)(selfNamesReaching(label)(state
+    |> stateEnclosingBindings
+    |> append(state.bindings))(state))(bindings)(state)
 
 let contractLayoutOrSelf (substituted: SemanticType) (original: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcValueType(substituted)(state)
@@ -10356,13 +10378,17 @@ let recursive bindSelfCallResults (pairs: List((SemanticType, SemanticType))) (s
 // self calls that took a fresh result type (`deferSelfCallResultType`): each meets the binding's
 // own once the body is done, so a deferred copy-out resolves against the type the body settled
 // on. Applied right after the spine closes, before any ownership step reads the body's type.
-let recursive markOwnedDeferredSelfCalls (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+// The result's layout is read as the function's own return reads it, its phantoms as `Never`, so a
+// self call agrees with the return on whether the result is one of the contract's types.
+let recursive markOwnedDeferredSelfCalls (label: Str) (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
     match pending with
         | [] -> []
         | copyOut :: rest ->
-            (if copyOut.deferredSelfCall && isGeneralRcValueType(copyOut.deferredType)(state)
-            then copyOut with deferredOwned = true
-            else copyOut) :: markOwnedDeferredSelfCalls(rest)(state)
+            (let layout = resolvePhantomResultLayout(label)(copyOut.deferredType)(state)
+            in
+                if copyOut.deferredSelfCall && isGeneralRcValueType(layout)(state)
+                then copyOut with deferredOwned = true, deferredType = layout
+                else copyOut) :: markOwnedDeferredSelfCalls(label)(rest)(state)
 
 let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
     match pending with
@@ -10378,17 +10404,39 @@ let recursive registerOwnedDeferredSlots (pending: List(CorePendingCallCopyOut))
 // body's end: each deferred self call whose result is then of the contract's types registers its
 // result slot as an owned slot there, before the function's result releases its owned slots, and
 // its deferred block becomes the owned-result block. A loop's owned slots are released at its
-// back edges as well, which are already lowered, so a loop keeps the deferred copy-out.
-let adoptDeferredSelfCallResults (state: CoreLoweringState) =
-    match stateTcoLoopFrame(state) with
-        | Some(_frame) -> state
-        | None ->
-            let marked =
-                markOwnedDeferredSelfCalls(statePendingCallCopyOuts(state))(state)
-            in
-                state
-                |> withStatePendingCallCopyOuts(marked)
-                |> registerOwnedDeferredSlots(reverse(marked))
+// back edges as well, which are already lowered, so a loop keeps the deferred copy-out; a loop with no
+// back edge (a non-tail recursion lowered under a loop scaffold) adopts them like any other body.
+// A loop whose exit already made the result its own and released the owned slots (a curried
+// stage's loop body) releases the adopted results right away, the result holding its own
+// references.
+let recursive adoptedDeferredSlots (pending: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> []
+        | copyOut :: rest ->
+            if copyOut.deferredOwned
+            then (stateActiveFunctionOrigin(state), copyOut.deferredResultSlot, copyOut.deferredType) :: adoptedDeferredSlots(rest)(state)
+            else adoptedDeferredSlots(rest)(state)
+
+let adoptMarkedDeferredSelfCalls (label: Str) (resultFinished: Bool) (state: CoreLoweringState) =
+    (let marked =
+        markOwnedDeferredSelfCalls(label)(statePendingCallCopyOuts(state))(state)
+    in
+        if resultFinished
+        then
+            state
+            |> withStatePendingCallCopyOuts(marked)
+            |> emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(adoptedDeferredSlots(reverse(marked))(state))
+        else
+            state
+            |> withStatePendingCallCopyOuts(marked)
+            |> registerOwnedDeferredSlots(reverse(marked)))
+
+let adoptDeferredSelfCallResults (label: Str) (bodyTemp: Int) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), statePendingTcoResets(state)) with
+        | (None, _) -> adoptMarkedDeferredSelfCalls(label)(false)(state)
+        | (Some(_frame), []) ->
+            adoptMarkedDeferredSelfCalls(label)(isGeneralRcFinishedResult(bodyTemp)(state))(state)
+        | (Some(_frame), _resets) -> state
 
 let unifySelfCallResults (lowered: LoweredCoreValue) =
     match lowered with
@@ -10594,7 +10642,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = bodyState, temp = loweredTemp, semanticType = bodyType, error = None } ->
             match bodyState
-            |> adoptDeferredSelfCallResults
+            |> adoptDeferredSelfCallResults(label)(loweredTemp)
             |> adoptNormalizedParameterResult(label)(loweredTemp)
             |> reserveTcoExitTransferSlot(label)(loweredTemp)(bodyType)
             |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType)
@@ -19102,7 +19150,7 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (boundBody, None) ->
                     match boundBody
-                    |> adoptDeferredSelfCallResults
+                    |> adoptDeferredSelfCallResults(label)(loweredTemp)
                     |> adoptNormalizedParameterResult(label)(loweredTemp)
                     |> reserveTcoExitTransferSlot(label)(loweredTemp)(bodyType)
                     |> keepPredictedRuntimeManagedResult(label)(loweredTemp)(bodyType) with
