@@ -157,6 +157,12 @@ public sealed partial class Lowering
             IndexValueFlow(instruction, definitions, slotStores, cellStores);
         }
 
+        HashSet<int> demoted = ArenaDemotedSlots();
+        foreach (int slot in demoted)
+        {
+            slotStores.Remove(slot);
+        }
+
         var slots = new HashSet<int>();
         var visited = new HashSet<int>();
         var pending = new Stack<int>(temps);
@@ -188,6 +194,39 @@ public sealed partial class Lowering
         }
 
         return slots;
+    }
+
+    private static bool ArenaDemotedSlotsEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_DEMOTEDSLOTREACH") is null;
+
+    /// <summary>
+    /// The slots an element of an arena aggregate is demoted through: the value is stored, and
+    /// replaced by an independent arena copy when it is reference-counted. What the slot holds
+    /// afterwards is either that copy or a value outside the reference-counted heap, so it is
+    /// never a part of an owned value.
+    /// </summary>
+    private HashSet<int> ArenaDemotedSlots()
+    {
+        var demoted = new HashSet<int>();
+        if (!ArenaDemotedSlotsEnabled)
+        {
+            return demoted;
+        }
+
+        for (int i = 0; i + 2 < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.StoreLocal store
+                && _inst[i + 1] is IrInst.IsReferenceCounted test
+                && test.SourceTemp == store.Source
+                && _inst[i + 2] is IrInst.JumpIfFalse jump
+                && jump.CondTemp == test.Target
+                && jump.Target.StartsWith("rc_arena_demote_done", StringComparison.Ordinal))
+            {
+                demoted.Add(store.Slot);
+            }
+        }
+
+        return demoted;
     }
 
     private static void IndexValueFlow(

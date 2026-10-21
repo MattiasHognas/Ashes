@@ -3084,6 +3084,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_demoted_fields_beside_generic_value_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic function pairs its type parameter's value with the string-list fields of a
+        // record a call returned. The arena tuples hold independent copies of the fields, so the
+        // record is released behind the result.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildDemotedFieldsBesideGenericValueProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record fields demoted beside a generic value", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_generic_tuple_result_contract_part_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12697,6 +12721,33 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match summarize(State(items = [wide + "x", wide + "y"], count = n)) with
                         | (texts, _big) -> rounds(n - 1)(total + countAll(texts)(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildDemotedFieldsBesideGenericValueProgram(int rounds)
+        => $$"""
+            type Derived =
+                | pattern: List(Str)
+                | fields: List(Str)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let derive (n: Int) = Derived(pattern = [wide + Ashes.Text.fromInt(n)], fields = [wide + Ashes.Text.fromInt(n)])
+
+            let tagged value (n: Int) =
+                match derive(n) with
+                    | Derived { pattern = p, fields = f } -> [(value, f), (value, p)]
+
+            let recursive countAll (values: List((Int, List(Str)))) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countAll(tagged(n)(n))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

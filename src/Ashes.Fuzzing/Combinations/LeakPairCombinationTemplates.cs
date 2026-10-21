@@ -620,6 +620,37 @@ internal sealed class GenericTupleResultContractPartTemplate() : LeakCombination
 }
 
 /// <summary>
+/// A generic function pairs a value of its own type parameter with the string-list fields of a
+/// record a call returned: the arena tuples beside the generic value take independent copies of
+/// the fields, so the record is released behind the result.
+/// </summary>
+internal sealed class DemotedFieldBesideGenericValueTemplate() : LeakCombinationTemplate(
+    "leak.demoted-field-beside-generic-value", "demotedFieldBesideGenericValue", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.List, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string derived = names.Of("LeakDerived");
+        string derive = names.Of("derive");
+        string tagged = names.Of("tagged");
+        string[] results = ["[(value, f), (value, p)]", "[(value, f)]", "[(p, value)]"];
+        string result = results[names.Between(0, results.Length - 1)];
+        return $$"""
+            type {{derived}} =
+                | pattern: List(Str)
+                | fields: List(Str)
+
+            let {{derive}} (n: Int) = {{derived}}(pattern = [{{names.Word()}} + Ashes.Text.fromInt(n)], fields = [{{names.Word()}} + Ashes.Text.fromInt(n)])
+
+            let {{tagged}} value (n: Int) =
+                match {{derive}}(n) with
+                    | {{derived}} { pattern = p, fields = f } -> {{result}}
+
+            let {{names.Entry}} (seed: Int) = Ashes.Collection.List.length({{tagged}}(seed)(seed)) + seed
+            """;
+    }
+}
+
+/// <summary>
 /// An optimizer-pass shape: a walk over records that matches a helper's pair of state and rewritten
 /// record, consing the rewritten record onto its accumulator.
 /// </summary>
