@@ -2556,6 +2556,7 @@ public sealed partial class Lowering
         => type switch
         {
             TypeRef.TBigInt => "BigInt",
+            TypeRef.TBytes => "Bytes",
             TypeRef.TTuple => "Tuple",
             TypeRef.TNamedType named => RuntimeManagedAdtTypeName(named),
             TypeRef.TFun => "Function",
@@ -9420,8 +9421,12 @@ public sealed partial class Lowering
     /// <summary>
     /// Canonical scalar/tuple/ADT layout predicate shared by placement and classifier B.
     /// </summary>
+    // A byte buffer is one flat reference-counted block like a string: a loop that hands it to
+    // itself (through set or copyRange) keeps it on the heap, where an update writes in place while
+    // the buffer is unique, instead of copying it out of the arena every iteration.
     private bool IsRcEligibleScalarTupleOrAdtType(TypeRef type)
         => type is TypeRef.TStr or TypeRef.TBigInt
+            || type is TypeRef.TBytes && Environment.GetEnvironmentVariable("GRC_NO_BYTESLOOPRC") is null
             || type is TypeRef.TTuple tuple && CanRuntimeManageOwnedTupleType(tuple)
             || type is TypeRef.TNamedType named
                 && (CanCopyOutAdt(named, out _)

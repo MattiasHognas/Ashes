@@ -3325,6 +3325,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_bytes_buffer_handed_to_its_loop_through_set_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop that hands a buffer to itself through Byte.set. Left in the arena, each
+        // iteration copied the buffer out and nothing released the copy it replaced; placed on
+        // the reference-counted heap, the back edge releases the predecessor.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildBytesBufferHandedToItsLoopProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 63}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("bytes buffer handed to its loop through set", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public void Worklist_front_beside_queued_map_of_its_keys_is_placed_on_the_reference_counted_heap()
     {
         // A worklist whose loop marks each key in a map beside the front queue. The map's update
@@ -13029,6 +13053,23 @@ public sealed class LinuxBackendCoverageTests
                 else
                     let wide = Ashes.Byte.copyRange(Ashes.Byte.allocate(256))(0)(Ashes.Byte.allocate(256))(0)(256)
                     in rounds(n - 1)(total + Ashes.Byte.length(Ashes.Byte.allocate(512)) + Ashes.Byte.length(wide))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildBytesBufferHandedToItsLoopProgram(int rounds)
+        => $$"""
+            let recursive fill (buffer: Bytes) (i: Int) =
+                if i >= Ashes.Byte.length(buffer)
+                then buffer
+                else fill(Ashes.Byte.set(buffer)(i)(Ashes.Number.UInt.fromInt(i)))(i + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let filled = fill(Ashes.Byte.allocate(64))(0)
+                    in rounds(n - 1)(total + Ashes.Number.UInt.toInt(Ashes.Byte.get(filled)(63)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

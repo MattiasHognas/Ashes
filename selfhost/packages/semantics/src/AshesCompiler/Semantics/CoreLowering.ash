@@ -7251,6 +7251,7 @@ let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: 
 let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> LeafArgumentCopy(-1)
+        | SemBytes -> LeafArgumentCopy(-1)
         | SemList(_element) as list ->
             match argumentCopyPlanOf(list)(state) with
                 | Some(plan) -> plan
@@ -11433,6 +11434,7 @@ let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: C
                 then Some((tuple, "Tuple"))
                 else None
             | Some(SemString) -> Some((SemString, "String"))
+            | Some(SemBytes) -> Some((SemBytes, "Bytes"))
             | Some(SemList(element) as list) ->
                 if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
                 then

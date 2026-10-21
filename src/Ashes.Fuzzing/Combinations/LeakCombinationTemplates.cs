@@ -80,6 +80,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ClosureConsesOntoCurriedSelfCallTemplate());
         registry.Register(new BytesBufferUpdatesTemplate());
         registry.Register(new BytesFreshReadOperandTemplate());
+        registry.Register(new BytesLoopBufferTemplate());
     }
 }
 

@@ -93,3 +93,34 @@ internal sealed class BytesFreshReadOperandTemplate() : LeakCombinationTemplate(
             """;
     }
 }
+
+/// <summary>
+/// A loop that hands a buffer to itself through an update (<c>set</c>, <c>setU16Le</c>, or a
+/// <c>copyRange</c> within the buffer), started from a fresh buffer. The buffer parameter is
+/// reference-counted, and each back edge releases the buffer its successor replaces.
+/// </summary>
+internal sealed class BytesLoopBufferTemplate() : LeakCombinationTemplate(
+    "leak.bytes-loop-buffer", "bytesLoopBuffer", GeneratedFeature.Call)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string fill = names.Of("fillBuffer");
+        string size = LeakNames.Text(names.Between(4, 9));
+        string update = names.Variant("update", 3) switch
+        {
+            0 => "Ashes.Byte.set(buffer)(i)(Ashes.Number.UInt.fromInt(i))",
+            1 => "Ashes.Byte.setU16Le(buffer)(0)(7u16)",
+            _ => "Ashes.Byte.copyRange(buffer)(i)(buffer)(0)(1)",
+        };
+        return $$"""
+            let recursive {{fill}} (buffer: Bytes) (i: Int) =
+                if i >= Ashes.Byte.length(buffer)
+                then buffer
+                else {{fill}}({{update}})(i + 1)
+
+            let {{names.Entry}} (seed: Int) =
+                let filled = {{fill}}(Ashes.Byte.allocate({{size}}))(1)
+                in Ashes.Byte.length(filled) + seed
+            """;
+    }
+}
