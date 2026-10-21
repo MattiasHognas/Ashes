@@ -28,6 +28,11 @@ public sealed partial class Lowering
     private readonly Dictionary<IrInst.CallClosure, (int RequestTemp, int[] Parts)> _tupleResultPartsRequests =
         new(ReferenceEqualityComparer.Instance);
 
+    // The withdrawn requests, by the result temp of the call that made them: a function returning
+    // that result as it is forwards its own caller's request in their place.
+    private readonly Dictionary<IrInst.CallClosure, (int RequestTemp, int[] Parts)> _withdrawnTupleResultPartsRequests =
+        new(ReferenceEqualityComparer.Instance);
+
     // The parts a known function hands over when its result is asked for, or null.
     private int[]? CalleeTupleResultParts(Expr rootExpr, int argumentCount)
     {
@@ -91,6 +96,7 @@ public sealed partial class Lowering
                 return request.Parts;
             }
 
+            _withdrawnTupleResultPartsRequests[call] = request;
             for (int j = i - 1; j >= 0 && j >= i - 64; j--)
             {
                 if (_inst[j] is IrInst.LoadConstInt constant && constant.Target == request.RequestTemp)
@@ -198,6 +204,13 @@ public sealed partial class Lowering
         }
 
         List<GeneralRcOwnedSlot> kept = OwnedSlotsOutOfResultReach(resultTemp, _generalRcOwnedSlots);
+        if (TryForwardTupleResultPartsRequest(resultTemp, parts))
+        {
+            EmitGeneralRcOwnedSlotDrops(kept);
+            _tupleResultPartLabels[label] = parts;
+            return true;
+        }
+
         List<int>? cells = inLoop ? null : ArenaCellsOfResult(resultTemp);
         List<GeneralRcOwnedSlot> handedOver = kept;
         if (cells is { Count: > 0 })
@@ -226,6 +239,77 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
         _tupleResultPartLabels[label] = parts;
         return true;
+    }
+
+    private static bool ForwardedTupleResultPartsEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_FORWARDEDTUPLEPARTS") is null;
+
+    /// <summary>
+    /// A result that is another function's generic tuple result, returned as it is: the call's
+    /// withdrawn request for the same parts is replaced by this function's own caller's request
+    /// (bit 2 of its ownership word), so the callee hands the parts over to that caller directly and
+    /// this function takes none. False when the result is no such call's.
+    /// </summary>
+    private bool TryForwardTupleResultPartsRequest(int resultTemp, int[] parts)
+    {
+        IrInst.CallClosure? call = SoleCallThroughLocals(resultTemp);
+        if (!ForwardedTupleResultPartsEnabled
+            || call is null
+            || !_withdrawnTupleResultPartsRequests.Remove(call, out (int RequestTemp, int[] Parts) request)
+            || !request.Parts.SequenceEqual(parts))
+        {
+            return false;
+        }
+
+        int callIndex = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, call));
+        int index = callIndex < 0 ? -1 : _inst.FindLastIndex(callIndex, instruction => instruction is IrInst.LoadConstInt constant && constant.Target == request.RequestTemp);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        int wordTemp = NewTemp();
+        int bitTemp = NewTemp();
+        IrInst[] forwarded =
+        [
+            new IrInst.LoadArgumentOwnership(wordTemp),
+            new IrInst.LoadConstInt(bitTemp, TupleResultPartsRequestBit),
+            new IrInst.AndInt(request.RequestTemp, wordTemp, bitTemp),
+        ];
+        _inst.RemoveAt(index);
+        _inst.InsertRange(index, forwarded);
+        ShiftRecordedInstructionIndices(index, forwarded.Length - 1);
+        return true;
+    }
+
+    // The call whose result a temp is, through locals stored once and borrows; null when it may be
+    // another value.
+    private IrInst.CallClosure? SoleCallThroughLocals(int temp)
+    {
+        for (int depth = 0; depth < 16; depth++)
+        {
+            switch (DefinitionOf(temp))
+            {
+                case IrInst.CallClosure call:
+                    return call;
+                case IrInst.Borrow borrow:
+                    temp = borrow.SourceTemp;
+                    break;
+                case IrInst.LoadLocal load:
+                    List<int> sources = [.. _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == load.Slot).Select(store => store.Source)];
+                    if (sources.Count != 1)
+                    {
+                        return null;
+                    }
+
+                    temp = sources[0];
+                    break;
+                default:
+                    return null;
+            }
+        }
+
+        return null;
     }
 
     private void EmitRetainIfReferenceCounted(int valueTemp)

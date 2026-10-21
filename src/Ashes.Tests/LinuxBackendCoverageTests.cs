@@ -3108,6 +3108,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_forwarded_generic_tuple_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic function returns another generic function's tuple result as it is. The caller's
+        // request for the contract list goes on through it to the function that built the tuple,
+        // which hands the list over and releases the owned record behind it.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildForwardedGenericTupleResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic tuple result forwarded through a generic function", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_demoted_fields_beside_generic_value_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12779,6 +12803,46 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countAll(cases(3))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildForwardedGenericTupleResultProgram(int rounds)
+        => $$"""
+            type Item =
+                | name: Str
+                | n: Int
+
+            type Box =
+                | items: List(Item)
+                | count: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (k: Int) = [Item(name = wide + Ashes.Text.fromInt(k), n = k)]
+
+            let makeBox (k: Int) = Box(items = make(k + 1), count = k)
+
+            let pick value (k: Int) =
+                let built = makeBox(k)
+                in
+                    if k > 2
+                    then (value, make(k))
+                    else (value, built.items)
+
+            let forward value (k: Int) = pick(value)(k + 1)
+
+            let recursive countAll (values: List(Item)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _value :: rest -> countAll(rest)(total + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match forward(n)(n - n / 5 * 5) with
+                        | (_m, items) -> rounds(n - 1)(total + countAll(items)(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

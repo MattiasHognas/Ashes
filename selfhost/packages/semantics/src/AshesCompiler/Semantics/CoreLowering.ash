@@ -722,6 +722,9 @@ type CoreTcoState =
     // The call results of this function whose copy-out kind was undecidable when their window
     // closed, resolved with the pending resets once the body is lowered.
     | pendingCallCopyOuts: List(CorePendingCallCopyOut)
+    // The tuple-parts requests withdrawn from this function's calls, by result temp: the request
+    // constant and the parts asked for (stage 0's `_withdrawnTupleResultPartsRequests`).
+    | withdrawnTuplePartsRequests: List((Int, Int, List(Int)))
     // The recursive bindings whose result type was still unresolved when the body being lowered
     // began: a call to one of them sees a fresh result type, stage 0's lowering-local self arrow.
     | selfResultDeferredNames: List(Str)
@@ -1659,6 +1662,14 @@ let withStatePendingCallCopyOuts value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with pendingCallCopyOuts = value))
 
+let stateWithdrawnTuplePartsRequests (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.withdrawnTuplePartsRequests)
+
+let withStateWithdrawnTuplePartsRequests value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with withdrawnTuplePartsRequests = value))
+
 let stateSelfResultDeferredNames (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.selfResultDeferredNames)
@@ -2317,6 +2328,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             tmcActivatedLabels = [],
             pendingTcoResets = [],
             pendingCallCopyOuts = [],
+            withdrawnTuplePartsRequests = [],
             selfResultDeferredNames = [],
             selfCallResultUnifications = [],
             callArgumentRecordRetains = [],
@@ -5948,6 +5960,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateTcoLoopFrame(None)
             |> withStatePendingTcoResets([])
             |> withStatePendingCallCopyOuts([])
+            |> withStateWithdrawnTuplePartsRequests([])
             |> withStateSelfCallResultUnifications([])
             |> withStateRetiredLocals([]))
         |> (given (current: CoreLoweringState) ->
@@ -9941,6 +9954,91 @@ let tuplePartsHandOverPlan (resultTemp: Int) (parts: List(Int)) (scalars: List(I
                             (ownedSlotsOutside(localSlotsReachingTemps(pinning)(state.reversedInstructions))(registered), retainTuplePartStoresWhenRequested(retained)(state), true)
                 | _ -> (kept, state, false))
 
+// Stage 0's `SoleCallThroughLocals`: the call result a temp is, through locals stored once and
+// borrows; -1 when it may be another value.
+let recursive soleCallSourceThroughLocals (temp: Int) (depth: Int) (forward: List(IrInstruction)) (state: CoreLoweringState) =
+    if depth == 0
+    then -1
+    else
+        match definitionOfTemp(temp)(state.reversedInstructions) with
+            | Some(CallClosure(target, _closure, _argument, _word)) -> target
+            | Some(Borrow(_target, source)) -> soleCallSourceThroughLocals(source)(depth - 1)(forward)(state)
+            | Some(LoadLocal(_target, slot)) ->
+                match storedSourcesOf(slot)(forward) with
+                    | source :: [] -> soleCallSourceThroughLocals(source)(depth - 1)(forward)(state)
+                    | _ -> -1
+            | _ -> -1
+
+let recursive sameInts (left: List(Int)) (right: List(Int)) =
+    match (left, right) with
+        | ([], []) -> true
+        | (l :: leftRest, r :: rightRest) -> l == r && sameInts(leftRest)(rightRest)
+        | _ -> false
+
+let recursive withdrawnRequestFor (callTemp: Int) (parts: List(Int)) (requests: List((Int, Int, List(Int)))) =
+    match requests with
+        | [] -> -1
+        | (resultTemp, request, asked) :: rest ->
+            if resultTemp == callTemp && sameInts(asked)(parts)
+            then request
+            else withdrawnRequestFor(callTemp)(parts)(rest)
+
+// The withdrawn request constant replaced by this function's own caller's request, bit 2 of its
+// ownership word. The instructions are most recent first.
+let recursive forwardRequestConstant (request: Int) (wordTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = LoadConstInt(target, _value), location = location } as instruction) :: rest ->
+            if target == request
+            then IrInstruction(instruction = AndInt(request)(wordTemp)(wordTemp + 1), location = location) :: IrInstruction(instruction = LoadConstInt(wordTemp + 1)(4), location = location) :: IrInstruction(instruction = LoadArgumentOwnership(wordTemp), location = location) :: rest
+            else instruction :: forwardRequestConstant(request)(wordTemp)(rest)
+        | instruction :: rest -> instruction :: forwardRequestConstant(request)(wordTemp)(rest)
+
+// Stage 0's `TryForwardTupleResultPartsRequest`: a result that is another function's generic tuple
+// result returned as it is takes no parts itself; the call's withdrawn request for the same parts
+// becomes this function's own caller's request, so the callee hands the parts over to that caller
+// directly. None when the result is no such call's.
+let forwardTupleResultPartsRequest (resultTemp: Int) (parts: List(Int)) (state: CoreLoweringState) =
+    (let callTemp =
+        soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
+    in
+        if callTemp < 0
+        then None
+        else
+            let request =
+                state
+                |> stateWithdrawnTuplePartsRequests
+                |> withdrawnRequestFor(callTemp)(parts)
+            in
+                if request < 0
+                then None
+                else
+                    match freshTempRun(2)(state) with
+                        | FreshTemp { state = allocated, temp = wordTemp } -> Some((allocated with reversedInstructions = forwardRequestConstant(request)(wordTemp)(allocated.reversedInstructions))))
+
+let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
+    match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
+        | (handedOver, spliced, cellsKnown) ->
+            match freshLabel("tuple_parts_not_requested")(spliced) with
+                | FreshLabel { state = keepState, label = keepLabel } ->
+                    match freshLabel("tuple_parts_handed_over")(keepState) with
+                        | FreshLabel { state = doneState, label = doneLabel } ->
+                            doneState
+                            |> emitJumpUnlessTuplePartsRequestedOf(resultTemp)(keepLabel)
+                            |> (given (requested: CoreLoweringState) ->
+                                if cellsKnown
+                                then requested
+                                else emitTuplePartRetainsAtReturn(resultTemp)(parts)(requested))
+                            |> emitGeneralRcOwnedSlotDropsOf(origin)(handedOver)
+                            |> emit(Jump(doneLabel))
+                            |> emit(Label(keepLabel))
+                            |> emitGeneralRcOwnedSlotDropsOf(origin)(kept)
+                            |> emit(Label(doneLabel))
+                            |> (given (finished: CoreLoweringState) ->
+                                withStateTupleResultPartLabels(finished
+                                |> stateTupleResultPartLabels
+                                |> Ashes.Collection.Map.setStr(label)(parts))(finished))
+
 let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) (state: CoreLoweringState) =
     (let origin = stateActiveFunctionOrigin(state)
     in
@@ -9952,27 +10050,15 @@ let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (parts
             let kept =
                 ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)
             in
-                match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
-                    | (handedOver, spliced, cellsKnown) ->
-                        match freshLabel("tuple_parts_not_requested")(spliced) with
-                            | FreshLabel { state = keepState, label = keepLabel } ->
-                                match freshLabel("tuple_parts_handed_over")(keepState) with
-                                    | FreshLabel { state = doneState, label = doneLabel } ->
-                                        doneState
-                                        |> emitJumpUnlessTuplePartsRequestedOf(resultTemp)(keepLabel)
-                                        |> (given (requested: CoreLoweringState) ->
-                                            if cellsKnown
-                                            then requested
-                                            else emitTuplePartRetainsAtReturn(resultTemp)(parts)(requested))
-                                        |> emitGeneralRcOwnedSlotDropsOf(origin)(handedOver)
-                                        |> emit(Jump(doneLabel))
-                                        |> emit(Label(keepLabel))
-                                        |> emitGeneralRcOwnedSlotDropsOf(origin)(kept)
-                                        |> emit(Label(doneLabel))
-                                        |> (given (finished: CoreLoweringState) ->
-                                            withStateTupleResultPartLabels(finished
-                                            |> stateTupleResultPartLabels
-                                            |> Ashes.Collection.Map.setStr(label)(parts))(finished)))
+                match forwardTupleResultPartsRequest(resultTemp)(parts)(state) with
+                    | Some(forwarded) ->
+                        forwarded
+                        |> emitGeneralRcOwnedSlotDropsOf(origin)(kept)
+                        |> (given (finished: CoreLoweringState) ->
+                            withStateTupleResultPartLabels(finished
+                            |> stateTupleResultPartLabels
+                            |> Ashes.Collection.Map.setStr(label)(parts))(finished))
+                    | None -> handOverTupleParts(label)(resultTemp)(parts)(scalars)(origin)(registered)(kept)(state))
 
 // The return of a function whose result is outside the contract's types and holds no part of
 // a generic tuple: an independent copy, a move onto the heap, or the owned slots out of reach.
@@ -15618,6 +15704,13 @@ let recursive zeroRequestConstant (request: Int) (instructions: List(IrInstructi
             else instruction :: zeroRequestConstant(request)(rest)
         | instruction :: rest -> instruction :: zeroRequestConstant(request)(rest)
 
+// A withdrawn request is remembered with the parts it asked for, so a function returning the call's
+// result as it is can forward its own caller's request in its place.
+let recordWithdrawnTuplePartsRequest (resultTemp: Int) (request: Int) (parts: Maybe(List(Int))) (state: CoreLoweringState) =
+    match parts with
+        | Some(asked) -> withStateWithdrawnTuplePartsRequests((resultTemp, request, asked) :: stateWithdrawnTuplePartsRequests(state))(state)
+        | None -> state
+
 // Stage 0's `TakeTupleResultPartsRequest`: the parts the call producing `resultTemp` asked for, or
 // None; a withdrawn request is cleared in the call's ownership word, so the callee keeps its own
 // references.
@@ -15628,7 +15721,8 @@ let takeTupleResultPartsRequest (context: CoreCallContext) (resultTemp: Int) (wi
         then (state, None)
         else
             if withdraw
-            then ((state with reversedInstructions = zeroRequestConstant(request)(state.reversedInstructions)), None)
+            then
+                (recordWithdrawnTuplePartsRequest(resultTemp)(request)(calleeTupleResultParts(context)(state))((state with reversedInstructions = zeroRequestConstant(request)(state.reversedInstructions))), None)
             else (state, calleeTupleResultParts(context)(state)))
 
 let recursive loadHandedOverTupleParts (resultTemp: Int) (parts: List(Int)) (state: CoreLoweringState) (temps: List(Int)) =
@@ -19129,6 +19223,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateTcoLoopFrame(None)
             |> withStatePendingTcoResets([])
             |> withStatePendingCallCopyOuts([])
+            |> withStateWithdrawnTuplePartsRequests([])
             |> withStateSelfCallResultUnifications([])
             |> withStateRetiredLocals([]))
         |> (given (current: CoreLoweringState) ->

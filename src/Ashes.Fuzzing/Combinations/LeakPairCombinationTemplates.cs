@@ -663,6 +663,56 @@ internal sealed class RecursivePhantomListResultTemplate() : LeakCombinationTemp
 }
 
 /// <summary>
+/// A generic function returns another generic function's tuple result as it is: a value of its own
+/// type parameter beside a contract list built from a call or an owned record's field. The outer
+/// function's caller asks for the list, and the request goes on to the inner function.
+/// </summary>
+internal sealed class ForwardedGenericTupleResultTemplate() : LeakCombinationTemplate(
+    "leak.forwarded-generic-tuple-result", "forwardedGenericTupleResult", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.Let, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string item = names.Of("LeakItem");
+        string box = names.Of("LeakBox");
+        string make = names.Of("make");
+        string makeBox = names.Of("makeBox");
+        string pair = names.Of("pairWith");
+        string forward = names.Of("forwardPair");
+        string[] arms = [$"(value, {make}(k))", "(value, built.items)"];
+        string first = arms[names.Between(0, arms.Length - 1)];
+        string second = arms[names.Between(0, arms.Length - 1)];
+        string threshold = LeakNames.Text(names.Between(0, 3));
+        string step = LeakNames.Text(names.Between(0, 2));
+        return $$"""
+            type {{item}} =
+                | name: Str
+                | n: Int
+
+            type {{box}} =
+                | items: List({{item}})
+                | count: Int
+
+            let {{make}} (k: Int) = [{{item}}(name = {{names.Word()}} + Ashes.Text.fromInt(k), n = k)]
+
+            let {{makeBox}} (k: Int) = {{box}}(items = {{make}}(k + 1), count = k)
+
+            let {{pair}} value (k: Int) =
+                let built = {{makeBox}}(k)
+                in
+                    if k > {{threshold}}
+                    then {{first}}
+                    else {{second}}
+
+            let {{forward}} value (k: Int) = {{pair}}(value)(k + {{step}})
+
+            let {{names.Entry}} (seed: Int) =
+                match {{forward}}(seed)(seed) with
+                    | (_kept, items) -> Ashes.Collection.List.length(items) + seed
+            """;
+    }
+}
+
+/// <summary>
 /// A generic function pairs a value of its own type parameter with the string-list fields of a
 /// record a call returned: the arena tuples beside the generic value take independent copies of
 /// the fields, so the record is released behind the result.
