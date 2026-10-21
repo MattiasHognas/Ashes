@@ -79,6 +79,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConsOntoFreshCallResultTemplate());
         registry.Register(new ClosureConsesOntoCurriedSelfCallTemplate());
         registry.Register(new BytesBufferUpdatesTemplate());
+        registry.Register(new BytesFreshReadOperandTemplate());
     }
 }
 

@@ -3050,14 +3050,16 @@ let acceptsRuntimeManagedArgument (label: Str) (state: CoreLoweringState) =
 let recordRuntimeNormalizedArgument (label: Str) (state: CoreLoweringState) = withStateRuntimeNormalizedArgumentLabels(label :: stateRuntimeNormalizedArgumentLabels(state))(state)
 
 // Stage 0's `ReleaseConsumedOwnedOperand`: a consumer that keeps nothing of a newly produced
-// reference-counted string releases it right after the use.
-let releaseConsumedOperand (temp: Int) (state: CoreLoweringState) =
+// reference-counted value (a string, or a byte buffer) releases it right after the use.
+let releaseConsumedOperandOf (typeName: Str) (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
         | Some(RuntimeNewlyProduced) ->
             state
-            |> emit(RcDrop(temp)("String")(-1)(true)(false)(None))
+            |> emit(RcDrop(temp)(typeName)(-1)(true)(false)(None))
             |> markRuntimeTemp(temp)(RuntimeTransferred)
         | _ -> state
+
+let releaseConsumedOperand (temp: Int) (state: CoreLoweringState) = releaseConsumedOperandOf("String")(temp)(state)
 
 let unifyExpectedResult expected lowered =
     match lowered with
@@ -21550,6 +21552,38 @@ let releaseConsumedBuiltinOperand (consumedOperand: Maybe(Int)) (state: CoreLowe
         | Some(operand) -> releaseConsumedOperand(operand)(state)
         | None -> state
 
+// A byte builtin that only reads its buffer (a length, element or integer read, a search, a
+// comparison, a hash, a copied-out text, a copyRange source) releases a newly produced one right
+// after the use, stage 0's `ReleaseConsumedOwnedBytesOperand` at those sites.
+let consumedBytesOperands (kind: CoreBuiltinKind) (temps: List(Int)) =
+    match (kind, temps) with
+        | (CoreBytesLength, value :: []) -> [value]
+        | (CoreBytesGet, value :: _rest) -> [value]
+        | (CoreBytesGetU16Le, value :: _rest) -> [value]
+        | (CoreBytesGetU32Le, value :: _rest) -> [value]
+        | (CoreBytesGetU64Le, value :: _rest) -> [value]
+        | (CoreBytesIndexOf, value :: _rest) -> [value]
+        | (CoreBytesScanHash, value :: _rest) -> [value]
+        | (CoreBytesHash, value :: []) -> [value]
+        | (CoreBytesSubText, value :: _rest) -> [value]
+        | (CoreBytesCompare, left :: right :: []) ->
+            if left == right
+            then [left]
+            else [left, right]
+        | (CoreBytesCopyRange, destination :: _offset :: source :: _rest) ->
+            if source == destination
+            then []
+            else [source]
+        | _ -> []
+
+let recursive releaseConsumedBytesOperands (operands: List(Int)) (state: CoreLoweringState) =
+    match operands with
+        | [] -> state
+        | operand :: rest ->
+            state
+            |> releaseConsumedOperandOf("Bytes")(operand)
+            |> releaseConsumedBytesOperands(rest)
+
 // A fresh-string builtin that honored the runtime request produced a reference-counted string;
 // `Byte.allocate` and the pure byte updates always produce a reference-counted buffer, as stage 0
 // marks them runtime-managed.
@@ -21558,7 +21592,7 @@ let markFreshBuiltinResult (kind: CoreBuiltinKind) (runtimeManaged: Bool) (lower
     then markLoweredRuntimeTemp(lowered)
     else lowered
 
-let finishBuiltinEmission resultType lower consumedOperand state emission =
+let finishBuiltinEmission resultType lower consumedOperand consumedBytes state emission =
     match emission with
         | CoreBuiltinEmission { error = Some(error) } -> failure(state)(UnsupportedCoreBuiltinLowering(error))
         | CoreBuiltinEmission { instructions = instructions, nextTemp = nextTemp, result = result, error = None } ->
@@ -21566,6 +21600,7 @@ let finishBuiltinEmission resultType lower consumedOperand state emission =
             |> withNextTemp(nextTemp)
             |> emitCoreInstructions(instructions)
             |> releaseConsumedBuiltinOperand(consumedOperand)
+            |> releaseConsumedBytesOperands(consumedBytes)
             |> finishBuiltinResult(resultType)(lower)(result)
 
 // Stage 0's `LowerInternalDeepCopy`: the argument's independent clone, synthesized by its
@@ -21593,7 +21628,7 @@ let emitBuiltin layout resultType lower runtimeManaged reuseInput lowered =
                     semanticTypes
                     |> resolveCoreTypes(state)
                     |> emitCoreBuiltinReusing(kind)(runtimeManaged)(reuseInput)(nextTemp)(temps)
-                    |> finishBuiltinEmission(resultType)(lower)(consumedBuiltinOperand(kind)(temps))(state)
+                    |> finishBuiltinEmission(resultType)(lower)(consumedBuiltinOperand(kind)(temps))(consumedBytesOperands(kind)(temps))(state)
                     |> markFreshBuiltinResult(kind)(runtimeManaged)
 
 let emitTypedBuiltin layout resultType lower runtimeManaged reuseInput (lowered: LoweredCoreValues) typedState =

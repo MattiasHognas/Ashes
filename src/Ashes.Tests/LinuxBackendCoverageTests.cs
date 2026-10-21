@@ -3301,6 +3301,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_bytes_buffer_read_by_a_builtin_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A fresh buffer handed straight to a builtin that only reads it: a length, and the source
+        // of a copyRange. Nothing owns the buffer once the read completes, so it is released there,
+        // as a fresh string handed to print or byteLength is.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildFreshBytesBufferReadByBuiltinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 768}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh bytes buffer read by a builtin", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public void Worklist_front_beside_queued_map_of_its_keys_is_placed_on_the_reference_counted_heap()
     {
         // A worklist whose loop marks each key in a map beside the front queue. The map's update
@@ -12993,6 +13017,18 @@ public sealed class LinuxBackendCoverageTests
                 else
                     let keys = [wide + "1", wide + "2", wide + "3", wide + "4"]
                     in rounds(n - 1)(total + countAll(enqueue(keys)([])(0))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildFreshBytesBufferReadByBuiltinProgram(int rounds)
+        => $$"""
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let wide = Ashes.Byte.copyRange(Ashes.Byte.allocate(256))(0)(Ashes.Byte.allocate(256))(0)(256)
+                    in rounds(n - 1)(total + Ashes.Byte.length(Ashes.Byte.allocate(512)) + Ashes.Byte.length(wide))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

@@ -61,3 +61,35 @@ internal sealed class BytesBufferUpdatesTemplate() : LeakCombinationTemplate(
             """;
     }
 }
+
+/// <summary>
+/// A fresh buffer handed straight to a builtin that only reads it: a length, an element or
+/// integer read, a search, a hash, a copied-out text, a comparison, or a copyRange source. The
+/// builtin keeps nothing of the buffer, so the read is where it is released.
+/// </summary>
+internal sealed class BytesFreshReadOperandTemplate() : LeakCombinationTemplate(
+    "leak.bytes-fresh-read-operand", "bytesFreshReadOperand", GeneratedFeature.Call)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string size = LeakNames.Text(names.Between(4, 9));
+        string first = LeakNames.Text(names.Between(1, 9));
+        string body = names.Variant("read", 7) switch
+        {
+            0 => $$"""Ashes.Byte.length(Ashes.Byte.allocate({{size}})) + seed""",
+            1 => $$"""Ashes.Number.UInt.toInt(Ashes.Byte.get(Ashes.Byte.set(Ashes.Byte.allocate({{size}}))(0)({{first}}u8))(0)) + seed""",
+            2 => $$"""Ashes.Number.UInt.toInt(Ashes.Byte.getU16Le(Ashes.Byte.allocate({{size}}))(0)) + seed""",
+            3 => $$"""Ashes.Byte.indexOf(Ashes.Byte.allocate({{size}}))(0)(0) + Ashes.Byte.hash(Ashes.Byte.allocate({{size}})) % 7 + seed""",
+            4 => $$"""Ashes.Text.byteLength(Ashes.Byte.subText(Ashes.Byte.allocate({{size}}))(0)(2)) + seed""",
+            5 => $$"""Ashes.Byte.compare(Ashes.Byte.allocate({{size}}))(Ashes.Byte.allocate(3)) + seed""",
+            _ => $$"""
+                let wide = Ashes.Byte.copyRange(Ashes.Byte.allocate({{size}}))(0)(Ashes.Byte.allocate(2))(0)(2)
+                    in Ashes.Byte.length(wide) + seed
+                """,
+        };
+        return $$"""
+            let {{names.Entry}} (seed: Int) =
+                {{body}}
+            """;
+    }
+}
