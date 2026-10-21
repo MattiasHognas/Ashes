@@ -74,6 +74,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new PipedLambdaReturnsCallResultTemplate());
         registry.Register(new ConsOntoFreshCallResultTemplate());
         registry.Register(new ClosureConsesOntoCurriedSelfCallTemplate());
+        registry.Register(new BytesBufferUpdatesTemplate());
     }
 }
 
