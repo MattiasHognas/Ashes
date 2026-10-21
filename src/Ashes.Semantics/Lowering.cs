@@ -16424,12 +16424,34 @@ public sealed partial class Lowering
         _loopExitCell = exitCell ? cons : null;
         try
         {
-            return LowerConsTail(cons, head, listType, transfersChildren, savedTailPos, request);
+            (int, TypeRef) cell = LowerConsTail(cons, head, listType, transfersChildren, savedTailPos, request);
+            return exitCell && escapesThroughCall ? KeepArgumentExitCellOwned(cell) : cell;
         }
         finally
         {
             _loopExitCell = outerExitCell;
         }
+    }
+
+    // The cell built for a call's argument as a loop's exit cell is reference-counted, and a list of the
+    // contract's types is passed borrowed, so no consumed-argument release follows the call. The cell
+    // goes to an owned slot instead, released once the call's result holds references of its own.
+    private (int, TypeRef) KeepArgumentExitCellOwned((int Temp, TypeRef Type) cell)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLOWNED") is not null
+            || !IsRuntimeManagedResultTemp(cell.Temp)
+            || !IsGeneralRcValueType(cell.Type))
+        {
+            return cell;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, cell.Temp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(cell.Type));
+        int ownedTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(ownedTemp, ownedSlot));
+        return (ownedTemp, cell.Type);
     }
 
     // The cell a loop returns consed onto one of its list parameters (`| [] -> first :: acc`) is

@@ -4688,6 +4688,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_exit_cell_of_records_passed_to_call_memory_should_plateau()
+    {
+        // `| [] -> reverseValues(eof :: tokens)([])` over a list of records: the cell a loop's exit
+        // passes to a call is reference-counted and takes a reference to the accumulator, and a list
+        // of the contract's types is passed borrowed, so no consumed-argument release follows the
+        // call. The cell is kept in an owned slot of its own; without it the cell, and with it the
+        // whole accumulator, was never released.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        int[] roundCounts = [20_000, 100_000, 300_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram program = LowerProgramWithImports(BuildExitCellOfRecordsPassedToCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(program).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 9}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("exit cell of records passed to a call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_call_result_onto_choice_accumulator_memory_should_plateau()
     {
         // `walk(rest)(join(p) :: seen)` beside `walk(rest)(seen)`: the back edge copies the successor
@@ -11685,6 +11711,41 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(keepOdd([])(collect(3)([]))) + 1)
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildExitCellOfRecordsPassedToCallProgram(int rounds)
+        => $$"""
+            type Token =
+                | text: Str
+                | position: Int
+
+            let recursive reverseValues remaining result =
+                match remaining with
+                    | [] -> result
+                    | head :: tail -> reverseValues(tail)(head :: result)
+
+            let readToken (position: Int) = Token(text = Ashes.Text.fromInt(position), position = position)
+
+            let recursive scan (n: Int) (position: Int) (tokens: List(Token)) =
+                if position >= n
+                then reverseValues(Token(text = "", position = position) :: tokens)([])
+                else
+                    let token = readToken(position)
+                    in scan(n)(token.position + 1)(token :: tokens)
+
+            let recursive measure (tokens: List(Token)) (total: Int) =
+                match tokens with
+                    | [] -> total
+                    | token :: rest -> measure(rest)(total + Ashes.Text.byteLength(token.text) + token.position)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + measure(scan(3)(0)([]))(0))
 
             0
             |> rounds({{rounds}})

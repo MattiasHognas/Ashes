@@ -283,6 +283,10 @@ type ConsumerRequest =
     // parameter whose back edge copies its successor with references of its own borrows its head
     // and tail, taking no pattern-owner duplicate of them.
     | borrowsCellParts: Bool
+    // Stage 0's `_callArgumentCell`: the cons written as a call's argument and asked for as a loop's
+    // exit cell (`withEscapingArgumentCell`). It reaches the cons itself, through its spans, and
+    // nothing else.
+    | escapingArgumentCell: Bool
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -305,7 +309,8 @@ let emptyConsumerRequest =
         tailCall = false,
         consTailPosition = false,
         runtimeTcoListTailSlot = None,
-        borrowsCellParts = false
+        borrowsCellParts = false,
+        escapingArgumentCell = false
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
@@ -3175,6 +3180,13 @@ let consPartsRequestForwards (expression: Expr) =
         | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true
         | _ -> false
 
+// The escaping argument cell's flag reaches the cons the argument writes out, through its spans.
+let argumentCellRequestForwards (expression: Expr) =
+    match expression with
+        | ExprAt(_span, _inner) -> true
+        | ExprCons(_head, _tail) -> true
+        | _ -> false
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
@@ -3198,7 +3210,8 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         runtimeTcoListTailSlot = if aggregateRequestForwards(expression)
         then request.runtimeTcoListTailSlot
         else None,
-        borrowsCellParts = consPartsRequestForwards(expression) && request.borrowsCellParts
+        borrowsCellParts = consPartsRequestForwards(expression) && request.borrowsCellParts,
+        escapingArgumentCell = argumentCellRequestForwards(expression) && request.escapingArgumentCell
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =
@@ -14631,7 +14644,7 @@ let withEscapingArgumentCell (argument: Expr) (escapes: Bool) (state: CoreLoweri
     match (escapes, unspanArgument(argument)) with
         | (true, ExprCons(_head, tail)) ->
             match unspanArgument(tail) with
-                | ExprVar(_name) -> withConsumerRequest((consumerRequestOf(state) with consTailPosition = true))(state)
+                | ExprVar(_name) -> withConsumerRequest((consumerRequestOf(state) with consTailPosition = true, escapingArgumentCell = true))(state)
                 | _ -> state
         | _ -> state
 
@@ -20215,6 +20228,30 @@ let ownHeadOfCellOverFreshTail (request: ConsumerRequest) (tailExpression: Expr)
             else (request, head, tail)
         | _ -> (request, head, tail)
 
+// Stage 0's `KeepArgumentExitCellOwned`: the cell built for a call's argument as a loop's exit cell
+// (a cons onto a loop parameter asked for by `withEscapingArgumentCell`) is reference-counted, and
+// a list of the contract's types is passed borrowed, so no consumed-argument release follows the
+// call. The cell goes to an owned slot instead, released once the call's result holds references
+// of its own.
+let keepArgumentExitCellOwned (request: ConsumerRequest) (tailExpression: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = cellTemp, semanticType = cellType, error = None } ->
+            match (request.escapingArgumentCell, loopExitCellSlot(request)(tailExpression)(state)) with
+                | (true, Some(_slot)) ->
+                    if isRuntimeTemp(cellTemp)(state) && isGeneralRcValueType(resolveType(state)(cellType))(state)
+                    then
+                        match freshLocal(state) with
+                            | FreshLocal { state = allocated, local = ownedSlot } ->
+                                match allocated
+                                |> emit(StoreLocal(ownedSlot)(cellTemp))
+                                |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(cellType))
+                                |> freshTemp with
+                                    | FreshTemp { state = registered, temp = ownedTemp } ->
+                                        lowered with state = emit(LoadLocal(ownedTemp)(ownedSlot))(registered), temp = ownedTemp
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -20229,6 +20266,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                             duplicatedTail
                             |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                             |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
+                            |> keepArgumentExitCellOwned(request)(tailExpression)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
 let expectedListElementType state =
