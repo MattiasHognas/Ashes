@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from fresh]
-  locals=3 temps=12
+  locals=3 temps=13
     LoadLocal             Target=0 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:28)
     LoadLocal             Target=1 Slot=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:36)
     LoadConstInt          Target=2 Value=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:45)
@@ -13,20 +13,21 @@ function lambda_0  [SourceFunction from fresh]
     LoadArgumentOwnership Target=5   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
     LoadConstInt          Target=6 Value=1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
     ShrInt                Target=7 Left=5 Right=6   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    Alloc                 Target=8 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    LoadMemOffset         Target=9 BasePtr=4 OffsetBytes=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    LoadMemOffset         Target=10 BasePtr=4 OffsetBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    AndInt                Target=8 Left=7 Right=6   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    JumpIfFalse           CondTemp=8 Target=rc_result_owned_0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    Alloc                 Target=9 SizeBytes=16   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadMemOffset         Target=10 BasePtr=4 OffsetBytes=0   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=10   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadMemOffset         Target=11 BasePtr=4 OffsetBytes=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=11   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
     RcDrop                SourceTemp=4 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=2 Source=8   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    StoreLocal            Slot=2 Source=9   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
     Jump                  Target=rc_result_done_1   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
   rc_result_owned_0:
     StoreLocal            Slot=2 Source=4   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
   rc_result_done_1:
-    LoadLocal             Target=11 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
-    Return                Source=11   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    LoadLocal             Target=12 Slot=2   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
+    Return                Source=12   (back_edge_helper_calling_unreachable_helper_is_called.ash:4:1)
 
 function lambda_2  [ClosureHelper from pairFresh]
   locals=13 temps=14

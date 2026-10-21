@@ -10144,8 +10144,8 @@ let normalizeRequestedArenaResult (bodyTemp: Int) (bodyType: SemanticType) (stat
             | FreshTemp { state = wordState, temp = wordTemp } ->
                 match freshTemp(wordState) with
                     | FreshTemp { state = shiftState, temp = shiftTemp } ->
-                        match freshTemp(shiftState) with
-                            | FreshTemp { state = requestedState, temp = requestedTemp } ->
+                        match freshTempRun(2)(shiftState) with
+                            | FreshTemp { state = requestedState, temp = shiftedTemp } ->
                                 match freshLocal(requestedState) with
                                     | FreshLocal { state = slotState, local = resultSlot } ->
                                         match freshLabel("rc_result_owned")(slotState) with
@@ -10155,8 +10155,9 @@ let normalizeRequestedArenaResult (bodyTemp: Int) (bodyType: SemanticType) (stat
                                                         match doneState
                                                         |> emit(LoadArgumentOwnership(wordTemp))
                                                         |> emit(LoadConstInt(shiftTemp)(1))
-                                                        |> emit(ShrInt(requestedTemp)(wordTemp)(shiftTemp))
-                                                        |> emit(JumpIfFalse(requestedTemp)(ownedLabel))
+                                                        |> emit(ShrInt(shiftedTemp)(wordTemp)(shiftTemp))
+                                                        |> emit(AndInt(shiftedTemp + 1)(shiftedTemp)(shiftTemp))
+                                                        |> emit(JumpIfFalse(shiftedTemp + 1)(ownedLabel))
                                                         |> emitArenaResultDeepCopy(bodyTemp)(bodyType) with
                                                             | (copied, copiedTemp) ->
                                                                 match copied

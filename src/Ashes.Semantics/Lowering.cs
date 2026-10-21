@@ -7733,8 +7733,15 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadArgumentOwnership(ownershipWordTemp));
         int requestShiftTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(requestShiftTemp, 1));
-        int requestedTemp = NewTemp();
-        Emit(new IrInst.ShrInt(requestedTemp, ownershipWordTemp, requestShiftTemp));
+        int shiftedTemp = NewTemp();
+        Emit(new IrInst.ShrInt(shiftedTemp, ownershipWordTemp, requestShiftTemp));
+        int requestedTemp = shiftedTemp;
+        if (ArenaResultRequestMaskEnabled)
+        {
+            requestedTemp = NewTemp();
+            Emit(new IrInst.AndInt(requestedTemp, shiftedTemp, requestShiftTemp));
+        }
+
         int resultSlot = NewLocal();
         string ownedLabel = NewLabel("rc_result_owned");
         string doneLabel = NewLabel("rc_result_done");
@@ -7750,6 +7757,11 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return resultTemp;
     }
+
+    // Bit 1 of the hidden ownership word is read on its own, so a request for a tuple result's parts
+    // (bit 2) is never taken for a request for an arena result.
+    private static bool ArenaResultRequestMaskEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_ARENAREQUESTMASK") is null;
 
     // The result types EmitDeepCopy clones completely into the arena: strings and bytes, tuples
     // and lists over such values or copy types, and the ADTs with an arena deep copy.

@@ -54,7 +54,7 @@ function __rcdrop_3  [RuntimeManagedAdtDropper]
     Return                Source=4   (arena_loop_parameter_copies_retained_successor.ash:12:1)
 
 function lambda_0  [SourceFunction from fresh]
-  locals=9 temps=31
+  locals=9 temps=32
     LoadLocal             Target=0 Slot=1   (arena_loop_parameter_copies_retained_successor.ash:13:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (arena_loop_parameter_copies_retained_successor.ash:13:5)
@@ -89,36 +89,37 @@ function lambda_0  [SourceFunction from fresh]
     LoadArgumentOwnership Target=13   (arena_loop_parameter_copies_retained_successor.ash:12:1)
     LoadConstInt          Target=14 Value=1   (arena_loop_parameter_copies_retained_successor.ash:12:1)
     ShrInt                Target=15 Left=13 Right=14   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    JumpIfFalse           CondTemp=15 Target=rc_result_owned_3   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    Alloc                 Target=16 SizeBytes=16   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    LoadMemOffset         Target=17 BasePtr=12 OffsetBytes=0   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    Alloc                 Target=18 SizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    MakeClosure           Target=19 FuncLabel=__deepcopy_1 EnvPtrTemp=18 EnvSizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=19   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    CallClosure           Target=20 ClosureTemp=19 ArgTemp=17   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=20   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    LoadMemOffset         Target=21 BasePtr=12 OffsetBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    Alloc                 Target=22 SizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    MakeClosure           Target=23 FuncLabel=__deepcopy_2 EnvPtrTemp=22 EnvSizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=23   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    CallClosure           Target=24 ClosureTemp=23 ArgTemp=21   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=24   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    RcIsUnique            Target=25 SourceTemp=12
-    JumpIfFalse           CondTemp=25 Target=rc_drop_tuple_shared_5   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    LoadMemOffset         Target=26 BasePtr=12 OffsetBytes=0   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    LoadConstInt          Target=27 Value=0   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    CallKnown             Target=28 FuncLabel=__rcdrop_3 EnvTemp=27 ArgTemp=26   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    LoadMemOffset         Target=29 BasePtr=12 OffsetBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    RcDrop                SourceTemp=29 TypeName=Supply RuntimeManaged=true
+    AndInt                Target=16 Left=15 Right=14   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    JumpIfFalse           CondTemp=16 Target=rc_result_owned_3   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    Alloc                 Target=17 SizeBytes=16   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    LoadMemOffset         Target=18 BasePtr=12 OffsetBytes=0   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    Alloc                 Target=19 SizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    MakeClosure           Target=20 FuncLabel=__deepcopy_1 EnvPtrTemp=19 EnvSizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=20   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    CallClosure           Target=21 ClosureTemp=20 ArgTemp=18   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=21   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    LoadMemOffset         Target=22 BasePtr=12 OffsetBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    Alloc                 Target=23 SizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    MakeClosure           Target=24 FuncLabel=__deepcopy_2 EnvPtrTemp=23 EnvSizeBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=24   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    CallClosure           Target=25 ClosureTemp=24 ArgTemp=22   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=25   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    RcIsUnique            Target=26 SourceTemp=12
+    JumpIfFalse           CondTemp=26 Target=rc_drop_tuple_shared_5   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    LoadMemOffset         Target=27 BasePtr=12 OffsetBytes=0   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    LoadConstInt          Target=28 Value=0   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    CallKnown             Target=29 FuncLabel=__rcdrop_3 EnvTemp=28 ArgTemp=27   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    LoadMemOffset         Target=30 BasePtr=12 OffsetBytes=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    RcDrop                SourceTemp=30 TypeName=Supply RuntimeManaged=true
   rc_drop_tuple_shared_5:
     RcDrop                SourceTemp=12 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=8 Source=16   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    StoreLocal            Slot=8 Source=17   (arena_loop_parameter_copies_retained_successor.ash:12:1)
     Jump                  Target=rc_result_done_4   (arena_loop_parameter_copies_retained_successor.ash:12:1)
   rc_result_owned_3:
     StoreLocal            Slot=8 Source=12   (arena_loop_parameter_copies_retained_successor.ash:12:1)
   rc_result_done_4:
-    LoadLocal             Target=30 Slot=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
-    Return                Source=30   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    LoadLocal             Target=31 Slot=8   (arena_loop_parameter_copies_retained_successor.ash:12:1)
+    Return                Source=31   (arena_loop_parameter_copies_retained_successor.ash:12:1)
 
 function lambda_5  [ClosureHelper from countPairs]
   locals=22 temps=21

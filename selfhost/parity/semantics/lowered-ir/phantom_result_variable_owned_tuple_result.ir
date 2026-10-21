@@ -73,7 +73,7 @@ function __rcdrop_record_3  [RuntimeManagedAdtDropper]
     Return                Source=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
 
 function lambda_0  [SourceFunction from build]
-  locals=5 temps=30
+  locals=5 temps=31
     LoadLocal             Target=0 Slot=1   (phantom_result_variable_owned_tuple_result.ash:9:38)
     LoadConstInt          Target=1 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:49)
     LoadLocal             Target=2 Slot=1   (phantom_result_variable_owned_tuple_result.ash:9:60)
@@ -117,20 +117,21 @@ function lambda_0  [SourceFunction from build]
     LoadArgumentOwnership Target=21   (phantom_result_variable_owned_tuple_result.ash:9:1)
     LoadConstInt          Target=22 Value=1   (phantom_result_variable_owned_tuple_result.ash:9:1)
     ShrInt                Target=23 Left=21 Right=22   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    JumpIfFalse           CondTemp=23 Target=rc_result_owned_8   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    Alloc                 Target=24 SizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    MakeClosure           Target=25 FuncLabel=__deepcopy_2 EnvPtrTemp=24 EnvSizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=25   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    CallClosure           Target=26 ClosureTemp=25 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    LoadConstInt          Target=27 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    CallKnown             Target=28 FuncLabel=__rcdrop_record_3 EnvTemp=27 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    StoreLocal            Slot=4 Source=26   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    AndInt                Target=24 Left=23 Right=22   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    JumpIfFalse           CondTemp=24 Target=rc_result_owned_8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    Alloc                 Target=25 SizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    MakeClosure           Target=26 FuncLabel=__deepcopy_2 EnvPtrTemp=25 EnvSizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    StoreMemOffset        BasePtr=25 OffsetBytes=0 Source=26   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    CallClosure           Target=27 ClosureTemp=26 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadConstInt          Target=28 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    CallKnown             Target=29 FuncLabel=__rcdrop_record_3 EnvTemp=28 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    StoreLocal            Slot=4 Source=27   (phantom_result_variable_owned_tuple_result.ash:9:1)
     Jump                  Target=rc_result_done_9   (phantom_result_variable_owned_tuple_result.ash:9:1)
   rc_result_owned_8:
     StoreLocal            Slot=4 Source=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
   rc_result_done_9:
-    LoadLocal             Target=29 Slot=4   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    Return                Source=29   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadLocal             Target=30 Slot=4   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    Return                Source=30   (phantom_result_variable_owned_tuple_result.ash:9:1)
 
 function __rcnorm_5  [RuntimeManagedAdtNormalizer]
   locals=4 temps=8

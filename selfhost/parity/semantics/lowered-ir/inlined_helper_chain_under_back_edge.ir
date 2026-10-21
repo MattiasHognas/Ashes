@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from double]
-  locals=4 temps=15
+  locals=4 temps=16
     LoadConstInt          Target=0 Value=0   (inlined_helper_chain_under_back_edge.ash:1:23)
     LoadLocal             Target=1 Slot=1   (inlined_helper_chain_under_back_edge.ash:1:27)
     Alloc                 Target=2 SizeBytes=16 RuntimeManaged=true   (inlined_helper_chain_under_back_edge.ash:1:23)
@@ -15,31 +15,32 @@ function lambda_0  [SourceFunction from double]
     LoadArgumentOwnership Target=5   (inlined_helper_chain_under_back_edge.ash:1:1)
     LoadConstInt          Target=6 Value=1   (inlined_helper_chain_under_back_edge.ash:1:1)
     ShrInt                Target=7 Left=5 Right=6   (inlined_helper_chain_under_back_edge.ash:1:1)
-    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0   (inlined_helper_chain_under_back_edge.ash:1:1)
-    CopyOutList           DestTemp=8 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary   (inlined_helper_chain_under_back_edge.ash:1:1)
+    AndInt                Target=8 Left=7 Right=6   (inlined_helper_chain_under_back_edge.ash:1:1)
+    JumpIfFalse           CondTemp=8 Target=rc_result_owned_0   (inlined_helper_chain_under_back_edge.ash:1:1)
+    CopyOutList           DestTemp=9 SrcTemp=4 HeadCopy=Inline Purpose=ArenaResultBoundary   (inlined_helper_chain_under_back_edge.ash:1:1)
     StoreLocal            Slot=3 Source=4   (inlined_helper_chain_under_back_edge.ash:1:1)
   rcdrop_list_2:
-    LoadLocal             Target=9 Slot=3   (inlined_helper_chain_under_back_edge.ash:1:1)
-    LoadConstInt          Target=10 Value=0   (inlined_helper_chain_under_back_edge.ash:1:1)
-    CmpIntNe              Target=11 Left=9 Right=10   (inlined_helper_chain_under_back_edge.ash:1:1)
-    JumpIfFalse           CondTemp=11 Target=rcdrop_list_end_4   (inlined_helper_chain_under_back_edge.ash:1:1)
-    RcIsUnique            Target=12 SourceTemp=9
-    JumpIfFalse           CondTemp=12 Target=rcdrop_list_shared_3   (inlined_helper_chain_under_back_edge.ash:1:1)
-    LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=8   (inlined_helper_chain_under_back_edge.ash:1:1)
-    RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=3 Source=13   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadLocal             Target=10 Slot=3   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadConstInt          Target=11 Value=0   (inlined_helper_chain_under_back_edge.ash:1:1)
+    CmpIntNe              Target=12 Left=10 Right=11   (inlined_helper_chain_under_back_edge.ash:1:1)
+    JumpIfFalse           CondTemp=12 Target=rcdrop_list_end_4   (inlined_helper_chain_under_back_edge.ash:1:1)
+    RcIsUnique            Target=13 SourceTemp=10
+    JumpIfFalse           CondTemp=13 Target=rcdrop_list_shared_3   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadMemOffset         Target=14 BasePtr=10 OffsetBytes=8   (inlined_helper_chain_under_back_edge.ash:1:1)
+    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=3 Source=14   (inlined_helper_chain_under_back_edge.ash:1:1)
     Jump                  Target=rcdrop_list_2   (inlined_helper_chain_under_back_edge.ash:1:1)
   rcdrop_list_shared_3:
-    RcDrop                SourceTemp=9 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_4   (inlined_helper_chain_under_back_edge.ash:1:1)
   rcdrop_list_end_4:
-    StoreLocal            Slot=2 Source=8   (inlined_helper_chain_under_back_edge.ash:1:1)
+    StoreLocal            Slot=2 Source=9   (inlined_helper_chain_under_back_edge.ash:1:1)
     Jump                  Target=rc_result_done_1   (inlined_helper_chain_under_back_edge.ash:1:1)
   rc_result_owned_0:
     StoreLocal            Slot=2 Source=4   (inlined_helper_chain_under_back_edge.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=14 Slot=2   (inlined_helper_chain_under_back_edge.ash:1:1)
-    Return                Source=14   (inlined_helper_chain_under_back_edge.ash:1:1)
+    LoadLocal             Target=15 Slot=2   (inlined_helper_chain_under_back_edge.ash:1:1)
+    Return                Source=15   (inlined_helper_chain_under_back_edge.ash:1:1)
 
 function lambda_3  [ClosureHelper from go]
   locals=22 temps=21

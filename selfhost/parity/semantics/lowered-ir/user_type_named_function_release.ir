@@ -136,7 +136,7 @@ function __rcdrop_record_4  [RuntimeManagedAdtDropper]
     Return                Source=6   (user_type_named_function_release.ash:5:1)
 
 function lambda_0  [SourceFunction from makeFunction]
-  locals=6 temps=27
+  locals=6 temps=28
     LoadLocal             Target=3 Slot=1   (user_type_named_function_release.ash:5:1)
     LoadArgumentOwnership Target=4   (user_type_named_function_release.ash:5:1)
     LoadConstInt          Target=5 Value=1   (user_type_named_function_release.ash:5:1)
@@ -178,20 +178,21 @@ function lambda_0  [SourceFunction from makeFunction]
     LoadArgumentOwnership Target=18   (user_type_named_function_release.ash:5:1)
     LoadConstInt          Target=19 Value=1   (user_type_named_function_release.ash:5:1)
     ShrInt                Target=20 Left=18 Right=19   (user_type_named_function_release.ash:5:1)
-    JumpIfFalse           CondTemp=20 Target=rc_result_owned_17   (user_type_named_function_release.ash:5:1)
-    Alloc                 Target=21 SizeBytes=8   (user_type_named_function_release.ash:5:1)
-    MakeClosure           Target=22 FuncLabel=__deepcopy_2 EnvPtrTemp=21 EnvSizeBytes=8   (user_type_named_function_release.ash:5:1)
-    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=22   (user_type_named_function_release.ash:5:1)
-    CallClosure           Target=23 ClosureTemp=22 ArgTemp=17   (user_type_named_function_release.ash:5:1)
-    LoadConstInt          Target=24 Value=0   (user_type_named_function_release.ash:5:1)
-    CallKnown             Target=25 FuncLabel=__rcdrop_record_4 EnvTemp=24 ArgTemp=17   (user_type_named_function_release.ash:5:1)
-    StoreLocal            Slot=5 Source=23   (user_type_named_function_release.ash:5:1)
+    AndInt                Target=21 Left=20 Right=19   (user_type_named_function_release.ash:5:1)
+    JumpIfFalse           CondTemp=21 Target=rc_result_owned_17   (user_type_named_function_release.ash:5:1)
+    Alloc                 Target=22 SizeBytes=8   (user_type_named_function_release.ash:5:1)
+    MakeClosure           Target=23 FuncLabel=__deepcopy_2 EnvPtrTemp=22 EnvSizeBytes=8   (user_type_named_function_release.ash:5:1)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=23   (user_type_named_function_release.ash:5:1)
+    CallClosure           Target=24 ClosureTemp=23 ArgTemp=17   (user_type_named_function_release.ash:5:1)
+    LoadConstInt          Target=25 Value=0   (user_type_named_function_release.ash:5:1)
+    CallKnown             Target=26 FuncLabel=__rcdrop_record_4 EnvTemp=25 ArgTemp=17   (user_type_named_function_release.ash:5:1)
+    StoreLocal            Slot=5 Source=24   (user_type_named_function_release.ash:5:1)
     Jump                  Target=rc_result_done_18   (user_type_named_function_release.ash:5:1)
   rc_result_owned_17:
     StoreLocal            Slot=5 Source=17   (user_type_named_function_release.ash:5:1)
   rc_result_done_18:
-    LoadLocal             Target=26 Slot=5   (user_type_named_function_release.ash:5:1)
-    Return                Source=26   (user_type_named_function_release.ash:5:1)
+    LoadLocal             Target=27 Slot=5   (user_type_named_function_release.ash:5:1)
+    Return                Source=27   (user_type_named_function_release.ash:5:1)
 
 function __deepcopy_list_7  [ListDeepCopier]
   locals=2 temps=12
@@ -216,7 +217,7 @@ function __deepcopy_list_7  [ListDeepCopier]
     Return                Source=11   (user_type_named_function_release.ash:7:1)
 
 function lambda_6  [SourceFunction from mark]
-  locals=37 temps=100
+  locals=37 temps=101
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (user_type_named_function_release.ash:7:1)
     StoreLocal            Slot=4 Source=0   (user_type_named_function_release.ash:7:1)
@@ -420,37 +421,38 @@ function lambda_6  [SourceFunction from mark]
     LoadArgumentOwnership Target=85   (user_type_named_function_release.ash:7:1)
     LoadConstInt          Target=86 Value=1   (user_type_named_function_release.ash:7:1)
     ShrInt                Target=87 Left=85 Right=86   (user_type_named_function_release.ash:7:1)
-    JumpIfFalse           CondTemp=87 Target=rc_result_owned_49   (user_type_named_function_release.ash:7:1)
-    Alloc                 Target=88 SizeBytes=8   (user_type_named_function_release.ash:7:1)
-    MakeClosure           Target=89 FuncLabel=__deepcopy_list_7 EnvPtrTemp=88 EnvSizeBytes=8   (user_type_named_function_release.ash:7:1)
-    StoreMemOffset        BasePtr=88 OffsetBytes=0 Source=89   (user_type_named_function_release.ash:7:1)
-    CallClosure           Target=90 ClosureTemp=89 ArgTemp=60   (user_type_named_function_release.ash:7:1)
+    AndInt                Target=88 Left=87 Right=86   (user_type_named_function_release.ash:7:1)
+    JumpIfFalse           CondTemp=88 Target=rc_result_owned_49   (user_type_named_function_release.ash:7:1)
+    Alloc                 Target=89 SizeBytes=8   (user_type_named_function_release.ash:7:1)
+    MakeClosure           Target=90 FuncLabel=__deepcopy_list_7 EnvPtrTemp=89 EnvSizeBytes=8   (user_type_named_function_release.ash:7:1)
+    StoreMemOffset        BasePtr=89 OffsetBytes=0 Source=90   (user_type_named_function_release.ash:7:1)
+    CallClosure           Target=91 ClosureTemp=90 ArgTemp=60   (user_type_named_function_release.ash:7:1)
     StoreLocal            Slot=36 Source=60   (user_type_named_function_release.ash:7:1)
   rcdrop_list_51:
-    LoadLocal             Target=91 Slot=36   (user_type_named_function_release.ash:7:1)
-    LoadConstInt          Target=92 Value=0   (user_type_named_function_release.ash:7:1)
-    CmpIntNe              Target=93 Left=91 Right=92   (user_type_named_function_release.ash:7:1)
-    JumpIfFalse           CondTemp=93 Target=rcdrop_list_end_53   (user_type_named_function_release.ash:7:1)
-    RcIsUnique            Target=94 SourceTemp=91
-    JumpIfFalse           CondTemp=94 Target=rcdrop_list_shared_52   (user_type_named_function_release.ash:7:1)
-    LoadMemOffset         Target=95 BasePtr=91 OffsetBytes=0   (user_type_named_function_release.ash:7:1)
-    LoadConstInt          Target=96 Value=0   (user_type_named_function_release.ash:7:1)
-    CallKnown             Target=97 FuncLabel=__rcdrop_record_4 EnvTemp=96 ArgTemp=95   (user_type_named_function_release.ash:7:1)
-    LoadMemOffset         Target=98 BasePtr=91 OffsetBytes=8   (user_type_named_function_release.ash:7:1)
-    RcDrop                SourceTemp=91 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=36 Source=98   (user_type_named_function_release.ash:7:1)
+    LoadLocal             Target=92 Slot=36   (user_type_named_function_release.ash:7:1)
+    LoadConstInt          Target=93 Value=0   (user_type_named_function_release.ash:7:1)
+    CmpIntNe              Target=94 Left=92 Right=93   (user_type_named_function_release.ash:7:1)
+    JumpIfFalse           CondTemp=94 Target=rcdrop_list_end_53   (user_type_named_function_release.ash:7:1)
+    RcIsUnique            Target=95 SourceTemp=92
+    JumpIfFalse           CondTemp=95 Target=rcdrop_list_shared_52   (user_type_named_function_release.ash:7:1)
+    LoadMemOffset         Target=96 BasePtr=92 OffsetBytes=0   (user_type_named_function_release.ash:7:1)
+    LoadConstInt          Target=97 Value=0   (user_type_named_function_release.ash:7:1)
+    CallKnown             Target=98 FuncLabel=__rcdrop_record_4 EnvTemp=97 ArgTemp=96   (user_type_named_function_release.ash:7:1)
+    LoadMemOffset         Target=99 BasePtr=92 OffsetBytes=8   (user_type_named_function_release.ash:7:1)
+    RcDrop                SourceTemp=92 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=36 Source=99   (user_type_named_function_release.ash:7:1)
     Jump                  Target=rcdrop_list_51   (user_type_named_function_release.ash:7:1)
   rcdrop_list_shared_52:
-    RcDrop                SourceTemp=91 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=92 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_53   (user_type_named_function_release.ash:7:1)
   rcdrop_list_end_53:
-    StoreLocal            Slot=35 Source=90   (user_type_named_function_release.ash:7:1)
+    StoreLocal            Slot=35 Source=91   (user_type_named_function_release.ash:7:1)
     Jump                  Target=rc_result_done_50   (user_type_named_function_release.ash:7:1)
   rc_result_owned_49:
     StoreLocal            Slot=35 Source=60   (user_type_named_function_release.ash:7:1)
   rc_result_done_50:
-    LoadLocal             Target=99 Slot=35   (user_type_named_function_release.ash:7:1)
-    Return                Source=99   (user_type_named_function_release.ash:7:1)
+    LoadLocal             Target=100 Slot=35   (user_type_named_function_release.ash:7:1)
+    Return                Source=100   (user_type_named_function_release.ash:7:1)
 
 function lambda_9  [ClosureHelper from count]
   locals=31 temps=75

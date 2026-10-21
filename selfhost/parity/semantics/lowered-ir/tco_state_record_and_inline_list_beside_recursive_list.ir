@@ -270,7 +270,7 @@ function __rcdrop_general_9  [RuntimeManagedAdtDropper]
     Return                Source=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
 
 function lambda_4  [ClosureHelper from withSlot]
-  locals=4 temps=20
+  locals=4 temps=21
     LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
     LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:55)
     GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
@@ -293,20 +293,21 @@ function lambda_4  [ClosureHelper from withSlot]
     LoadArgumentOwnership Target=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
     LoadConstInt          Target=12 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
     ShrInt                Target=13 Left=11 Right=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    JumpIfFalse           CondTemp=13 Target=rc_result_owned_23   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    Alloc                 Target=14 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    MakeClosure           Target=15 FuncLabel=__deepcopy_7 EnvPtrTemp=14 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=15   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    CallClosure           Target=16 ClosureTemp=15 ArgTemp=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    LoadConstInt          Target=17 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    CallKnown             Target=18 FuncLabel=__rcdrop_general_9 EnvTemp=17 ArgTemp=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    StoreLocal            Slot=3 Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    AndInt                Target=14 Left=13 Right=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    JumpIfFalse           CondTemp=14 Target=rc_result_owned_23   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Alloc                 Target=15 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    MakeClosure           Target=16 FuncLabel=__deepcopy_7 EnvPtrTemp=15 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallClosure           Target=17 ClosureTemp=16 ArgTemp=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=18 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallKnown             Target=19 FuncLabel=__rcdrop_general_9 EnvTemp=18 ArgTemp=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=3 Source=17   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
     Jump                  Target=rc_result_done_24   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
   rc_result_owned_23:
     StoreLocal            Slot=3 Source=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
   rc_result_done_24:
-    LoadLocal             Target=19 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
-    Return                Source=19   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadLocal             Target=20 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
 
 function lambda_3  [SourceFunction from withSlot]
   locals=2 temps=3
@@ -462,7 +463,7 @@ function __rcdrop_general_16  [RuntimeManagedAdtDropper]
     Return                Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
 
 function lambda_12  [ClosureHelper from lowerOne]
-  locals=14 temps=51
+  locals=14 temps=52
     LoadEnv               Target=0 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
@@ -550,20 +551,21 @@ function lambda_12  [ClosureHelper from lowerOne]
     LoadArgumentOwnership Target=42   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
     LoadConstInt          Target=43 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
     ShrInt                Target=44 Left=42 Right=43   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    JumpIfFalse           CondTemp=44 Target=rc_result_owned_51   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    Alloc                 Target=45 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    MakeClosure           Target=46 FuncLabel=__deepcopy_14 EnvPtrTemp=45 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    StoreMemOffset        BasePtr=45 OffsetBytes=0 Source=46   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    CallClosure           Target=47 ClosureTemp=46 ArgTemp=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    LoadConstInt          Target=48 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    CallKnown             Target=49 FuncLabel=__rcdrop_general_16 EnvTemp=48 ArgTemp=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    StoreLocal            Slot=13 Source=47   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    AndInt                Target=45 Left=44 Right=43   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    JumpIfFalse           CondTemp=45 Target=rc_result_owned_51   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Alloc                 Target=46 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    MakeClosure           Target=47 FuncLabel=__deepcopy_14 EnvPtrTemp=46 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=47   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallClosure           Target=48 ClosureTemp=47 ArgTemp=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=49 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallKnown             Target=50 FuncLabel=__rcdrop_general_16 EnvTemp=49 ArgTemp=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=13 Source=48   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
     Jump                  Target=rc_result_done_52   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
   rc_result_owned_51:
     StoreLocal            Slot=13 Source=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
   rc_result_done_52:
-    LoadLocal             Target=50 Slot=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
-    Return                Source=50   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadLocal             Target=51 Slot=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=51   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
 
 function lambda_11  [SourceFunction from lowerOne]
   locals=2 temps=3

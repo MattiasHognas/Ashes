@@ -9,7 +9,7 @@ function lambda_0  [SourceFunction from base]
     Return                Source=2   (inlined_helper_sibling_by_label.ash:1:1)
 
 function lambda_1  [SourceFunction from wrap]
-  locals=7 temps=16
+  locals=7 temps=17
     LoadConstInt          Target=0 Value=0   (inlined_helper_sibling_by_label.ash:3:21)
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=1 Index=0   (inlined_helper_sibling_by_label.ash:3:22)
@@ -24,31 +24,32 @@ function lambda_1  [SourceFunction from wrap]
     LoadArgumentOwnership Target=6   (inlined_helper_sibling_by_label.ash:3:1)
     LoadConstInt          Target=7 Value=1   (inlined_helper_sibling_by_label.ash:3:1)
     ShrInt                Target=8 Left=6 Right=7   (inlined_helper_sibling_by_label.ash:3:1)
-    JumpIfFalse           CondTemp=8 Target=rc_result_owned_0   (inlined_helper_sibling_by_label.ash:3:1)
-    CopyOutList           DestTemp=9 SrcTemp=5 HeadCopy=Inline Purpose=ArenaResultBoundary   (inlined_helper_sibling_by_label.ash:3:1)
+    AndInt                Target=9 Left=8 Right=7   (inlined_helper_sibling_by_label.ash:3:1)
+    JumpIfFalse           CondTemp=9 Target=rc_result_owned_0   (inlined_helper_sibling_by_label.ash:3:1)
+    CopyOutList           DestTemp=10 SrcTemp=5 HeadCopy=Inline Purpose=ArenaResultBoundary   (inlined_helper_sibling_by_label.ash:3:1)
     StoreLocal            Slot=6 Source=5   (inlined_helper_sibling_by_label.ash:3:1)
   rcdrop_list_2:
-    LoadLocal             Target=10 Slot=6   (inlined_helper_sibling_by_label.ash:3:1)
-    LoadConstInt          Target=11 Value=0   (inlined_helper_sibling_by_label.ash:3:1)
-    CmpIntNe              Target=12 Left=10 Right=11   (inlined_helper_sibling_by_label.ash:3:1)
-    JumpIfFalse           CondTemp=12 Target=rcdrop_list_end_4   (inlined_helper_sibling_by_label.ash:3:1)
-    RcIsUnique            Target=13 SourceTemp=10
-    JumpIfFalse           CondTemp=13 Target=rcdrop_list_shared_3   (inlined_helper_sibling_by_label.ash:3:1)
-    LoadMemOffset         Target=14 BasePtr=10 OffsetBytes=8   (inlined_helper_sibling_by_label.ash:3:1)
-    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=6 Source=14   (inlined_helper_sibling_by_label.ash:3:1)
+    LoadLocal             Target=11 Slot=6   (inlined_helper_sibling_by_label.ash:3:1)
+    LoadConstInt          Target=12 Value=0   (inlined_helper_sibling_by_label.ash:3:1)
+    CmpIntNe              Target=13 Left=11 Right=12   (inlined_helper_sibling_by_label.ash:3:1)
+    JumpIfFalse           CondTemp=13 Target=rcdrop_list_end_4   (inlined_helper_sibling_by_label.ash:3:1)
+    RcIsUnique            Target=14 SourceTemp=11
+    JumpIfFalse           CondTemp=14 Target=rcdrop_list_shared_3   (inlined_helper_sibling_by_label.ash:3:1)
+    LoadMemOffset         Target=15 BasePtr=11 OffsetBytes=8   (inlined_helper_sibling_by_label.ash:3:1)
+    RcDrop                SourceTemp=11 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=6 Source=15   (inlined_helper_sibling_by_label.ash:3:1)
     Jump                  Target=rcdrop_list_2   (inlined_helper_sibling_by_label.ash:3:1)
   rcdrop_list_shared_3:
-    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=11 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_4   (inlined_helper_sibling_by_label.ash:3:1)
   rcdrop_list_end_4:
-    StoreLocal            Slot=5 Source=9   (inlined_helper_sibling_by_label.ash:3:1)
+    StoreLocal            Slot=5 Source=10   (inlined_helper_sibling_by_label.ash:3:1)
     Jump                  Target=rc_result_done_1   (inlined_helper_sibling_by_label.ash:3:1)
   rc_result_owned_0:
     StoreLocal            Slot=5 Source=5   (inlined_helper_sibling_by_label.ash:3:1)
   rc_result_done_1:
-    LoadLocal             Target=15 Slot=5   (inlined_helper_sibling_by_label.ash:3:1)
-    Return                Source=15   (inlined_helper_sibling_by_label.ash:3:1)
+    LoadLocal             Target=16 Slot=5   (inlined_helper_sibling_by_label.ash:3:1)
+    Return                Source=16   (inlined_helper_sibling_by_label.ash:3:1)
 
 function lambda_4  [ClosureHelper from go]
   locals=22 temps=21

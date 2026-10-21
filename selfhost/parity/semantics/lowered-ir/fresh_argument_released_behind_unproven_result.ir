@@ -19,7 +19,7 @@ function lambda_0  [SourceFunction from apply]
     Return                Source=2   (fresh_argument_released_behind_unproven_result.ash:8:1)
 
 function lambda_2  [SourceFunction from keep]
-  locals=5 temps=15
+  locals=5 temps=16
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_behind_unproven_result.ash:10:1)
     LoadArgumentOwnership Target=2   (fresh_argument_released_behind_unproven_result.ash:10:1)
     LoadConstInt          Target=3 Value=1   (fresh_argument_released_behind_unproven_result.ash:10:1)
@@ -46,19 +46,20 @@ function lambda_2  [SourceFunction from keep]
     LoadArgumentOwnership Target=10   (fresh_argument_released_behind_unproven_result.ash:10:1)
     LoadConstInt          Target=11 Value=1   (fresh_argument_released_behind_unproven_result.ash:10:1)
     ShrInt                Target=12 Left=10 Right=11   (fresh_argument_released_behind_unproven_result.ash:10:1)
-    JumpIfFalse           CondTemp=12 Target=rc_result_owned_4   (fresh_argument_released_behind_unproven_result.ash:10:1)
-    CopyOutArena          DestTemp=13 SrcTemp=0 Purpose=ArenaResultBoundary
+    AndInt                Target=13 Left=12 Right=11   (fresh_argument_released_behind_unproven_result.ash:10:1)
+    JumpIfFalse           CondTemp=13 Target=rc_result_owned_4   (fresh_argument_released_behind_unproven_result.ash:10:1)
+    CopyOutArena          DestTemp=14 SrcTemp=0 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=0 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=4 Source=13   (fresh_argument_released_behind_unproven_result.ash:10:1)
+    StoreLocal            Slot=4 Source=14   (fresh_argument_released_behind_unproven_result.ash:10:1)
     Jump                  Target=rc_result_done_5   (fresh_argument_released_behind_unproven_result.ash:10:1)
   rc_result_owned_4:
     StoreLocal            Slot=4 Source=0   (fresh_argument_released_behind_unproven_result.ash:10:1)
   rc_result_done_5:
-    LoadLocal             Target=14 Slot=4   (fresh_argument_released_behind_unproven_result.ash:10:1)
-    Return                Source=14   (fresh_argument_released_behind_unproven_result.ash:10:1)
+    LoadLocal             Target=15 Slot=4   (fresh_argument_released_behind_unproven_result.ash:10:1)
+    Return                Source=15   (fresh_argument_released_behind_unproven_result.ash:10:1)
 
 function lambda_4  [ClosureHelper from firstName]
-  locals=17 temps=34
+  locals=17 temps=35
     LoadEnv               Target=0 Index=0   (fresh_argument_released_behind_unproven_result.ash:13:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (fresh_argument_released_behind_unproven_result.ash:13:5)
@@ -127,16 +128,17 @@ function lambda_4  [ClosureHelper from firstName]
     LoadArgumentOwnership Target=29   (fresh_argument_released_behind_unproven_result.ash:12:1)
     LoadConstInt          Target=30 Value=1   (fresh_argument_released_behind_unproven_result.ash:12:1)
     ShrInt                Target=31 Left=29 Right=30   (fresh_argument_released_behind_unproven_result.ash:12:1)
-    JumpIfFalse           CondTemp=31 Target=rc_result_owned_13   (fresh_argument_released_behind_unproven_result.ash:12:1)
-    CopyOutArena          DestTemp=32 SrcTemp=28 Purpose=ArenaResultBoundary
+    AndInt                Target=32 Left=31 Right=30   (fresh_argument_released_behind_unproven_result.ash:12:1)
+    JumpIfFalse           CondTemp=32 Target=rc_result_owned_13   (fresh_argument_released_behind_unproven_result.ash:12:1)
+    CopyOutArena          DestTemp=33 SrcTemp=28 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=16 Source=32   (fresh_argument_released_behind_unproven_result.ash:12:1)
+    StoreLocal            Slot=16 Source=33   (fresh_argument_released_behind_unproven_result.ash:12:1)
     Jump                  Target=rc_result_done_14   (fresh_argument_released_behind_unproven_result.ash:12:1)
   rc_result_owned_13:
     StoreLocal            Slot=16 Source=28   (fresh_argument_released_behind_unproven_result.ash:12:1)
   rc_result_done_14:
-    LoadLocal             Target=33 Slot=16   (fresh_argument_released_behind_unproven_result.ash:12:1)
-    Return                Source=33   (fresh_argument_released_behind_unproven_result.ash:12:1)
+    LoadLocal             Target=34 Slot=16   (fresh_argument_released_behind_unproven_result.ash:12:1)
+    Return                Source=34   (fresh_argument_released_behind_unproven_result.ash:12:1)
 
 function lambda_3  [SourceFunction from firstName]
   locals=2 temps=7
@@ -239,7 +241,7 @@ function __rcdrop_record_8  [RuntimeManagedAdtDropper]
     Return                Source=9   (fresh_argument_released_behind_unproven_result.ash:17:1)
 
 function lambda_5  [SourceFunction from mk]
-  locals=5 temps=29
+  locals=5 temps=30
     LoadConstStr          Target=0 StrLabel=str_0   (fresh_argument_released_behind_unproven_result.ash:17:34)
     LoadLocal             Target=1 Slot=1   (fresh_argument_released_behind_unproven_result.ash:17:59)
     TextFromInt           Target=2 ValueTemp=1   (fresh_argument_released_behind_unproven_result.ash:17:40)
@@ -280,23 +282,24 @@ function lambda_5  [SourceFunction from mk]
     LoadArgumentOwnership Target=20   (fresh_argument_released_behind_unproven_result.ash:17:1)
     LoadConstInt          Target=21 Value=1   (fresh_argument_released_behind_unproven_result.ash:17:1)
     ShrInt                Target=22 Left=20 Right=21   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    JumpIfFalse           CondTemp=22 Target=rc_result_owned_25   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    Alloc                 Target=23 SizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    MakeClosure           Target=24 FuncLabel=__deepcopy_7 EnvPtrTemp=23 EnvSizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=24   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    CallClosure           Target=25 ClosureTemp=24 ArgTemp=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    LoadConstInt          Target=26 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    CallKnown             Target=27 FuncLabel=__rcdrop_record_8 EnvTemp=26 ArgTemp=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    StoreLocal            Slot=4 Source=25   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    AndInt                Target=23 Left=22 Right=21   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    JumpIfFalse           CondTemp=23 Target=rc_result_owned_25   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Alloc                 Target=24 SizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    MakeClosure           Target=25 FuncLabel=__deepcopy_7 EnvPtrTemp=24 EnvSizeBytes=8   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=25   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    CallClosure           Target=26 ClosureTemp=25 ArgTemp=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadConstInt          Target=27 Value=0   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    CallKnown             Target=28 FuncLabel=__rcdrop_record_8 EnvTemp=27 ArgTemp=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    StoreLocal            Slot=4 Source=26   (fresh_argument_released_behind_unproven_result.ash:17:1)
     Jump                  Target=rc_result_done_26   (fresh_argument_released_behind_unproven_result.ash:17:1)
   rc_result_owned_25:
     StoreLocal            Slot=4 Source=19   (fresh_argument_released_behind_unproven_result.ash:17:1)
   rc_result_done_26:
-    LoadLocal             Target=28 Slot=4   (fresh_argument_released_behind_unproven_result.ash:17:1)
-    Return                Source=28   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    LoadLocal             Target=29 Slot=4   (fresh_argument_released_behind_unproven_result.ash:17:1)
+    Return                Source=29   (fresh_argument_released_behind_unproven_result.ash:17:1)
 
 function lambda_9  [SourceFunction from label]
-  locals=14 temps=40
+  locals=14 temps=41
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (fresh_argument_released_behind_unproven_result.ash:19:25)
     Borrow                Target=1 SourceTemp=0
@@ -358,16 +361,17 @@ function lambda_9  [SourceFunction from label]
     LoadArgumentOwnership Target=35   (fresh_argument_released_behind_unproven_result.ash:19:1)
     LoadConstInt          Target=36 Value=1   (fresh_argument_released_behind_unproven_result.ash:19:1)
     ShrInt                Target=37 Left=35 Right=36   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    JumpIfFalse           CondTemp=37 Target=rc_result_owned_33   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    CopyOutArena          DestTemp=38 SrcTemp=22 Purpose=ArenaResultBoundary
+    AndInt                Target=38 Left=37 Right=36   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    JumpIfFalse           CondTemp=38 Target=rc_result_owned_33   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    CopyOutArena          DestTemp=39 SrcTemp=22 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=22 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=13 Source=38   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    StoreLocal            Slot=13 Source=39   (fresh_argument_released_behind_unproven_result.ash:19:1)
     Jump                  Target=rc_result_done_34   (fresh_argument_released_behind_unproven_result.ash:19:1)
   rc_result_owned_33:
     StoreLocal            Slot=13 Source=22   (fresh_argument_released_behind_unproven_result.ash:19:1)
   rc_result_done_34:
-    LoadLocal             Target=39 Slot=13   (fresh_argument_released_behind_unproven_result.ash:19:1)
-    Return                Source=39   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    LoadLocal             Target=40 Slot=13   (fresh_argument_released_behind_unproven_result.ash:19:1)
+    Return                Source=40   (fresh_argument_released_behind_unproven_result.ash:19:1)
 
 function _start_main  [ProgramEntry]
   locals=28 temps=37

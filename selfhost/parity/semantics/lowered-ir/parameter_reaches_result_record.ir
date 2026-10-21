@@ -80,7 +80,7 @@ function __rcdrop_record_4  [RuntimeManagedAdtDropper]
     Return                Source=3   (parameter_reaches_result_record.ash:5:1)
 
 function lambda_0  [SourceFunction from wrap]
-  locals=10 temps=46
+  locals=10 temps=47
     LoadConstInt          Target=0 Value=0   (parameter_reaches_result_record.ash:5:25)
     LoadLocal             Target=1 Slot=1   (parameter_reaches_result_record.ash:5:26)
     Alloc                 Target=2 SizeBytes=16   (parameter_reaches_result_record.ash:5:25)
@@ -160,37 +160,38 @@ function lambda_0  [SourceFunction from wrap]
     LoadArgumentOwnership Target=31   (parameter_reaches_result_record.ash:5:1)
     LoadConstInt          Target=32 Value=1   (parameter_reaches_result_record.ash:5:1)
     ShrInt                Target=33 Left=31 Right=32   (parameter_reaches_result_record.ash:5:1)
-    JumpIfFalse           CondTemp=33 Target=rc_result_owned_17   (parameter_reaches_result_record.ash:5:1)
-    Alloc                 Target=34 SizeBytes=8   (parameter_reaches_result_record.ash:5:1)
-    MakeClosure           Target=35 FuncLabel=__deepcopy_list_2 EnvPtrTemp=34 EnvSizeBytes=8   (parameter_reaches_result_record.ash:5:1)
-    StoreMemOffset        BasePtr=34 OffsetBytes=0 Source=35   (parameter_reaches_result_record.ash:5:1)
-    CallClosure           Target=36 ClosureTemp=35 ArgTemp=30   (parameter_reaches_result_record.ash:5:1)
+    AndInt                Target=34 Left=33 Right=32   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=34 Target=rc_result_owned_17   (parameter_reaches_result_record.ash:5:1)
+    Alloc                 Target=35 SizeBytes=8   (parameter_reaches_result_record.ash:5:1)
+    MakeClosure           Target=36 FuncLabel=__deepcopy_list_2 EnvPtrTemp=35 EnvSizeBytes=8   (parameter_reaches_result_record.ash:5:1)
+    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=36   (parameter_reaches_result_record.ash:5:1)
+    CallClosure           Target=37 ClosureTemp=36 ArgTemp=30   (parameter_reaches_result_record.ash:5:1)
     StoreLocal            Slot=9 Source=30   (parameter_reaches_result_record.ash:5:1)
   rcdrop_list_19:
-    LoadLocal             Target=37 Slot=9   (parameter_reaches_result_record.ash:5:1)
-    LoadConstInt          Target=38 Value=0   (parameter_reaches_result_record.ash:5:1)
-    CmpIntNe              Target=39 Left=37 Right=38   (parameter_reaches_result_record.ash:5:1)
-    JumpIfFalse           CondTemp=39 Target=rcdrop_list_end_21   (parameter_reaches_result_record.ash:5:1)
-    RcIsUnique            Target=40 SourceTemp=37
-    JumpIfFalse           CondTemp=40 Target=rcdrop_list_shared_20   (parameter_reaches_result_record.ash:5:1)
-    LoadMemOffset         Target=41 BasePtr=37 OffsetBytes=0   (parameter_reaches_result_record.ash:5:1)
-    LoadConstInt          Target=42 Value=0   (parameter_reaches_result_record.ash:5:1)
-    CallKnown             Target=43 FuncLabel=__rcdrop_record_4 EnvTemp=42 ArgTemp=41   (parameter_reaches_result_record.ash:5:1)
-    LoadMemOffset         Target=44 BasePtr=37 OffsetBytes=8   (parameter_reaches_result_record.ash:5:1)
-    RcDrop                SourceTemp=37 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=9 Source=44   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=38 Slot=9   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=39 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CmpIntNe              Target=40 Left=38 Right=39   (parameter_reaches_result_record.ash:5:1)
+    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_21   (parameter_reaches_result_record.ash:5:1)
+    RcIsUnique            Target=41 SourceTemp=38
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_20   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=42 BasePtr=38 OffsetBytes=0   (parameter_reaches_result_record.ash:5:1)
+    LoadConstInt          Target=43 Value=0   (parameter_reaches_result_record.ash:5:1)
+    CallKnown             Target=44 FuncLabel=__rcdrop_record_4 EnvTemp=43 ArgTemp=42   (parameter_reaches_result_record.ash:5:1)
+    LoadMemOffset         Target=45 BasePtr=38 OffsetBytes=8   (parameter_reaches_result_record.ash:5:1)
+    RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=9 Source=45   (parameter_reaches_result_record.ash:5:1)
     Jump                  Target=rcdrop_list_19   (parameter_reaches_result_record.ash:5:1)
   rcdrop_list_shared_20:
-    RcDrop                SourceTemp=37 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_21   (parameter_reaches_result_record.ash:5:1)
   rcdrop_list_end_21:
-    StoreLocal            Slot=8 Source=36   (parameter_reaches_result_record.ash:5:1)
+    StoreLocal            Slot=8 Source=37   (parameter_reaches_result_record.ash:5:1)
     Jump                  Target=rc_result_done_18   (parameter_reaches_result_record.ash:5:1)
   rc_result_owned_17:
     StoreLocal            Slot=8 Source=30   (parameter_reaches_result_record.ash:5:1)
   rc_result_done_18:
-    LoadLocal             Target=45 Slot=8   (parameter_reaches_result_record.ash:5:1)
-    Return                Source=45   (parameter_reaches_result_record.ash:5:1)
+    LoadLocal             Target=46 Slot=8   (parameter_reaches_result_record.ash:5:1)
+    Return                Source=46   (parameter_reaches_result_record.ash:5:1)
 
 function _start_main  [ProgramEntry]
   locals=21 temps=46

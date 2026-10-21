@@ -218,7 +218,7 @@ function __rcdrop_record_7  [RuntimeManagedAdtDropper]
     Return                Source=11   (closure_environment_normalizes_record_of_list.ash:12:1)
 
 function lambda_1  [ClosureHelper from emitTo]
-  locals=4 temps=21
+  locals=4 temps=22
     LoadEnv               Target=0 Index=0   (closure_environment_normalizes_record_of_list.ash:12:40)
     LoadConstInt          Target=1 Value=0   (closure_environment_normalizes_record_of_list.ash:12:58)
     LoadLocal             Target=2 Slot=1   (closure_environment_normalizes_record_of_list.ash:12:59)
@@ -243,20 +243,21 @@ function lambda_1  [ClosureHelper from emitTo]
     LoadArgumentOwnership Target=12   (closure_environment_normalizes_record_of_list.ash:12:1)
     LoadConstInt          Target=13 Value=1   (closure_environment_normalizes_record_of_list.ash:12:1)
     ShrInt                Target=14 Left=12 Right=13   (closure_environment_normalizes_record_of_list.ash:12:1)
-    JumpIfFalse           CondTemp=14 Target=rc_result_owned_21   (closure_environment_normalizes_record_of_list.ash:12:1)
-    Alloc                 Target=15 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:12:1)
-    MakeClosure           Target=16 FuncLabel=__deepcopy_4 EnvPtrTemp=15 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:12:1)
-    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=16   (closure_environment_normalizes_record_of_list.ash:12:1)
-    CallClosure           Target=17 ClosureTemp=16 ArgTemp=11   (closure_environment_normalizes_record_of_list.ash:12:1)
-    LoadConstInt          Target=18 Value=0   (closure_environment_normalizes_record_of_list.ash:12:1)
-    CallKnown             Target=19 FuncLabel=__rcdrop_record_7 EnvTemp=18 ArgTemp=11   (closure_environment_normalizes_record_of_list.ash:12:1)
-    StoreLocal            Slot=3 Source=17   (closure_environment_normalizes_record_of_list.ash:12:1)
+    AndInt                Target=15 Left=14 Right=13   (closure_environment_normalizes_record_of_list.ash:12:1)
+    JumpIfFalse           CondTemp=15 Target=rc_result_owned_21   (closure_environment_normalizes_record_of_list.ash:12:1)
+    Alloc                 Target=16 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:12:1)
+    MakeClosure           Target=17 FuncLabel=__deepcopy_4 EnvPtrTemp=16 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:12:1)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=17   (closure_environment_normalizes_record_of_list.ash:12:1)
+    CallClosure           Target=18 ClosureTemp=17 ArgTemp=11   (closure_environment_normalizes_record_of_list.ash:12:1)
+    LoadConstInt          Target=19 Value=0   (closure_environment_normalizes_record_of_list.ash:12:1)
+    CallKnown             Target=20 FuncLabel=__rcdrop_record_7 EnvTemp=19 ArgTemp=11   (closure_environment_normalizes_record_of_list.ash:12:1)
+    StoreLocal            Slot=3 Source=18   (closure_environment_normalizes_record_of_list.ash:12:1)
     Jump                  Target=rc_result_done_22   (closure_environment_normalizes_record_of_list.ash:12:1)
   rc_result_owned_21:
     StoreLocal            Slot=3 Source=11   (closure_environment_normalizes_record_of_list.ash:12:1)
   rc_result_done_22:
-    LoadLocal             Target=20 Slot=3   (closure_environment_normalizes_record_of_list.ash:12:1)
-    Return                Source=20   (closure_environment_normalizes_record_of_list.ash:12:1)
+    LoadLocal             Target=21 Slot=3   (closure_environment_normalizes_record_of_list.ash:12:1)
+    Return                Source=21   (closure_environment_normalizes_record_of_list.ash:12:1)
 
 function __rc_cdrop_9  [RuntimeManagedClosureDropper]
   locals=2 temps=5
@@ -296,7 +297,7 @@ function lambda_0  [SourceFunction from emitTo]
     Return                Source=2   (closure_environment_normalizes_record_of_list.ash:12:1)
 
 function lambda_10  [SourceFunction from mk]
-  locals=5 temps=22
+  locals=5 temps=23
     LoadConstStr          Target=0 StrLabel=str_0   (closure_environment_normalizes_record_of_list.ash:14:35)
     LoadLocal             Target=1 Slot=1   (closure_environment_normalizes_record_of_list.ash:14:40)
     ConcatStr             Target=2 Left=0 Right=1 RuntimeManaged=true   (closure_environment_normalizes_record_of_list.ash:14:35)
@@ -326,23 +327,24 @@ function lambda_10  [SourceFunction from mk]
     LoadArgumentOwnership Target=13   (closure_environment_normalizes_record_of_list.ash:14:1)
     LoadConstInt          Target=14 Value=1   (closure_environment_normalizes_record_of_list.ash:14:1)
     ShrInt                Target=15 Left=13 Right=14   (closure_environment_normalizes_record_of_list.ash:14:1)
-    JumpIfFalse           CondTemp=15 Target=rc_result_owned_34   (closure_environment_normalizes_record_of_list.ash:14:1)
-    Alloc                 Target=16 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:14:1)
-    MakeClosure           Target=17 FuncLabel=__deepcopy_6 EnvPtrTemp=16 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:14:1)
-    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=17   (closure_environment_normalizes_record_of_list.ash:14:1)
-    CallClosure           Target=18 ClosureTemp=17 ArgTemp=12   (closure_environment_normalizes_record_of_list.ash:14:1)
-    LoadConstInt          Target=19 Value=0   (closure_environment_normalizes_record_of_list.ash:14:1)
-    CallKnown             Target=20 FuncLabel=__rcdrop_record_8 EnvTemp=19 ArgTemp=12   (closure_environment_normalizes_record_of_list.ash:14:1)
-    StoreLocal            Slot=4 Source=18   (closure_environment_normalizes_record_of_list.ash:14:1)
+    AndInt                Target=16 Left=15 Right=14   (closure_environment_normalizes_record_of_list.ash:14:1)
+    JumpIfFalse           CondTemp=16 Target=rc_result_owned_34   (closure_environment_normalizes_record_of_list.ash:14:1)
+    Alloc                 Target=17 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:14:1)
+    MakeClosure           Target=18 FuncLabel=__deepcopy_6 EnvPtrTemp=17 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:14:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=18   (closure_environment_normalizes_record_of_list.ash:14:1)
+    CallClosure           Target=19 ClosureTemp=18 ArgTemp=12   (closure_environment_normalizes_record_of_list.ash:14:1)
+    LoadConstInt          Target=20 Value=0   (closure_environment_normalizes_record_of_list.ash:14:1)
+    CallKnown             Target=21 FuncLabel=__rcdrop_record_8 EnvTemp=20 ArgTemp=12   (closure_environment_normalizes_record_of_list.ash:14:1)
+    StoreLocal            Slot=4 Source=19   (closure_environment_normalizes_record_of_list.ash:14:1)
     Jump                  Target=rc_result_done_35   (closure_environment_normalizes_record_of_list.ash:14:1)
   rc_result_owned_34:
     StoreLocal            Slot=4 Source=12   (closure_environment_normalizes_record_of_list.ash:14:1)
   rc_result_done_35:
-    LoadLocal             Target=21 Slot=4   (closure_environment_normalizes_record_of_list.ash:14:1)
-    Return                Source=21   (closure_environment_normalizes_record_of_list.ash:14:1)
+    LoadLocal             Target=22 Slot=4   (closure_environment_normalizes_record_of_list.ash:14:1)
+    Return                Source=22   (closure_environment_normalizes_record_of_list.ash:14:1)
 
 function lambda_11  [SourceFunction from build]
-  locals=28 temps=84
+  locals=28 temps=85
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (closure_environment_normalizes_record_of_list.ash:16:25)
     Borrow                Target=1 SourceTemp=0
@@ -476,20 +478,21 @@ function lambda_11  [SourceFunction from build]
     LoadArgumentOwnership Target=75   (closure_environment_normalizes_record_of_list.ash:16:1)
     LoadConstInt          Target=76 Value=1   (closure_environment_normalizes_record_of_list.ash:16:1)
     ShrInt                Target=77 Left=75 Right=76   (closure_environment_normalizes_record_of_list.ash:16:1)
-    JumpIfFalse           CondTemp=77 Target=rc_result_owned_44   (closure_environment_normalizes_record_of_list.ash:16:1)
-    Alloc                 Target=78 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
-    MakeClosure           Target=79 FuncLabel=__deepcopy_4 EnvPtrTemp=78 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
-    StoreMemOffset        BasePtr=78 OffsetBytes=0 Source=79   (closure_environment_normalizes_record_of_list.ash:16:1)
-    CallClosure           Target=80 ClosureTemp=79 ArgTemp=38   (closure_environment_normalizes_record_of_list.ash:16:1)
-    LoadConstInt          Target=81 Value=0   (closure_environment_normalizes_record_of_list.ash:16:1)
-    CallKnown             Target=82 FuncLabel=__rcdrop_record_7 EnvTemp=81 ArgTemp=38   (closure_environment_normalizes_record_of_list.ash:16:1)
-    StoreLocal            Slot=27 Source=80   (closure_environment_normalizes_record_of_list.ash:16:1)
+    AndInt                Target=78 Left=77 Right=76   (closure_environment_normalizes_record_of_list.ash:16:1)
+    JumpIfFalse           CondTemp=78 Target=rc_result_owned_44   (closure_environment_normalizes_record_of_list.ash:16:1)
+    Alloc                 Target=79 SizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
+    MakeClosure           Target=80 FuncLabel=__deepcopy_4 EnvPtrTemp=79 EnvSizeBytes=8   (closure_environment_normalizes_record_of_list.ash:16:1)
+    StoreMemOffset        BasePtr=79 OffsetBytes=0 Source=80   (closure_environment_normalizes_record_of_list.ash:16:1)
+    CallClosure           Target=81 ClosureTemp=80 ArgTemp=38   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadConstInt          Target=82 Value=0   (closure_environment_normalizes_record_of_list.ash:16:1)
+    CallKnown             Target=83 FuncLabel=__rcdrop_record_7 EnvTemp=82 ArgTemp=38   (closure_environment_normalizes_record_of_list.ash:16:1)
+    StoreLocal            Slot=27 Source=81   (closure_environment_normalizes_record_of_list.ash:16:1)
     Jump                  Target=rc_result_done_45   (closure_environment_normalizes_record_of_list.ash:16:1)
   rc_result_owned_44:
     StoreLocal            Slot=27 Source=38   (closure_environment_normalizes_record_of_list.ash:16:1)
   rc_result_done_45:
-    LoadLocal             Target=83 Slot=27   (closure_environment_normalizes_record_of_list.ash:16:1)
-    Return                Source=83   (closure_environment_normalizes_record_of_list.ash:16:1)
+    LoadLocal             Target=84 Slot=27   (closure_environment_normalizes_record_of_list.ash:16:1)
+    Return                Source=84   (closure_environment_normalizes_record_of_list.ash:16:1)
 
 function lambda_13  [ClosureHelper from weigh]
   locals=33 temps=86

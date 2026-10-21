@@ -116,7 +116,7 @@ function __rcdrop_record_6  [RuntimeManagedAdtDropper]
     Return                Source=3   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
 
 function lambda_0  [SourceFunction from readNext]
-  locals=7 temps=52
+  locals=7 temps=53
     LoadConstInt          Target=0 Value=2   (tco_let_bound_successor_keeps_owned_child.ash:13:44)
     LoadLocal             Target=1 Slot=1   (tco_let_bound_successor_keeps_owned_child.ash:13:73)
     TextFromInt           Target=2 ValueTemp=1 RuntimeManaged=true   (tco_let_bound_successor_keeps_owned_child.ash:13:54)
@@ -183,37 +183,38 @@ function lambda_0  [SourceFunction from readNext]
     LoadArgumentOwnership Target=32   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
     LoadConstInt          Target=33 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
     ShrInt                Target=34 Left=32 Right=33   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    JumpIfFalse           CondTemp=34 Target=rc_result_owned_16   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    Alloc                 Target=35 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    LoadMemOffset         Target=36 BasePtr=31 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    Alloc                 Target=37 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    MakeClosure           Target=38 FuncLabel=__deepcopy_3 EnvPtrTemp=37 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    StoreMemOffset        BasePtr=37 OffsetBytes=0 Source=38   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    CallClosure           Target=39 ClosureTemp=38 ArgTemp=36   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    LoadMemOffset         Target=40 BasePtr=31 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    Alloc                 Target=41 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    MakeClosure           Target=42 FuncLabel=__deepcopy_4 EnvPtrTemp=41 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    StoreMemOffset        BasePtr=41 OffsetBytes=0 Source=42   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    CallClosure           Target=43 ClosureTemp=42 ArgTemp=40   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=43   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    RcIsUnique            Target=44 SourceTemp=31
-    JumpIfFalse           CondTemp=44 Target=rc_drop_tuple_shared_18   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    LoadMemOffset         Target=45 BasePtr=31 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    LoadConstInt          Target=46 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    CallKnown             Target=47 FuncLabel=__rcdrop_record_5 EnvTemp=46 ArgTemp=45   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    LoadMemOffset         Target=48 BasePtr=31 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    LoadConstInt          Target=49 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    CallKnown             Target=50 FuncLabel=__rcdrop_record_6 EnvTemp=49 ArgTemp=48   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    AndInt                Target=35 Left=34 Right=33   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    JumpIfFalse           CondTemp=35 Target=rc_result_owned_16   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    Alloc                 Target=36 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadMemOffset         Target=37 BasePtr=31 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    Alloc                 Target=38 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    MakeClosure           Target=39 FuncLabel=__deepcopy_3 EnvPtrTemp=38 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    StoreMemOffset        BasePtr=38 OffsetBytes=0 Source=39   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    CallClosure           Target=40 ClosureTemp=39 ArgTemp=37   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=40   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadMemOffset         Target=41 BasePtr=31 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    Alloc                 Target=42 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    MakeClosure           Target=43 FuncLabel=__deepcopy_4 EnvPtrTemp=42 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    StoreMemOffset        BasePtr=42 OffsetBytes=0 Source=43   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    CallClosure           Target=44 ClosureTemp=43 ArgTemp=41   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    StoreMemOffset        BasePtr=36 OffsetBytes=8 Source=44   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    RcIsUnique            Target=45 SourceTemp=31
+    JumpIfFalse           CondTemp=45 Target=rc_drop_tuple_shared_18   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadMemOffset         Target=46 BasePtr=31 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadConstInt          Target=47 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    CallKnown             Target=48 FuncLabel=__rcdrop_record_5 EnvTemp=47 ArgTemp=46   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadMemOffset         Target=49 BasePtr=31 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadConstInt          Target=50 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    CallKnown             Target=51 FuncLabel=__rcdrop_record_6 EnvTemp=50 ArgTemp=49   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
   rc_drop_tuple_shared_18:
     RcDrop                SourceTemp=31 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=6 Source=35   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    StoreLocal            Slot=6 Source=36   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
     Jump                  Target=rc_result_done_17   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
   rc_result_owned_16:
     StoreLocal            Slot=6 Source=31   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
   rc_result_done_17:
-    LoadLocal             Target=51 Slot=6   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
-    Return                Source=51   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    LoadLocal             Target=52 Slot=6   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
+    Return                Source=52   (tco_let_bound_successor_keeps_owned_child.ash:13:1)
 
 function __deepcopy_list_11  [ListDeepCopier]
   locals=2 temps=12
@@ -260,7 +261,7 @@ function __deepcopy_list_12  [ListDeepCopier]
     Return                Source=11   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
 
 function lambda_10  [ClosureHelper from scan]
-  locals=93 temps=420
+  locals=93 temps=421
     LoadEnv               Target=0 Index=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     StoreLocal            Slot=2 Source=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     LoadEnv               Target=1 Index=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
@@ -760,93 +761,93 @@ function lambda_10  [ClosureHelper from scan]
     StoreLocal            Slot=2 Source=135   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
     StoreLocal            Slot=4 Source=168   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
     StoreLocal            Slot=1 Source=171   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
-    LoadLocal             Target=378 Slot=9
-    JumpIfFalse           CondTemp=378 Target=rc_tco_drop_inactive_214
+    LoadLocal             Target=379 Slot=9
+    JumpIfFalse           CondTemp=379 Target=rc_tco_drop_inactive_214
     StoreLocal            Slot=91 Source=175
   rcdrop_list_215:
-    LoadLocal             Target=379 Slot=91
-    LoadConstInt          Target=380 Value=0
-    CmpIntNe              Target=381 Left=379 Right=380
-    JumpIfFalse           CondTemp=381 Target=rcdrop_list_end_217
-    RcIsUnique            Target=382 SourceTemp=379
-    JumpIfFalse           CondTemp=382 Target=rcdrop_list_shared_216
-    LoadMemOffset         Target=383 BasePtr=379 OffsetBytes=0
-    LoadConstInt          Target=384 Value=0
-    CallKnown             Target=385 FuncLabel=__rcdrop_record_6 EnvTemp=384 ArgTemp=383
-    LoadMemOffset         Target=386 BasePtr=379 OffsetBytes=8
-    RcDrop                SourceTemp=379 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=91 Source=386
+    LoadLocal             Target=380 Slot=91
+    LoadConstInt          Target=381 Value=0
+    CmpIntNe              Target=382 Left=380 Right=381
+    JumpIfFalse           CondTemp=382 Target=rcdrop_list_end_217
+    RcIsUnique            Target=383 SourceTemp=380
+    JumpIfFalse           CondTemp=383 Target=rcdrop_list_shared_216
+    LoadMemOffset         Target=384 BasePtr=380 OffsetBytes=0
+    LoadConstInt          Target=385 Value=0
+    CallKnown             Target=386 FuncLabel=__rcdrop_record_6 EnvTemp=385 ArgTemp=384
+    LoadMemOffset         Target=387 BasePtr=380 OffsetBytes=8
+    RcDrop                SourceTemp=380 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=91 Source=387
     Jump                  Target=rcdrop_list_215
   rcdrop_list_shared_216:
-    RcDrop                SourceTemp=379 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=380 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_217
   rcdrop_list_end_217:
   rc_tco_drop_inactive_214:
-    LoadLocal             Target=387 Slot=48
-    StoreLocal            Slot=92 Source=387
+    LoadLocal             Target=388 Slot=48
+    StoreLocal            Slot=92 Source=388
   rcdrop_list_218:
-    LoadLocal             Target=388 Slot=92
-    LoadConstInt          Target=389 Value=0
-    CmpIntNe              Target=390 Left=388 Right=389
-    JumpIfFalse           CondTemp=390 Target=lambda_10_rc_edge_24_122
-    RcIsUnique            Target=391 SourceTemp=388
-    JumpIfFalse           CondTemp=391 Target=rcdrop_list_shared_219
-    LoadMemOffset         Target=392 BasePtr=388 OffsetBytes=0
-    LoadConstInt          Target=393 Value=0
-    CallKnown             Target=394 FuncLabel=__rcdrop_record_6 EnvTemp=393 ArgTemp=392
-    LoadMemOffset         Target=395 BasePtr=388 OffsetBytes=8
-    RcDrop                SourceTemp=388 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=92 Source=395
+    LoadLocal             Target=389 Slot=92
+    LoadConstInt          Target=390 Value=0
+    CmpIntNe              Target=391 Left=389 Right=390
+    JumpIfFalse           CondTemp=391 Target=lambda_10_rc_edge_24_122
+    RcIsUnique            Target=392 SourceTemp=389
+    JumpIfFalse           CondTemp=392 Target=rcdrop_list_shared_219
+    LoadMemOffset         Target=393 BasePtr=389 OffsetBytes=0
+    LoadConstInt          Target=394 Value=0
+    CallKnown             Target=395 FuncLabel=__rcdrop_record_6 EnvTemp=394 ArgTemp=393
+    LoadMemOffset         Target=396 BasePtr=389 OffsetBytes=8
+    RcDrop                SourceTemp=389 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=92 Source=396
     Jump                  Target=rcdrop_list_218
   rcdrop_list_shared_219:
-    RcDrop                SourceTemp=388 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=389 TypeName=List RuntimeManaged=true
     RcDrop                SourceTemp=25 TypeName=Diag OwnerSlot=24
     Jump                  Target=rcdrop_list_end_220
   rcdrop_list_end_220:
-    LoadLocal             Target=396 Slot=18
-    LoadConstInt          Target=397 Value=0
-    CmpIntNe              Target=398 Left=396 Right=397
-    JumpIfFalse           CondTemp=398 Target=general_rc_owned_absent_221
-    IsReferenceCounted    Target=399 SourceTemp=396
+    LoadLocal             Target=397 Slot=18
+    LoadConstInt          Target=398 Value=0
+    CmpIntNe              Target=399 Left=397 Right=398
     JumpIfFalse           CondTemp=399 Target=general_rc_owned_absent_221
-    RcIsUnique            Target=400 SourceTemp=396
-    JumpIfFalse           CondTemp=400 Target=rc_drop_tuple_shared_222
-    LoadMemOffset         Target=401 BasePtr=396 OffsetBytes=0
-    LoadConstInt          Target=402 Value=0
-    CallKnown             Target=403 FuncLabel=__rcdrop_record_5 EnvTemp=402 ArgTemp=401
-    LoadMemOffset         Target=404 BasePtr=396 OffsetBytes=8
-    LoadConstInt          Target=405 Value=0
-    CallKnown             Target=406 FuncLabel=__rcdrop_record_6 EnvTemp=405 ArgTemp=404
+    IsReferenceCounted    Target=400 SourceTemp=397
+    JumpIfFalse           CondTemp=400 Target=general_rc_owned_absent_221
+    RcIsUnique            Target=401 SourceTemp=397
+    JumpIfFalse           CondTemp=401 Target=rc_drop_tuple_shared_222
+    LoadMemOffset         Target=402 BasePtr=397 OffsetBytes=0
+    LoadConstInt          Target=403 Value=0
+    CallKnown             Target=404 FuncLabel=__rcdrop_record_5 EnvTemp=403 ArgTemp=402
+    LoadMemOffset         Target=405 BasePtr=397 OffsetBytes=8
+    LoadConstInt          Target=406 Value=0
+    CallKnown             Target=407 FuncLabel=__rcdrop_record_6 EnvTemp=406 ArgTemp=405
   rc_drop_tuple_shared_222:
-    RcDrop                SourceTemp=396 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=18 Source=397
+    RcDrop                SourceTemp=397 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=18 Source=398
   general_rc_owned_absent_221:
-    LoadLocal             Target=407 Slot=17
-    LoadConstInt          Target=408 Value=0
-    CmpIntNe              Target=409 Left=407 Right=408
-    JumpIfFalse           CondTemp=409 Target=general_rc_owned_absent_223
-    IsReferenceCounted    Target=410 SourceTemp=407
+    LoadLocal             Target=408 Slot=17
+    LoadConstInt          Target=409 Value=0
+    CmpIntNe              Target=410 Left=408 Right=409
     JumpIfFalse           CondTemp=410 Target=general_rc_owned_absent_223
-    RcIsUnique            Target=411 SourceTemp=407
-    JumpIfFalse           CondTemp=411 Target=rc_drop_tuple_shared_224
-    LoadMemOffset         Target=412 BasePtr=407 OffsetBytes=0
-    LoadConstInt          Target=413 Value=0
-    CallKnown             Target=414 FuncLabel=__rcdrop_record_5 EnvTemp=413 ArgTemp=412
-    LoadMemOffset         Target=415 BasePtr=407 OffsetBytes=8
-    LoadConstInt          Target=416 Value=0
-    CallKnown             Target=417 FuncLabel=__rcdrop_record_6 EnvTemp=416 ArgTemp=415
+    IsReferenceCounted    Target=411 SourceTemp=408
+    JumpIfFalse           CondTemp=411 Target=general_rc_owned_absent_223
+    RcIsUnique            Target=412 SourceTemp=408
+    JumpIfFalse           CondTemp=412 Target=rc_drop_tuple_shared_224
+    LoadMemOffset         Target=413 BasePtr=408 OffsetBytes=0
+    LoadConstInt          Target=414 Value=0
+    CallKnown             Target=415 FuncLabel=__rcdrop_record_5 EnvTemp=414 ArgTemp=413
+    LoadMemOffset         Target=416 BasePtr=408 OffsetBytes=8
+    LoadConstInt          Target=417 Value=0
+    CallKnown             Target=418 FuncLabel=__rcdrop_record_6 EnvTemp=417 ArgTemp=416
   rc_drop_tuple_shared_224:
-    RcDrop                SourceTemp=407 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=17 Source=408
+    RcDrop                SourceTemp=408 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=17 Source=409
   general_rc_owned_absent_223:
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=90
     StoreLocal            Slot=4 Source=168
     RcDrop                SourceTemp=24 TypeName=Tok OwnerSlot=23
-    LoadConstInt          Target=418 Value=1
-    StoreLocal            Slot=8 Source=418
-    StoreLocal            Slot=1 Source=171
     LoadConstInt          Target=419 Value=1
-    StoreLocal            Slot=9 Source=419
+    StoreLocal            Slot=8 Source=419
+    StoreLocal            Slot=1 Source=171
+    LoadConstInt          Target=420 Value=1
+    StoreLocal            Slot=9 Source=420
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=90
     RestoreStackPointer   Slot=12   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
     Jump                  Target=lambda_10_body   (tco_let_bound_successor_keeps_owned_child.ash:28:20)
@@ -1140,71 +1141,72 @@ function lambda_10  [ClosureHelper from scan]
     LoadArgumentOwnership Target=346   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     LoadConstInt          Target=347 Value=1   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     ShrInt                Target=348 Left=346 Right=347   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=348 Target=rc_result_owned_144   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=349 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=350 BasePtr=303 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=351 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    MakeClosure           Target=352 FuncLabel=__deepcopy_list_11 EnvPtrTemp=351 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=351 OffsetBytes=0 Source=352   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CallClosure           Target=353 ClosureTemp=352 ArgTemp=350   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=349 OffsetBytes=0 Source=353   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=354 BasePtr=303 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Alloc                 Target=355 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    MakeClosure           Target=356 FuncLabel=__deepcopy_list_12 EnvPtrTemp=355 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=355 OffsetBytes=0 Source=356   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CallClosure           Target=357 ClosureTemp=356 ArgTemp=354   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreMemOffset        BasePtr=349 OffsetBytes=8 Source=357   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=358 SourceTemp=303
-    JumpIfFalse           CondTemp=358 Target=rc_drop_tuple_shared_146   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=359 BasePtr=303 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=88 Source=359   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    AndInt                Target=349 Left=348 Right=347   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=349 Target=rc_result_owned_144   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=350 SizeBytes=16   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=351 BasePtr=303 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=352 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    MakeClosure           Target=353 FuncLabel=__deepcopy_list_11 EnvPtrTemp=352 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=352 OffsetBytes=0 Source=353   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CallClosure           Target=354 ClosureTemp=353 ArgTemp=351   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=350 OffsetBytes=0 Source=354   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=355 BasePtr=303 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Alloc                 Target=356 SizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    MakeClosure           Target=357 FuncLabel=__deepcopy_list_12 EnvPtrTemp=356 EnvSizeBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=356 OffsetBytes=0 Source=357   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CallClosure           Target=358 ClosureTemp=357 ArgTemp=355   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreMemOffset        BasePtr=350 OffsetBytes=8 Source=358   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=359 SourceTemp=303
+    JumpIfFalse           CondTemp=359 Target=rc_drop_tuple_shared_146   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=360 BasePtr=303 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=88 Source=360   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rcdrop_list_147:
-    LoadLocal             Target=360 Slot=88   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=361 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=362 Left=360 Right=361   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=362 Target=rcdrop_list_end_149   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=363 SourceTemp=360
-    JumpIfFalse           CondTemp=363 Target=rcdrop_list_shared_148   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=364 BasePtr=360 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=365 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CallKnown             Target=366 FuncLabel=__rcdrop_record_5 EnvTemp=365 ArgTemp=364   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=367 BasePtr=360 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=360 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=88 Source=367   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=361 Slot=88   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=362 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=363 Left=361 Right=362   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=363 Target=rcdrop_list_end_149   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=364 SourceTemp=361
+    JumpIfFalse           CondTemp=364 Target=rcdrop_list_shared_148   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=365 BasePtr=361 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=366 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CallKnown             Target=367 FuncLabel=__rcdrop_record_5 EnvTemp=366 ArgTemp=365   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=368 BasePtr=361 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=361 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=88 Source=368   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     Jump                  Target=rcdrop_list_147   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rcdrop_list_shared_148:
-    RcDrop                SourceTemp=360 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=361 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_149   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rcdrop_list_end_149:
-    LoadMemOffset         Target=368 BasePtr=303 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    StoreLocal            Slot=89 Source=368   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=369 BasePtr=303 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=89 Source=369   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rcdrop_list_150:
-    LoadLocal             Target=369 Slot=89   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=370 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CmpIntNe              Target=371 Left=369 Right=370   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    JumpIfFalse           CondTemp=371 Target=rcdrop_list_end_152   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcIsUnique            Target=372 SourceTemp=369
-    JumpIfFalse           CondTemp=372 Target=rcdrop_list_shared_151   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=373 BasePtr=369 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadConstInt          Target=374 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    CallKnown             Target=375 FuncLabel=__rcdrop_record_6 EnvTemp=374 ArgTemp=373   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    LoadMemOffset         Target=376 BasePtr=369 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    RcDrop                SourceTemp=369 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=89 Source=376   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=370 Slot=89   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=371 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CmpIntNe              Target=372 Left=370 Right=371   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    JumpIfFalse           CondTemp=372 Target=rcdrop_list_end_152   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcIsUnique            Target=373 SourceTemp=370
+    JumpIfFalse           CondTemp=373 Target=rcdrop_list_shared_151   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=374 BasePtr=370 OffsetBytes=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadConstInt          Target=375 Value=0   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    CallKnown             Target=376 FuncLabel=__rcdrop_record_6 EnvTemp=375 ArgTemp=374   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadMemOffset         Target=377 BasePtr=370 OffsetBytes=8   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    RcDrop                SourceTemp=370 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=89 Source=377   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     Jump                  Target=rcdrop_list_150   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rcdrop_list_shared_151:
-    RcDrop                SourceTemp=369 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=370 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_152   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rcdrop_list_end_152:
   rc_drop_tuple_shared_146:
     RcDrop                SourceTemp=303 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=87 Source=349   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    StoreLocal            Slot=87 Source=350   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
     Jump                  Target=rc_result_done_145   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rc_result_owned_144:
     StoreLocal            Slot=87 Source=303   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   rc_result_done_145:
-    LoadLocal             Target=377 Slot=87   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
-    Return                Source=377   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    LoadLocal             Target=378 Slot=87   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
+    Return                Source=378   (tco_let_bound_successor_keeps_owned_child.ash:15:1)
   lambda_10_rc_edge_24_122:
     RcDrop                SourceTemp=25 TypeName=Diag OwnerSlot=24
     Jump                  Target=rcdrop_list_end_220
