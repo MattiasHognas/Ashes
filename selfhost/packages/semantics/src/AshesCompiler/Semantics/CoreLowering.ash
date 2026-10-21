@@ -9986,16 +9986,52 @@ let recursive withdrawnRequestFor (callTemp: Int) (parts: List(Int)) (requests: 
             then request
             else withdrawnRequestFor(callTemp)(parts)(rest)
 
-// The withdrawn request constant replaced by this function's own caller's request, bit 2 of its
-// ownership word. The instructions are most recent first.
-let recursive forwardRequestConstant (request: Int) (wordTemp: Int) (instructions: List(IrInstruction)) =
+// A tuple-parts request word: an `OrInt` of the request constant 4 and the address of the arena
+// word the callee writes its mask into. The request constant, the word, and that address.
+let tuplePartsRequestOfWord (requestWord: Int) (instructions: List(IrInstruction)) =
+    match definitionOfTemp(requestWord)(instructions) with
+        | Some(OrInt(_target, constant, cell)) ->
+            match definitionOfTemp(constant)(instructions) with
+                | Some(LoadConstInt(_constantTarget, 4)) -> Some((constant, requestWord, cell))
+                | _ -> None
+        | _ -> None
+
+// The tuple-parts request of the ownership word `word` a call passes: the request word is the word
+// itself or the left operand of the `OrInt` joining it to the rest; None when the call asked for no
+// parts.
+let tuplePartsRequestOf (word: Int) (instructions: List(IrInstruction)) =
+    match tuplePartsRequestOfWord(word)(instructions) with
+        | Some(request) -> Some(request)
+        | None ->
+            match definitionOfTemp(word)(instructions) with
+                | Some(OrInt(_target, requestWord, _rest)) -> tuplePartsRequestOfWord(requestWord)(instructions)
+                | _ -> None
+
+let recursive callTuplePartsRequest (resultTemp: Int) (budget: Int) (instructions: List(IrInstruction)) =
+    if budget == 0
+    then None
+    else
+        match instructions with
+            | [] -> None
+            | IrInstruction { instruction = CallClosure(target, _closure, _argument, word) } :: rest ->
+                if target == resultTemp
+                then
+                    if word < 0
+                    then None
+                    else tuplePartsRequestOf(word)(rest)
+                else callTuplePartsRequest(resultTemp)(budget - 1)(rest)
+            | _ :: rest -> callTuplePartsRequest(resultTemp)(budget - 1)(rest)
+
+// The withdrawn request word replaced by this function's own caller's request and mask address,
+// read out of its ownership word. The instructions are most recent first.
+let recursive forwardRequestWord (requestWord: Int) (wordTemp: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> []
-        | (IrInstruction { instruction = LoadConstInt(target, _value), location = location } as instruction) :: rest ->
-            if target == request
-            then IrInstruction(instruction = AndInt(request)(wordTemp)(wordTemp + 1), location = location) :: IrInstruction(instruction = LoadConstInt(wordTemp + 1)(4), location = location) :: IrInstruction(instruction = LoadArgumentOwnership(wordTemp), location = location) :: rest
-            else instruction :: forwardRequestConstant(request)(wordTemp)(rest)
-        | instruction :: rest -> instruction :: forwardRequestConstant(request)(wordTemp)(rest)
+        | (IrInstruction { instruction = OrInt(target, _left, _right) } as instruction) :: rest ->
+            if target == requestWord
+            then IrInstruction(instruction = AndInt(requestWord)(wordTemp)(wordTemp + 1), location = None) :: IrInstruction(instruction = LoadConstInt(wordTemp + 1)(-4), location = None) :: IrInstruction(instruction = LoadArgumentOwnership(wordTemp), location = None) :: rest
+            else instruction :: forwardRequestWord(requestWord)(wordTemp)(rest)
+        | instruction :: rest -> instruction :: forwardRequestWord(requestWord)(wordTemp)(rest)
 
 // Stage 0's `TryForwardTupleResultPartsRequest`: a result that is another function's generic tuple
 // result returned as it is takes no parts itself; the call's withdrawn request for the same parts
@@ -10017,7 +10053,101 @@ let forwardTupleResultPartsRequest (resultTemp: Int) (parts: List(Int)) (state: 
                 then None
                 else
                     match freshTempRun(2)(state) with
-                        | FreshTemp { state = allocated, temp = wordTemp } -> Some((allocated with reversedInstructions = forwardRequestConstant(request)(wordTemp)(allocated.reversedInstructions))))
+                        | FreshTemp { state = allocated, temp = wordTemp } -> Some((allocated with reversedInstructions = forwardRequestWord(request)(wordTemp)(allocated.reversedInstructions))))
+
+// Whether a call has a withdrawn request on record.
+let recursive hasWithdrawnRequest (callTemp: Int) (requests: List((Int, Int, List(Int)))) =
+    match requests with
+        | [] -> false
+        | (resultTemp, _request, _asked) :: rest -> resultTemp == callTemp || hasWithdrawnRequest(callTemp)(rest)
+
+// The call producing `callTemp` with its ownership word replaced by `word` and the forwarded
+// request instructions placed before it. The instructions are most recent first.
+let recursive forwardRequestIntoCall (callTemp: Int) (word: Int) (forwarded: List(IrInstruction)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = CallClosure(target, closure, argument, _word) } as instruction) :: rest ->
+            if target == callTemp
+            then (instruction with instruction = CallClosure(target)(closure)(argument)(word)) :: append(forwarded)(rest)
+            else instruction :: forwardRequestIntoCall(callTemp)(word)(forwarded)(rest)
+        | instruction :: rest -> instruction :: forwardRequestIntoCall(callTemp)(word)(forwarded)(rest)
+
+let recursive callWordOf (callTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = CallClosure(target, _closure, _argument, word) } :: rest ->
+            if target == callTemp
+            then Some(word)
+            else callWordOf(callTemp)(rest)
+        | _ :: rest -> callWordOf(callTemp)(rest)
+
+// Stage 0's `ForwardTupleResultPartsRequestThroughGenericResult`: a result of unresolved type that
+// is a call's result returned as it is forwards its own caller's request and mask address to that
+// call, beside whatever its word already passes; the mask the callee writes says whether it handed
+// anything over.
+let forwardTupleResultPartsRequestThroughGenericResult (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemVariable(_variable) ->
+            let callTemp =
+                soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
+            in
+                if callTemp < 0 || hasWithdrawnRequest(callTemp)(stateWithdrawnTuplePartsRequests(state))
+                then state
+                else
+                    match callWordOf(callTemp)(state.reversedInstructions) with
+                        | None -> state
+                        | Some(callWord) ->
+                            match callTuplePartsRequest(callTemp)(64)(state.reversedInstructions) with
+                                | Some(_request) -> state
+                                | None ->
+                                    match freshTempRun(if callWord < 0
+                                    then 3
+                                    else 4)(state) with
+                                        | FreshTemp { state = allocated, temp = requestTemp } ->
+                                            let forwarded =
+                                                [
+                                                    IrInstruction(instruction = AndInt(requestTemp)(requestTemp + 1)(requestTemp + 2), location = None),
+                                                    IrInstruction(instruction = LoadConstInt(requestTemp + 2)(-4), location = None),
+                                                    IrInstruction(instruction = LoadArgumentOwnership(requestTemp + 1), location = None)
+                                                ]
+                                            in
+                                                let rewritten =
+                                                    if callWord < 0
+                                                    then allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp)(forwarded)(allocated.reversedInstructions)
+                                                    else allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp + 3)(IrInstruction(instruction = OrInt(requestTemp + 3)(requestTemp)(callWord), location = None) :: forwarded)(allocated.reversedInstructions)
+                                                in
+                                                    match rewritten
+                                                    |> stateTupleResultPartLabels
+                                                    |> Ashes.Collection.Map.getStr(label) with
+                                                        | Some(_parts) -> rewritten
+                                                        | None ->
+                                                            withStateTupleResultPartLabels(rewritten
+                                                            |> stateTupleResultPartLabels
+                                                            |> Ashes.Collection.Map.setStr(label)([]))(rewritten)
+        | _ -> state
+
+let recursive powerOfTwo (exponent: Int) =
+    if exponent <= 0
+    then 1
+    else 2 * powerOfTwo(exponent - 1)
+
+// On the hand-over path: the mask of the parts handed over, written into the caller's word.
+let recursive tuplePartsMask (parts: List(Int)) =
+    match parts with
+        | [] -> 0
+        | part :: rest -> powerOfTwo(part) + tuplePartsMask(rest)
+
+let emitTupleResultPartsMask (parts: List(Int)) (state: CoreLoweringState) =
+    match freshTempRun(4)(state) with
+        | FreshTemp { state = allocated, temp = wordTemp } ->
+            allocated
+            |> emit(LoadArgumentOwnership(wordTemp))
+            |> emit(LoadConstInt(wordTemp + 1)(-8))
+            |> emit(AndInt(wordTemp + 2)(wordTemp)(wordTemp + 1))
+            |> emit(parts
+            |> tuplePartsMask
+            |> LoadConstInt(wordTemp + 3))
+            |> emit(StoreMemOffset(wordTemp + 2)(0)(wordTemp + 3))
 
 let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
     match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
@@ -10032,6 +10162,7 @@ let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalar
                                 if cellsKnown
                                 then requested
                                 else emitTuplePartRetainsAtReturn(resultTemp)(parts)(requested))
+                            |> emitTupleResultPartsMask(parts)
                             |> emitGeneralRcOwnedSlotDropsOf(origin)(handedOver)
                             |> emit(Jump(doneLabel))
                             |> emit(Label(keepLabel))
@@ -10105,7 +10236,10 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
             then (emitGeneralRcOwnedSlotDrops(state), bodyTemp)
             else
                 match tupleResultParts(bodyType)(state) with
-                    | [] -> finishGeneralRcFunctionResultOutsideContract(bodyTemp)(bodyType)(state)
+                    | [] ->
+                        state
+                        |> forwardTupleResultPartsRequestThroughGenericResult(label)(bodyTemp)(bodyType)
+                        |> finishGeneralRcFunctionResultOutsideContract(bodyTemp)(bodyType)
                     | parts ->
                         (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
 
@@ -14595,39 +14729,66 @@ let recordBorrowedCall (borrows: Bool) (target: Int) (state: CoreLoweringState) 
             | None -> state with borrowedCalls = ("_start_main", target) :: state.borrowedCalls
     else state
 
-// Stage 0's `CalleeTupleResultParts`: the parts a known function hands over when its generic tuple
-// result is asked for, reached along the returned-closure chain one hop per application past the
-// first.
-let calleeTupleResultParts (context: CoreCallContext) (state: CoreLoweringState) =
-    match context.facts with
-        | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
-            match state
-            |> stateFunctionReturnedClosureLabels
-            |> innermostStageLabel(count - 1)(label) with
-                | Some(stageLabel) ->
-                    state
-                    |> stateTupleResultPartLabels
-                    |> Ashes.Collection.Map.getStr(stageLabel)
-                | None -> None
-        | _ -> None
+// The contract elements of a call's tuple result type, by index: the parts a call asks for.
+let contractElementParts (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemTuple(elements) -> contractElementIndices(elements)(0)(state)
+        | _ -> []
+
+let unknownCalleeTupleResultParts (candidates: List(Int)) =
+    match candidates with
+        | [] -> None
+        | _ -> Some(candidates)
+
+// Stage 0's `CalleeTupleResultParts`: the parts a call asks its callee for, the contract elements
+// of its tuple result type (the callee's own parts when that type is not yet a tuple). A call asks a
+// known function that may hand them over, reached along the returned-closure chain one hop per
+// application past the first, and any callee it cannot name, since the mask the callee writes says
+// what it handed over.
+let calleeTupleResultParts (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let candidates = contractElementParts(resultType)(state)
+    in
+        match context.facts with
+            | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
+                match state
+                |> stateFunctionReturnedClosureLabels
+                |> innermostStageLabel(count - 1)(label) with
+                    | Some(stageLabel) ->
+                        match state
+                        |> stateTupleResultPartLabels
+                        |> Ashes.Collection.Map.getStr(stageLabel) with
+                            | Some(calleeParts) ->
+                                match candidates with
+                                    | [] -> unknownCalleeTupleResultParts(calleeParts)
+                                    | _ -> Some(candidates)
+                            | None -> None
+                    | None -> unknownCalleeTupleResultParts(candidates)
+            | _ -> unknownCalleeTupleResultParts(candidates))
 
 // Stage 0's `EmitTupleResultPartsRequestWord`: bit 2 of the hidden ownership word asks the callee
-// for its tuple result's contract parts, the request constant on the left of the word.
-let emitTupleResultPartsRequestWord (context: CoreCallContext) (wordTemp: Int) (state: CoreLoweringState) =
-    match calleeTupleResultParts(context)(state) with
+// for its tuple result's contract parts, and the bits above it address a cleared arena word the
+// callee writes the mask of the parts it handed over into; the request word is on the left of the
+// word.
+let emitTupleResultPartsRequestWord (context: CoreCallContext) (resultType: SemanticType) (wordTemp: Int) (state: CoreLoweringState) =
+    match calleeTupleResultParts(context)(resultType)(state) with
         | None -> (state, wordTemp)
         | Some(_parts) ->
-            match freshTemp(state) with
-                | FreshTemp { state = requestState, temp = requestTemp } ->
+            match freshTempRun(4)(state) with
+                | FreshTemp { state = requestState, temp = cellTemp } ->
                     let loaded =
-                        emit(LoadConstInt(requestTemp)(4))(requestState)
+                        requestState
+                        |> emit(Alloc(cellTemp)(8)(false))
+                        |> emit(LoadConstInt(cellTemp + 1)(0))
+                        |> emit(StoreMemOffset(cellTemp)(0)(cellTemp + 1))
+                        |> emit(LoadConstInt(cellTemp + 2)(4))
+                        |> emit(OrInt(cellTemp + 3)(cellTemp + 2)(cellTemp))
                     in
                         if wordTemp < 0
-                        then (loaded, requestTemp)
+                        then (loaded, cellTemp + 3)
                         else
                             match freshTemp(loaded) with
                                 | FreshTemp { state = joinedState, temp = joinedTemp } ->
-                                    (emit(OrInt(joinedTemp)(requestTemp)(wordTemp))(joinedState), joinedTemp)
+                                    (emit(OrInt(joinedTemp)(cellTemp + 3)(wordTemp))(joinedState), joinedTemp)
 
 let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) (readsResult: Bool) (resultNormalizedOwned: Bool) unifiedState =
     match prepareCallArgument(handOff)(handsFreshArgumentOverUnderAdoption(context)(handOff))(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
@@ -14639,7 +14800,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                             match if arity == 1
                             then
                                 match emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState) with
-                                    | (arenaState, arenaWord) -> emitTupleResultPartsRequestWord(context)(arenaWord)(arenaState)
+                                    | (arenaState, arenaWord) -> emitTupleResultPartsRequestWord(context)(resultType)(arenaWord)(arenaState)
                             else (targetState, argumentFlagTemp) with
                                 | (wordState, wordTemp) ->
                                     CoreCallStage(
@@ -15659,47 +15820,6 @@ let emitClosureReturnsGeneralRcOwnedFlag (closureTemp: Int) (state: CoreLowering
             |> emit(LoadConstInt(packedTemp + 3)(1))
             |> emit(AndInt(packedTemp + 4)(packedTemp + 2)(packedTemp + 3)), packedTemp + 4)
 
-// The tuple-parts request constant of the ownership word `word` a call passes: the word itself or
-// the left operand of the `OrInt` joining it to the rest; -1 when the call asked for no parts.
-let recursive tuplePartsRequestConstant (word: Int) (joined: Bool) (instructions: List(IrInstruction)) =
-    match instructions with
-        | [] -> -1
-        | IrInstruction { instruction = OrInt(target, request, _rest) } :: rest ->
-            if target == word
-            then
-                if joined
-                then -1
-                else tuplePartsRequestConstant(request)(true)(rest)
-            else tuplePartsRequestConstant(word)(joined)(rest)
-        | IrInstruction { instruction = LoadConstInt(target, value) } :: rest ->
-            if target == word
-            then
-                if value == 4
-                then word
-                else -1
-            else tuplePartsRequestConstant(word)(joined)(rest)
-        | IrInstruction { instruction = instruction } :: rest ->
-            if instruction
-            |> getDefinedTemps
-            |> containsInt(word)
-            then -1
-            else tuplePartsRequestConstant(word)(joined)(rest)
-
-let recursive callTuplePartsRequest (resultTemp: Int) (budget: Int) (instructions: List(IrInstruction)) =
-    if budget == 0
-    then -1
-    else
-        match instructions with
-            | [] -> -1
-            | IrInstruction { instruction = CallClosure(target, _closure, _argument, word) } :: rest ->
-                if target == resultTemp
-                then
-                    if word < 0
-                    then -1
-                    else tuplePartsRequestConstant(word)(false)(rest)
-                else callTuplePartsRequest(resultTemp)(budget - 1)(rest)
-            | _ :: rest -> callTuplePartsRequest(resultTemp)(budget - 1)(rest)
-
 let recursive zeroRequestConstant (request: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> []
@@ -15709,26 +15829,28 @@ let recursive zeroRequestConstant (request: Int) (instructions: List(IrInstructi
             else instruction :: zeroRequestConstant(request)(rest)
         | instruction :: rest -> instruction :: zeroRequestConstant(request)(rest)
 
-// A withdrawn request is remembered with the parts it asked for, so a function returning the call's
-// result as it is can forward its own caller's request in its place.
-let recordWithdrawnTuplePartsRequest (resultTemp: Int) (request: Int) (parts: Maybe(List(Int))) (state: CoreLoweringState) =
+// A withdrawn request is remembered by its request word with the parts it asked for, so a function
+// returning the call's result as it is can forward its own caller's request in its place.
+let recordWithdrawnTuplePartsRequest (resultTemp: Int) (requestWord: Int) (parts: Maybe(List(Int))) (state: CoreLoweringState) =
     match parts with
-        | Some(asked) -> withStateWithdrawnTuplePartsRequests((resultTemp, request, asked) :: stateWithdrawnTuplePartsRequests(state))(state)
+        | Some(asked) -> withStateWithdrawnTuplePartsRequests((resultTemp, requestWord, asked) :: stateWithdrawnTuplePartsRequests(state))(state)
         | None -> state
 
-// Stage 0's `TakeTupleResultPartsRequest`: the parts the call producing `resultTemp` asked for, or
-// None; a withdrawn request is cleared in the call's ownership word, so the callee keeps its own
+// Stage 0's `TakeTupleResultPartsRequest`: the parts the call producing `resultTemp` asked for and
+// the arena word its callee writes the mask of the handed-over parts into, or None; a withdrawn
+// request's constant is cleared in the call's ownership word, so the callee keeps its own
 // references.
-let takeTupleResultPartsRequest (context: CoreCallContext) (resultTemp: Int) (withdraw: Bool) (state: CoreLoweringState) =
-    (let request = callTuplePartsRequest(resultTemp)(64)(state.reversedInstructions)
-    in
-        if request < 0
-        then (state, None)
-        else
+let takeTupleResultPartsRequest (context: CoreCallContext) (resultTemp: Int) (resultType: SemanticType) (withdraw: Bool) (state: CoreLoweringState) =
+    match callTuplePartsRequest(resultTemp)(64)(state.reversedInstructions) with
+        | None -> (state, None)
+        | Some((constant, requestWord, cell)) ->
             if withdraw
             then
-                (recordWithdrawnTuplePartsRequest(resultTemp)(request)(calleeTupleResultParts(context)(state))((state with reversedInstructions = zeroRequestConstant(request)(state.reversedInstructions))), None)
-            else (state, calleeTupleResultParts(context)(state)))
+                (recordWithdrawnTuplePartsRequest(resultTemp)(requestWord)(calleeTupleResultParts(context)(resultType)(state))((state with reversedInstructions = zeroRequestConstant(constant)(state.reversedInstructions))), None)
+            else
+                match calleeTupleResultParts(context)(resultType)(state) with
+                    | Some(parts) -> (state, Some((parts, cell)))
+                    | None -> (state, None)
 
 let recursive loadHandedOverTupleParts (resultTemp: Int) (parts: List(Int)) (state: CoreLoweringState) (temps: List(Int)) =
     match parts with
@@ -15738,54 +15860,56 @@ let recursive loadHandedOverTupleParts (resultTemp: Int) (parts: List(Int)) (sta
                 | FreshTemp { state = allocated, temp = partTemp } ->
                     loadHandedOverTupleParts(resultTemp)(rest)(emit(LoadMemOffset(partTemp)(resultTemp)(part * 8))(allocated))(partTemp :: temps)
 
-let recursive releaseHandedOverTuplePartList (parts: List(Int)) (partTemps: List(Int)) (elementTypes: List(SemanticType)) (state: CoreLoweringState) =
+// The mask the callee wrote, then the parts of the call's tuple result.
+let loadHandedOverMaskAndParts (resultTemp: Int) (parts: List(Int)) (cell: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = maskTemp } ->
+            match loadHandedOverTupleParts(resultTemp)(parts)(emit(LoadMemOffset(maskTemp)(cell)(0))(allocated))([]) with
+                | (loaded, partTemps) -> (loaded, maskTemp, partTemps)
+
+let recursive releaseHandedOverTuplePartList (parts: List(Int)) (partTemps: List(Int)) (maskTemp: Int) (elementTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (parts, partTemps) with
         | (part :: restParts, partTemp :: restTemps) ->
             match freshLabel("tuple_part_kept")(state) with
                 | FreshLabel { state = labelled, label = skipLabel } ->
-                    labelled
-                    |> emitSkipUnlessReferenceCounted(partTemp)(skipLabel)
-                    |> emitOwnedValueChildDrop(partTemp)(nthElementType(part)(elementTypes))
-                    |> emit(Label(skipLabel))
-                    |> releaseHandedOverTuplePartList(restParts)(restTemps)(elementTypes)
+                    match freshTempRun(4)(labelled) with
+                        | FreshTemp { state = allocated, temp = shiftTemp } ->
+                            allocated
+                            |> emit(LoadConstInt(shiftTemp)(part))
+                            |> emit(ShrInt(shiftTemp + 1)(maskTemp)(shiftTemp))
+                            |> emit(LoadConstInt(shiftTemp + 2)(1))
+                            |> emit(AndInt(shiftTemp + 3)(shiftTemp + 1)(shiftTemp + 2))
+                            |> emit(JumpIfFalse(shiftTemp + 3)(skipLabel))
+                            |> emitSkipUnlessReferenceCounted(partTemp)(skipLabel)
+                            |> emitOwnedValueChildDrop(partTemp)(nthElementType(part)(elementTypes))
+                            |> emit(Label(skipLabel))
+                            |> releaseHandedOverTuplePartList(restParts)(restTemps)(maskTemp)(elementTypes)
         | _ -> state
 
 // Stage 0's `ReleaseHandedOverTupleParts`: after a call's tuple result is copied out of the arena,
-// the references the callee handed over with the parts are released, the copy holding its own.
-let releaseHandedOverTupleParts (resultTemp: Int) (semanticType: SemanticType) (parts: List(Int)) (partTemps: List(Int)) (state: CoreLoweringState) =
+// the references the callee handed over with the parts its mask names are released, the copy
+// holding its own.
+let releaseHandedOverTupleParts (semanticType: SemanticType) (parts: List(Int)) (maskTemp: Int) (partTemps: List(Int)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
-        | SemTuple(elementTypes) ->
-            match freshLabel("tuple_parts_arena")(state) with
-                | FreshLabel { state = arenaState, label = arenaLabel } ->
-                    match freshLabel("tuple_parts_done")(arenaState) with
-                        | FreshLabel { state = doneState, label = doneLabel } ->
-                            match freshTemp(doneState) with
-                                | FreshTemp { state = allocated, temp = countedTemp } ->
-                                    allocated
-                                    |> emit(IsReferenceCounted(countedTemp)(resultTemp))
-                                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
-                                    |> emit(Jump(doneLabel))
-                                    |> emit(Label(arenaLabel))
-                                    |> releaseHandedOverTuplePartList(parts)(partTemps)(elementTypes)
-                                    |> emit(Label(doneLabel))
+        | SemTuple(elementTypes) -> releaseHandedOverTuplePartList(parts)(partTemps)(maskTemp)(elementTypes)(state)
         | _ -> state
 
-// The normalizing copy of a call's contract result, with the parts the callee handed over read
-// before it and released after it.
-let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe(List(Int))) (state: CoreLoweringState) =
+// The normalizing copy of a call's contract result, with the mask and the parts the callee handed
+// over read before it and the parts the mask names released after it.
+let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe((List(Int), Int))) (state: CoreLoweringState) =
     match handedParts with
         | None ->
             match emitGuardedDeepCopy(temp)(plan)(state) with
                 | (copied, copyTemp) ->
                     emit(StoreLocal(ownedSlot)(copyTemp))(copied)
-        | Some(parts) ->
-            match loadHandedOverTupleParts(temp)(parts)(state)([]) with
-                | (loaded, partTemps) ->
+        | Some((parts, cell)) ->
+            match loadHandedOverMaskAndParts(temp)(parts)(cell)(state) with
+                | (loaded, maskTemp, partTemps) ->
                     match emitGuardedDeepCopy(temp)(plan)(loaded) with
                         | (copied, copyTemp) ->
                             copied
                             |> emit(StoreLocal(ownedSlot)(copyTemp))
-                            |> releaseHandedOverTupleParts(temp)(semanticType)(parts)(partTemps)
+                            |> releaseHandedOverTupleParts(semanticType)(parts)(maskTemp)(partTemps)
 
 // Stage 0's withdrawal in `LowerCallRestoreArenaFor`: a call result that is not copied out under
 // the contract takes no parts over.
@@ -15793,7 +15917,7 @@ let withdrawTuplePartsRequestOutsideContract (context: CoreCallContext) (temp: I
     if isGeneralRcValueType(semanticType)(state)
     then state
     else
-        match takeTupleResultPartsRequest(context)(temp)(true)(state) with
+        match takeTupleResultPartsRequest(context)(temp)(semanticType)(true)(state) with
             | (withdrawn, _parts) -> withdrawn
 
 // Stage 0's `LowerGeneralRcCallResult`: a call result of the contract's types is owned by the
@@ -15802,7 +15926,7 @@ let withdrawTuplePartsRequestOutsideContract (context: CoreCallContext) (temp: I
 // function returns it owned; and it is normalized otherwise, since a generic callee's result may
 // borrow its arguments' parts. The value is kept in an owned slot and handed on without a
 // runtime-managed fact.
-let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe(List(Int))) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe((List(Int), Int))) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match if returnsOwned
     then (state, -1)
     else
@@ -15843,7 +15967,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
 let lowerGeneralRcCallResultOwned (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state)
     in
-        match takeTupleResultPartsRequest(context)(temp)(returnsOwned)(state) with
+        match takeTupleResultPartsRequest(context)(temp)(semanticType)(returnsOwned)(state) with
             | (requestState, handedParts) -> lowerGeneralRcCallResultTakingParts(returnsOwned)(handedParts)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(requestState))
 
 // A result of the contract's types is owned by the caller once the call is lowered, so a request

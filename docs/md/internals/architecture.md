@@ -1399,10 +1399,14 @@ parts through bit 2 of the hidden ownership word (see [ir.md](ir.md)). The funct
 contract element of its arena result a reference of its own, where the element is stored when every
 cell the result can be is known, at the return otherwise, and releases every owned value no other
 element reaches; the caller copies the tuple out and releases the handed-over references behind its
-copy. A function that returns another function's such tuple as it is forwards its own caller's
-request to that call in place of one of its own, and takes no parts itself. A caller that cannot
-name the function (a closure parameter) does not ask, and the function then releases only the
-owned values out of its result's reach.
+copy. The function also signals the hand-over at run time: the request carries the address of a
+word the caller cleared, and the function writes into it the mask of the parts it handed over, so
+the caller releases only those. A caller can therefore ask any callee, a closure it cannot name
+included: one that does not honor the request leaves the mask zero and releases only the owned
+values out of its result's reach. A function that returns another call's result as it is (another
+function's such tuple, or a result of unresolved type, as a generic `apply f x = f(x)` returns)
+forwards its own caller's request and address to that call, in place of a request of its own, and
+takes no parts itself; the callee answers the caller that asked.
 
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:

@@ -13395,7 +13395,7 @@ public sealed partial class Lowering
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
             RequestsArenaResult(funType.Ret),
-            i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count) : null,
+            i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
     }
@@ -14694,10 +14694,10 @@ public sealed partial class Lowering
             runtimeManagedArgumentFlagTemp = EmitArenaResultRequestWord(runtimeManagedArgumentFlagTemp);
         }
 
-        int tupleResultPartsRequestTemp = -1;
+        TupleResultPartsRequest? tupleResultPartsRequest = null;
         if (tupleResultParts is not null)
         {
-            runtimeManagedArgumentFlagTemp = EmitTupleResultPartsRequestWord(runtimeManagedArgumentFlagTemp, out tupleResultPartsRequestTemp);
+            runtimeManagedArgumentFlagTemp = EmitTupleResultPartsRequestWord(runtimeManagedArgumentFlagTemp, tupleResultParts, out tupleResultPartsRequest);
         }
 
         var callInstruction = new IrInst.CallClosure(
@@ -14719,9 +14719,9 @@ public sealed partial class Lowering
             _arenaResultRequestingCalls.Add(emittedCall);
         }
 
-        if (tupleResultParts is not null && _inst[^1] is IrInst.CallClosure requestingCall)
+        if (tupleResultPartsRequest is not null && _inst[^1] is IrInst.CallClosure requestingCall)
         {
-            _tupleResultPartsRequests[requestingCall] = (tupleResultPartsRequestTemp, tupleResultParts);
+            _tupleResultPartsRequests[requestingCall] = tupleResultPartsRequest;
         }
     }
 

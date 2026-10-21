@@ -813,7 +813,7 @@ public sealed partial class Lowering
         bool calleeReturnsOwned)
     {
         CancelArenaResultRequest(currentTemp);
-        int[]? handedParts = TakeTupleResultPartsRequest(currentTemp, withdraw: calleeReturnsOwned);
+        TupleResultPartsRequest? handedParts = TakeTupleResultPartsRequest(currentTemp, withdraw: calleeReturnsOwned);
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
@@ -832,9 +832,9 @@ public sealed partial class Lowering
                 Emit(new IrInst.Label(normalizeLabel));
             }
 
-            int[] partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
+            (int MaskTemp, int[] PartTemps) partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
-            ReleaseHandedOverTupleParts(currentTemp, callResultType, handedParts, partTemps);
+            ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
 
             Emit(new IrInst.Label(ownedLabel));
         }

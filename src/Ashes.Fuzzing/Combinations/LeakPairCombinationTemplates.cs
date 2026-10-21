@@ -713,6 +713,65 @@ internal sealed class ForwardedGenericTupleResultTemplate() : LeakCombinationTem
 }
 
 /// <summary>
+/// A generic function's tuple result (a value of its own type parameter beside a contract list built
+/// from a call or an owned record's field) comes back through a closure: a generic function applying
+/// its closure parameter, that applied once more, or a closure parameter of a concrete tuple type.
+/// The caller cannot name the function that built the tuple, so it asks whatever it calls and the
+/// mask the builder writes says what was handed over.
+/// </summary>
+internal sealed class ClosureAppliedGenericTupleResultTemplate() : LeakCombinationTemplate(
+    "leak.closure-applied-generic-tuple-result", "closureAppliedGenericTupleResult", GeneratedFeature.Record, GeneratedFeature.Tuple, GeneratedFeature.Let, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string item = names.Of("LeakItem");
+        string box = names.Of("LeakBox");
+        string make = names.Of("make");
+        string makeBox = names.Of("makeBox");
+        string pair = names.Of("pairWith");
+        string apply = names.Of("applyPair");
+        string applyAgain = names.Of("applyPairAgain");
+        string run = names.Of("runPair");
+        string[] arms = [$"(value, {make}(k))", "(value, built.items)"];
+        string first = arms[names.Between(0, arms.Length - 1)];
+        string second = arms[names.Between(0, arms.Length - 1)];
+        string threshold = LeakNames.Text(names.Between(0, 3));
+        string[] calls = [$"{apply}({pair})(seed)", $"{applyAgain}({pair})(seed)", $"{run}({pair}(seed))(seed)"];
+        string call = calls[names.Between(0, calls.Length - 1)];
+        return $$"""
+            type {{item}} =
+                | name: Str
+                | n: Int
+
+            type {{box}} =
+                | items: List({{item}})
+                | count: Int
+
+            let {{make}} (k: Int) = [{{item}}(name = {{names.Word()}} + Ashes.Text.fromInt(k), n = k)]
+
+            let {{makeBox}} (k: Int) = {{box}}(items = {{make}}(k + 1), count = k)
+
+            let {{pair}} value (k: Int) =
+                let built = {{makeBox}}(k)
+                in
+                    if k > {{threshold}}
+                    then {{first}}
+                    else {{second}}
+
+            let {{apply}} f (k: Int) = f(k)(k)
+
+            let {{applyAgain}} f (k: Int) = {{apply}}(f)(k)
+
+            let {{run}} (f: Int -> (Int, List({{item}}))) (k: Int) = f(k)
+
+            let {{names.Entry}} (seed: Int) =
+                match {{call}} with
+                    | (_kept, items) -> Ashes.Collection.List.length(items) + seed
+            """;
+    }
+}
+
+/// <summary>
 /// A generic function pairs a value of its own type parameter with the string-list fields of a
 /// record a call returned: the arena tuples beside the generic value take independent copies of
 /// the fields, so the record is released behind the result.
