@@ -1063,7 +1063,7 @@ public sealed class UniquenessSummaryTests
 
         summary.ShouldNotBeNull();
         TcoParamStructuralFacts values = summary.TcoParamFacts[0];
-        values.Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons);
         values.ArenaSelfContainedListRebuild.ShouldBeFalse();
     }
 

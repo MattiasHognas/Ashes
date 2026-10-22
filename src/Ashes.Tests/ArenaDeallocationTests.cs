@@ -706,11 +706,13 @@ public sealed class ArenaDeallocationTests
         summary.ShouldNotBeNull();
         summary.TcoParamFacts[0].ArenaSelfContainedListRebuild.ShouldBeFalse(
             "One shared-spine edge must make the whole-loop rebuild fact fail closed.");
+        summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.GrownCons,
+            "A fresh one-cell start beside edges that grow the list leaves it a grown accumulator.");
         instructions.Any(instruction => instruction is IrInst.CopyOutList
         {
             RuntimeManaged: true,
-        }).ShouldBeFalse(
-            "A per-edge fresh list must not promote the parameter when another edge retains the previous spine.");
+        }).ShouldBeTrue(
+            "The grown accumulator lives on the reference-counted heap, where the fresh edge releases the previous spine.");
     }
 
     [Test]
@@ -2404,11 +2406,10 @@ public sealed class ArenaDeallocationTests
         IrFunction labels = ir.Functions.Single(function =>
             function.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16 }) == 4);
 
-        labels.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: true }).ShouldBe(2,
-            "The cells with computed heads are reference counted; the ones with static heads stay in the arena.");
-        labels.Instructions.Count(instruction => instruction is IrInst.IsReferenceCounted).ShouldBe(1,
-            "Only the reference-counted cell whose tail is an arena cell tests it; the empty list and a cell "
-            + "just allocated in the reference-counted region are known.");
+        labels.Instructions.Count(instruction => instruction is IrInst.Alloc { SizeBytes: 16, RuntimeManaged: true }).ShouldBe(4,
+            "A static head over a reference-counted cell is reference counted too, so the whole literal is.");
+        labels.Instructions.Count(instruction => instruction is IrInst.IsReferenceCounted).ShouldBe(0,
+            "Every tail is the empty list or a cell just allocated in the reference-counted region, so none is tested.");
     }
 
     [Test]
