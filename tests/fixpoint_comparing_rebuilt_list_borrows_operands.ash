@@ -5,7 +5,7 @@ let recursive lowerEach (items: List(Int)) =
         | [] -> []
         | head :: rest ->
             if head > 1
-            then (head - 1) :: lowerEach(rest)
+            then head - 1 :: lowerEach(rest)
             else head :: lowerEach(rest)
 
 let recursive settle (values: List(Int)) =
@@ -23,7 +23,8 @@ let recursive sum (items: List(Int)) (total: Int) =
 let recursive rounds (n: Int) (total: Int) =
     if n == 0
     then total
-    else rounds(n - 1)(total + sum(settle([2, 3, 4]))(0))
+    else
+        rounds(n - 1)(total + sum(settle([2, 3, 4]))(0))
 
 0
 |> rounds(300)
