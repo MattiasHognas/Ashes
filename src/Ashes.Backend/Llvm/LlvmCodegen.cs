@@ -401,7 +401,7 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Runs LLVM 22's standard new-pass-manager pipeline for the selected level.
+    /// Runs LLVM 23's standard new-pass-manager pipeline for the selected level.
     /// These pipelines safely optimize Ashes' inline assembly because every operation
     /// with externally visible effects is marked side-effecting and every operation
     /// that observes or changes implicit memory state has a memory clobber.
