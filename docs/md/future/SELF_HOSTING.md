@@ -611,11 +611,33 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    question while the leaks are.
 
    Still open in E: generic named results (`Result`, `Maybe`, `List`) of contract values, which get
-   the same run-time hand-over as tuples; stage 1's remaining unreduced shapes (the `(label, index)`
-   pairs, the parser's qualified-identifier list, the lexer's string retain); the back-edge arena
-   compaction stage 1 lacks; and the exit census over N and N+1 generated functions with the memory
-   plateau that show E is done. Winning back `n-body`'s 4 to 5% and reclaiming the persistent map's
-   region are no longer part of E and follow it as tasks of their own.
+   the same run-time hand-over as tuples; stage 1's remaining census classes (below); the back-edge
+   arena compaction stage 1 lacks; and the exit census over N and N+1 generated functions with the
+   memory plateau that show E is done. Winning back `n-body`'s 4 to 5% and reclaiming the persistent
+   map's region are no longer part of E and follow it as tasks of their own.
+
+   **The census classes, named.** A debug build of stage 1 run on the probe to its exit, a census
+   that prints each leaked root two levels deep (strings decoded, claims summed), and a hardware
+   watch on one root's count through the whole run name the source behind each class. The probe's
+   input has to be a frozen copy of the packages: editing `selfhost/` moves every address.
+   - *Lists of `(name, ownership)` pairs, 15 MB:* the ownership-inference tables. A loop returning
+     `Some(entry)` of a binding matched out of its parameter, and a helper rebuilding that `Some`,
+     kept the retained entry in an arena cell. Fixed: such a cell is built on the counted heap
+     (leaked at 60 s 151.6 to 144.8 MB, probe peak 537 to 528 MB; about 10 MB of the class is left,
+     from another site).
+   - *Records holding a `CoreLoweringState`, 21 MB:* `FreshTemp`-like records passed into a generic
+     forwarder (`lowerLoadedPattern ... lowerPattern loaded`). The forwarder's result is a closure
+     call of unresolved type, so the owned record is in the result's reach and is never released.
+     Needs an ownership-word answer for generic forwarders, as tuples got: a design task.
+   - *String-literal table versions, 11 MB:* every version of `stringLiterals` ends with one
+     reference that no cell holds (its holder was released without its fields, or held it from an
+     arena copy; not confirmed). Not reduced.
+   - *`SemNamed` types, 12 MB, and one-word `TokenKind` cells, 7 MB:* the renumbered constructor
+     definitions of `prepareDropperTypes`, and the lexer's token kinds, each left with one reference
+     after its holders went (the holders not identified yet). Not reduced.
+   - *Qualified identifiers, 2.5 MB:* a consumed list argument is released spine-only when an arena
+     tuple result may hold its heads, so every head the tuple does not hold leaks.
+     `OwnResultBeforeArgumentRelease` skips tuple results and handed-over arguments.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
