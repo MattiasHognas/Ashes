@@ -340,7 +340,7 @@ public sealed partial class Lowering
             // A fresh value is handed over as it is and a prepared one keeps its own retain; every
             // other heap field is normalized into the cell and must be expressible there.
             bool fresh = IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]);
-            anyFresh |= fresh;
+            anyFresh |= fresh || HoldsReferenceTakenForCell(arguments[i], argumentTemps[i]);
             if (!fresh
                 && !IsPreparedConstructorArgument(arguments[i], fieldType)
                 && (ContainsUnresolvedLayoutType(fieldType, [])
@@ -350,27 +350,36 @@ public sealed partial class Lowering
             }
         }
 
-        if (!anyFresh)
+        if (anyFresh)
         {
-            return false;
+            NormalizePlacedConstructorFields(arguments, argumentTemps, argumentTypes);
         }
 
+        return anyFresh;
+    }
+
+    // The reference a cell placed on the reference-counted heap takes to each heap field that holds
+    // none of its own yet: a retain of a counted value, a copy of an arena one.
+    private void NormalizePlacedConstructorFields(
+        IReadOnlyList<Ashes.Frontend.Expr> arguments,
+        List<int> argumentTemps,
+        IReadOnlyList<TypeRef> argumentTypes)
+    {
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(argumentTypes[i]);
             if (CanArenaReset(fieldType)
                 || IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i])
-                || IsPreparedConstructorArgument(arguments[i], fieldType))
+                || IsPreparedConstructorArgument(arguments[i], fieldType)
+                || IsRetainTakenForCell(argumentTemps[i]))
             {
                 continue;
             }
 
-            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(argumentTemps[i], fieldType);
+            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(WithdrawPatternOwnerMarker(argumentTemps[i]), fieldType);
             MarkRuntimeManagedTemp(normalizedTemp);
             argumentTemps[i] = normalizedTemp;
         }
-
-        return true;
     }
 
     private void HandFreshConstructorChildrenToOwnedSlots(
@@ -427,6 +436,53 @@ public sealed partial class Lowering
         return argument is not (Ashes.Frontend.Expr.Var or Ashes.Frontend.Expr.QualifiedVar)
             && IsRuntimeManagedResultTemp(temp)
             && !IsOwnershipNeutralTemp(temp);
+    }
+
+    // An argument holding a reference taken for the cell under construction.
+    private bool HoldsReferenceTakenForCell(Ashes.Frontend.Expr argument, int temp)
+        => IsRetainedTailPatternOwner(argument) || IsRetainTakenForCell(temp);
+
+    // A loop's result built in tail position around a binding matched out of a reference-counted
+    // loop parameter: the constructor retains the binding (the loop releases its parameters at the
+    // exit), and only a reference-counted cell releases that retain.
+    private bool IsRetainedTailPatternOwner(Ashes.Frontend.Expr argument)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORTAILOWNER") is null
+            && _tcoCtx is { InTailPosition: true } loop
+            && argument is Ashes.Frontend.Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true, IsDropped: false } owner
+            && loop.IsRuntimeManagedSlot(owner.PerceusRootParameterSlot);
+
+    // A reference the preparation of a constructor argument took for the cell (a real retain of an
+    // owned value the cell keeps), outside a loop's successor: an arena cell would hold it with
+    // nothing to release it. A successor's back edge, written in place or bound by a `let` the self
+    // call passes on, balances the retains its own cells hold.
+    private bool IsRetainTakenForCell(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORRETAIN") is null
+            && !(_tcoCtx is { } loop
+                && (_tcoArgumentDestination is { } destination && ReferenceEquals(destination.Loop, loop)
+                    || ReferenceEquals(_arenaSuccessorLetLoop, loop)))
+            && FindLastInstruction(instruction => instruction switch
+            {
+                IrInst.RcDup duplicate => duplicate.Target == temp,
+                IrInst.LoadLocal load => load.Target == temp,
+                _ => false,
+            }) is int index and >= 0
+            && _inst[index] is IrInst.RcDup { RuntimeManaged: true };
+
+    // The pattern-owner duplicate an argument took for an arena cell becomes a plain read when the
+    // cell is placed on the reference-counted heap instead: the normalization of the value the
+    // duplicate read takes the cell's reference, whatever the owner's root parameter is finally
+    // placed as. Answers the value to normalize.
+    private int WithdrawPatternOwnerMarker(int temp)
+    {
+        int index = FindLastInstruction(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == temp);
+        if (index < 0 || _inst[index] is not IrInst.RcDup { RuntimeManaged: false } marker)
+        {
+            return temp;
+        }
+
+        _inst[index] = new IrInst.Borrow(marker.Target, marker.SourceTemp) { Location = marker.Location };
+        return marker.SourceTemp;
     }
 
     // An argument the constructor's preparation retains itself: an owned reference-counted binding,

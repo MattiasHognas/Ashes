@@ -4329,16 +4329,22 @@ public sealed partial class Lowering
         }
 
         request = LoopSuccessorLetRequest(let, request);
-
-        if (TryLowerRuntimeManagedLetValue(
-                let,
-                request,
-                out (int Temp, TypeRef Type) lowered))
+        TcoContext? outerSuccessorLetLoop = _arenaSuccessorLetLoop;
+        if (IsArenaLoopSuccessorLet(let))
         {
-            return lowered;
+            _arenaSuccessorLetLoop = _tcoCtx;
         }
 
-        return LowerRemainingLetValue(let, request);
+        try
+        {
+            return TryLowerRuntimeManagedLetValue(let, request, out (int Temp, TypeRef Type) lowered)
+                ? lowered
+                : LowerRemainingLetValue(let, request);
+        }
+        finally
+        {
+            _arenaSuccessorLetLoop = outerSuccessorLetLoop;
+        }
     }
 
     // A binding the loop's self-call passes on becomes the next iteration's parameter exactly like
@@ -4347,13 +4353,18 @@ public sealed partial class Lowering
     // the back edge. A parameter on the reference-counted heap needs none of it: its back edge
     // copies the successor with references of its own before those owners are released.
     private LoweredValueRequest LoopSuccessorLetRequest(Expr.Let let, LoweredValueRequest request)
+        => IsArenaLoopSuccessorLet(let) ? request with { TransfersRuntimeManagedChildren = true } : request;
+
+    private bool IsArenaLoopSuccessorLet(Expr.Let let)
         => _tcoCtx is { } tco
             && Environment.GetEnvironmentVariable("GRC_NO_LETSUCCESSOR") is null
             && SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName) is { } ordinal
             && ordinal < tco.ParamSlots.Count
-            && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal])
-                ? request with { TransfersRuntimeManagedChildren = true }
-                : request;
+            && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal]);
+
+    // The loop whose arena successor a `let` value being lowered becomes: its back edge balances the
+    // retains the cells it builds hold.
+    private TcoContext? _arenaSuccessorLetLoop;
 
     // The position at which a self-call in the expression passes the name, or null.
     private static int? SelfCallOrdinalPassing(Expr expression, string name, string selfName)

@@ -1527,10 +1527,15 @@ public sealed partial class Lowering
                 continue;
             }
 
-            argumentTemps[index] = DuplicateRuntimeManagedOwnedValueForTransfer(
-                arguments[index],
-                argumentTemps[index],
-                argumentTypes[index]);
+            // A retain the argument's preparation already took for the cell is the cell's reference.
+            if (!IsRetainTakenForCell(argumentTemps[index]))
+            {
+                argumentTemps[index] = DuplicateRuntimeManagedOwnedValueForTransfer(
+                    arguments[index],
+                    argumentTemps[index],
+                    argumentTypes[index]);
+            }
+
             info.RuntimeDeepUnique = false;
         }
     }

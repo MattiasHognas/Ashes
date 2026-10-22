@@ -1,0 +1,29 @@
+// A loop over a table returns Some of the entry it finds, a list a pattern binds out of the loop's
+// list parameter, and a helper rebuilds the Some around the entry it looked up: both cells are built
+// on the reference-counted heap, each holding a reference taken for it.
+let recursive lookup (key: Int) (table: List((Int, List(Int)))) =
+    match table with
+        | [] -> None
+        | (name, entry) :: rest ->
+            if name == key
+            then Some(entry)
+            else lookup(key)(rest)
+
+let handOff (table: List((Int, List(Int)))) (key: Int) =
+    match lookup(key)(table) with
+        | Some(entry) -> Some(entry)
+        | None -> None
+
+let recursive count (xs: List(Int)) (n: Int) =
+    match xs with
+        | [] -> n
+        | _ :: rest -> count(rest)(n + 1)
+
+let found (table: List((Int, List(Int)))) =
+    match handOff(table)(2) with
+        | Some(entry) -> count(entry)(0)
+        | None -> 0
+
+[(1, [1]), (2, [2, 3])]
+|> found
+|> Ashes.IO.print

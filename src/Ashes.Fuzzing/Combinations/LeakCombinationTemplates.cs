@@ -33,6 +33,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new CopiedSuccessorHeadTupleTemplate());
         registry.Register(new ConstructorOwningFreshChildTemplate());
         registry.Register(new OwnerReleasedOnEarlierSplitEdgeTemplate());
+        registry.Register(new LoopResultCellHoldingPatternBindingTemplate());
         registry.Register(new ExitCellPassedToCallTemplate());
         registry.Register(new ExitCellOfRecordsPassedToCallTemplate());
         registry.Register(new AccumulatorResetByLiteralOrChoiceTemplate());

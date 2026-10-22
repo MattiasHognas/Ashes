@@ -113,6 +113,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("tco_list_parameter_resolved_by_back_edge")]
     [Arguments("list_literal_static_and_computed_heads")]
     [Arguments("constructor_owning_fresh_list_child")]
+    [Arguments("loop_result_some_holding_pattern_binding")]
     [Arguments("concat_runtime_result")]
     [Arguments("curried_known_call_result")]
     [Arguments("generic_list_result_deep_copy")]

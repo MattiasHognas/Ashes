@@ -696,6 +696,9 @@ type CoreTcoState =
     // `_loweringTcoBackEdgeArgumentSlot`: a read of that parameter inside its own successor is
     // the reference the back edge moves, never retained.
     | backEdgeArgumentSlot: Maybe(Int)
+    // The loop whose arena successor a `let` value being lowered becomes (stage 0's
+    // `_arenaSuccessorLetLoop`): its back edge balances the retains the cells it builds hold.
+    | arenaSuccessorLetLoop: Maybe(Str)
     // The affine accumulator whose own tail self-call argument is being lowered, stage 0's
     // `_affineAppendCtx`: its name, its parameter slot, and the loop's reservation start and end
     // slots. A `+` chain rooted at that parameter grows the reservation in place.
@@ -1736,6 +1739,14 @@ let withStateBackEdgeArgumentSlot value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with backEdgeArgumentSlot = value))
 
+let stateArenaSuccessorLetLoop (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.arenaSuccessorLetLoop)
+
+let withStateArenaSuccessorLetLoop value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with arenaSuccessorLetLoop = value))
+
 let stateAffineAppendContext (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.affineAppendContext)
@@ -2327,6 +2338,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             tcoParameterRetainSites = [],
             borrowedScrutineeCells = [],
             backEdgeArgumentSlot = None,
+            arenaSuccessorLetLoop = None,
             affineAppendContext = None,
             affineAppendReservation = None,
             recursiveProducerResultSlots = [],
@@ -18497,19 +18509,32 @@ let representationLetValueRequest (name: Str) (value: Expr) (body: Expr) (state:
 // of this iteration, so an aggregate it builds retains the owned children it stores, whose owners
 // are still released at the back edge. A parameter on the reference-counted heap needs none of it:
 // its back edge copies the successor with references of its own before those owners are released.
-let loopSuccessorLetRequest (name: Str) (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+let isArenaLoopSuccessorLet (name: Str) (body: Expr) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(frame), Some(loop)) ->
             match selfCallOrdinalPassing(body)(name)(loop.selfName) with
-                | None -> request
+                | None -> false
                 | Some(ordinal) ->
                     match parameterSlotAtOrdinal(ordinal)(frame.parameterSlots) with
-                        | None -> request
-                        | Some(slot) ->
-                            if loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
-                            then request
-                            else request with transfersRuntimeManagedChildren = true
-        | _ -> request
+                        | None -> false
+                        | Some(slot) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state) == false
+        | _ -> false
+
+let loopSuccessorLetRequest (name: Str) (body: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
+    if isArenaLoopSuccessorLet(name)(body)(state)
+    then request with transfersRuntimeManagedChildren = true
+    else request
+
+// A `let` value the loop's self call passes on as an arena successor is lowered inside the loop's
+// mark; the mark is restored once the value is lowered.
+let enterArenaSuccessorLet (name: Str) (body: Expr) (state: CoreLoweringState) =
+    match (isArenaLoopSuccessorLet(name)(body)(state), stateTcoLoop(state)) with
+        | (true, Some(loop)) -> withStateArenaSuccessorLetLoop(Some(loop.selfName))(state)
+        | _ -> state
+
+let leaveArenaSuccessorLet (saved: Maybe(Str)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = loweredState } -> lowered with state = withStateArenaSuccessorLetLoop(saved)(loweredState)
 
 let letValueRequest (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
     loopSuccessorLetRequest(name)(body)(representationLetValueRequest(name)(value)(body)(state))(state)
@@ -18561,7 +18586,9 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                     |> withConsumerRequest(letValueRequest(name)(value)(body)(state))
                     |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
                     |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(body))
-                    |> lower(value) with
+                    |> enterArenaSuccessorLet(name)(body)
+                    |> lower(value)
+                    |> leaveArenaSuccessorLet(stateArenaSuccessorLetLoop(state)) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match loweredValue
@@ -21967,6 +21994,17 @@ let retainConstructorLoopParameterArguments (runtimeManaged: Bool) arguments low
                 | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
         | _ -> lowered
 
+// Whether a successor temp is a transfer retain: the temp a runtime-managed duplicate defines
+// (the retain `retainTransferredChild` takes of a live owner's read).
+let recursive isTransferRetainIn (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else isTransferRetainIn(temp)(rest)
+        | _ :: rest -> isTransferRetainIn(temp)(rest)
+
 // Stage 0's `IsFreshOwnedConstructorArgument`: a value produced by the argument expression itself
 // (not read from a binding) that is owned on the reference-counted heap. A self call's
 // placeholder result decides nothing about ownership.
@@ -21979,6 +22017,30 @@ let recursive producesOwnValue (argument: Expr) =
 
 let isFreshOwnedConstructorArgument (argument: Expr) (temp: Int) (state: CoreLoweringState) =
     producesOwnValue(argument) && isRuntimeTemp(temp)(state) && containsInt(temp)(stateBackEdgeDummyTemps(state)) == false
+
+// Stage 0's `IsRetainedTailPatternOwner`: a loop's result built in tail position around a binding
+// matched out of a reference-counted loop parameter takes a duplicate of the binding (the loop
+// releases its parameters at the exit), and only a reference-counted cell releases it.
+let retainedTailPatternOwner (request: ConsumerRequest) (argument: Expr) (state: CoreLoweringState) =
+    match (request, unspanArgument(argument)) with
+        | (ConsumerRequest { tailPosition = true }, ExprVar(name)) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) -> loopParameterIsRuntimeManaged(name)(state)
+                | None -> false
+        | _ -> false
+
+// Stage 0's `IsRetainTakenForCell`: a retain the preparation of an argument took for the cell (a
+// transfer retain of an owned value the cell keeps), outside a loop's successor (a tail self call's
+// argument or a `let` the self call passes on, whose back edge balances its cells' retains), where an
+// arena cell would hold it with nothing to release it.
+let inArenaSuccessorLet (state: CoreLoweringState) =
+    match (stateArenaSuccessorLetLoop(state), stateTcoLoop(state)) with
+        | (Some(name), Some(loop)) -> name == loop.selfName
+        | _ -> false
+
+let retainTakenForCell (temp: Int) (state: CoreLoweringState) = stateBackEdgeArgumentSlot(state) == None && inArenaSuccessorLet(state) == false && isTransferRetainIn(temp)(state.reversedInstructions)
+
+let holdsReferenceTakenForCell (request: ConsumerRequest) (argument: Expr) (temp: Int) (state: CoreLoweringState) = retainedTailPatternOwner(request)(argument)(state) || retainTakenForCell(temp)(state)
 
 // Stage 0's `CanNormalizeIntoOwnedRuntimeValue` for a constructor's own type.
 let normalizesIntoOwnedValue (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -22019,6 +22081,13 @@ let recursive anyFreshOwnedArgument (arguments: List(Expr)) (temps: List(Int)) (
         | (argument :: restArguments, temp :: restTemps) -> isFreshOwnedConstructorArgument(argument)(temp)(state) || anyFreshOwnedArgument(restArguments)(restTemps)(state)
         | _ -> false
 
+// An argument whose value the cell would own outright: a fresh value, or a reference taken for the
+// cell.
+let recursive anyCellOwnedArgument (request: ConsumerRequest) (arguments: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (arguments, temps) with
+        | (argument :: restArguments, temp :: restTemps) -> isFreshOwnedConstructorArgument(argument)(temp)(state) || holdsReferenceTakenForCell(request)(argument)(temp)(state) || anyCellOwnedArgument(request)(restArguments)(restTemps)(state)
+        | _ -> false
+
 // A constructor whose arena cell would hold a fresh reference-counted value hands it to an owned
 // slot, ahead of the retains the constructor's preparation takes. A cell placed on the
 // reference-counted heap or on the stack, and a zero-cost constructor, own nothing of the kind.
@@ -22054,9 +22123,11 @@ let recursive placesConstructorFields (arguments: List(Expr)) (temps: List(Int))
         | _ -> true
 
 // The owned value a reference-counted cell stores for a field that is neither fresh nor
-// prepared: a reference of its own, or a copy of an arena value.
-let normalizePlacedConstructorField (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if resultSurvivesReset(semanticType)(state) || isFreshOwnedConstructorArgument(argument)(temp)(state) || isPreparedConstructorArgument(argument)(semanticType)(state)
+// prepared, nor a retain taken for the cell: a reference of its own, or a copy of an arena value.
+// A pattern-owner duplicate the argument took for an arena cell becomes a plain read, since the
+// copy takes the cell's reference whatever the owner's root parameter is finally placed as.
+let normalizePlacedConstructorField (request: ConsumerRequest) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(semanticType)(state) || isFreshOwnedConstructorArgument(argument)(temp)(state) || retainTakenForCell(temp)(state) || retainedTailPatternOwner(request)(argument)(state) == false && isPreparedConstructorArgument(argument)(semanticType)(state)
     then (state, temp)
     else
         match match ownedResultPlanOf(semanticType)(state) with
@@ -22064,28 +22135,30 @@ let normalizePlacedConstructorField (argument: Expr) (temp: Int) (semanticType: 
             | None -> generalCopyPlanOf(semanticType)(state) with
             | None -> (state, temp)
             | Some(plan) ->
-                match emitGuardedDeepCopy(temp)(plan)(state) with
-                    | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
+                match neutralizeElementDuplicate(temp)(state) with
+                    | (withdrawn, source) ->
+                        match emitGuardedDeepCopy(source)(plan)(withdrawn) with
+                            | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
 
-let recursive normalizePlacedConstructorFields (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+let recursive normalizePlacedConstructorFields (request: ConsumerRequest) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (arguments, temps, semanticTypes) with
         | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
-            match normalizePlacedConstructorField(argument)(temp)(resolveType(state)(semanticType))(state) with
-                | (normalized, normalizedTemp) -> normalizePlacedConstructorFields(restArguments)(restTemps)(restTypes)(normalized)(normalizedTemp :: reversed)
+            match normalizePlacedConstructorField(request)(argument)(temp)(resolveType(state)(semanticType))(state) with
+                | (normalized, normalizedTemp) -> normalizePlacedConstructorFields(request)(restArguments)(restTemps)(restTypes)(normalized)(normalizedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
 // Stage 0's `PlaceConstructorOwningFreshChild`: an arena cell never releases what it holds, so a
-// constructor storing a fresh reference-counted value is built on the reference-counted heap
-// instead, owning that value outright and a reference of its own to every other heap field.
-// Answers the arguments and whether the cell is placed there.
-let placeConstructorOwningFreshChild (layout: CoreConstructorLayout) arguments (resultType: SemanticType) (runtimeManaged: Bool) (stackAllocate: Bool) lowered =
+// constructor storing a fresh reference-counted value, or a reference taken for the cell, is built
+// on the reference-counted heap instead, owning that value outright and a reference of its own to
+// every other heap field. Answers the arguments and whether the cell is placed there.
+let placeConstructorOwningFreshChild (layout: CoreConstructorLayout) arguments (request: ConsumerRequest) (resultType: SemanticType) (runtimeManaged: Bool) (stackAllocate: Bool) lowered =
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> (lowered, runtimeManaged)
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyFreshOwnedArgument(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
+            if runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyCellOwnedArgument(request)(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
             then (lowered, runtimeManaged)
             else
-                match normalizePlacedConstructorFields(arguments)(temps)(semanticTypes)(state)([]) with
+                match normalizePlacedConstructorFields(request)(arguments)(temps)(semanticTypes)(state)([]) with
                     | (normalized, normalizedTemps) -> ((lowered with state = normalized, temps = normalizedTemps), true)
         | _ -> (lowered, runtimeManaged)
 
@@ -22113,12 +22186,15 @@ let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeM
                     )
         | _ -> finishCoreValues(state)(reversedTemps)(reversedTypes)
 
+// A retain the argument's preparation already took for the cell is the cell's reference.
 let retainOwnedChildArgument (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match unspanArgument(argument) with
         | ExprVar(name) ->
             match liveRuntimeOwnerSlot(name)(state) with
                 | Some(slot) ->
-                    match emitTransferRetain(temp)(semanticType)(state) with
+                    match if retainTakenForCell(temp)(state)
+                    then success(temp)(semanticType)(state)
+                    else emitTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } ->
                             (withStateOwnerReleasePlans(retained
                             |> stateOwnerReleasePlans
@@ -22169,7 +22245,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                                         match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
                                             | (failedState, Some(error)) -> failure(failedState)(error)
                                             | (typedState, None) ->
-                                                match (lowered with state = typedState) |> placeConstructorOwningFreshChild(layout)(arguments)(resultType)(runtimeManaged)(stackAllocate) with
+                                                match (lowered with state = typedState) |> placeConstructorOwningFreshChild(layout)(arguments)(request)(resultType)(runtimeManaged)(stackAllocate) with
                                                     | (placed, placedRuntimeManaged) ->
                                                         placed
                                                         |> handConstructorFreshChildren(layout)(arguments)(resultType)(placedRuntimeManaged)(stackAllocate)
@@ -25757,17 +25833,6 @@ let recursive argumentParameterPartsOf (arguments: List(Expr)) (state: CoreLower
     match arguments with
         | [] -> []
         | argument :: rest -> (argumentRootSlotOf(argument)(state) != None) :: argumentParameterPartsOf(rest)(state)
-
-// Whether a successor temp is a transfer retain: the temp a runtime-managed duplicate defines
-// (the retain `retainTransferredChild` takes of a live owner's read).
-let recursive isTransferRetainIn (temp: Int) (instructions: List(IrInstruction)) =
-    match instructions with
-        | [] -> false
-        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
-            if target == temp
-            then runtimeManaged
-            else isTransferRetainIn(temp)(rest)
-        | _ :: rest -> isTransferRetainIn(temp)(rest)
 
 let recursive transferRetainedFlags (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
