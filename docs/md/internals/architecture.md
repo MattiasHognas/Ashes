@@ -1291,6 +1291,7 @@ program has to be recompiled with the variable set:
 |---|---|
 | `ASHES_RC_POISON=1` | Every freed RC payload is overwritten with `0xDD`, so a read after free fails visibly instead of reading stale data. |
 | `ASHES_RC_VERIFY=1` | Every lowered store into an RC cell checks that the stored value does not point at arena or stack memory, raising `SIGABRT` at the first violating store (linux-x64). |
+| `ASHES_RC_LEAKCHECK=1` | The program counts the RC cells it allocates and releases and, when it ends normally, writes `ashes-rc-live N` (the cells still live) to standard error (Linux). A value kept to the end counts as live, so a leak shows as the difference between one round of the same work and two. The count is not synchronized: only single-threaded programs report an exact figure. The self-hosted compiler honours the same variable, counting in its region allocator (`__ashes_rc_alloc` up, `__ashes_rc_free` down), so a C string it builds for a system call counts as live where stage 0's arena copy does not. |
 
 Running the end-to-end suite with `ASHES_RC_POISON=1` set is the quickest way
 to surface a latent use-after-free.
@@ -1373,14 +1374,52 @@ owned slot and releases it after its last use, at a loop's back edge, or at the 
 record of the contract is released through one dropper synthesized per type (`__rcdrop_record_N`),
 so a loop releasing it at many back edges carries one call each rather than the whole release.
 
+The contract is one calling convention for the whole program. A function that may run while a
+one-shot handler's post is pending keeps its values in the arena the post captures, so a program
+in which any `handle` can leave a post pending keeps the contract off everywhere; declared or
+provided capabilities alone leave nothing pending and do not.
+
 A call emitted while its result type is still unresolved (a sibling of a recursive group, say)
 requests an arena result, for a caller that could not own one. Once the result turns out to be of a
 contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its
 reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
 
+A tuple beside a value of unresolved layout (a generic function's parameter, say) cannot go onto the
+reference-counted heap, and nothing releases what an arena tuple holds. Such a tuple never holds the
+only reference to a reference-counted value: an element that may be reference-counted (other than
+one of the contract's types) is copied into the arena beside it, a fresh one is released after its
+copy, and no reference is taken for the tuple. Likewise, a loop parameter kept in the arena on a
+back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
+the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
+
+When such a tuple is a function's result, its contract elements (an owned call result, a borrowed
+parameter, a part of an owned value) point into values the function would otherwise have to leave
+unreleased. A caller that names the function and knows the tuple's concrete type asks for those
+parts through bit 2 of the hidden ownership word (see [ir.md](ir.md)). The function then gives each
+contract element of its arena result a reference of its own, where the element is stored when every
+cell the result can be is known, at the return otherwise, and releases every owned value no other
+element reaches; the caller copies the tuple out and releases the handed-over references behind its
+copy. The function also signals the hand-over at run time: the request carries the address of a
+word the caller cleared, and the function writes into it the mask of the parts it handed over, so
+the caller releases only those. A caller can therefore ask any callee, a closure it cannot name
+included: one that does not honor the request leaves the mask zero and releases only the owned
+values out of its result's reach. A function that returns another call's result as it is (another
+function's such tuple, or a result of unresolved type, as a generic `apply f x = f(x)` returns)
+forwards its own caller's request and address to that call, in place of a request of its own, and
+takes no parts itself; the callee answers the caller that asked.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
-the references its construction retained, so the back edge's copy releases them from the dying cell;
-any other successor, a call's result say, is borrowed by the copy, and its owner releases it.
+the references its construction retained, so the back edge's copy releases them from the dying cell:
+exactly those, read back from the instructions that built the cell, so a child the construction only
+borrowed (a retain marker finalization left an identity) is not released. Any other successor, a
+call's result say, is borrowed by the copy, and its owner releases it. A copy that borrows an arena
+cell's children takes its own reference to each before the loop releases its parameters, so the
+retains the cell's construction made of loop-parameter reads have nothing to balance them and are
+withdrawn: for a record update or a `let`-bound record successor, for a loop's result copied by its
+normalization helper, and for a record built only to be matched when no arm binds a heap-typed part
+of it. A retain is withdrawn only when the cell holds its sole reference and the parameter it reads
+is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
+child's root there).
 
 A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
 of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs
@@ -1473,6 +1512,14 @@ same-key updates overwrite compatible storage in place after region and
 capacity checks. This is an Ashes-specific specialized region, not the lifetime
 model for ordinary collections. Dedicated 2K/10K/50K RSS slopes and the 1BRC
 profile guard both fresh-insert and overwrite paths against retained growth.
+
+A node keeps a copy of each value it stores, never the value itself, so a call
+into the specialization borrows every argument but the map, and an owned value
+a field was copied from (the result of an upsert's closure, say) is released
+once copied. Nothing reclaims the region: a map the specialization built stays
+there after its last use, as does each value a call site copies in for a
+generic function's quantified parameter, so a loop that builds a fresh map per
+round grows by that map every round.
 
 ### Cycles
 

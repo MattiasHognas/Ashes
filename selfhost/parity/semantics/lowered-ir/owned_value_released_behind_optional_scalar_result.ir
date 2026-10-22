@@ -185,7 +185,7 @@ function __rcdrop_general_6  [RuntimeManagedAdtDropper]
     Return                Source=3   (owned_value_released_behind_optional_scalar_result.ash:16:1)
 
 function lambda_2  [SourceFunction from firstUse]
-  locals=18 temps=55
+  locals=18 temps=56
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (owned_value_released_behind_optional_scalar_result.ash:17:11)
     Borrow                Target=1 SourceTemp=0
@@ -276,20 +276,21 @@ function lambda_2  [SourceFunction from firstUse]
     LoadArgumentOwnership Target=46   (owned_value_released_behind_optional_scalar_result.ash:16:1)
     LoadConstInt          Target=47 Value=1   (owned_value_released_behind_optional_scalar_result.ash:16:1)
     ShrInt                Target=48 Left=46 Right=47   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    JumpIfFalse           CondTemp=48 Target=rc_result_owned_30   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    Alloc                 Target=49 SizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    MakeClosure           Target=50 FuncLabel=__deepcopy_5 EnvPtrTemp=49 EnvSizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    StoreMemOffset        BasePtr=49 OffsetBytes=0 Source=50   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    CallClosure           Target=51 ClosureTemp=50 ArgTemp=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    LoadConstInt          Target=52 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    CallKnown             Target=53 FuncLabel=__rcdrop_general_6 EnvTemp=52 ArgTemp=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    StoreLocal            Slot=17 Source=51   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    AndInt                Target=49 Left=48 Right=47   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    JumpIfFalse           CondTemp=49 Target=rc_result_owned_30   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Alloc                 Target=50 SizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    MakeClosure           Target=51 FuncLabel=__deepcopy_5 EnvPtrTemp=50 EnvSizeBytes=8   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreMemOffset        BasePtr=50 OffsetBytes=0 Source=51   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallClosure           Target=52 ClosureTemp=51 ArgTemp=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadConstInt          Target=53 Value=0   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    CallKnown             Target=54 FuncLabel=__rcdrop_general_6 EnvTemp=53 ArgTemp=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    StoreLocal            Slot=17 Source=52   (owned_value_released_behind_optional_scalar_result.ash:16:1)
     Jump                  Target=rc_result_done_31   (owned_value_released_behind_optional_scalar_result.ash:16:1)
   rc_result_owned_30:
     StoreLocal            Slot=17 Source=39   (owned_value_released_behind_optional_scalar_result.ash:16:1)
   rc_result_done_31:
-    LoadLocal             Target=54 Slot=17   (owned_value_released_behind_optional_scalar_result.ash:16:1)
-    Return                Source=54   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    LoadLocal             Target=55 Slot=17   (owned_value_released_behind_optional_scalar_result.ash:16:1)
+    Return                Source=55   (owned_value_released_behind_optional_scalar_result.ash:16:1)
 
 function lambda_8  [ClosureHelper from rounds]
   locals=29 temps=49

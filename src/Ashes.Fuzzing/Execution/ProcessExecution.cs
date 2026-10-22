@@ -22,7 +22,8 @@ internal static class ProcessTimeout
         TimeSpan timeout,
         int maximumOutputBytes,
         CancellationToken cancellationToken,
-        bool capturePeakWorkingSet = false)
+        bool capturePeakWorkingSet = false,
+        IReadOnlyDictionary<string, string>? environment = null)
     {
         if (timeout <= TimeSpan.Zero || maximumOutputBytes < 0)
         {
@@ -40,6 +41,10 @@ internal static class ProcessTimeout
         foreach (string argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+        foreach ((string name, string value) in environment ?? new Dictionary<string, string>(StringComparer.Ordinal))
+        {
+            startInfo.Environment[name] = value;
         }
         using Process process = new() { StartInfo = startInfo };
         Stopwatch stopwatch = Stopwatch.StartNew();

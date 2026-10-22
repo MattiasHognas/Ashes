@@ -60,6 +60,26 @@ public sealed class TypeResolutionTests
     }
 
     [Test]
+    public void Unknown_type_in_inline_parameter_annotation_is_reported_at_the_parameter()
+    {
+        const string source = "let recursive g (items: List(Foo)) (acc: List(Foo)) =\n    match items with\n        | [] -> acc\n        | head :: rest -> g(rest)(head :: acc)\n\nAshes.IO.print(1)";
+        var (_, diag) = LowerProgram(source);
+
+        DiagnosticEntry unknown = diag.StructuredErrors.First(entry => entry.Message.Contains("Unknown type name 'Foo'", StringComparison.Ordinal));
+        unknown.Pos.ShouldBe(source.IndexOf("items", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Inline_parameter_annotation_type_variable_is_shared_across_curried_parameters()
+    {
+        var (_, generic) = LowerProgram("let recursive reverseOnto (items: List(a)) (acc: List(a)) =\n    match items with\n        | [] -> acc\n        | head :: rest -> reverseOnto(rest)(head :: acc)\n\nlet first items =\n    match items with\n        | [] -> 0\n        | head :: _ -> head\n\nlet empty items =\n    match items with\n        | [] -> 0\n        | _ -> 1\n\nAshes.IO.print(first(reverseOnto([1, 2])([])) + empty(reverseOnto([\"a\"])([])))");
+        generic.Errors.ShouldBeEmpty();
+
+        var (_, shared) = LowerProgram("let same (x: a) (y: a) = x\n\nAshes.IO.print(same(1)(\"s\"))");
+        shared.Errors.ShouldContain(error => error.Contains("Type mismatch", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void Resolve_type_name_reports_diagnostic_for_wrong_arity()
     {
         var (lowering, diag) = LowerProgram("type Bool = | True | False\nAshes.IO.print(1)");

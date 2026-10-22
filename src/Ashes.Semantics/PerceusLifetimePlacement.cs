@@ -395,6 +395,15 @@ internal static class PerceusLifetimePlacement
             return lastUse;
         }
 
+        // A branch whose condition is an alias (a call's result, read only as a truth value or a
+        // tag) ends its block: the drop goes before it, so every path out of the block takes it.
+        // After it, the drop would sit on the fallthrough path alone.
+        if (instructions[lastUse] is IrInst.JumpIfFalse or IrInst.SwitchTag
+            && Environment.GetEnvironmentVariable("GRC_NO_BRANCHUSEDROP") is null)
+        {
+            return lastUse;
+        }
+
         int insertionIndex = lastUse + 1;
         if (IsArenaCopyOut(instructions[lastUse])
             && insertionIndex < instructions.Count
@@ -456,12 +465,17 @@ internal static class PerceusLifetimePlacement
                     && (borrowedArgumentCalls is null || !borrowedArgumentCalls.Contains(call))
                     && (loadOrdinal + 1 < block.OwnerLoads.Count || block.LiveOut))
                 {
-                    AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, call.ArgTemp, runtimeManaged) { Location = call.Location });
+                    // The owner may be an empty list (a null reference with no header), which the
+                    // duplicate skips like the owner's own duplicate does.
+                    AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, call.ArgTemp, runtimeManaged, CallDupMayBeEmpty(mayBeEmpty)) { Location = call.Location });
                     break;
                 }
             }
         }
     }
+
+    private static bool CallDupMayBeEmpty(bool mayBeEmpty)
+        => mayBeEmpty && Environment.GetEnvironmentVariable("GRC_NO_CALLDUPEMPTY") is null;
 
     private static HashSet<int> CollectOwnerAliases(
         List<IrInst> instructions,

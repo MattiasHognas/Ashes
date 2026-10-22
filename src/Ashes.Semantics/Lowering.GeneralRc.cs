@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -104,9 +105,22 @@ public sealed partial class Lowering
         && CanTestRepresentation
         && AllowsOrdinaryRcPlacement
         && AllowsAsyncIndependentRcPlacement
-        && CapabilityGlobalCount == 0
+        && !ProgramMayRunUnderLiveHandlerPost
         && !_inCoroutineBody
         && !InReuseSpecializationBody;
+
+    // The contract is one calling convention for the whole program, and a function that may run
+    // while a one-shot handler's post is pending keeps its values in the arena the post captures
+    // (see AllowsOrdinaryRcPlacement): a program where any function may do so keeps the contract
+    // off everywhere. Declared capabilities alone (a `provide`, an operation no `handle` catches)
+    // leave nothing pending. The inferred-trait discovery pass runs before the handler analysis and
+    // keeps the conservative answer.
+    private bool ProgramMayRunUnderLiveHandlerPost =>
+        CapabilityGlobalCount > 0
+        && (_collectInferredTraitElaboration
+            || !_maAnalyzed
+            || _maEntryMayExecuteUnderLiveHandlerPost
+            || _maFunctionsMayExecuteUnderLiveHandlerPost.Count > 0);
 
     // A reuse specialization builds its result in the persistent region, and the loop calling it
     // keeps that parameter there: nothing in its body takes or hands over an owned value, or each
@@ -120,7 +134,9 @@ public sealed partial class Lowering
     // Predecessor marks the slot holding what a call's owned slot held before this iteration stored
     // it again: an earlier iteration's value, left to a successor, that the loop still owns.
     // Branches names the match arms and if branches the slot was stored inside, outermost first.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null);
+    // Binders are the source names bound to the value or to its parts (the let it is bound by, the
+    // pattern bindings of a match on it), shared between the slot and its predecessor slot.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -155,7 +171,7 @@ public sealed partial class Lowering
     }
 
     // Registers the owned slot just stored, marking it this iteration's when it sits in a loop.
-    private void RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
+    private GeneralRcOwnedSlot RegisterGeneralRcOwnedSlot(int slot, TypeRef type)
     {
         TcoContext? loop = _tcoCtx ?? _generalRcBackEdgeLoop;
         int freshSlot = -1;
@@ -167,7 +183,52 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(freshSlot, oneTemp));
         }
 
-        _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(slot, type, loop, freshSlot, Branches: [.. _generalRcBranches]));
+        var owned = new GeneralRcOwnedSlot(slot, type, loop, freshSlot, Branches: [.. _generalRcBranches], Binders: new HashSet<string>(StringComparer.Ordinal));
+        _generalRcOwnedSlots.Add(owned);
+        return owned;
+    }
+
+    // Records the names a `let` or a match's patterns bind from a value just lowered, when that
+    // value is the read of an owned slot of the loop being lowered: the names through which the
+    // slot's value, or a part of it, can reach a successor.
+    private void NoteGeneralRcOwnedSlotBinders(int valueTemp, IEnumerable<string> names)
+    {
+        TcoContext? loop = _tcoCtx ?? _generalRcBackEdgeLoop;
+        if (loop is null)
+        {
+            return;
+        }
+
+        List<GeneralRcOwnedSlot> loopSlots = _generalRcOwnedSlots
+            .Where(owned => !owned.Predecessor && ReferenceEquals(owned.Loop, loop))
+            .ToList();
+        int slot = OwnedSlotReadInto(valueTemp, loopSlots, parts: false);
+        if (slot < 0)
+        {
+            return;
+        }
+
+        for (int i = loopSlots.Count - 1; i >= 0; i--)
+        {
+            if (loopSlots[i].Slot == slot)
+            {
+                loopSlots[i].Binders?.UnionWith(names);
+                return;
+            }
+        }
+    }
+
+    // The names every arm of a match binds from its value, noted as binders of the owned slot the
+    // value reads.
+    private void NoteMatchScrutineeBinders(Expr.Match match, int valueTemp)
+    {
+        HashSet<string> binders = new(StringComparer.Ordinal);
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            CollectPatternBinders(matchCase.Pattern, binders);
+        }
+
+        NoteGeneralRcOwnedSlotBinders(valueTemp, binders);
     }
 
     // Inside a loop, moves what the owned slot about to be stored still holds into a slot of its own:
@@ -188,11 +249,11 @@ public sealed partial class Lowering
         return predecessorSlot;
     }
 
-    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type)
+    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type, HashSet<string>? binders = null)
     {
         if (predecessorSlot >= 0)
         {
-            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches]));
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches], Binders: binders));
         }
     }
 
@@ -396,18 +457,92 @@ public sealed partial class Lowering
             .Select(argument => IsStrictLoopParameterPart(argument, tco))
             .ToArray();
         _generalRcBackEdgeArgumentSlots[pendingId] = argumentTemps
-            .Select(temp => OwnedSlotReadInto(temp, loopSlots))
+            .Select(temp => OwnedSlotReadInto(temp, loopSlots, parts: false))
+            .ToArray();
+        _generalRcBackEdgeArgumentPartSlots[pendingId] = argumentTemps
+            .Select(temp => OwnedSlotReadInto(temp, loopSlots, parts: true))
             .ToArray();
     }
 
-    // Per back edge, the owned slot each successor argument is a plain read of, or -1.
+    // Per back edge, the owned slot each successor argument is a plain read of, or -1; and the owned
+    // slot each is a plain read of or a part of.
     private readonly Dictionary<int, int[]> _generalRcBackEdgeArgumentSlots = [];
+    private readonly Dictionary<int, int[]> _generalRcBackEdgeArgumentPartSlots = [];
 
-    private int OwnedSlotReadInto(int temp, List<GeneralRcOwnedSlot> ownedSlots)
+    private int OwnedSlotReadInto(int temp, List<GeneralRcOwnedSlot> ownedSlots, bool parts)
     {
         for (int i = _inst.Count - 1; i >= 0; i--)
         {
             if (_inst[i] is IrInst.LoadLocal load && load.Target == temp)
+            {
+                return ownedSlots.Any(owned => owned.Slot == load.Slot) ? load.Slot
+                    : parts ? OwnedSlotPartBoundInto(load.Slot, ownedSlots)
+                    : -1;
+            }
+
+            if (parts && _inst[i] is IrInst.Borrow borrow && borrow.Target == temp)
+            {
+                temp = borrow.SourceTemp;
+            }
+        }
+
+        return -1;
+    }
+
+    // A binding stored once with a field read out of an owned slot's value (a pattern binding of a
+    // call's owned result): a part of a value holding its own references, which stays alive with it.
+    // A binding stored once with the owned slot's value itself (`let next = f(x)`) is that value.
+    private static bool OwnedSlotAliasesEnabled => Environment.GetEnvironmentVariable("GRC_NO_OWNEDSLOTALIAS") is null;
+
+    private int OwnedSlotPartBoundInto(int slot, List<GeneralRcOwnedSlot> ownedSlots)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_OWNEDSLOTPART") is not null)
+        {
+            return -1;
+        }
+
+        int storeIndex = -1;
+        for (int i = 0; i < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.StoreLocal store && store.Slot == slot)
+            {
+                if (storeIndex >= 0)
+                {
+                    return -1;
+                }
+
+                storeIndex = i;
+            }
+        }
+
+        if (storeIndex < 0 || _inst[storeIndex] is not IrInst.StoreLocal { Source: int partTemp })
+        {
+            return -1;
+        }
+
+        int baseTemp = -1;
+        for (int i = storeIndex - 1; i >= 0; i--)
+        {
+            if (StateMachineTransform.GetDefinedTemps(_inst[i]).Contains(partTemp))
+            {
+                if (_inst[i] is IrInst.LoadLocal alias && OwnedSlotAliasesEnabled)
+                {
+                    return ownedSlots.Any(owned => owned.Slot == alias.Slot) ? alias.Slot : -1;
+                }
+
+                baseTemp = _inst[i] switch
+                {
+                    IrInst.LoadMemOffset read => read.BasePtr,
+                    IrInst.GetAdtField field => field.Ptr,
+                    _ => -1,
+                };
+                break;
+            }
+        }
+
+        for (int i = storeIndex - 1; i >= 0 && baseTemp >= 0; i--)
+        {
+            if (_inst[i] is IrInst.LoadLocal load && load.Target == baseTemp)
             {
                 return ownedSlots.Any(owned => owned.Slot == load.Slot) ? load.Slot : -1;
             }
@@ -678,6 +813,7 @@ public sealed partial class Lowering
         bool calleeReturnsOwned)
     {
         CancelArenaResultRequest(currentTemp);
+        TupleResultPartsRequest? handedParts = TakeTupleResultPartsRequest(currentTemp, withdraw: calleeReturnsOwned);
         int ownedFlagTemp = calleeReturnsOwned ? -1 : TryEmitClosureReturnsGeneralRcOwnedFlag(currentTemp);
         int callPreRestoreEndSlot = NewLocal();
         int ownedSlot = NewLocal();
@@ -696,13 +832,16 @@ public sealed partial class Lowering
                 Emit(new IrInst.Label(normalizeLabel));
             }
 
+            (int MaskTemp, int[] PartTemps) partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
+            ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
+
             Emit(new IrInst.Label(ownedLabel));
         }
 
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
-        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
-        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType));
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders);
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -715,7 +854,7 @@ public sealed partial class Lowering
     /// list of scalars or strings) when the function holds owned values it might point into.
     /// Returns the temp to return.
     /// </summary>
-    private int FinishGeneralRcFunctionResult(string label, int bodyTemp, TypeRef bodyType, bool closesProducerChain = false)
+    private int FinishGeneralRcFunctionResult(string label, int bodyTemp, TypeRef bodyType, bool closesProducerChain = false, TcoContext? loopTco = null)
     {
         LeaveGeneralRcFunction(label);
         _generalRcIndependentResultTemp = -1;
@@ -724,7 +863,8 @@ public sealed partial class Lowering
             Unify(bodyType, committed);
         }
 
-        TypeRef pruned = Prune(bodyType);
+        TypeRef pruned = ResolvePhantomResultLayout(label, bodyType);
+        _enclosingScopesByLabel.Remove(label);
         if (!GeneralRcEnabled)
         {
             return bodyTemp;
@@ -752,11 +892,12 @@ public sealed partial class Lowering
         // join of a recursive producer's arms carries it while an arm's cells stay in the arena.
         else if (contractResult || (normalizesOwnedResult && !IsRuntimeManagedResultTemp(bodyTemp)))
         {
-            // A result the body produced owned (a fresh reference-counted value) is taken as it is
-            // when its cells turn out reference-counted, and copied when they are still in the arena.
-            resultTemp = contractResult && Environment.GetEnvironmentVariable("GRC_NO_KEEP") is null && (closesProducerChain || IsNewlyProducedRcTemp(bodyTemp) || IsNormalizedJoinTemp(bodyTemp))
-                ? EmitOwnedResultOrCopy(bodyTemp, pruned)
-                : EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
+            resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain, loopTco);
+            _generalRcIndependentResultTemp = resultTemp;
+        }
+        else if (MovesOwnedPartsIntoTupleResult(bodyTemp, pruned))
+        {
+            resultTemp = EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
             MarkRuntimeManagedTemp(resultTemp);
             _generalRcIndependentResultTemp = resultTemp;
         }
@@ -766,13 +907,366 @@ public sealed partial class Lowering
             _generalRcOwnedResultLabels.Add(label);
         }
 
-        // Any other result (a closure, a tuple) may still point into the owned values, which are
-        // then left to leak. The slots stay registered: loop back edges are emitted later.
-        if (contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp))
+        bool resultIndependent = contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp);
+        if (resultIndependent || !TryReleaseOwnedSlotsHandingOverTupleParts(label, resultTemp, pruned, loopTco is not null))
         {
-            EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
+            ReleaseOwnedSlotsBehindResult(resultTemp, resultIndependent);
         }
 
+        return resultTemp;
+    }
+
+    // A result that holds its own references releases every owned slot behind it. Any other result
+    // (a closure, a tuple) may still point into the owned values: only the ones no value flowing
+    // into the result is read from are released, the rest are left to leak. The slots stay
+    // registered: loop back edges are emitted later.
+    private void ReleaseOwnedSlotsBehindResult(int resultTemp, bool resultIndependent)
+    {
+        if (resultIndependent)
+        {
+            EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
+            return;
+        }
+
+        EmitGeneralRcOwnedSlotDrops(OwnedSlotsOutOfResultReach(resultTemp, _generalRcOwnedSlots));
+    }
+
+    // A type variable of a function's result that is quantified by the function's scheme and occurs
+    // in none of its parameter types is a phantom: no value of its type can reach the function, so
+    // the `a` of a result's `Maybe(a)` only ever reads `None`. The result's layout is decided with
+    // the variable read as `Never`, at the function's return and at every call of it alike, so a
+    // result of the contract's types but for the phantom is owned like any other instead of staying
+    // in the arena beside the owned values it holds. A variable under a trait constraint is not a
+    // phantom: a method of the trait may produce a value of its type. An external function's types
+    // are the foreign interface's, which have no variables, so no external produces one either.
+    // The reading is taken only where it makes the result one of the contract's types; any other
+    // result keeps its variables, and the copy-out they choose.
+    private static bool PhantomResultRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_PHANTOM") is null;
+
+    // The scopes each function being lowered was created in, by label: the environment its scheme
+    // is generalized against, which its own scope no longer holds.
+    private readonly Dictionary<string, ImmutableSortedDictionary<string, Binding>[]> _enclosingScopesByLabel =
+        new(StringComparer.Ordinal);
+
+    // The functions a `let` binds, with the curry stages each one returns: their types are
+    // generalized once the binding is lowered, so a result variable no parameter and no binding in
+    // scope names is quantified there. Any other function (a lambda handed to a call, a constructor
+    // taken as a function) is typed by the context it meets afterwards, where such a variable may
+    // still be unified with a value's type.
+    private readonly HashSet<string> _letBoundFunctionLabels = new(StringComparer.Ordinal);
+
+    private void NoteLetBoundFunction(string label)
+    {
+        if (_activeFunctionOrigin is { Kind: IrFunctionOriginKind.SourceFunction })
+        {
+            _letBoundFunctionLabels.Add(label);
+        }
+    }
+
+    private void NoteLetBoundCurryStage(string stageLabel, string label)
+    {
+        if (_letBoundFunctionLabels.Contains(stageLabel))
+        {
+            _letBoundFunctionLabels.Add(label);
+        }
+    }
+
+    // Whether the function `label` is `selfLabel` or one of the curry stages it returns.
+    private bool CurryChainReaches(string selfLabel, string label)
+    {
+        string current = selfLabel;
+        for (int depth = 0; depth < 64; depth++)
+        {
+            if (string.Equals(current, label, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!_functionReturnedClosureLabels.TryGetValue(current, out string? next))
+            {
+                return false;
+            }
+
+            current = next;
+        }
+
+        return false;
+    }
+
+    // The layout of a function's own result at its return: the body's type with the phantoms read
+    // as `Never`, for a function a `let` binds. The function's scope and the scopes it was created
+    // in hold every variable that is not a phantom, but for the function's own binding (its self
+    // reference), which names the result's variables and is skipped.
+    private TypeRef ResolvePhantomResultLayout(string label, TypeRef resultType)
+    {
+        TypeRef pruned = Prune(resultType);
+        if (!PhantomResultRuleEnabled
+            || pruned is TypeRef.TFun
+            || !_letBoundFunctionLabels.Contains(label)
+            || !ContainsUnresolvedLayoutType(pruned, []))
+        {
+            return pruned;
+        }
+
+        HashSet<int> phantoms = [];
+        FtvType(pruned, phantoms);
+        if (phantoms.Count == 0)
+        {
+            return pruned;
+        }
+
+        phantoms.ExceptWith(VariablesHeldBesideFunction(label));
+        return phantoms.Count == 0 ? pruned : ContractLayoutOrSelf(SubstitutePhantomVariables(pruned, phantoms), pruned);
+    }
+
+    private HashSet<int> VariablesHeldBesideFunction(string label)
+    {
+        HashSet<int> held = [];
+        HashSet<string> selfNames = SelfNamesReaching(label);
+        if (_ambientRow is not null)
+        {
+            FtvType(_ambientRow, held);
+        }
+
+        if (_scopes.Count > 0)
+        {
+            AddScopeFtvBesideSelf(_scopes.Peek(), label, held, selfNames);
+        }
+
+        if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
+        {
+            foreach (ImmutableSortedDictionary<string, Binding> scope in enclosing)
+            {
+                AddScopeFtvBesideSelf(scope, label, held, selfNames);
+            }
+        }
+
+        foreach (TraitConstraintScope scope in _traitConstraintScopes)
+        {
+            foreach (TraitConstraint constraint in scope.Constraints)
+            {
+                foreach (TypeRef argument in constraint.TypeArgs)
+                {
+                    FtvType(argument, held);
+                }
+            }
+        }
+
+        return held;
+    }
+
+    private static bool RecursivePhantomRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_RECURSIVEPHANTOM") is null;
+
+    // The names the function `label` (or a curry stage returning it) is bound to as itself.
+    private HashSet<string> SelfNamesReaching(string label)
+    {
+        HashSet<string> names = new(StringComparer.Ordinal);
+        if (!RecursivePhantomRuleEnabled)
+        {
+            return names;
+        }
+
+        IEnumerable<ImmutableSortedDictionary<string, Binding>> scopes = _scopes.Count > 0 ? [_scopes.Peek()] : [];
+        if (_enclosingScopesByLabel.TryGetValue(label, out ImmutableSortedDictionary<string, Binding>[]? enclosing))
+        {
+            scopes = scopes.Concat(enclosing);
+        }
+
+        foreach (ImmutableSortedDictionary<string, Binding> scope in scopes)
+        {
+            foreach ((string name, Binding binding) in scope)
+            {
+                if ((binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
+                    || (_selfCaptureLabels.TryGetValue(binding, out string? capturedLabel) && CurryChainReaches(capturedLabel, label)))
+                {
+                    names.Add(name);
+                }
+            }
+        }
+
+        return names;
+    }
+
+    // The locals `let recursive` binds its function's own name to while the function is lowered.
+    private readonly HashSet<object> _letRecursiveSelfLocals = new(ReferenceEqualityComparer.Instance);
+
+    // The captures of a function's self binding, with the function they capture.
+    private readonly Dictionary<object, string> _selfCaptureLabels = new(ReferenceEqualityComparer.Instance);
+
+    private TypeRef ContractLayoutOrSelf(TypeRef substituted, TypeRef original)
+        => IsGeneralRcValueType(substituted) ? substituted : original;
+
+    // The `let recursive` binding of one of `selfNames` (a name the function calls itself by, in
+    // the scope the function was created in), or a closure's capture of it, holds the function itself, so its type names the
+    // result's variables without holding a value of them, and is skipped like the function's own
+    // self binding.
+    private void AddScopeFtvBesideSelf(
+        ImmutableSortedDictionary<string, Binding> scope,
+        string label,
+        HashSet<int> held,
+        HashSet<string> selfNames)
+    {
+        foreach ((string name, Binding binding) in scope)
+        {
+            if ((binding is Binding.Self self && CurryChainReaches(self.FuncLabel, label))
+                || (selfNames.Contains(name) && _letRecursiveSelfLocals.Contains(binding)))
+            {
+                continue;
+            }
+
+            AddBindingFtv(binding, held);
+        }
+    }
+
+    private void AddBindingFtv(Binding binding, HashSet<int> result)
+    {
+        switch (binding)
+        {
+            case Binding.Scheme scheme:
+                AddSchemeFtv(scheme.S, result);
+                break;
+            case Binding.EnvScheme environmentScheme:
+                AddSchemeFtv(environmentScheme.S, result);
+                break;
+            case Binding.Intrinsic intrinsic:
+                AddSchemeFtv(intrinsic.S, result);
+                break;
+            case Binding.PreludeValue preludeValue:
+                AddSchemeFtv(preludeValue.S, result);
+                break;
+            default:
+                AddBindingTypeFtv(binding, result);
+                break;
+        }
+    }
+
+    private TypeRef SubstitutePhantomVariables(TypeRef type, HashSet<int> phantoms)
+    {
+        TypeRef pruned = Prune(type);
+        return pruned switch
+        {
+            TypeRef.TVar variable when phantoms.Contains(variable.Id) => new TypeRef.TNever(),
+            TypeRef.TList list => new TypeRef.TList(SubstitutePhantomVariables(list.Element, phantoms)),
+            TypeRef.TTuple tuple => new TypeRef.TTuple(
+                tuple.Elements.Select(element => SubstitutePhantomVariables(element, phantoms)).ToList()),
+            TypeRef.TNamedType { TypeArgs.Count: > 0 } named => named with
+            {
+                TypeArgs = named.TypeArgs.Select(argument => SubstitutePhantomVariables(argument, phantoms)).ToList(),
+            },
+            _ => pruned,
+        };
+    }
+
+    // The layout of a call's result: the callee's scheme names the phantoms, and each one still
+    // unresolved at this call reads as `Never`. A call of a function being lowered (a self call)
+    // reads them the way the function's return will.
+    private TypeRef ResolveCallPhantomResultLayout(Expr rootExpr, int argumentCount, TypeRef callResultType)
+    {
+        if (!PhantomResultRuleEnabled || callResultType is TypeRef.TFun || !ContainsUnresolvedLayoutType(callResultType, []))
+        {
+            return callResultType;
+        }
+
+        Binding? binding = rootExpr switch
+        {
+            Expr.Var variable => Lookup(variable.Name),
+            Expr.QualifiedVar qualified => Lookup(
+                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            _ => null,
+        };
+        return binding switch
+        {
+            Binding.Scheme scheme => SubstituteSchemePhantoms(scheme.S, argumentCount, callResultType),
+            Binding.EnvScheme environmentScheme => SubstituteSchemePhantoms(environmentScheme.S, argumentCount, callResultType),
+            Binding.Self self => ResolvePhantomResultLayout(self.FuncLabel, callResultType),
+            Binding.Env captured when RecursivePhantomRuleEnabled && _selfCaptureLabels.TryGetValue(captured, out string? capturedLabel)
+                => ResolvePhantomResultLayout(capturedLabel, callResultType),
+            _ => callResultType,
+        };
+    }
+
+    private TypeRef SubstituteSchemePhantoms(TypeScheme scheme, int argumentCount, TypeRef callResultType)
+    {
+        HashSet<int> held = [];
+        TypeRef cursor = Prune(scheme.Body);
+        for (int index = 0; index < argumentCount; index++)
+        {
+            if (cursor is not TypeRef.TFun function)
+            {
+                return callResultType;
+            }
+
+            FtvType(function.Arg, held);
+            cursor = Prune(function.Ret);
+        }
+
+        foreach (TraitConstraint constraint in scheme.Constraints)
+        {
+            foreach (TypeRef argument in constraint.TypeArgs)
+            {
+                FtvType(argument, held);
+            }
+        }
+
+        HashSet<int> phantoms = [];
+        FtvType(cursor, phantoms);
+        phantoms.IntersectWith(scheme.Quantified.Select(variable => variable.Id));
+        phantoms.ExceptWith(held);
+        return phantoms.Count == 0
+            ? callResultType
+            : ContractLayoutOrSelf(SubstituteInstantiatedPhantoms(cursor, callResultType, phantoms), callResultType);
+    }
+
+    // The instantiated type is walked beside the scheme's: where the scheme has a phantom and the
+    // instantiation still a variable, the variable reads as `Never`; a variable the call resolved
+    // keeps its resolution, which is a layout of its own.
+    private TypeRef SubstituteInstantiatedPhantoms(TypeRef schemeType, TypeRef instantiated, HashSet<int> phantoms)
+    {
+        TypeRef scheme = Prune(schemeType);
+        TypeRef pruned = Prune(instantiated);
+        return (scheme, pruned) switch
+        {
+            (TypeRef.TVar variable, TypeRef.TVar) when phantoms.Contains(variable.Id) => new TypeRef.TNever(),
+            (TypeRef.TList schemeList, TypeRef.TList list) =>
+                new TypeRef.TList(SubstituteInstantiatedPhantoms(schemeList.Element, list.Element, phantoms)),
+            (TypeRef.TTuple schemeTuple, TypeRef.TTuple tuple) when schemeTuple.Elements.Count == tuple.Elements.Count =>
+                new TypeRef.TTuple(tuple.Elements
+                    .Select((element, index) => SubstituteInstantiatedPhantoms(schemeTuple.Elements[index], element, phantoms))
+                    .ToList()),
+            (TypeRef.TNamedType schemeNamed, TypeRef.TNamedType named)
+                when ReferenceEquals(schemeNamed.Symbol, named.Symbol) && schemeNamed.TypeArgs.Count == named.TypeArgs.Count =>
+                named with
+                {
+                    TypeArgs = named.TypeArgs
+                        .Select((argument, index) => SubstituteInstantiatedPhantoms(schemeNamed.TypeArgs[index], argument, phantoms))
+                        .ToList(),
+                },
+            _ => pruned,
+        };
+    }
+
+    // A result the body produced owned (a fresh reference-counted value) is taken as it is when its
+    // cells turn out reference-counted, and copied when they are still in the arena. The copy of an
+    // arena result borrows its children ahead of the loop's exit releases.
+    private int EmitGeneralRcOwnedFunctionResult(int bodyTemp, TypeRef pruned, bool contractResult, bool closesProducerChain, TcoContext? loopTco)
+    {
+        if (contractResult && loopTco is not null)
+        {
+            WithdrawLoopParameterRetainsOfCopiedCells(bodyTemp, LoopParametersOf(loopTco));
+        }
+
+        bool keeps = contractResult && Environment.GetEnvironmentVariable("GRC_NO_KEEP") is null && (closesProducerChain || IsNewlyProducedRcTemp(bodyTemp) || IsNormalizedJoinTemp(bodyTemp));
+        int resultTemp = keeps
+            ? EmitOwnedResultOrCopy(bodyTemp, pruned)
+            : EmitRuntimeManagedTcoDeepCopy(bodyTemp, pruned);
+        if (!keeps)
+        {
+            ReleaseFreshChildrenOfCopiedArenaTuple(bodyTemp, pruned);
+        }
+
+        MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
     }
 
@@ -902,18 +1396,24 @@ public sealed partial class Lowering
 
     // An earlier iteration's value is released once no successor can still name it: each successor
     // is inline, a plain read of an owned slot (a result holding its own references), a parameter
-    // normalized onto the reference-counted heap, or of a type that cannot hold its parts. A
-    // parameter handed on unchanged may be that very value, so it counts only by its type.
+    // normalized onto the reference-counted heap, a parameter only ever walked or handed on by every
+    // self call (it holds nothing newer than the loop's entry), an expression naming neither the
+    // value's binders nor a parameter that may hold a part of it, or of a type that cannot hold its
+    // parts. A parameter handed on unchanged at this edge alone may be that very value, so it counts
+    // only by its type.
     private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
     {
-        int[] argumentSlots = _generalRcBackEdgeArgumentSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
+        int[] argumentSlots = _generalRcBackEdgeArgumentPartSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
         foreach (GeneralRcOwnedSlot predecessor in predecessors)
         {
-            List<TypeRef> parts = HeapPartTypes(predecessor.Type);
+            List<TypeRef> parts = PredecessorPartTypes(predecessor.Type);
+            bool[] unnamed = SuccessorsNamingNoPartOf(info, predecessor, successorsNormalized);
             bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
                 CanArenaReset(Prune(info.ArgTypes[index]))
                 || (index < argumentSlots.Length && argumentSlots[index] >= 0)
+                || SuccessorPredatesTheLoop(info, index)
                 || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
+                || (index < unnamed.Length && unnamed[index])
                 || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
             if (unreachable)
             {
@@ -921,6 +1421,123 @@ public sealed partial class Lowering
             }
         }
     }
+
+    // The parts of an earlier iteration's value a successor could hold without a reference of its
+    // own. A string inside the value is retained wherever it is kept, so a successor holding one of
+    // the value's strings keeps it alive by itself; a value that is itself a string stays a part.
+    private List<TypeRef> PredecessorPartTypes(TypeRef type)
+    {
+        List<TypeRef> parts = HeapPartTypes(type);
+        return Environment.GetEnvironmentVariable("GRC_NO_STRINGPARTS") is null && Prune(type) is not TypeRef.TStr
+            ? parts.Where(part => Prune(part) is not TypeRef.TStr).ToList()
+            : parts;
+    }
+
+    // Per successor, whether its expression names nothing that can hold the predecessor's value or
+    // a part of it: none of the names bound from the value (its binders and the names derived from
+    // them), and none of the parameters a self call may hand such a name, or a part of one, whole
+    // or through another parameter. A parameter normalized onto the reference-counted heap on this
+    // path holds references of its own, so nothing reaches a successor through it. Claimed only
+    // when the value was bound to names and the body's parameter flow was followed.
+    private bool[] SuccessorsNamingNoPartOf(PendingTcoReset info, GeneralRcOwnedSlot predecessor, bool successorsNormalized)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_PREDECESSORNAMES") is not null
+            || predecessor.Binders is not { Count: > 0 } binders
+            || info.Tco.SelfCallParameterFlow is not { } flow
+            || info.Tco.Body is not { } body)
+        {
+            return [];
+        }
+
+        List<string> parameters = info.Tco.ParamNames;
+        FlowCallPolicy policy = info.Tco.FlowPolicy;
+        HashSet<string> named = CollectDerivedNames(body, binders, parameters, policy);
+        HashSet<int> ownReferences = PositionsHoldingOwnReferences(info.Tco, body);
+        HashSet<int> holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named, policy);
+        holders.ExceptWith(ownReferences);
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach ((int position, HashSet<int> sources) in flow)
+            {
+                bool normalized = successorsNormalized
+                    && position < info.ParamPlacements.Length
+                    && info.ParamPlacements[position]?.Representation == TcoPlacementRepresentation.RuntimeRc;
+                if (!normalized && !ownReferences.Contains(position) && !holders.Contains(position) && sources.Any(holders.Contains))
+                {
+                    holders.Add(position);
+                    changed = true;
+                }
+            }
+        }
+
+        foreach (int holder in holders)
+        {
+            if (holder < parameters.Count)
+            {
+                named.Add(parameters[holder]);
+            }
+        }
+
+        return info.ArgExpressions
+            .Select(argument => !named.Any(name => FlowMentionsName(argument, name, parameters, policy, 0)))
+            .ToArray();
+    }
+
+    // The parameter positions of a value of the contract's own types that every self call hands
+    // either the parameter itself or a call's result. A call's result of these types is owned and
+    // holds references of its own to whatever it keeps, so such a parameter holds nothing of an
+    // iteration's value without a reference of its own, whatever the call was given.
+    private HashSet<int> PositionsHoldingOwnReferences(TcoContext tco, Expr body)
+    {
+        HashSet<int> positions = [];
+        if (Environment.GetEnvironmentVariable("GRC_NO_OWNEDRESULTPOSITION") is not null)
+        {
+            return positions;
+        }
+
+        List<string> parameters = tco.ParamNames;
+        for (int position = 0; position < parameters.Count; position++)
+        {
+            if (tco.ParamTypes.TryGetValue(position, out TypeRef? type) && IsGeneralRcValueType(Prune(type)))
+            {
+                positions.Add(position);
+            }
+        }
+
+        foreach (Expr? node in EnumerateFlowNodes(body))
+        {
+            if (node is null)
+            {
+                return [];
+            }
+
+            if (TryUnwindSelfCall(node, tco.SelfName, parameters.Count, out List<Expr> arguments))
+            {
+                positions.RemoveWhere(position => !IsOwnReferenceSuccessor(arguments[position], parameters[position]));
+            }
+        }
+
+        return positions;
+    }
+
+    private bool IsOwnReferenceSuccessor(Expr argument, string parameter)
+        => argument switch
+        {
+            Expr.Var variable => string.Equals(variable.Name, parameter, StringComparison.Ordinal),
+            Expr.Call => !TryDescribeConstructorExpression(argument, out _, out _, out _),
+            _ => false,
+        };
+
+    // A successor that is the parameter's own consumed tail, where every self call passes that tail,
+    // or the parameter itself, where every self call hands it on unchanged: only parts of the value
+    // the loop was entered with, which no iteration's owned value can be.
+    private static bool SuccessorPredatesTheLoop(PendingTcoReset info, int index)
+        => Environment.GetEnvironmentVariable("GRC_NO_PREDECESSORENTRYPARTS") is null
+            && index < info.ParamSlots.Length
+            && info.Tco.ParamFacts.TryGetValue(info.ParamSlots[index], out TcoParamStaticFacts? facts)
+            && (facts.LoopInvariant || (facts.ConsumedListTail && info.ConsumedListTail[index]));
 
     // Whether every successor either owns its parts or is of a type that cannot hold any heap part
     // of an owned value of this type (a list of integer pairs never holds a record of strings): the
@@ -1002,6 +1619,22 @@ public sealed partial class Lowering
         }
 
         return iterationSlots.Where(owned => taken.Contains(owned.Slot)).ToList();
+    }
+
+    // The program's entry holds owned call results like any function (a fresh argument of the
+    // trailing pipe, say) and releases them at its end, as a function does at its return, when its
+    // value cannot point into them: a scalar, or a value of a type whose constructors all carry
+    // nothing.
+    private void ReleaseEntryGeneralRcOwnedSlots(TypeRef resultType)
+    {
+        TypeRef pruned = Prune(resultType);
+        if (GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_ENTRYRELEASE") is null
+            && (CanArenaReset(pruned)
+                || pruned is TypeRef.TNamedType { Symbol.Constructors: { Count: > 0 } constructors } && constructors.All(constructor => constructor.Arity == 0)))
+        {
+            EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
+        }
     }
 
     private void EmitGeneralRcOwnedSlotDrops(List<GeneralRcOwnedSlot> ownedSlots)

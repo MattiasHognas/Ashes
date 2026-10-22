@@ -19,6 +19,7 @@ export (
     value emitBytesSubClamp,
     value emitBytesSubText,
     value emitBytesSubView,
+    value emitCopyFfiBytes,
     value emitTextUnconsText,
     value emitDecimalDigitCheck,
     value emitDecimalDigitValue,
@@ -288,35 +289,15 @@ let emitBytesSubText context function_ builder i64 i8 ptrType (arena: ArenaRunti
                     emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(buildAdd(builder)(srcAddr)(start)("bytes_sub_src_start_addr"))(copyLen)("bytes_sub")
 
 // `Bytes.subView(bytes)(start)(len)`: a zero-copy view `{len|VIEW, backingBytesAddr}` over the
-// clamped range in a fresh 16-byte RC payload — O(1), the backing must outlive the view exactly as
-// stage 0's `EmitBytesSubView` documents.
-let emitBytesSubView builder i64 i8 ptrType mallocFn mallocType bytesRef startVal lenVal =
+// clamped range in a 16-byte arena block, reclaimed with the bracket that allocated it — O(1),
+// stage 0's `EmitBytesSubView`. The view is never reference-counted: lowering treats it as a
+// borrowed view of its backing, so no release ever reaches it.
+let emitBytesSubView context function_ builder i64 i8 ptrType (arena: ArenaRuntime) bytesRef startVal lenVal =
     match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_subv") with
         | (srcLen, srcAddr) ->
             match emitBytesSubClamp(builder)(i64)(srcLen)(startVal)(lenVal)("bytes_subv") with
                 | (start, viewLen) ->
-                    let headerPtr = buildCall(builder)(mallocType)(mallocFn)([constInt(i64)(32u64)(false)])(1u32)("bytes_subv_header")
-                    in
-                        let _ =
-                            buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
-                        in
-                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_subv_size_ptr")
-                            in
-                                let _ =
-                                    buildStore(builder)(constInt(i64)(16u64)(false))(sizePtr)
-                                in
-                                    let taggedLen =
-                                        buildOr(builder)(viewLen)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 63))(false))("bytes_subv_tagged_len")
-                                    in
-                                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_subv_payload_ptr")
-                                        in
-                                            let _ = buildStore(builder)(taggedLen)(payloadPtr)
-                                            in
-                                                let ptrWordPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_subv_ptr_word")
-                                                in
-                                                    let _ =
-                                                        buildStore(builder)(buildAdd(builder)(srcAddr)(start)("bytes_subv_src_start"))(ptrWordPtr)
-                                                    in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_subv_result")
+                    emitArenaStringView(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(srcAddr)(start)("bytes_subv_src_start"))(viewLen)("bytes_subv")
 
 // `Text.unconsText(text)`: `None` for the empty string, otherwise `Some((head, rest))` where
 // `head` is the first UTF-8 scalar's bytes (its width classed from the lead byte alone, clamped
@@ -418,7 +399,7 @@ let emitDecimalDigitValue builder i64 byteValue name =
 // `Text.parseInt(text)`: sign, decimal digits, and overflow thresholds against the Int bounds,
 // producing `Ok(value)` or `Error(message)` with stage 0's exact message strings and block
 // structure (`EmitTextParseInt`).
-let emitTextParseInt context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
+let emitTextParseInt context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType (managed: Bool) textRef =
     match emitStringParts(builder)(i64)(ptrType)(textRef)("tpi") with
         | (len, bytesAddr) ->
             let bytesPtr = buildIntToPtr(builder)(bytesAddr)(ptrType)("tpi_bytes_ptr")
@@ -554,25 +535,25 @@ let emitTextParseInt context function_ i64 i8 ptrType builder mallocFn mallocTyp
                                                                                                                                                                                                                                                     buildSelect(builder)(finalIsNegative)(buildSub(builder)(constInt(i64)(0u64)(false))(magnitude)("tpi_negated"))(magnitude)("tpi_final_value")
                                                                                                                                                                                                                                                 in
                                                                                                                                                                                                                                                     let _ =
-                                                                                                                                                                                                                                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(signedValue)("tpi_ok"))(resultSlot)
+                                                                                                                                                                                                                                                        buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(0)(signedValue)("tpi_ok"))(resultSlot)
                                                                                                                                                                                                                                                     in
                                                                                                                                                                                                                                                         let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                                                                                                         in
                                                                                                                                                                                                                                                             let _ = positionBuilderAtEnd(builder)(invalidBlock)
                                                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                                                let invalidMessage = emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 73, 110, 116, 40, 41, 32, 105, 110, 118, 97, 108, 105, 100, 32, 105, 110, 112, 117, 116])("tpi_invalid_msg")
+                                                                                                                                                                                                                                                                let invalidMessage = emitAsciiLiteralString(context)(builder)(i64)(i8)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 73, 110, 116, 40, 41, 32, 105, 110, 118, 97, 108, 105, 100, 32, 105, 110, 112, 117, 116])("tpi_invalid_msg")
                                                                                                                                                                                                                                                                 in
                                                                                                                                                                                                                                                                     let _ =
-                                                                                                                                                                                                                                                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(invalidMessage)("tpi_invalid_result"))(resultSlot)
+                                                                                                                                                                                                                                                                        buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(1)(invalidMessage)("tpi_invalid_result"))(resultSlot)
                                                                                                                                                                                                                                                                     in
                                                                                                                                                                                                                                                                         let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                                                                                                                         in
                                                                                                                                                                                                                                                                             let _ = positionBuilderAtEnd(builder)(overflowBlock)
                                                                                                                                                                                                                                                                             in
-                                                                                                                                                                                                                                                                                let overflowMessage = emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 73, 110, 116, 40, 41, 32, 111, 118, 101, 114, 102, 108, 111, 119])("tpi_overflow_msg")
+                                                                                                                                                                                                                                                                                let overflowMessage = emitAsciiLiteralString(context)(builder)(i64)(i8)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 73, 110, 116, 40, 41, 32, 111, 118, 101, 114, 102, 108, 111, 119])("tpi_overflow_msg")
                                                                                                                                                                                                                                                                                 in
                                                                                                                                                                                                                                                                                     let _ =
-                                                                                                                                                                                                                                                                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(overflowMessage)("tpi_overflow_result"))(resultSlot)
+                                                                                                                                                                                                                                                                                        buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(1)(overflowMessage)("tpi_overflow_result"))(resultSlot)
                                                                                                                                                                                                                                                                                     in
                                                                                                                                                                                                                                                                                         let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                                                                                                                                         in
@@ -918,7 +899,7 @@ let emitBytesAllocate context function_ i64 i8 builder allocateDynamic lengthVal
 // byte in order (`EmitBytesFromList`'s exact shape; cons layout head at 0, tail at 8, nil = 0).
 // `reversed` fills from the end while still walking `listRef` head-to-tail — the fused form of
 // `Byte.fromList(List.reverse(xs))`, which never builds the reversed list.
-let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocType reversed listRef =
+let emitBytesFromList context function_ i64 i8 ptrType builder allocateDynamic reversed listRef =
     (let countSlot = buildEntryAlloca(builder)(i64)("bfl_count")
     in
         let curSlot = buildEntryAlloca(builder)(i64)("bfl_cur")
@@ -975,75 +956,63 @@ let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocTy
                                                                                                     in
                                                                                                         let length = buildLoad(builder)(i64)(countSlot)("bfl_length")
                                                                                                         in
-                                                                                                            let totalSize =
-                                                                                                                buildAdd(builder)(length)(constInt(i64)(24u64)(false))("bfl_total")
+                                                                                                            let payloadPtr =
+                                                                                                                allocateDynamic(buildAdd(builder)(length)(constInt(i64)(8u64)(false))("bfl_size"))("bfl")
                                                                                                             in
-                                                                                                                let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("bfl_header")
+                                                                                                                let _ = buildStore(builder)(length)(payloadPtr)
                                                                                                                 in
-                                                                                                                    let _ =
-                                                                                                                        buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                                                                                                                    let dataPtr = gepBytes(builder)(i64)(i8)(payloadPtr)(8)("bfl_data")
                                                                                                                     in
-                                                                                                                        let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bfl_size_ptr")
+                                                                                                                        let _ =
+                                                                                                                            buildStore(builder)(buildPtrToInt(builder)(payloadPtr)(i64)("bfl_payload_value"))(resultSlot)
                                                                                                                         in
-                                                                                                                            let _ =
-                                                                                                                                buildStore(builder)(buildAdd(builder)(length)(constInt(i64)(8u64)(false))("bfl_size"))(sizePtr)
+                                                                                                                            let _ = buildStore(builder)(listRef)(curSlot)
                                                                                                                             in
-                                                                                                                                let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bfl_payload")
+                                                                                                                                let _ =
+                                                                                                                                    buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
                                                                                                                                 in
-                                                                                                                                    let _ = buildStore(builder)(length)(payloadPtr)
+                                                                                                                                    let _ = buildBr(builder)(fillCheckBlock)
                                                                                                                                     in
-                                                                                                                                        let dataPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bfl_data")
+                                                                                                                                        let _ = positionBuilderAtEnd(builder)(fillCheckBlock)
                                                                                                                                         in
-                                                                                                                                            let _ =
-                                                                                                                                                buildStore(builder)(buildPtrToInt(builder)(payloadPtr)(i64)("bfl_payload_value"))(resultSlot)
+                                                                                                                                            let curFill = buildLoad(builder)(i64)(curSlot)("bfl_cur_fill")
                                                                                                                                             in
-                                                                                                                                                let _ = buildStore(builder)(listRef)(curSlot)
+                                                                                                                                                let fillDone =
+                                                                                                                                                    buildICmp(builder)(intPredicateEq)(curFill)(constInt(i64)(0u64)(false))("bfl_fill_done")
                                                                                                                                                 in
-                                                                                                                                                    let _ =
-                                                                                                                                                        buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
+                                                                                                                                                    let _ = buildCondBr(builder)(fillDone)(doneBlock)(fillBodyBlock)
                                                                                                                                                     in
-                                                                                                                                                        let _ = buildBr(builder)(fillCheckBlock)
+                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(fillBodyBlock)
                                                                                                                                                         in
-                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(fillCheckBlock)
+                                                                                                                                                            let fillCellPtr = buildIntToPtr(builder)(curFill)(ptrType)("bfl_fill_cell")
                                                                                                                                                             in
-                                                                                                                                                                let curFill = buildLoad(builder)(i64)(curSlot)("bfl_cur_fill")
+                                                                                                                                                                let headVal = buildLoad(builder)(i64)(fillCellPtr)("bfl_head")
                                                                                                                                                                 in
-                                                                                                                                                                    let fillDone =
-                                                                                                                                                                        buildICmp(builder)(intPredicateEq)(curFill)(constInt(i64)(0u64)(false))("bfl_fill_done")
+                                                                                                                                                                    let idx = buildLoad(builder)(i64)(idxSlot)("bfl_idx_value")
                                                                                                                                                                     in
-                                                                                                                                                                        let _ = buildCondBr(builder)(fillDone)(doneBlock)(fillBodyBlock)
+                                                                                                                                                                        let destIndex =
+                                                                                                                                                                            if reversed
+                                                                                                                                                                            then
+                                                                                                                                                                                buildSub(builder)(buildSub(builder)(length)(constInt(i64)(1u64)(false))("bfl_len_m1"))(idx)("bfl_rev_idx")
+                                                                                                                                                                            else idx
                                                                                                                                                                         in
-                                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(fillBodyBlock)
+                                                                                                                                                                            let elemPtr = buildGEP(builder)(i8)(dataPtr)([destIndex])(1u32)("bfl_elem")
                                                                                                                                                                             in
-                                                                                                                                                                                let fillCellPtr = buildIntToPtr(builder)(curFill)(ptrType)("bfl_fill_cell")
+                                                                                                                                                                                let _ =
+                                                                                                                                                                                    buildStore(builder)(buildTrunc(builder)(headVal)(i8)("bfl_byte"))(elemPtr)
                                                                                                                                                                                 in
-                                                                                                                                                                                    let headVal = buildLoad(builder)(i64)(fillCellPtr)("bfl_head")
+                                                                                                                                                                                    let _ =
+                                                                                                                                                                                        buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bfl_idx_next"))(idxSlot)
                                                                                                                                                                                     in
-                                                                                                                                                                                        let idx = buildLoad(builder)(i64)(idxSlot)("bfl_idx_value")
+                                                                                                                                                                                        let fillTailPtr = gepBytes(builder)(i64)(i8)(fillCellPtr)(8)("bfl_fill_tail_ptr")
                                                                                                                                                                                         in
-                                                                                                                                                                                            let destIndex =
-                                                                                                                                                                                                if reversed
-                                                                                                                                                                                                then
-                                                                                                                                                                                                    buildSub(builder)(buildSub(builder)(length)(constInt(i64)(1u64)(false))("bfl_len_m1"))(idx)("bfl_rev_idx")
-                                                                                                                                                                                                else idx
+                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                buildStore(builder)(buildLoad(builder)(i64)(fillTailPtr)("bfl_fill_tail"))(curSlot)
                                                                                                                                                                                             in
-                                                                                                                                                                                                let elemPtr = buildGEP(builder)(i8)(dataPtr)([destIndex])(1u32)("bfl_elem")
+                                                                                                                                                                                                let _ = buildBr(builder)(fillCheckBlock)
                                                                                                                                                                                                 in
-                                                                                                                                                                                                    let _ =
-                                                                                                                                                                                                        buildStore(builder)(buildTrunc(builder)(headVal)(i8)("bfl_byte"))(elemPtr)
-                                                                                                                                                                                                    in
-                                                                                                                                                                                                        let _ =
-                                                                                                                                                                                                            buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bfl_idx_next"))(idxSlot)
-                                                                                                                                                                                                        in
-                                                                                                                                                                                                            let fillTailPtr = gepBytes(builder)(i64)(i8)(fillCellPtr)(8)("bfl_fill_tail_ptr")
-                                                                                                                                                                                                            in
-                                                                                                                                                                                                                let _ =
-                                                                                                                                                                                                                    buildStore(builder)(buildLoad(builder)(i64)(fillTailPtr)("bfl_fill_tail"))(curSlot)
-                                                                                                                                                                                                                in
-                                                                                                                                                                                                                    let _ = buildBr(builder)(fillCheckBlock)
-                                                                                                                                                                                                                    in
-                                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
-                                                                                                                                                                                                                        in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
+                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                                                                                    in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
 
 // A fixed ASCII line written from a stack buffer via the raw `write` syscall followed by exit 1 —
 // the generalized form of the `Bytes.get` panic (`EmitPanic`/`EmitBytesGuard`'s observable shape).
@@ -1187,17 +1156,53 @@ let emitBytesCheckedRange context function_ i64 i8 builder bufferLength offset l
                                                 let _ = emitBytesPanicLine(builder)(i64)(i8)(panicCodes)
                                                 in positionBuilderAtEnd(builder)(validBlock))
 
-// A fresh RC copy of a Bytes value (`EmitBytesCopyOnWrite` with the reuse path always off: every
-// selfhost dispatch arm passes reuse = false, so the result never aliases the input).
-let emitBytesCopyOnWrite builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bytesRef name =
-    match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name + "_src") with
-        | (len, srcAddr) -> emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(srcAddr)(len)(name)
+// The buffer a checked update writes (`EmitBytesCopyOnWrite`): the input itself when the lowering
+// hands over a fresh one to reuse, otherwise a copy placed by the instruction's flag.
+let emitBytesCopyOnWrite builder i64 ptrType copyPlaced (reuse: Bool) bytesRef name =
+    if reuse
+    then bytesRef
+    else
+        match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name + "_src") with
+            | (len, srcAddr) -> copyPlaced(srcAddr)(len)(name)
+
+// The range copy of `Byte.copyRange` (`EmitBytesRangeCopy`): a destination reused in place may be
+// the source buffer itself, so the same buffer goes through an arena scratch copy and distinct
+// buffers take one direct `memcpy`.
+let emitBytesRangeCopy context function_ i64 ptrType builder (arena: ArenaRuntime) memcpyFn memcpyType resultRef sourceRef destination source length =
+    (let overlapBlock = appendBasicBlock(context)(function_)("bytes_copyrange_overlap_safe")
+    in
+        let directBlock = appendBasicBlock(context)(function_)("bytes_copyrange_direct")
+        in
+            let doneBlock = appendBasicBlock(context)(function_)("bytes_copyrange_done")
+            in
+                let sameBuffer = buildICmp(builder)(intPredicateEq)(resultRef)(sourceRef)("bytes_copyrange_same_buffer")
+                in
+                    let _ = buildCondBr(builder)(sameBuffer)(overlapBlock)(directBlock)
+                    in
+                        let _ = positionBuilderAtEnd(builder)(overlapBlock)
+                        in
+                            let scratchSize =
+                                alignArenaSizeDynamic(builder)(i64)(buildAdd(builder)(length)(constInt(i64)(8u64)(false))("bytes_copyrange_scratch_size"))("bytes_copyrange_scratch_aligned")
+                            in
+                                let scratch =
+                                    buildIntToPtr(builder)(emitArenaAllocDynamic(context)(function_)(builder)(i64)(arena)(scratchSize)("bytes_copyrange_scratch"))(ptrType)("bytes_copyrange_scratch_ptr")
+                                in
+                                    let _ = buildCall(builder)(memcpyType)(memcpyFn)([scratch, source, length])(3u32)("bytes_copyrange_to_scratch")
+                                    in
+                                        let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, scratch, length])(3u32)("bytes_copyrange_from_scratch")
+                                        in
+                                            let _ = buildBr(builder)(doneBlock)
+                                            in
+                                                let _ = positionBuilderAtEnd(builder)(directBlock)
+                                                in
+                                                    let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, source, length])(3u32)("bytes_copyrange_copy")
+                                                    in
+                                                        let _ = buildBr(builder)(doneBlock)
+                                                        in positionBuilderAtEnd(builder)(doneBlock))
 
 // `Byte.copyRange(bytes)(offset)(source)(sourceOffset)(length)`: both ranges checked, the
-// destination copied fresh, then one `memcpy` of the range. The fresh copy never aliases the
-// source buffer, so stage 0's same-buffer scratch path is unreachable here and the direct copy
-// suffices (`EmitBytesCopyRange`/`EmitBytesRangeCopy`).
-let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
+// destination reused or copied, then the range copied (`EmitBytesCopyRange`).
+let emitBytesCopyRange context function_ i64 i8 ptrType builder (arena: ArenaRuntime) copyPlaced (reuse: Bool) memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
     (let destLen = emitStringLengthValue(builder)(i64)(ptrType)(destRef)("bytes_copyrange_dest_len")
     in
         let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(destLen)(destOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 100, 101, 115, 116, 105, 110, 97, 116, 105, 111, 110, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_dest")
@@ -1206,7 +1211,7 @@ let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocT
             in
                 let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(sourceLen)(sourceOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 115, 111, 117, 114, 99, 101, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_source")
                 in
-                    let result = emitBytesCopyOnWrite(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(destRef)("bytes_copyrange")
+                    let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(reuse)(destRef)("bytes_copyrange")
                     in
                         match emitStringParts(builder)(i64)(ptrType)(result)("bytes_copyrange_result") with
                             | (_resultLen, resultAddr) ->
@@ -1218,18 +1223,18 @@ let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocT
                                             let source =
                                                 buildIntToPtr(builder)(buildAdd(builder)(srcAddr)(sourceOffset)("bytes_copyrange_src_addr"))(ptrType)("bytes_copyrange_source_start")
                                             in
-                                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, source, length])(3u32)("bytes_copyrange_copy")
+                                                let _ = emitBytesRangeCopy(context)(function_)(i64)(ptrType)(builder)(arena)(memcpyFn)(memcpyType)(result)(sourceRef)(destination)(source)(length)
                                                 in result)
 
-// `Byte.set`/`setU16Le`/`setU32Le`/`setU64Le`: range checked, the input copied fresh, then the
+// `Byte.set`/`setU16Le`/`setU32Le`/`setU64Le`: range checked, the input reused or copied, then the
 // little-endian byte stores at the offset (`EmitBytesSetUnsigned`).
-let emitBytesSetUnsigned context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType width panicCodes bytesRef offset value name =
+let emitBytesSetUnsigned context function_ i64 i8 ptrType builder copyPlaced (reuse: Bool) width panicCodes bytesRef offset value name =
     (let bufferLength = emitStringLengthValue(builder)(i64)(ptrType)(bytesRef)(name + "_len")
     in
         let _ =
             emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(bufferLength)(offset)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(panicCodes)(name)
         in
-            let result = emitBytesCopyOnWrite(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bytesRef)(name)
+            let result = emitBytesCopyOnWrite(builder)(i64)(ptrType)(copyPlaced)(reuse)(bytesRef)(name)
             in
                 match emitStringParts(builder)(i64)(ptrType)(result)(name + "_result") with
                     | (_resultLen, resultAddr) ->
@@ -1240,7 +1245,7 @@ let emitBytesSetUnsigned context function_ i64 i8 ptrType builder mallocFn mallo
 
 // `Byte.scanHash(bytes)(needle)(from)`: one pass that stops at the first `needle` byte while
 // FNV-1a-hashing the bytes before it, returning the `(index, hash)` tuple (`EmitBytesScanHash`).
-let emitBytesScanHash context function_ i64 i8 ptrType builder mallocFn mallocType bytesRef needleVal fromVal =
+let emitBytesScanHash context function_ i64 i8 ptrType builder arena mallocFn mallocType bytesRef needleVal fromVal =
     match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_sh") with
         | (len, dataAddr) ->
             let dataPtr = buildIntToPtr(builder)(dataAddr)(ptrType)("bytes_sh_data")
@@ -1321,7 +1326,8 @@ let emitBytesScanHash context function_ i64 i8 ptrType builder mallocFn mallocTy
                                                                                                                                                         in
                                                                                                                                                             let _ = positionBuilderAtEnd(builder)(doneBlock)
                                                                                                                                                             in
-                                                                                                                                                                let tuplePtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)("bytes_sh_tuple")
+                                                                                                                                                                let tuplePtr =
+                                                                                                                                                                    buildIntToPtr(builder)(emitArenaAlloc(context)(function_)(builder)(i64)(arena)(16)("bytes_sh_tuple"))(ptrType)("bytes_sh_tuple_ptr")
                                                                                                                                                                 in
                                                                                                                                                                     let _ =
                                                                                                                                                                         buildStore(builder)(buildLoad(builder)(i64)(foundSlot)("bytes_sh_found_v"))(tuplePtr)
@@ -1335,7 +1341,7 @@ let emitBytesScanHash context function_ i64 i8 ptrType builder mallocFn mallocTy
 // `Text.toHex(value)`: `0x`-prefixed lowercase hex of the signed value's magnitude, digits written
 // back-to-front into a 32-byte stack buffer, then copied into a fresh RC string
 // (`EmitIntToHexString`'s zero/digit/prefix/sign phases).
-let emitTextToHex context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType value =
+let emitTextToHex context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType (managed: Bool) value =
     (let bufferType = arrayType(i8)(32u64)
     in
         let buffer = buildEntryAlloca(builder)(bufferType)("tth_buffer")
@@ -1455,14 +1461,14 @@ let emitTextToHex context function_ i64 i8 ptrType builder mallocFn mallocType m
                                                                                                                                                                                             in
                                                                                                                                                                                                 let startAddr =
                                                                                                                                                                                                     buildAdd(builder)(buildPtrToInt(builder)(buffer)(i64)("tth_buffer_addr"))(buildSub(builder)(constInt(i64)(32u64)(false))(count)("tth_start_index"))("tth_start_addr")
-                                                                                                                                                                                                in emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(startAddr)(count)("tth_string"))
+                                                                                                                                                                                                in emitPlacedStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(managed)(startAddr)(count)("tth_string"))
 
 // `Text.parseFloat(text)`: sign, integer digits, optional fraction, optional `e`/`E` exponent —
 // each phase a block, the value carried through `f64` slots, ranges checked against the maximum
 // finite double (built from its exact bit pattern; the frontend has no exponent literals), and
 // `Ok(bits)`/`Error(message)` with stage 0's exact message strings and block structure
 // (`EmitTextParseFloat`'s integer/fraction/exponent/scale phases).
-let emitTextParseFloat context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
+let emitTextParseFloat context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType (managed: Bool) textRef =
     match emitStringParts(builder)(i64)(ptrType)(textRef)("tpf") with
         | (len, bytesAddr) ->
             let f64 = doubleType(context)
@@ -1895,25 +1901,25 @@ let emitTextParseFloat context function_ i64 i8 ptrType builder mallocFn mallocT
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         let finalBits = finalValue
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             let _ =
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(finalBits)("tpf_ok"))(resultSlot)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(0)(finalBits)("tpf_ok"))(resultSlot)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     let _ = positionBuilderAtEnd(builder)(invalidBlock)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        let invalidMessage = emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 70, 108, 111, 97, 116, 40, 41, 32, 105, 110, 118, 97, 108, 105, 100, 32, 105, 110, 112, 117, 116])("tpf_invalid_msg")
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        let invalidMessage = emitAsciiLiteralString(context)(builder)(i64)(i8)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 70, 108, 111, 97, 116, 40, 41, 32, 105, 110, 118, 97, 108, 105, 100, 32, 105, 110, 112, 117, 116])("tpf_invalid_msg")
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             let _ =
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(invalidMessage)("tpf_invalid_result"))(resultSlot)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(1)(invalidMessage)("tpf_invalid_result"))(resultSlot)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     let _ = positionBuilderAtEnd(builder)(rangeBlock)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     in
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        let rangeMessage = emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 70, 108, 111, 97, 116, 40, 41, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101])("tpf_range_msg")
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        let rangeMessage = emitAsciiLiteralString(context)(builder)(i64)(i8)([65, 115, 104, 101, 115, 46, 84, 101, 120, 116, 46, 112, 97, 114, 115, 101, 70, 108, 111, 97, 116, 40, 41, 32, 111, 117, 116, 32, 111, 102, 32, 114, 97, 110, 103, 101])("tpf_range_msg")
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             let _ =
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(rangeMessage)("tpf_range_result"))(resultSlot)
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(1)(rangeMessage)("tpf_range_result"))(resultSlot)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             in
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 in
@@ -1995,3 +2001,68 @@ let emitRuneToText builder i64 i8 allocate rune =
                                                                 let _ =
                                                                     emitRuneStoreByte(builder)(i64)(i8)(bytesPtr)(3)(emitRuneContinuationByte(builder)(i64)(rune)(0)("rune_fourth"))("rune_text_b3")
                                                                 in buildPtrToInt(builder)(textPtr)(i64)("rune_text_result"))
+
+// "Foreign byte pointer was null for a nonzero length."
+let ffiCopyBytesNullPointerCodes = [70, 111, 114, 101, 105, 103, 110, 32, 98, 121, 116, 101, 32, 112, 111, 105, 110, 116, 101, 114, 32, 119, 97, 115, 32, 110, 117, 108, 108, 32, 102, 111, 114, 32, 97, 32, 110, 111, 110, 122, 101, 114, 111, 32, 108, 101, 110, 103, 116, 104, 46]
+
+// "Foreign byte length exceeds 1073741824 bytes."
+let ffiCopyBytesTooLongCodes = [70, 111, 114, 101, 105, 103, 110, 32, 98, 121, 116, 101, 32, 108, 101, 110, 103, 116, 104, 32, 101, 120, 99, 101, 101, 100, 115, 32, 49, 48, 55, 51, 55, 52, 49, 56, 50, 52, 32, 98, 121, 116, 101, 115, 46]
+
+// The empty `Bytes` value: an arena payload behind the immortal header holding the length word
+// `0` and no bytes, stage 0's `EmitBytesEmpty`.
+let emitArenaEmptyBytes context function_ builder i64 i8 ptrType (arena: ArenaRuntime) name =
+    name
+    |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(arenaConst(i64)(8))
+    |> (given (bytesRef) ->
+        Unit
+        |> (given (_) ->
+            storeWordAt(builder)(i64)(i8)(ptrType)(bytesRef)(0)(arenaConst(i64)(0))(name + "_len"))
+        |> (given (_) -> bytesRef))
+
+// `Ashes.Ffi.copyBytes(pointer)(length)`, stage 0's `EmitCopyFfiBytes`: a length over 1 GiB is
+// `Error`, a zero length is `Ok` of the empty bytes whatever the pointer, a null pointer with a
+// nonzero length is `Error`, and otherwise the range is copied into arena bytes and returned as
+// `Ok`, the `Result` in the arena too. Every arm stores its `Result` word into one slot read at the join.
+let emitCopyFfiBytes context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pointer length =
+    (let resultSlot = buildEntryAlloca(builder)(i64)("ffi_bytes_result")
+    in
+        let sizeAccepted = appendBasicBlock(context)(function_)("ffi_bytes_size_accepted")
+        in
+            let emptyBlock = appendBasicBlock(context)(function_)("ffi_bytes_empty")
+            in
+                let checkPointer = appendBasicBlock(context)(function_)("ffi_bytes_check_pointer")
+                in
+                    let copyBlock = appendBasicBlock(context)(function_)("ffi_bytes_copy")
+                    in
+                        let nullPointer = appendBasicBlock(context)(function_)("ffi_bytes_null")
+                        in
+                            let tooLong = appendBasicBlock(context)(function_)("ffi_bytes_too_long")
+                            in
+                                let done = appendBasicBlock(context)(function_)("ffi_bytes_done")
+                                in
+                                    sizeAccepted
+                                    |> buildCondBr(builder)(buildICmp(builder)(intPredicateUgt)(length)(constInt(i64)(1073741824u64)(false))("ffi_bytes_exceeds_limit"))(tooLong)
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(sizeAccepted))
+                                    |> (given (_) ->
+                                        buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(length)(constInt(i64)(0u64)(false))("ffi_bytes_is_empty"))(emptyBlock)(checkPointer))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(emptyBlock))
+                                    |> (given (_) ->
+                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(emitArenaEmptyBytes(context)(function_)(builder)(i64)(i8)(ptrType)(arena)("ffi_bytes_empty"))("ffi_bytes_ok_empty"))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(done))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(checkPointer))
+                                    |> (given (_) ->
+                                        buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(pointer)(constInt(i64)(0u64)(false))("ffi_bytes_is_null"))(nullPointer)(copyBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(copyBlock))
+                                    |> (given (_) ->
+                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(pointer)(length)("ffi_bytes_copy"))("ffi_bytes_ok"))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(done))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(nullPointer))
+                                    |> (given (_) ->
+                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(ffiCopyBytesNullPointerCodes)("ffi_bytes_null_msg"))("ffi_bytes_null_error"))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(done))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(tooLong))
+                                    |> (given (_) ->
+                                        buildStore(builder)(emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)(ffiCopyBytesTooLongCodes)("ffi_bytes_too_long_msg"))("ffi_bytes_too_long_error"))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(done))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(done))
+                                    |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("ffi_bytes_result_value")))

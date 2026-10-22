@@ -2,26 +2,27 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from bang]
-  locals=3 temps=8
+  locals=3 temps=9
     LoadLocal             Target=0 Slot=1   (non_tail_self_call_list_result.ash:1:21)
     LoadConstStr          Target=1 StrLabel=str_0   (non_tail_self_call_list_result.ash:1:25)
     ConcatStr             Target=2 Left=0 Right=1 RuntimeManaged=true   (non_tail_self_call_list_result.ash:1:21)
     LoadArgumentOwnership Target=3   (non_tail_self_call_list_result.ash:1:1)
     LoadConstInt          Target=4 Value=1   (non_tail_self_call_list_result.ash:1:1)
     ShrInt                Target=5 Left=3 Right=4   (non_tail_self_call_list_result.ash:1:1)
-    JumpIfFalse           CondTemp=5 Target=rc_result_owned_0   (non_tail_self_call_list_result.ash:1:1)
-    CopyOutArena          DestTemp=6 SrcTemp=2 Purpose=ArenaResultBoundary
+    AndInt                Target=6 Left=5 Right=4   (non_tail_self_call_list_result.ash:1:1)
+    JumpIfFalse           CondTemp=6 Target=rc_result_owned_0   (non_tail_self_call_list_result.ash:1:1)
+    CopyOutArena          DestTemp=7 SrcTemp=2 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=2 Source=6   (non_tail_self_call_list_result.ash:1:1)
+    StoreLocal            Slot=2 Source=7   (non_tail_self_call_list_result.ash:1:1)
     Jump                  Target=rc_result_done_1   (non_tail_self_call_list_result.ash:1:1)
   rc_result_owned_0:
     StoreLocal            Slot=2 Source=2   (non_tail_self_call_list_result.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=7 Slot=2   (non_tail_self_call_list_result.ash:1:1)
-    Return                Source=7   (non_tail_self_call_list_result.ash:1:1)
+    LoadLocal             Target=8 Slot=2   (non_tail_self_call_list_result.ash:1:1)
+    Return                Source=8   (non_tail_self_call_list_result.ash:1:1)
 
 function lambda_1  [SourceFunction from stamp]
-  locals=30 temps=49
+  locals=30 temps=50
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (non_tail_self_call_list_result.ash:3:1)
     StoreLocal            Slot=4 Source=0   (non_tail_self_call_list_result.ash:3:1)
@@ -121,33 +122,34 @@ function lambda_1  [SourceFunction from stamp]
     LoadArgumentOwnership Target=38   (non_tail_self_call_list_result.ash:3:1)
     LoadConstInt          Target=39 Value=1   (non_tail_self_call_list_result.ash:3:1)
     ShrInt                Target=40 Left=38 Right=39   (non_tail_self_call_list_result.ash:3:1)
-    JumpIfFalse           CondTemp=40 Target=rc_result_owned_12   (non_tail_self_call_list_result.ash:3:1)
-    CopyOutList           DestTemp=41 SrcTemp=36 HeadCopy=String Purpose=ArenaResultBoundary   (non_tail_self_call_list_result.ash:3:1)
+    AndInt                Target=41 Left=40 Right=39   (non_tail_self_call_list_result.ash:3:1)
+    JumpIfFalse           CondTemp=41 Target=rc_result_owned_12   (non_tail_self_call_list_result.ash:3:1)
+    CopyOutList           DestTemp=42 SrcTemp=36 HeadCopy=String Purpose=ArenaResultBoundary   (non_tail_self_call_list_result.ash:3:1)
     StoreLocal            Slot=28 Source=36   (non_tail_self_call_list_result.ash:3:1)
   rcdrop_list_14:
-    LoadLocal             Target=42 Slot=28   (non_tail_self_call_list_result.ash:3:1)
-    LoadConstInt          Target=43 Value=0   (non_tail_self_call_list_result.ash:3:1)
-    CmpIntNe              Target=44 Left=42 Right=43   (non_tail_self_call_list_result.ash:3:1)
-    JumpIfFalse           CondTemp=44 Target=rcdrop_list_end_16   (non_tail_self_call_list_result.ash:3:1)
-    RcIsUnique            Target=45 SourceTemp=42
-    JumpIfFalse           CondTemp=45 Target=rcdrop_list_shared_15   (non_tail_self_call_list_result.ash:3:1)
-    LoadMemOffset         Target=46 BasePtr=42 OffsetBytes=0   (non_tail_self_call_list_result.ash:3:1)
-    RcDrop                SourceTemp=46 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=47 BasePtr=42 OffsetBytes=8   (non_tail_self_call_list_result.ash:3:1)
-    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=28 Source=47   (non_tail_self_call_list_result.ash:3:1)
+    LoadLocal             Target=43 Slot=28   (non_tail_self_call_list_result.ash:3:1)
+    LoadConstInt          Target=44 Value=0   (non_tail_self_call_list_result.ash:3:1)
+    CmpIntNe              Target=45 Left=43 Right=44   (non_tail_self_call_list_result.ash:3:1)
+    JumpIfFalse           CondTemp=45 Target=rcdrop_list_end_16   (non_tail_self_call_list_result.ash:3:1)
+    RcIsUnique            Target=46 SourceTemp=43
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_shared_15   (non_tail_self_call_list_result.ash:3:1)
+    LoadMemOffset         Target=47 BasePtr=43 OffsetBytes=0   (non_tail_self_call_list_result.ash:3:1)
+    RcDrop                SourceTemp=47 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=48 BasePtr=43 OffsetBytes=8   (non_tail_self_call_list_result.ash:3:1)
+    RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=48   (non_tail_self_call_list_result.ash:3:1)
     Jump                  Target=rcdrop_list_14   (non_tail_self_call_list_result.ash:3:1)
   rcdrop_list_shared_15:
-    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=43 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_16   (non_tail_self_call_list_result.ash:3:1)
   rcdrop_list_end_16:
-    StoreLocal            Slot=27 Source=41   (non_tail_self_call_list_result.ash:3:1)
+    StoreLocal            Slot=27 Source=42   (non_tail_self_call_list_result.ash:3:1)
     Jump                  Target=rc_result_done_13   (non_tail_self_call_list_result.ash:3:1)
   rc_result_owned_12:
     StoreLocal            Slot=27 Source=36   (non_tail_self_call_list_result.ash:3:1)
   rc_result_done_13:
-    LoadLocal             Target=48 Slot=27   (non_tail_self_call_list_result.ash:3:1)
-    Return                Source=48   (non_tail_self_call_list_result.ash:3:1)
+    LoadLocal             Target=49 Slot=27   (non_tail_self_call_list_result.ash:3:1)
+    Return                Source=49   (non_tail_self_call_list_result.ash:3:1)
 
 function lambda_2  [SourceFunction from count]
   locals=11 temps=11

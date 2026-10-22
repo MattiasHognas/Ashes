@@ -44,6 +44,12 @@ export (
     value arenaConst,
     value arenaValueImmortalCount,
     value alignArenaSizeDynamic,
+    value emitStringToArenaCString,
+    value emitArenaResultAdt,
+    value emitPlacedResultAdt,
+    value emitArenaSome,
+    value emitArenaNone,
+    value emitArenaStringFromBytesAddr,
     value addZeroWordGlobal,
     value addInternalFunction,
     value loadWordAt,
@@ -333,6 +339,27 @@ let emitArenaAllocAdt context function_ builder i64 i8 ptrType (arena: ArenaRunt
 let alignArenaSizeDynamic builder i64 sizeRef name =
     buildAnd(builder)(buildAdd(builder)(sizeRef)(arenaConst(i64)(7))(name + "_plus_7"))(arenaConst(i64)(-8))(name)
 
+// A NUL-terminated copy of `stringRef`'s bytes for a syscall or a C call, allocated in the arena as
+// stage 0's `EmitStringToCString` allocates it: the call reads it before the scope that owns the
+// arena memory is reclaimed, so nothing has to free it. An Ashes `Str` is length-prefixed and
+// never NUL-terminated.
+let emitStringToArenaCString context function_ builder i64 i8 ptrType (arena: ArenaRuntime) memcpyFn memcpyType stringRef name =
+    match emitStringParts(builder)(i64)(ptrType)(stringRef)(name) with
+        | (len, srcAddr) ->
+            name + "_size"
+            |> buildAdd(builder)(len)(arenaConst(i64)(1))
+            |> (given (size) -> alignArenaSizeDynamic(builder)(i64)(size)(name + "_aligned"))
+            |> (given (aligned) -> emitArenaAllocDynamic(context)(function_)(builder)(i64)(arena)(aligned)(name + "_base"))
+            |> (given (base) -> buildIntToPtr(builder)(base)(ptrType)(name + "_buf"))
+            |> (given (destPtr) ->
+                Unit
+                |> (given (_) -> buildCall(builder)(memcpyType)(memcpyFn)([destPtr, buildIntToPtr(builder)(srcAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
+                |> (given (_) ->
+                    name + "_nul_ptr"
+                    |> buildGEP(builder)(i8)(destPtr)([len])(1u32)
+                    |> buildStore(builder)(constInt(i8)(0u64)(false)))
+                |> (given (_) -> destPtr))
+
 // The `1 << 62` immortal count an arena-resident `Str`/`BigInt` copy carries in its header (the
 // same sentinel a string literal's `.rodata` global holds): a retain or release on the value never
 // reaches zero, so only the arena reset that owns it ever frees it.
@@ -345,6 +372,32 @@ let storeWordAt builder i64 i8 ptrType baseRef offsetBytes value name =
     name
     |> memOffsetPtr(builder)(i64)(i8)(ptrType)(baseRef)(offsetBytes)
     |> buildStore(builder)(value)
+
+// A builtin's one-field `Result` (`Ok(value)` for tag 0, `Error(value)` for tag 1) in the arena, as
+// stage 0's `EmitResultOk`/`EmitResultError` build it by default: the lowering treats the result as
+// an arena value and never releases it.
+let emitArenaResultAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) tag fieldValue name =
+    name
+    |> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(1)(false)
+    |> (given (address) ->
+        Unit
+        |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(address)(8)(fieldValue)(name + "_field"))
+        |> (given (_) -> address))
+
+// A builtin's one-field `Result` placed by its instruction's flag, as stage 0's `EmitResultOk`/
+// `EmitResultError` take `runtimeManaged` for `Text.parseInt`, `Text.parseFloat`,
+// `BigInt.toInt` and `BigInt.parse`: a reference-counted cell when the result escapes, otherwise
+// the arena cell every other builtin result is.
+let emitPlacedResultAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType (managed: Bool) tag fieldValue name =
+    if managed
+    then emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(tag)(fieldValue)(name)
+    else emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldValue)(name)
+
+// A builtin's `Some(value)` (tag 1, one field) and `None` (tag 0, no field) in the arena, as
+// stage 0's `EmitAllocAdt(state, 1, 1)` and `EmitAllocAdt(state, 0, 0)` build them.
+let emitArenaSome context function_ builder i64 i8 ptrType (arena: ArenaRuntime) fieldValue name = emitArenaResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(1)(fieldValue)(name)
+
+let emitArenaNone context function_ builder i64 i8 ptrType (arena: ArenaRuntime) name = emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)(name)
 
 // An arena block of `16 + valueSize` bytes with the immortal RC header written, returned as the
 // value address (the word after the header) — stage 0's `EmitArenaValueAllocDynamic`.
@@ -367,18 +420,20 @@ let emitArenaValueAllocDynamic context function_ builder i64 i8 ptrType (arena: 
 // of 1, released by `RcDrop`), otherwise an arena block with the immortal header, reclaimed with
 // the bracket that allocated it — stage 0's `EmitRuntimeRcAllocDynamic` and
 // `EmitArenaValueAllocDynamic` split for a string result.
+let emitArenaStringFromBytesAddr context function_ builder i64 i8 ptrType (arena: ArenaRuntime) memcpyFn memcpyType srcBytesAddr len name =
+    name
+    |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(len)(arenaConst(i64)(8))(name + "_size"))
+    |> (given (dest) ->
+        Unit
+        |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(dest)(0)(len)(name + "_len"))
+        |> (given (_) ->
+            buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))(name + "_bytes"))(ptrType)(name + "_bytes_ptr"), buildIntToPtr(builder)(srcBytesAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
+        |> (given (_) -> dest))
+
 let emitPlacedStringFromBytesAddr context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType memcpyFn memcpyType (managed: Bool) srcBytesAddr len name =
     if managed
     then emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(srcBytesAddr)(len)(name)
-    else
-        name
-        |> emitArenaValueAllocDynamic(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(buildAdd(builder)(len)(arenaConst(i64)(8))(name + "_size"))
-        |> (given (dest) ->
-            Unit
-            |> (given (_) -> storeWordAt(builder)(i64)(i8)(ptrType)(dest)(0)(len)(name + "_len"))
-            |> (given (_) ->
-                buildCall(builder)(memcpyType)(memcpyFn)([buildIntToPtr(builder)(buildAdd(builder)(dest)(arenaConst(i64)(8))(name + "_bytes"))(ptrType)(name + "_bytes_ptr"), buildIntToPtr(builder)(srcBytesAddr)(ptrType)(name + "_src_ptr"), len])(3u32)(name + "_memcpy"))
-            |> (given (_) -> dest))
+    else emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(srcBytesAddr)(len)(name)
 
 // A zero-copy view `{len|VIEW, bytesAddr}` over `len` bytes at `bytesAddr`, in a 16-byte arena
 // block behind the immortal header — stage 0's `EmitStringView`. The backing must outlive the

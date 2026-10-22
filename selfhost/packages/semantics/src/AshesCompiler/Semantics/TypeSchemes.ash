@@ -162,7 +162,7 @@ let generalize environment semanticType constraints =
 
 // Build the whole quantified-variable renaming from one supply before applying it to the body and
 // constraints, so separate instantiations cannot accidentally share inference variables.
-let recursive instantiateQuantifiers quantified supply substitution =
+let recursive instantiateQuantifiers (quantified: List((Int, Str))) (supply: TypeVariableSupply) (substitution: List((Int, SemanticType))) =
     match quantified with
         | [] -> (substitution, supply)
         | (variableId, _name) :: tail ->

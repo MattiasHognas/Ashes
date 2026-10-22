@@ -270,7 +270,22 @@ caller transferred a retained runtime-managed argument, which an RC-normalizing 
 instead of copying. Bit 1 set means the caller cannot own a runtime-managed result: a generic
 body applying a closure parameter has no static layout for the result and its own caller
 deep-copies the whole result out later, so a callee whose result is reference-counted deep-copies
-it into the arena (`ArenaResultBoundary`) and releases the original before returning.
+it into the arena (`ArenaResultBoundary`) and releases the original before returning. Bit 2
+set asks a function whose result is a generic tuple (an element of unresolved layout beside
+contract-typed ones) for the tuple's contract parts: when its result is an arena cell, each
+contract element holds a reference of its own (an owned value's moves in, a borrowed one is
+retained, a fresh one keeps the reference the cell took), the owned values behind them are
+released, and the caller, which knows the concrete type, releases those references once its
+copy of the tuple holds its own. The bits from 3 up of a word with bit 2 set are the address of
+an arena word the caller cleared before the call (an 8-byte-aligned `Alloc`, so its low three
+bits are free); a function that hands parts over writes there the mask of the element indices it
+handed over (bit `i` for element `i`), and the caller releases exactly the parts the mask names.
+A function that does not honor the request leaves the word zero, so a caller can ask any callee:
+one it names whose compiled body may hand the parts over or forward the request, and any closure
+it cannot name. A function that returns a call's result as it is (a generic forwarder applying a
+closure parameter, or a function returning another's generic tuple result) passes its own word's
+bit 2 and address (`word & -4`) on to that call, so the callee writes the mask into the word of
+the caller that asked.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

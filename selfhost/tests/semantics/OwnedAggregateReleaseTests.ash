@@ -417,6 +417,18 @@ let testFreshEscapeTerminals unit =
                     | _ -> None)
             |> test.assertEqual(true)))
 
+// The trailing pipe `0 |> pass(build(2)([]))` hands `pass` the list `build` returns owned; the
+// program's entry keeps it in an owned slot and releases it at its end, as a function would at
+// its return.
+let trailingPipeSource = "type Where =\n    | line: Int\n    | column: Int\n\ntype Instr =\n    | kind: Int\n    | location: Where\n\nlet step (kind: Int) (location: Where) = (kind, Instr(kind = kind + 1, location = location))\n\nlet recursive pass (instructions: List(Instr)) (total: Int) =\n    match instructions with\n        | [] -> total\n        | Instr { kind = kind, location = location } :: tail ->\n            match step(kind)(location) with\n                | (_n, rewritten) -> pass(tail)(total + rewritten.kind)\n\nlet recursive build (n: Int) (acc: List(Instr)) =\n    if n == 0\n    then acc\n    else build(n - 1)(Instr(kind = n, location = Where(line = n, column = 1)) :: acc)\n\n0\n|> pass(build(2)([]))\n|> Ashes.IO.print"
+
+let testEntryReleasesTrailingPipeFreshArgument unit =
+    trailingPipeSource
+    |> loweredLines
+    |> functionLines("ProgramEntry")
+    |> countContaining("general_rc_owned_absent_")
+    |> test.assertEqual(3)
+
 let runOwnedAggregateReleaseTests unit =
     Unit
     |> testOwnedListLetWalksSpineInline
@@ -429,5 +441,6 @@ let runOwnedAggregateReleaseTests unit =
     |> testFreshListConstruction
     |> testImmediateListMatchUse
     |> testImmediateRecordUses
+    |> testEntryReleasesTrailingPipeFreshArgument
     |> testFreshEscapeTerminals
     |> (given (_) -> Ashes.IO.print("owned aggregate release tests passed"))

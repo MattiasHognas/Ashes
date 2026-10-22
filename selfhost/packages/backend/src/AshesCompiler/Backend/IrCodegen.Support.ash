@@ -71,8 +71,8 @@ export (
     value emitStringLengthValue,
     value emitHeapStringFromBytesAddr,
     value emitAsciiHeapString,
+    value emitAsciiLiteralString,
     value emitResultAdt,
-    value emitCopyFfiBytes,
     value emitLoadByteAtI64,
     value emitRcAllocPayloadPtrDynamic,
 )
@@ -901,6 +901,38 @@ let emitAsciiHeapString builder i64 i8 ptrType mallocFn mallocType memcpyFn memc
                     in
                         emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(constInt(i64)(Ashes.Number.UInt.fromInt64(count))(false))(name))
 
+let recursive asciiByteConstants i8 codes =
+    match codes with
+        | [] -> []
+        | code :: rest ->
+            constInt(i8)(Ashes.Number.UInt.fromInt64(code))(false) :: asciiByteConstants(i8)(rest)
+
+// A fixed ASCII message as a constant string global, stage 0's `EmitHeapStringLiteral`: the
+// layout `{immortal count, 0, len, bytes}` puts a header the `1 << 62` count makes inert in front
+// of the string, so the value (the global's address past the 16-byte header) is retained and
+// released like any `Str` and never freed.
+let emitAsciiLiteralString context builder i64 i8 codes name =
+    (let length =
+        codes
+        |> Ashes.Collection.List.length
+        |> Ashes.Number.UInt.fromInt64
+    in
+        let byteArrayType = arrayType(i8)(length)
+        in
+            let global =
+                addGlobal(builderModule(builder))(structType(context)([i64, i64, i64, byteArrayType])(4u32)(false))(".str_msg_" + name)
+            in
+                let _ =
+                    Unit
+                    |> (given (_) ->
+                        false
+                        |> constStruct(context)([constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 62))(false), constInt(i64)(0u64)(false), constInt(i64)(length)(false), constArray(i8)(asciiByteConstants(i8)(codes))(length)])(4u32)
+                        |> setInitializer(global))
+                    |> (given (_) -> setGlobalConstant(global)(true))
+                    |> (given (_) -> setLinkage(global)(linkageInternal))
+                in
+                    buildAdd(builder)(buildPtrToInt(builder)(global)(i64)(name + "_global_addr"))(constInt(i64)(16u64)(false))(name))
+
 // `Ok(value)` (tag 0) / `Error(value)` (tag 1): one field stored past the tag word — stage 0's
 // `EmitResultOk`/`EmitResultError` tags exactly.
 let emitResultAdt builder i64 i8 ptrType mallocFn mallocType tag fieldValue name =
@@ -912,68 +944,6 @@ let emitResultAdt builder i64 i8 ptrType mallocFn mallocType tag fieldValue name
             in
                 let _ = buildStore(builder)(fieldValue)(fieldPtr)
                 in adtValue)
-
-// "Foreign byte pointer was null for a nonzero length."
-let ffiCopyBytesNullPointerCodes = [70, 111, 114, 101, 105, 103, 110, 32, 98, 121, 116, 101, 32, 112, 111, 105, 110, 116, 101, 114, 32, 119, 97, 115, 32, 110, 117, 108, 108, 32, 102, 111, 114, 32, 97, 32, 110, 111, 110, 122, 101, 114, 111, 32, 108, 101, 110, 103, 116, 104, 46]
-
-// "Foreign byte length exceeds 1073741824 bytes."
-let ffiCopyBytesTooLongCodes = [70, 111, 114, 101, 105, 103, 110, 32, 98, 121, 116, 101, 32, 108, 101, 110, 103, 116, 104, 32, 101, 120, 99, 101, 101, 100, 115, 32, 49, 48, 55, 51, 55, 52, 49, 56, 50, 52, 32, 98, 121, 116, 101, 115, 46]
-
-// The empty `Bytes` value: a reference-counted payload holding the length word `0` and no bytes.
-let emitEmptyRcBytes builder i64 i8 mallocFn mallocType name =
-    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(8)(name)
-    in
-        payloadPtr
-        |> buildStore(builder)(constInt(i64)(0u64)(false))
-        |> (given (_) -> buildPtrToInt(builder)(payloadPtr)(i64)(name + "_value")))
-
-// `Ashes.Ffi.copyBytes(pointer)(length)`, stage 0's `EmitCopyFfiBytes`: a length over 1 GiB is
-// `Error`, a zero length is `Ok` of the empty bytes whatever the pointer, a null pointer with a
-// nonzero length is `Error`, and otherwise the range is copied into fresh reference-counted
-// bytes and returned as `Ok`. Every arm stores its `Result` word into one slot read at the join.
-let emitCopyFfiBytes context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pointer length =
-    (let resultSlot = buildEntryAlloca(builder)(i64)("ffi_bytes_result")
-    in
-        let sizeAccepted = appendBasicBlock(context)(function_)("ffi_bytes_size_accepted")
-        in
-            let emptyBlock = appendBasicBlock(context)(function_)("ffi_bytes_empty")
-            in
-                let checkPointer = appendBasicBlock(context)(function_)("ffi_bytes_check_pointer")
-                in
-                    let copyBlock = appendBasicBlock(context)(function_)("ffi_bytes_copy")
-                    in
-                        let nullPointer = appendBasicBlock(context)(function_)("ffi_bytes_null")
-                        in
-                            let tooLong = appendBasicBlock(context)(function_)("ffi_bytes_too_long")
-                            in
-                                let done = appendBasicBlock(context)(function_)("ffi_bytes_done")
-                                in
-                                    sizeAccepted
-                                    |> buildCondBr(builder)(buildICmp(builder)(intPredicateUgt)(length)(constInt(i64)(1073741824u64)(false))("ffi_bytes_exceeds_limit"))(tooLong)
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(sizeAccepted))
-                                    |> (given (_) ->
-                                        buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(length)(constInt(i64)(0u64)(false))("ffi_bytes_is_empty"))(emptyBlock)(checkPointer))
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(emptyBlock))
-                                    |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitEmptyRcBytes(builder)(i64)(i8)(mallocFn)(mallocType)("ffi_bytes_empty"))("ffi_bytes_ok_empty"))(resultSlot))
-                                    |> (given (_) -> buildBr(builder)(done))
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(checkPointer))
-                                    |> (given (_) ->
-                                        buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(pointer)(constInt(i64)(0u64)(false))("ffi_bytes_is_null"))(nullPointer)(copyBlock))
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(copyBlock))
-                                    |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pointer)(length)("ffi_bytes_copy"))("ffi_bytes_ok"))(resultSlot))
-                                    |> (given (_) -> buildBr(builder)(done))
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(nullPointer))
-                                    |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(ffiCopyBytesNullPointerCodes)("ffi_bytes_null_msg"))("ffi_bytes_null_error"))(resultSlot))
-                                    |> (given (_) -> buildBr(builder)(done))
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(tooLong))
-                                    |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(ffiCopyBytesTooLongCodes)("ffi_bytes_too_long_msg"))("ffi_bytes_too_long_error"))(resultSlot))
-                                    |> (given (_) -> buildBr(builder)(done))
-                                    |> (given (_) -> positionBuilderAtEnd(builder)(done))
-                                    |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("ffi_bytes_result_value")))
 
 // The byte at dynamic `index`, zero-extended to the universal `i64` word.
 let emitLoadByteAtI64 builder i64 i8 bytesPtr index name =

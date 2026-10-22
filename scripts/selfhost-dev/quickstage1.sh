@@ -12,6 +12,9 @@ env "$@" dotnet run -c Release --no-build --project src/Ashes.Cli -- compile --p
 BIN=$(ls selfhost/packages/cli/out/ 2>/dev/null | head -1)
 [ -z "$BIN" ] && { echo "STAGE 1 BUILD FAILED"; grep -E "ASH|rror|nsupported" "$T/q-$tag.s1build" | head -3 | cut -c1-300; exit 1; }
 cp "selfhost/packages/cli/out/$BIN" "$J/s1-$tag"
+# Stage 1 calls libLLVM at run time through its $ORIGIN RUNPATH: the bundled copy stage 0 loads goes
+# beside it, so both stages generate code with the same LLVM rather than whatever the system ships.
+cp -u runtimes/linux-x64/lib*.so* "$J/"
 for src in t0 t4; do
     rm -f "$J/tiny.out"
     bash -c "ulimit -s 1048576; '$J/s1-$tag' compile '$J/tiny/$src.ash' -o '$J/tiny.out'" > "$T/q-$tag.$src.log" 2>&1

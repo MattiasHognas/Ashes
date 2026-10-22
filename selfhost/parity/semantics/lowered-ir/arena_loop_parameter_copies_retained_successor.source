@@ -1,0 +1,30 @@
+// A loop threads a generic list beside a state record it rebuilds from a call's
+// reference-counted pair. The generic list keeps both parameters in the arena and the loop never
+// resets its arena, so the retain the successor state took out of the pair would have no release:
+// the parameter takes an arena copy of it instead and the retain is released.
+type Sem =
+    | SemVariable(Int)
+    | SemName(Str)
+
+type Supply =
+    | nextId: Int
+
+let fresh (supply: Supply) =
+    match supply with
+        | Supply { nextId = nextId } -> (SemVariable(nextId), Supply(nextId = nextId + 1))
+
+let recursive countPairs items total =
+    match items with
+        | [] -> total
+        | _ :: rest -> countPairs(rest)(total + 1)
+
+let recursive instantiate quantified supply substitution =
+    match quantified with
+        | [] -> countPairs(substitution)(0)
+        | _variableId :: tail ->
+            match fresh(supply) with
+                | (freshVariable, nextSupply) -> instantiate(tail)(nextSupply)((tail, freshVariable) :: substitution)
+
+[]
+|> instantiate([1, 2, 3])(Supply(nextId = 5))
+|> Ashes.IO.print

@@ -19,8 +19,10 @@ internal static class TestFixture
     internal static GenerationContext ContextFor(ICombinationTemplate template)
     {
         GenerationContext context = GenerationContext.Empty;
-        return template.Id.StartsWith("trait.", StringComparison.Ordinal)
-            ? TraitPreludeGenerator.Generate(0, context).Context
-            : context;
+        return CombinationRegistry.ApplicabilityContext(
+            template,
+            template.Id.StartsWith("trait.", StringComparison.Ordinal)
+                ? TraitPreludeGenerator.Generate(0, context).Context
+                : context);
     }
 }

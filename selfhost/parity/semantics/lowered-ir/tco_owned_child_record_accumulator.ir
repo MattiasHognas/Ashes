@@ -58,7 +58,7 @@ function __deepcopy_4  [AdtDeepCopier]
     Return                Source=0   (tco_owned_child_record_accumulator.ash:11:1)
 
 function lambda_1  [ClosureHelper from step]
-  locals=20 temps=71
+  locals=20 temps=72
     LoadEnv               Target=0 Index=0   (tco_owned_child_record_accumulator.ash:11:1)
     StoreLocal            Slot=2 Source=0   (tco_owned_child_record_accumulator.ash:11:1)
     LoadLocal             Target=22 Slot=1   (tco_owned_child_record_accumulator.ash:11:1)
@@ -120,44 +120,44 @@ function lambda_1  [ClosureHelper from step]
     LoadLocal             Target=19 Slot=1   (tco_owned_child_record_accumulator.ash:14:10)
     StoreLocal            Slot=2 Source=8   (tco_owned_child_record_accumulator.ash:14:10)
     StoreLocal            Slot=1 Source=17   (tco_owned_child_record_accumulator.ash:14:10)
-    IsReferenceCounted    Target=54 SourceTemp=17
-    JumpIfFalse           CondTemp=54 Target=rc_representation_copy_16
-    RcDup                 Target=55 SourceTemp=17 RuntimeManaged=true
-    StoreLocal            Slot=18 Source=55
-    Jump                  Target=rc_representation_done_17
-  rc_representation_copy_16:
-    CopyOutArena          DestTemp=58 SrcTemp=17 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=59 Ptr=17 FieldIndex=0 Tagless=true
-    IsReferenceCounted    Target=60 SourceTemp=59
-    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_18
-    RcDup                 Target=61 SourceTemp=59 RuntimeManaged=true
-    StoreLocal            Slot=19 Source=61
-    Jump                  Target=rc_representation_done_19
-  rc_representation_copy_18:
-    CopyOutArena          DestTemp=62 SrcTemp=59 RuntimeManaged=true Purpose=RcNormalization
+    IsReferenceCounted    Target=55 SourceTemp=17
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_17
+    RcDup                 Target=56 SourceTemp=17 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=56
+    Jump                  Target=rc_representation_done_18
+  rc_representation_copy_17:
+    CopyOutArena          DestTemp=59 SrcTemp=17 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=60 Ptr=17 FieldIndex=0 Tagless=true
+    IsReferenceCounted    Target=61 SourceTemp=60
+    JumpIfFalse           CondTemp=61 Target=rc_representation_copy_19
+    RcDup                 Target=62 SourceTemp=60 RuntimeManaged=true
     StoreLocal            Slot=19 Source=62
-  rc_representation_done_19:
-    LoadLocal             Target=63 Slot=19
-    SetAdtField           Ptr=58 FieldIndex=0 Source=63 Tagless=true
-    IsReferenceCounted    Target=64 SourceTemp=59
-    JumpIfFalse           CondTemp=64 Target=rc_source_child_in_arena_20
-    RcDrop                SourceTemp=59 TypeName=String RuntimeManaged=true
-  rc_source_child_in_arena_20:
-    StoreLocal            Slot=18 Source=58
-  rc_representation_done_17:
-    LoadLocal             Target=65 Slot=18
-    LoadLocal             Target=66 Slot=8
-    JumpIfFalse           CondTemp=66 Target=rc_tco_drop_inactive_21
-    LoadConstInt          Target=67 Value=0
-    CallKnown             Target=68 FuncLabel=__rcdrop_record_3 EnvTemp=67 ArgTemp=19
-  rc_tco_drop_inactive_21:
+    Jump                  Target=rc_representation_done_20
+  rc_representation_copy_19:
+    CopyOutArena          DestTemp=63 SrcTemp=60 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=19 Source=63
+  rc_representation_done_20:
+    LoadLocal             Target=64 Slot=19
+    SetAdtField           Ptr=59 FieldIndex=0 Source=64 Tagless=true
+    IsReferenceCounted    Target=65 SourceTemp=60
+    JumpIfFalse           CondTemp=65 Target=rc_source_child_in_arena_21
+    RcDrop                SourceTemp=60 TypeName=String RuntimeManaged=true
+  rc_source_child_in_arena_21:
+    StoreLocal            Slot=18 Source=59
+  rc_representation_done_18:
+    LoadLocal             Target=66 Slot=18
+    LoadLocal             Target=67 Slot=8
+    JumpIfFalse           CondTemp=67 Target=rc_tco_drop_inactive_22
+    LoadConstInt          Target=68 Value=0
+    CallKnown             Target=69 FuncLabel=__rcdrop_record_3 EnvTemp=68 ArgTemp=19
+  rc_tco_drop_inactive_22:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=17
-    LoadConstInt          Target=69 Value=0
-    StoreLocal            Slot=6 Source=69
-    StoreLocal            Slot=7 Source=69
-    StoreLocal            Slot=1 Source=65
-    LoadConstInt          Target=70 Value=1
-    StoreLocal            Slot=8 Source=70
+    LoadConstInt          Target=70 Value=0
+    StoreLocal            Slot=6 Source=70
+    StoreLocal            Slot=7 Source=70
+    StoreLocal            Slot=1 Source=66
+    LoadConstInt          Target=71 Value=1
+    StoreLocal            Slot=8 Source=71
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=17
     RestoreStackPointer   Slot=11   (tco_owned_child_record_accumulator.ash:14:10)
     Jump                  Target=lambda_1_body   (tco_owned_child_record_accumulator.ash:14:10)
@@ -185,20 +185,21 @@ function lambda_1  [ClosureHelper from step]
     LoadArgumentOwnership Target=45   (tco_owned_child_record_accumulator.ash:11:1)
     LoadConstInt          Target=46 Value=1   (tco_owned_child_record_accumulator.ash:11:1)
     ShrInt                Target=47 Left=45 Right=46   (tco_owned_child_record_accumulator.ash:11:1)
-    JumpIfFalse           CondTemp=47 Target=rc_result_owned_14   (tco_owned_child_record_accumulator.ash:11:1)
-    Alloc                 Target=48 SizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
-    MakeClosure           Target=49 FuncLabel=__deepcopy_4 EnvPtrTemp=48 EnvSizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
-    StoreMemOffset        BasePtr=48 OffsetBytes=0 Source=49   (tco_owned_child_record_accumulator.ash:11:1)
-    CallClosure           Target=50 ClosureTemp=49 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
-    LoadConstInt          Target=51 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
-    CallKnown             Target=52 FuncLabel=__rcdrop_record_3 EnvTemp=51 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
-    StoreLocal            Slot=16 Source=50   (tco_owned_child_record_accumulator.ash:11:1)
+    AndInt                Target=48 Left=47 Right=46   (tco_owned_child_record_accumulator.ash:11:1)
+    JumpIfFalse           CondTemp=48 Target=rc_result_owned_14   (tco_owned_child_record_accumulator.ash:11:1)
+    Alloc                 Target=49 SizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
+    MakeClosure           Target=50 FuncLabel=__deepcopy_4 EnvPtrTemp=49 EnvSizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
+    StoreMemOffset        BasePtr=49 OffsetBytes=0 Source=50   (tco_owned_child_record_accumulator.ash:11:1)
+    CallClosure           Target=51 ClosureTemp=50 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=52 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
+    CallKnown             Target=53 FuncLabel=__rcdrop_record_3 EnvTemp=52 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
+    StoreLocal            Slot=16 Source=51   (tco_owned_child_record_accumulator.ash:11:1)
     Jump                  Target=rc_result_done_15   (tco_owned_child_record_accumulator.ash:11:1)
   rc_result_owned_14:
     StoreLocal            Slot=16 Source=40   (tco_owned_child_record_accumulator.ash:11:1)
   rc_result_done_15:
-    LoadLocal             Target=53 Slot=16   (tco_owned_child_record_accumulator.ash:11:1)
-    Return                Source=53   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadLocal             Target=54 Slot=16   (tco_owned_child_record_accumulator.ash:11:1)
+    Return                Source=54   (tco_owned_child_record_accumulator.ash:11:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from step]
   locals=2 temps=4
@@ -218,7 +219,7 @@ function lambda_0  [SourceFunction from step]
     Return                Source=4   (tco_owned_child_record_accumulator.ash:11:1)
 
 function _start_main  [ProgramEntry]
-  locals=10 temps=21
+  locals=10 temps=27
     LoadConstInt          Target=0 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_owned_child_record_accumulator.ash:11:1)
     StoreLocal            Slot=0 Source=1   (tco_owned_child_record_accumulator.ash:11:1)
@@ -253,5 +254,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=9
     CopyOutArena          DestTemp=20 SrcTemp=18 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=9
+    LoadLocal             Target=21 Slot=6
+    LoadConstInt          Target=22 Value=0
+    CmpIntNe              Target=23 Left=21 Right=22
+    JumpIfFalse           CondTemp=23 Target=general_rc_owned_absent_16
+    IsReferenceCounted    Target=24 SourceTemp=21
+    JumpIfFalse           CondTemp=24 Target=general_rc_owned_absent_16
+    LoadConstInt          Target=25 Value=0
+    CallKnown             Target=26 FuncLabel=__rcdrop_record_3 EnvTemp=25 ArgTemp=21
+    StoreLocal            Slot=6 Source=22
+  general_rc_owned_absent_16:
     Return                Source=20
 

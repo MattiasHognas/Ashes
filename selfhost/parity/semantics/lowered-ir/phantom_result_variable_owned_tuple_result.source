@@ -1,0 +1,22 @@
+// A function's result type has a variable its parameters lack, a phantom: no value of its type
+// can reach the function, so the result's layout reads it as Never, which makes the tuple one of
+// the contract's types. The callee returns it owned, with the record it holds moved in, and the
+// caller keeps it in an owned slot instead of leaving the record's owned slot behind at every call.
+type State =
+    | counter: Int
+    | items: List(Int)
+
+let build (n: Int) = State(counter = n, items = [n, n + 1, n + 2])
+
+let make (n: Int) = (build(n), n + 1, None)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else
+        match make(n) with
+            | (state, m, _h) -> rounds(n - 1)(total + state.counter + m)
+
+0
+|> rounds(3)
+|> Ashes.IO.print

@@ -1,0 +1,25 @@
+// A choice accumulator placed on the reference-counted heap, handed on in one arm and grown by a
+// cons of a pattern-bound head in the other: the back edge copies the cell with references of its
+// own, so the cell borrows its head and takes no pattern-owner duplicate of it.
+let recursive enqueue (pending: List(Str)) (back: List(Str)) (index: Int) =
+    match pending with
+        | [] -> back
+        | key :: rest ->
+            if index == 1
+            then enqueue(rest)(back)(index + 1)
+            else enqueue(rest)(key :: back)(index + 1)
+
+let recursive countAll (values: List(Str)) (total: Int) =
+    match values with
+        | [] -> total
+        | _value :: rest -> countAll(rest)(total + 1)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else
+        let keys = ["a" + "1", "b" + "2", "c" + "3", "d" + "4"]
+        in rounds(n - 1)(total + countAll(enqueue(keys)([])(0))(0))
+
+0
+|> rounds(3)

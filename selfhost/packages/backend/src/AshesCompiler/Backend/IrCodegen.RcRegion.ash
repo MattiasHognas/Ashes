@@ -18,6 +18,7 @@ export (
     type RcRegionRuntime,
     value defineRcRegionRuntime,
     value emitIsReferenceCountedIn,
+    value emitLiveCellsCount,
 )
 
 type RcRegionRuntime =
@@ -28,6 +29,7 @@ type RcRegionRuntime =
     | freeLists: LLVMValueRef
     | allocFn: LLVMValueRef
     | freeFn: LLVMValueRef
+    | liveCellsGlobal: Maybe(LLVMValueRef)
 
 let regionConst i64 value =
     constInt(i64)(Ashes.Number.UInt.fromInt64(value))(false)
@@ -101,6 +103,21 @@ let roundUp builder i64 value multiple name =
 
 let freeListSlot builder i64 (runtime: RcRegionRuntime) blockBytes name =
     buildGEP(builder)(i64)(runtime.freeLists)([buildLShr(builder)(blockBytes)(regionConst(i64)(4))(name + "_index")])(1u32)(name)
+
+// Adds `delta` to the program's live-cell counter when leak checking is on: `__ashes_rc_live`,
+// counted up at every allocation and down at every release, so the program can report at its end
+// how many cells were never released. The count is one process-wide word updated without
+// synchronization, as stage 0's is.
+let emitLiveCellsCount builder i64 (runtime: RcRegionRuntime) delta name =
+    match runtime.liveCellsGlobal with
+        | None -> Unit
+        | Some(global) ->
+            name + "_live"
+            |> buildLoad(builder)(i64)(global)
+            |> (given (current) ->
+                buildAdd(builder)(current)(regionConst(i64)(delta))(name + "_live_next"))
+            |> (given (next) -> buildStore(builder)(next)(global))
+            |> (given (_) -> Unit)
 
 // Whether `address` lies inside the reserved range, as an `i1`. The bounds are zero until the
 // reservation succeeds, so nothing is inside before then.
@@ -210,31 +227,33 @@ let emitAllocBody context builder i64 ptrType (runtime: RcRegionRuntime) libcMal
                                 in
                                     let _ = positionBuilderAtEnd(builder)(entryBlock)
                                     in
-                                        let size = getParam(function_)(0u32)
+                                        let _ = emitLiveCellsCount(builder)(i64)(runtime)(1)("rc_alloc")
                                         in
-                                            let blockBytes =
-                                                buildAdd(builder)(roundUp(builder)(i64)(size)(16)("rc_alloc_rounded"))(regionConst(i64)(blockPrefixBytes))("rc_alloc_block")
+                                            let size = getParam(function_)(0u32)
                                             in
-                                                "rc_alloc_is_initialized"
-                                                |> buildICmp(builder)(intPredicateNe)(buildLoad(builder)(i64)(runtime.regionInitializedGlobal)("rc_alloc_initialized"))(regionConst(i64)(0))
-                                                |> (given (initialized) -> buildCondBr(builder)(initialized)(readyBlock)(reserveBlock))
-                                                |> (given (_) -> positionBuilderAtEnd(builder)(readyBlock))
-                                                |> (given (_) ->
-                                                    "rc_alloc_has_region" |> buildICmp(builder)(intPredicateNe)(buildLoad(builder)(i64)(runtime.regionBaseGlobal)("rc_alloc_base"))(regionConst(i64)(0)))
-                                                |> (given (hasRegion) -> buildCondBr(builder)(hasRegion)(sizedBlock)(libcBlock))
-                                                |> (given (_) -> positionBuilderAtEnd(builder)(sizedBlock))
-                                                |> (given (_) ->
-                                                    buildICmp(builder)(intPredicateUle)(blockBytes)(regionConst(i64)(largestListedBlockBytes))("rc_alloc_is_listed"))
-                                                |> (given (listed) -> buildCondBr(builder)(listed)(listedBlock)(pagedBlock))
-                                                |> (given (_) -> positionBuilderAtEnd(builder)(listedBlock))
-                                                |> (given (_) -> emitListedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
-                                                |> (given (_) -> positionBuilderAtEnd(builder)(pagedBlock))
-                                                |> (given (_) -> emitPagedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
-                                                |> (given (_) -> positionBuilderAtEnd(builder)(libcBlock))
-                                                |> (given (_) ->
-                                                    "rc_alloc_libc_block"
-                                                    |> buildCall(builder)(mallocType)(libcMalloc)([size])(1u32)
-                                                    |> buildRet(builder)))
+                                                let blockBytes =
+                                                    buildAdd(builder)(roundUp(builder)(i64)(size)(16)("rc_alloc_rounded"))(regionConst(i64)(blockPrefixBytes))("rc_alloc_block")
+                                                in
+                                                    "rc_alloc_is_initialized"
+                                                    |> buildICmp(builder)(intPredicateNe)(buildLoad(builder)(i64)(runtime.regionInitializedGlobal)("rc_alloc_initialized"))(regionConst(i64)(0))
+                                                    |> (given (initialized) -> buildCondBr(builder)(initialized)(readyBlock)(reserveBlock))
+                                                    |> (given (_) -> positionBuilderAtEnd(builder)(readyBlock))
+                                                    |> (given (_) ->
+                                                        "rc_alloc_has_region" |> buildICmp(builder)(intPredicateNe)(buildLoad(builder)(i64)(runtime.regionBaseGlobal)("rc_alloc_base"))(regionConst(i64)(0)))
+                                                    |> (given (hasRegion) -> buildCondBr(builder)(hasRegion)(sizedBlock)(libcBlock))
+                                                    |> (given (_) -> positionBuilderAtEnd(builder)(sizedBlock))
+                                                    |> (given (_) ->
+                                                        buildICmp(builder)(intPredicateUle)(blockBytes)(regionConst(i64)(largestListedBlockBytes))("rc_alloc_is_listed"))
+                                                    |> (given (listed) -> buildCondBr(builder)(listed)(listedBlock)(pagedBlock))
+                                                    |> (given (_) -> positionBuilderAtEnd(builder)(listedBlock))
+                                                    |> (given (_) -> emitListedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
+                                                    |> (given (_) -> positionBuilderAtEnd(builder)(pagedBlock))
+                                                    |> (given (_) -> emitPagedAllocation(context)(builder)(i64)(ptrType)(runtime)(libcBlock)(blockBytes))
+                                                    |> (given (_) -> positionBuilderAtEnd(builder)(libcBlock))
+                                                    |> (given (_) ->
+                                                        "rc_alloc_libc_block"
+                                                        |> buildCall(builder)(mallocType)(libcMalloc)([size])(1u32)
+                                                        |> buildRet(builder)))
 
 // `void __ashes_rc_free(ptr block)`: a small block of the range goes onto the free list of its
 // size, a large one's pages back to the kernel, and any other block back to libc.
@@ -253,48 +272,51 @@ let emitFreeBody context builder i64 ptrType (runtime: RcRegionRuntime) libcFree
                         in
                             let _ = positionBuilderAtEnd(builder)(entryBlock)
                             in
-                                let block = getParam(function_)(0u32)
+                                let _ = emitLiveCellsCount(builder)(i64)(runtime)(-1)("rc_free")
                                 in
-                                    let address = buildPtrToInt(builder)(block)(i64)("rc_free_address")
+                                    let block = getParam(function_)(0u32)
                                     in
-                                        let _ =
-                                            buildCondBr(builder)(emitInRegion(builder)(i64)(runtime)(address)("rc_free"))(regionBlock)(libcBlock)
+                                        let address = buildPtrToInt(builder)(block)(i64)("rc_free_address")
                                         in
-                                            let _ = positionBuilderAtEnd(builder)(regionBlock)
+                                            let _ =
+                                                buildCondBr(builder)(emitInRegion(builder)(i64)(runtime)(address)("rc_free"))(regionBlock)(libcBlock)
                                             in
-                                                let prefix =
-                                                    buildSub(builder)(address)(regionConst(i64)(blockPrefixBytes))("rc_free_prefix")
+                                                let _ = positionBuilderAtEnd(builder)(regionBlock)
                                                 in
-                                                    let blockBytes =
-                                                        buildLoad(builder)(i64)(buildIntToPtr(builder)(prefix)(ptrType)("rc_free_prefix_ptr"))("rc_free_block")
+                                                    let prefix =
+                                                        buildSub(builder)(address)(regionConst(i64)(blockPrefixBytes))("rc_free_prefix")
                                                     in
-                                                        "rc_free_is_listed"
-                                                        |> buildICmp(builder)(intPredicateUle)(blockBytes)(regionConst(i64)(largestListedBlockBytes))
-                                                        |> (given (listed) -> buildCondBr(builder)(listed)(listedBlock)(pagedBlock))
-                                                        |> (given (_) -> positionBuilderAtEnd(builder)(listedBlock))
-                                                        |> (given (_) -> freeListSlot(builder)(i64)(runtime)(blockBytes)("rc_free_list_slot"))
-                                                        |> (given (listSlot) ->
-                                                            Unit
+                                                        let blockBytes =
+                                                            buildLoad(builder)(i64)(buildIntToPtr(builder)(prefix)(ptrType)("rc_free_prefix_ptr"))("rc_free_block")
+                                                        in
+                                                            "rc_free_is_listed"
+                                                            |> buildICmp(builder)(intPredicateUle)(blockBytes)(regionConst(i64)(largestListedBlockBytes))
+                                                            |> (given (listed) -> buildCondBr(builder)(listed)(listedBlock)(pagedBlock))
+                                                            |> (given (_) -> positionBuilderAtEnd(builder)(listedBlock))
+                                                            |> (given (_) -> freeListSlot(builder)(i64)(runtime)(blockBytes)("rc_free_list_slot"))
+                                                            |> (given (listSlot) ->
+                                                                Unit
+                                                                |> (given (_) ->
+                                                                    "rc_free_next_slot"
+                                                                    |> wordPointer(builder)(ptrType)(i64)(prefix)(8)
+                                                                    |> buildStore(builder)(buildLoad(builder)(i64)(listSlot)("rc_free_head")))
+                                                                |> (given (_) -> buildStore(builder)(prefix)(listSlot)))
+                                                            |> (given (_) -> buildRetVoid(builder))
+                                                            |> (given (_) -> positionBuilderAtEnd(builder)(pagedBlock))
                                                             |> (given (_) ->
-                                                                "rc_free_next_slot"
-                                                                |> wordPointer(builder)(ptrType)(i64)(prefix)(8)
-                                                                |> buildStore(builder)(buildLoad(builder)(i64)(listSlot)("rc_free_head")))
-                                                            |> (given (_) -> buildStore(builder)(prefix)(listSlot)))
-                                                        |> (given (_) -> buildRetVoid(builder))
-                                                        |> (given (_) -> positionBuilderAtEnd(builder)(pagedBlock))
-                                                        |> (given (_) ->
-                                                            emitLinuxSyscallCall(builder)(i64)(regionConst(i64)(28))(prefix)(blockBytes)(regionConst(i64)(madviseDontNeed))("rc_free_madvise"))
-                                                        |> (given (_) -> buildRetVoid(builder))
-                                                        |> (given (_) -> positionBuilderAtEnd(builder)(libcBlock))
-                                                        |> (given (_) -> buildCall(builder)(freeType)(libcFree)([block])(1u32)(""))
-                                                        |> (given (_) -> buildRetVoid(builder)))
+                                                                emitLinuxSyscallCall(builder)(i64)(regionConst(i64)(28))(prefix)(blockBytes)(regionConst(i64)(madviseDontNeed))("rc_free_madvise"))
+                                                            |> (given (_) -> buildRetVoid(builder))
+                                                            |> (given (_) -> positionBuilderAtEnd(builder)(libcBlock))
+                                                            |> (given (_) -> buildCall(builder)(freeType)(libcFree)([block])(1u32)(""))
+                                                            |> (given (_) -> buildRetVoid(builder)))
 
 // `IsReferenceCounted`: whether a value's address lies inside the reserved range, as this
 // codegen's canonical 0/1 `i64` Bool.
 let emitIsReferenceCountedIn builder i64 (runtime: RcRegionRuntime) name valueRef =
     buildZExt(builder)(emitInRegion(builder)(i64)(runtime)(valueRef)(name))(i64)(name)
 
-let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocType libcFree freeType =
+// The two functions, and with `leakCheck` the live-cell counter they keep.
+let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocType libcFree freeType (leakCheck: Bool) =
     (let runtime =
         RcRegionRuntime(
             regionBaseGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_base"),
@@ -303,7 +325,13 @@ let defineRcRegionRuntime module_ context builder i64 ptrType libcMalloc mallocT
             regionInitializedGlobal = zeroWordGlobal(module_)(i64)("__ashes_rc_region_initialized"),
             freeLists = freeListsGlobal(module_)(i64),
             allocFn = internalFunction(module_)("__ashes_rc_alloc")(mallocType),
-            freeFn = internalFunction(module_)("__ashes_rc_free")(freeType)
+            freeFn = internalFunction(module_)("__ashes_rc_free")(freeType),
+            liveCellsGlobal = if leakCheck
+            then
+                "__ashes_rc_live"
+                |> zeroWordGlobal(module_)(i64)
+                |> Some
+            else None
         )
     in
         mallocType

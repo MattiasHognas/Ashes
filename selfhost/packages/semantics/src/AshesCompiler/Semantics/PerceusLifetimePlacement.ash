@@ -547,9 +547,13 @@ let isArenaCopyOut (instruction: IrInstruction) =
 // A returned alias (an escaping cell or call result that embeds the owner) is a use whose "after"
 // is unreachable; the drop goes before the return, where lowering's escape handling has already
 // retained or copied what the result keeps.
+// A branch whose condition is an alias (a call's result, read only as a truth value or a tag) ends
+// its block: the drop goes before it, so every path out of the block takes it.
 let lifetimeInsertionIndex (instructions: List(IrInstruction)) (lastUse: Int) =
     match (listAt(instructions)(lastUse), listAt(instructions)(lastUse + 1)) with
         | (Some(IrInstruction { instruction = Return(_result) }), _) -> lastUse
+        | (Some(IrInstruction { instruction = JumpIfFalse(_condition, _target) }), _) -> lastUse
+        | (Some(IrInstruction { instruction = SwitchTag(_tag, _cases, _defaultLabel) }), _) -> lastUse
         | (Some(last), Some(IrInstruction { instruction = ReclaimArenaChunks(_saved, _preRestore, _loop) })) ->
             if isArenaCopyOut(last)
             then lastUse + 2
@@ -571,8 +575,8 @@ let placedDrop (anchor: OwnerAnchor) (slot: Int) (region: OwnerRegion) =
 // The compensating dups one owner load needs after it within its block: a record-field store of
 // an alias into a runtime-managed cell (an arena- or stack-allocated cell borrows instead, see
 // `arenaAdtCellTarget`), and a closure call handing an alias on while the owner stays live
-// afterwards.
-let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: List(Int)) (keepsLiveAfter: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) =
+// afterwards. Either dup skips an empty list (a null reference) as the owner's own does.
+let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: List(Int)) (keepsLiveAfter: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) (borrowedCalls: List(Int)) =
     match indexed with
         | [] -> (insertions, tempCount)
         | (index, IrInstruction { instruction = kind, location = location }) :: rest ->
@@ -580,30 +584,30 @@ let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: 
                 | Borrow(target, source) ->
                     if sortedSetContains(source)(aliases)
                     then
-                        callDupsAfterLoad(rest)(sortedSetInsert(target)(aliases))(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
-                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
+                        callDupsAfterLoad(rest)(sortedSetInsert(target)(aliases))(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
                 | SetAdtField(ptr, _fieldIndex, source, _tagless) ->
                     if sortedSetContains(source)(aliases) && sortedSetContains(ptr)(borrowingArenaCells) == false
                     then
-                        callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount + 1)(append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(source)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]))(borrowingArenaCells)
-                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
-                | CallClosure(_target, _closure, argument, _flag) ->
-                    if sortedSetContains(argument)(aliases) && keepsLiveAfter
-                    then (append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(argument)(anchor.anchorRuntimeManaged)(false), location = location))]), tempCount + 1)
-                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
-                | _ -> callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)
+                        callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount + 1)(append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(source)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]))(borrowingArenaCells)(borrowedCalls)
+                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                | CallClosure(target, _closure, argument, _flag) ->
+                    if sortedSetContains(argument)(aliases) && keepsLiveAfter && sortedSetContains(target)(borrowedCalls) == false
+                    then (append(insertions)([(index, IrInstruction(instruction = RcDup(tempCount)(argument)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]), tempCount + 1)
+                    else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
+                | _ -> callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
 
-let recursive callDups (instructions: List(IrInstruction)) (blockEnd: Int) (loads: List(Int)) (liveOut: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) =
+let recursive callDups (instructions: List(IrInstruction)) (blockEnd: Int) (loads: List(Int)) (liveOut: Bool) (anchor: OwnerAnchor) (tempCount: Int) (insertions: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) (borrowedCalls: List(Int)) =
     match loads with
         | [] -> (insertions, tempCount)
         | loadIndex :: rest ->
             match listAt(instructions)(loadIndex) with
                 | Some(IrInstruction { instruction = LoadLocal(sourceTemp, _slot) }) ->
-                    match callDupsAfterLoad(indexedRange(instructions)(0)(loadIndex + 1)(blockEnd))([sourceTemp])(length(rest) > 0 || liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells) with
-                        | (nextInsertions, nextTempCount) -> callDups(instructions)(blockEnd)(rest)(liveOut)(anchor)(nextTempCount)(nextInsertions)(borrowingArenaCells)
-                | _ -> callDups(instructions)(blockEnd)(rest)(liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)
+                    match callDupsAfterLoad(indexedRange(instructions)(0)(loadIndex + 1)(blockEnd))([sourceTemp])(length(rest) > 0 || liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls) with
+                        | (nextInsertions, nextTempCount) -> callDups(instructions)(blockEnd)(rest)(liveOut)(anchor)(nextTempCount)(nextInsertions)(borrowingArenaCells)(borrowedCalls)
+                | _ -> callDups(instructions)(blockEnd)(rest)(liveOut)(anchor)(tempCount)(insertions)(borrowingArenaCells)(borrowedCalls)
 
-let recursive collectInsertions (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (region: List(Int)) (definitionBlock: Int) (owner: OwnerRegion) (slot: Int) (anchor: OwnerAnchor) (label: Str) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (remaining: List(Int)) (tempCount: Int) (insertions: List((Int, IrInstruction))) (retargets: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) =
+let recursive collectInsertions (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (region: List(Int)) (definitionBlock: Int) (owner: OwnerRegion) (slot: Int) (anchor: OwnerAnchor) (label: Str) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (remaining: List(Int)) (tempCount: Int) (insertions: List((Int, IrInstruction))) (retargets: List((Int, IrInstruction))) (borrowingArenaCells: List(Int)) (borrowedCalls: List(Int)) =
     match remaining with
         | [] -> (insertions, retargets, tempCount)
         | blockIndex :: rest ->
@@ -612,9 +616,9 @@ let recursive collectInsertions (instructions: List(IrInstruction)) (blocks: Lis
                     ((given (dropsAndRetargets) ->
                         match dropsAndRetargets with
                             | (drops, edgeRetargets) ->
-                                match callDups(instructions)(end)(loads)(liveOut)(anchor)(tempCount)(append(insertions)(drops))(borrowingArenaCells) with
+                                match callDups(instructions)(end)(loads)(liveOut)(anchor)(tempCount)(append(insertions)(drops))(borrowingArenaCells)(borrowedCalls) with
                                     | (nextInsertions, nextTempCount) ->
-                                        collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(rest)(nextTempCount)(nextInsertions)(append(retargets)(edgeRetargets))(borrowingArenaCells)))(if length(uses) > 0 && liveOut == false
+                                        collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(rest)(nextTempCount)(nextInsertions)(append(retargets)(edgeRetargets))(borrowingArenaCells)(borrowedCalls)))(if length(uses) > 0 && liveOut == false
                     then
                         ([(uses
                         |> lastOf
@@ -633,7 +637,7 @@ let recursive collectInsertions (instructions: List(IrInstruction)) (blocks: Lis
                                 else
                                     splitLiveEdges(instructions)(blocks)(region)(liveness)(predecessors)(blockIndex)(placedDrop(anchor)(slot)(owner))(label)(slot)
                             else ([], []))
-                | _ -> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(rest)(tempCount)(insertions)(retargets)(borrowingArenaCells)
+                | _ -> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(rest)(tempCount)(insertions)(retargets)(borrowingArenaCells)(borrowedCalls)
 
 let recursive distinctIndicesDescending (insertions: List((Int, IrInstruction))) (acc: List(Int)) =
     match insertions with
@@ -703,7 +707,7 @@ let borrowingArenaCells (instructions: List(IrInstruction)) (ownerAliases: List(
     then []
     else arenaAdtCells
 
-let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (region: List(Int)) (arenaAdtCells: List(Int)) =
+let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (region: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
     arenaAdtCells
     |> collectOwnerAliases(blocks)(regionInstructions(instructions)(blocks)(region))(slot)
     |> (given (ownerAliases) ->
@@ -716,22 +720,22 @@ let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: O
             |> (given (liveness) ->
                 arenaAdtCells
                 |> borrowingArenaCells(instructions)(ownerAliases)
-                |> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(region)(tempCount)([])([])) with
+                |> (given (cells) -> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(region)(tempCount)([])([])(cells)(borrowedCalls))) with
                 | (insertions, retargets, nextTempCount) ->
                     PlacedInstructions(placedInstructions = instructions
                     |> applyRetargets(retargets)
                     |> applyInsertions(distinctIndicesDescending(insertions)([]))(insertions), placedTempCount = nextTempCount, placedDominators = dominators)))
 
-let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: List(Int)) =
+let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
     []
     |> reachableBeforeBoundary(blocks)(dominators)(definitionBlock)(boundaryBlock)([definitionBlock])
     |> (given (visited) -> sortedBlocks(visited)(length(blocks) - 1)([]))
     |> (given (region) ->
         if length(region) == 0
         then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = dominators)
-        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(region)(arenaAdtCells))
+        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(region)(arenaAdtCells)(borrowedCalls))
 
-let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) (arenaAdtCells: List(Int)) =
+let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
     instructions
     |> buildCfgBlocks
     |> (given (blocks) ->
@@ -746,10 +750,10 @@ let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: Own
                         match knownDominators with
                             | [] -> computeImmediateDominators(blocks)
                             | _ -> knownDominators
-                    in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(boundaryBlock)(arenaAdtCells))
+                    in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(boundaryBlock)(arenaAdtCells)(borrowedCalls))
 
 // Removes the lexical anchor (and the owner load feeding it) and places the owner's drop.
-let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (arenaAdtCells: List(Int)) (placed: PlacedInstructions) =
+let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
     match placed with
         | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators } ->
             match (listAt(instructions)(anchorIndex), ownerDefinition(instructions)(slot)(0)) with
@@ -765,29 +769,52 @@ let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (arenaAdtCells: List(
                             | _ -> (withoutAnchor, anchorIndex))
                     |> (given (removed) ->
                         match removed with
-                            | (remaining, boundary) -> placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount)(knownDominators)(arenaAdtCells))
+                            | (remaining, boundary) -> placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount)(knownDominators)(arenaAdtCells)(borrowedCalls))
                 | _ -> placed
 
-let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (arenaAdtCells: List(Int)) (placed: PlacedInstructions) =
+let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
     match slots with
         | [] -> placed
         | slot :: rest ->
-            placeOwnerSlots(label)(rest)(arenaAdtCells)(match anchorIndices(placed.placedInstructions)(slot)(0) with
-                | anchorIndex :: [] -> placeOwner(label)(slot)(anchorIndex)(arenaAdtCells)(placed)
+            placeOwnerSlots(label)(rest)(arenaAdtCells)(borrowedCalls)(match anchorIndices(placed.placedInstructions)(slot)(0) with
+                | anchorIndex :: [] -> placeOwner(label)(slot)(anchorIndex)(arenaAdtCells)(borrowedCalls)(placed)
                 | _ -> placed)
 
 // Places the lifetimes of one function body; `label` names the function, prefixing the labels of
-// the drop blocks that split a live branch edge.
-let placeInstructionLifetimesIn (label: Str) (instructions: List(IrInstruction)) (tempCount: Int) =
-    placeOwnerSlots(label)(ownerSlots(instructions)([]))(collectArenaAdtCells(instructions)([]))(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = []))
+// the drop blocks that split a live branch edge. `borrowedCalls` are the result temps of the
+// body's closure calls that only borrow their argument, which get no compensating duplicate.
+let placeInstructionLifetimesBorrowing (label: Str) (borrowedCalls: List(Int)) (instructions: List(IrInstruction)) (tempCount: Int) =
+    placeOwnerSlots(label)(ownerSlots(instructions)([]))(collectArenaAdtCells(instructions)([]))(borrowedCalls)(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = []))
+
+let placeInstructionLifetimesIn (label: Str) (instructions: List(IrInstruction)) (tempCount: Int) = placeInstructionLifetimesBorrowing(label)([])(instructions)(tempCount)
 
 let placeInstructionLifetimes (instructions: List(IrInstruction)) (tempCount: Int) = placeInstructionLifetimesIn("")(instructions)(tempCount)
 
-let placeFunctionLifetimes (function_: IrFunction) =
+// The borrowing calls grouped by the label of the function holding them.
+let recursive borrowedCallsByLabel (borrowedCalls: List((Str, Int))) byLabel =
+    match borrowedCalls with
+        | [] -> byLabel
+        | (label, target) :: rest ->
+            byLabel
+            |> Ashes.Collection.Map.upsertStr(label)([target])(given (targets: List(Int)) -> sortedSetInsert(target)(targets))
+            |> borrowedCallsByLabel(rest)
+
+let placeFunctionLifetimesBorrowing byLabel (function_: IrFunction) =
     if function_.lifetimesPlaced
     then function_
     else
-        match placeInstructionLifetimesIn(function_.label)(function_.instructions)(function_.tempCount) with
-            | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount } -> function_ with instructions = instructions, tempCount = tempCount, lifetimesPlaced = true
+        let borrowedCalls =
+            match Ashes.Collection.Map.getStr(function_.label)(byLabel) with
+                | Some(targets) -> targets
+                | None -> []
+        in
+            match placeInstructionLifetimesBorrowing(function_.label)(borrowedCalls)(function_.instructions)(function_.tempCount) with
+                | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount } -> function_ with instructions = instructions, tempCount = tempCount, lifetimesPlaced = true
 
-let placeLifetimes (program: IrProgram) = program with entryFunction = placeFunctionLifetimes(program.entryFunction), functions = map(placeFunctionLifetimes)(program.functions)
+let placeFunctionLifetimes (function_: IrFunction) = placeFunctionLifetimesBorrowing(Ashes.Collection.Map.empty)(function_)
+
+// `borrowedCalls` names each borrowing closure call by its function's label and its result temp.
+let placeLifetimes (borrowedCalls: List((Str, Int))) (program: IrProgram) =
+    (let byLabel = borrowedCallsByLabel(borrowedCalls)(Ashes.Collection.Map.empty)
+    in
+        program with entryFunction = placeFunctionLifetimesBorrowing(byLabel)(program.entryFunction), functions = map(placeFunctionLifetimesBorrowing(byLabel))(program.functions))

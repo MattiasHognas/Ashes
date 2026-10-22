@@ -289,7 +289,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, forkFailed, forkFailedBlock, parentBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, forkFailedBlock);
-        LlvmValueHandle forkErrRef = EmitStackStringObject(state, "Process.spawn: fork failed");
+        LlvmValueHandle forkErrRef = EmitHeapStringLiteral(state, "Process.spawn: fork failed");
         LlvmApi.BuildStore(builder, EmitResultError(state, forkErrRef), resultSlot);
         LlvmApi.BuildBr(builder, spawnDoneBlock);
 
@@ -524,7 +524,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, createFailed, spawnFailedBlock, spawnOkBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, spawnFailedBlock);
-        LlvmApi.BuildStore(builder, EmitResultError(state, EmitStackStringObject(state, "Process.spawn: CreateProcessA failed")), resultSlot);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, "Process.spawn: CreateProcessA failed")), resultSlot);
         LlvmApi.BuildBr(builder, spawnDoneBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, spawnOkBlock);

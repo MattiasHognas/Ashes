@@ -34,6 +34,16 @@ try
         return 0;
     }
     string repositoryRoot = FindRepositoryRoot(Environment.CurrentDirectory);
+    if (configuration.Command == FuzzCommandKind.LeakCensus)
+    {
+        return await LeakCensus.RunAsync(
+            configuration,
+            profiles.Get(configuration.Profile),
+            new ProgramGenerator(rules, combinations),
+            repositoryRoot,
+            CancellationToken.None).ConfigureAwait(false);
+    }
+
     FuzzCampaign campaign = new(new ProgramGenerator(rules, combinations), profiles, oracles);
     return configuration.Command == FuzzCommandKind.Corpus
         ? await campaign.RunCorpusAsync(configuration, repositoryRoot, CancellationToken.None).ConfigureAwait(false)

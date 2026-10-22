@@ -223,6 +223,11 @@ public sealed partial class Lowering
             AcceptsRuntimeManagedArgument: _runtimeNormalizedFunctionArgumentLabels.Contains(label)));
 
         string rootName = $"__element_specialization_{_elementSpecializations.Count}_{closureTemp}";
+        if (CalleeSaturatedResultIsQuantifiedList(rootExpression))
+        {
+            _quantifiedListResultSpecializationRoots.Add(rootName);
+        }
+
         int slot = NewLocal();
         Emit(new IrInst.StoreLocal(slot, closureTemp));
         _knownFunctionLabelsBySlot[slot] = label;
@@ -231,6 +236,30 @@ public sealed partial class Lowering
         rootExpression = new Expr.Var(rootName);
         calleeTemp = closureTemp;
         return scopeDepth;
+    }
+
+    // The routed roots of callees whose list result's element is quantified in their scheme: the
+    // specialization compiles that element concretely, and its cells may be reference-counted where
+    // the generic body's were arena, so the caller reads the result's ownership at run time and
+    // takes an owned list over or copies an arena one, as it does for a generic callee's.
+    private readonly HashSet<string> _quantifiedListResultSpecializationRoots = new(StringComparer.Ordinal);
+
+    private bool IsQuantifiedListResultSpecializationRoot(Expr rootExpr)
+        => rootExpr is Expr.Var variable && _quantifiedListResultSpecializationRoots.Contains(variable.Name);
+
+    // Whether the callee, applied to every parameter of its scheme (a curried chain of up to the
+    // depth limit's arrows), results in a list whose element is quantified in that scheme.
+    private bool CalleeSaturatedResultIsQuantifiedList(Expr rootExpr)
+    {
+        for (int argumentCount = 1; argumentCount <= ElementSpecializationDepthLimit; argumentCount++)
+        {
+            if (IsCalleeResultListElementQuantifiedInScheme(rootExpr, argumentCount))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void LeaveElementSpecializationRoot(int scopeDepth)

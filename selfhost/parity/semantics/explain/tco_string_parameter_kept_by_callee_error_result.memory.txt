@@ -5,11 +5,11 @@ Function: describe
   ownership
     result: consumed, move-safe yes
     result fresh: yes
-  perceus [lambda_8]
+  perceus [lambda_13]
     dup:                  0
     drop:                 1
     uniqueness checks:    0
-  representation [lambda_8]
+  representation [lambda_13]
     conservative unknown: 21
     region:               11
     runtime rc:           4
@@ -18,17 +18,18 @@ Function: run
   ownership
     dependency: consumed, move-safe yes
     result fresh: no
-  perceus [lambda_9]
+  perceus [lambda_14]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  perceus [lambda_9__scalarenv0]
+  perceus [lambda_14__scalarenv0]
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-  representation [lambda_9]
-    conservative unknown: 10
-    region:               4
+  representation [lambda_14]
+    conservative unknown: 11
+    region:               6
+    runtime rc:           1
 
 Function: validateAll
   ownership
@@ -37,8 +38,8 @@ Function: validateAll
     paths: consumed, move-safe yes
     result fresh: no
   perceus [lambda_7]
-    dup:                  7
-    drop:                 11
+    dup:                  16
+    drop:                 17
     uniqueness checks:    3
   perceus [lambda_6]
     dup:                  0
@@ -49,9 +50,9 @@ Function: validateAll
     drop:                 0
     uniqueness checks:    0
   representation [lambda_7]
-    conservative unknown: 16
-    region:               3
-    runtime rc:           18
+    conservative unknown: 21
+    region:               20
+    runtime rc:           49
   representation [lambda_6]
     conservative unknown: 2
     region:               2

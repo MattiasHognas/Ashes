@@ -17,11 +17,15 @@
 //   stage 0's own label.
 
 import Ashes.Collection.List.append
+import Ashes.Collection.List.length
 import AshesCompiler.Frontend.Syntax
 export (
     value reuseSpecializationCandidates,
     value reuseSpecializationLabel,
     value collectSpecializableCallArgs,
+    value loopRoutableSpecializationCandidates,
+    value specializationLinearParameter,
+    value specializationArity,
 )
 
 let recursive specializationLambdaChain (value: Expr) (reversedParameters: List(Str)) =
@@ -42,13 +46,79 @@ let specializationCandidateOf (name: Str) (value: Expr) =
         | [] -> None
         | reversedParameters -> Some((name, reverseNames(reversedParameters)([]), value))
 
+let recursive stripSpecializationSpans (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> stripSpecializationSpans(inner)
+        | other -> other
+
+// The body under a lambda chain and the leading non-recursive lets it opens with (a hoisted
+// per-call setup such as a composite key).
+let recursive specializationInnermostBody (expression: Expr) =
+    match stripSpecializationSpans(expression) with
+        | ExprLambda(_parameter, body, _annotation) -> specializationInnermostBody(body)
+        | ExprLet(_name, _value, body, _parameters, _annotation, _constraints) -> specializationInnermostBody(body)
+        | other -> other
+
+let recursive lastOuterParameter (parameters: List(Str)) =
+    match parameters with
+        | [] -> None
+        | parameter :: [] -> Some(parameter)
+        | _parameter :: rest -> lastOuterParameter(rest)
+
+// Stage 0's `TryGetNestedRecursiveReturn`: a non-recursive function whose lambda chain returns a
+// nested single-parameter recursive worker, bare (`in go`, the caller supplying the worker's
+// accumulator as one extra argument) or applied to the last outer parameter (`in go(map)`), is
+// specialized on the worker's parameter: the `Map.set` shape. The worker's own parameter, when
+// the value has that shape.
+let nestedRecursiveWorkerParameter (parameters: List(Str)) (value: Expr) =
+    match specializationInnermostBody(value) with
+        | ExprLetRecursive(worker, ExprLambda(workerParameter, workerBody, _annotation), returned, _parameters, _typeAnnotation, _constraints) ->
+            match (stripSpecializationSpans(workerBody), stripSpecializationSpans(returned)) with
+                | (ExprLambda(_inner, _body, _innerAnnotation), _returned) -> None
+                | (_workerBody, ExprVar(reference)) ->
+                    if reference == worker
+                    then Some(workerParameter)
+                    else None
+                | (_workerBody, ExprCall(function, argument, _isSugar, _layout)) ->
+                    match (stripSpecializationSpans(function), stripSpecializationSpans(argument), lastOuterParameter(parameters)) with
+                        | (ExprVar(reference), ExprVar(forwarded), Some(last)) ->
+                            if reference == worker && forwarded == last
+                            then Some(workerParameter)
+                            else None
+                        | _ -> None
+                | _ -> None
+        | _ -> None
+
+// The parameter a candidate is specialized on: its nested worker's, or its last.
+let specializationLinearParameter (parameters: List(Str)) (value: Expr) =
+    match nestedRecursiveWorkerParameter(parameters)(value) with
+        | Some(workerParameter) -> Some(workerParameter)
+        | None -> lastOuterParameter(parameters)
+
+// The arguments a saturated call to the candidate passes: one per outer parameter, and one more
+// for a nested worker's accumulator.
+let specializationArity (parameters: List(Str)) (value: Expr) =
+    match nestedRecursiveWorkerParameter(parameters)(value) with
+        | Some(_workerParameter) -> length(parameters) + 1
+        | None -> length(parameters)
+
+// A non-recursive top-level function is a candidate only in the nested-worker shape.
+let nestedSpecializationCandidateOf (name: Str) (value: Expr) =
+    match specializationCandidateOf(name)(value) with
+        | Some((_name, parameters, _value)) ->
+            match nestedRecursiveWorkerParameter(parameters)(value) with
+                | Some(_workerParameter) -> Some((name, parameters, value))
+                | None -> None
+        | None -> None
+
 let recursive consCandidate (candidate: Maybe((Str, List(Str), Expr))) (rest: List((Str, List(Str), Expr))) =
     match candidate with
         | Some(found) -> found :: rest
         | None -> rest
 
-// Every self-recursive top-level function of the program, in declaration order. A recursive group
-// of more than one binding is skipped: mutual recursion has no single accumulator to make linear.
+// Every self-recursive top-level function of the program, and every non-recursive one returning a
+// nested recursive worker, in declaration order. A recursive group of more than one binding is
+// skipped: mutual recursion has no single accumulator to make linear.
 let recursive reuseSpecializationCandidates (items: List(TopLevelItem)) =
     match items with
         | [] -> []
@@ -57,11 +127,31 @@ let recursive reuseSpecializationCandidates (items: List(TopLevelItem)) =
             rest
             |> reuseSpecializationCandidates
             |> consCandidate(specializationCandidateOf(name)(value))
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+            rest
+            |> reuseSpecializationCandidates
+            |> consCandidate(nestedSpecializationCandidateOf(name)(value))
         | TopLevelRecursiveGroup(LetBindingSyntax { name = name, value = value } :: []) :: rest ->
             rest
             |> reuseSpecializationCandidates
             |> consCandidate(specializationCandidateOf(name)(value))
         | _ :: rest -> reuseSpecializationCandidates(rest)
+
+// Stage 0's `_specializableFunctions` less `_freshCompositionOnlySpecializable`: the candidates a
+// loop parameter handed straight to them as the accumulator is routed to, with the argument
+// count such a call passes. A self-recursive candidate qualifies only with one parameter; a
+// nested-worker candidate always does.
+let recursive loopRoutableSpecializationCandidates (candidates: List((Str, List(Str), Expr))) =
+    match candidates with
+        | [] -> []
+        | (name, parameter :: [], value) :: rest ->
+            match nestedRecursiveWorkerParameter([parameter])(value) with
+                | Some(_workerParameter) -> (name, 2) :: loopRoutableSpecializationCandidates(rest)
+                | None -> (name, 1) :: loopRoutableSpecializationCandidates(rest)
+        | (name, parameters, value) :: rest ->
+            match nestedRecursiveWorkerParameter(parameters)(value) with
+                | Some(_workerParameter) -> (name, length(parameters) + 1) :: loopRoutableSpecializationCandidates(rest)
+                | None -> loopRoutableSpecializationCandidates(rest)
 
 // The label of the `index`-th specialization generated in a program, stage 0's naming.
 let reuseSpecializationLabel (name: Str) (index: Int) =
@@ -80,35 +170,51 @@ let recursive containsCandidateName (name: Str) (names: List(Str)) =
         | [] -> false
         | candidate :: rest -> candidate == name || containsCandidateName(name)(rest)
 
+let recursive routableCandidateArity (name: Str) (candidates: List((Str, Int))) =
+    match candidates with
+        | [] -> None
+        | (candidate, arity) :: rest ->
+            if candidate == name
+            then Some(arity)
+            else routableCandidateArity(name)(rest)
+
 let recursive specializationAccumulatorRecorded (name: Str) (found: List((Str, Str))) =
     match found with
         | [] -> false
         | (candidate, _callee) :: rest -> candidate == name || specializationAccumulatorRecorded(name)(rest)
 
-// The one argument a saturated call to a single-parameter candidate passes, when it is a bare
-// parameter name of the enclosing loop.
+// The last argument of a saturated call to a routable candidate, when it is a bare parameter
+// name of the enclosing loop.
 let recursive unspanSpecializationExpr (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanSpecializationExpr(inner)
         | other -> other
 
-let specializationCallAccumulator (parameters: List(Str)) (candidates: List(Str)) (expression: Expr) =
+let recursive lastCallArgument (arguments: List(Expr)) =
+    match arguments with
+        | [] -> None
+        | argument :: [] -> Some(argument)
+        | _argument :: rest -> lastCallArgument(rest)
+
+let specializationCallAccumulator (parameters: List(Str)) (candidates: List((Str, Int))) (expression: Expr) =
     match specializationCallRoot(expression)([]) with
-        | (root, argument :: []) ->
-            match (unspanSpecializationExpr(root), unspanSpecializationExpr(argument)) with
-                | (ExprVar(callee), ExprVar(accumulator)) ->
-                    if containsCandidateName(callee)(candidates) && containsCandidateName(accumulator)(parameters)
-                    then Some((accumulator, callee))
-                    else None
+        | (root, arguments) ->
+            match (unspanSpecializationExpr(root), lastCallArgument(arguments)) with
+                | (ExprVar(callee), Some(argument)) ->
+                    match (routableCandidateArity(callee)(candidates), unspanSpecializationExpr(argument)) with
+                        | (Some(arity), ExprVar(accumulator)) ->
+                            if arity == length(arguments) && containsCandidateName(accumulator)(parameters)
+                            then Some((accumulator, callee))
+                            else None
+                        | _ -> None
                 | _ -> None
-        | _ -> None
 
 // Stage 0's `CollectSpecializableCallArgs`: every loop parameter handed straight to a
 // single-parameter specialization candidate as its accumulator, with the callee's name, in the
 // order the body first passes it. Stage 0 keeps the LAST such callee per parameter and this keeps
 // the first; they agree wherever a parameter reaches only one candidate, which is every shape the
 // specialization can be routed for anyway.
-let recursive collectSpecializableCallArgs (parameters: List(Str)) (candidates: List(Str)) (expression: Expr) (found: List((Str, Str))) =
+let recursive collectSpecializableCallArgs (parameters: List(Str)) (candidates: List((Str, Int))) (expression: Expr) (found: List((Str, Str))) =
     match expression with
         | ExprAt(_span, inner) -> collectSpecializableCallArgs(parameters)(candidates)(inner)(found)
         | ExprCall(function, argument, _isSugar, _layout) as call ->
@@ -134,14 +240,14 @@ let recursive collectSpecializableCallArgs (parameters: List(Str)) (candidates: 
             |> collectSpecializableCallArgs(parameters)(candidates)(value)
             |> collectSpecializableCallArgsInCases(parameters)(candidates)(cases)
         | _ -> found
-and recordSpecializableCallArg (parameters: List(Str)) (candidates: List(Str)) (call: Expr) (found: List((Str, Str))) =
+and recordSpecializableCallArg (parameters: List(Str)) (candidates: List((Str, Int))) (call: Expr) (found: List((Str, Str))) =
     match specializationCallAccumulator(parameters)(candidates)(call) with
         | Some((accumulator, callee)) ->
             if specializationAccumulatorRecorded(accumulator)(found)
             then found
             else append(found)([(accumulator, callee)])
         | None -> found
-and collectSpecializableCallArgsInCases (parameters: List(Str)) (candidates: List(Str)) (cases: List((Pattern, Expr, Maybe(Expr)))) (found: List((Str, Str))) =
+and collectSpecializableCallArgsInCases (parameters: List(Str)) (candidates: List((Str, Int))) (cases: List((Pattern, Expr, Maybe(Expr)))) (found: List((Str, Str))) =
     match cases with
         | [] -> found
         | (_pattern, body, _guard) :: rest ->

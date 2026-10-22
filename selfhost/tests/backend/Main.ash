@@ -2445,7 +2445,8 @@ let assertLooksLikeAssembly bytes label =
 // not a bare `ret` — a real, separate claim from `assertLooksLikeAssembly`'s label-only check.
 // The module also carries the arena runtime's helper functions, which return normally, so only
 // the entry function's own body is checked: the entry is the module's first function, so its
-// body is everything before the `.Lfunc_end0` marker.
+// body is everything before the `.Lfunc_end0:` label. The label is matched with its colon: LLVM 23
+// also names `.Lfunc_end0` in the `.prefalign` directive ahead of the entry body.
 let assertEndsInSyscallExit bytes =
     (let text =
         bytes
@@ -2453,7 +2454,7 @@ let assertEndsInSyscallExit bytes =
         |> Ashes.Byte.subText(bytes)(0)
     in
         let entryText =
-            match Ashes.Text.split(text)(".Lfunc_end0") with
+            match Ashes.Text.split(text)(".Lfunc_end0:") with
                 | entry :: _ -> entry
                 | [] -> text
         in
@@ -2968,6 +2969,39 @@ let testRunStaticExecutableForRealIrMultiParamGenericTypeModule unit =
                                                         let _ = test.assertEqual("7")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// A loop threading a map through its generic setter's owned result tests its owned result slots
+// against zero at the back edge and at the exit, including a slot no path has stored yet (one
+// round leaves the predecessor slot unwritten). The slots start at zero, as stage 0's backend
+// makes them; an uninitialized slot is stack garbage the loop would release, which hung this
+// program. The run is bounded by `timeout` so a hang fails the test instead of the suite.
+let unwrittenLoopSlotSource = "type Tree(K, V) =\n    | Empty\n    | Node(Int, Tree, K, V, Tree)\n\nlet height map =\n    match map with\n        | Empty -> 0\n        | Node(nodeHeight, _left, _key, _value, _right) -> nodeHeight\n\nlet makeNode left key value right = Node(height(left) + height(right) + 1)(left)(key)(value)(right)\n\nlet setInt (newKey: Int) newValue =\n    (let recursive go map =\n        match map with\n            | Empty -> makeNode(Empty)(newKey)(newValue)(Empty)\n            | Node(_height, left, key, value, right) ->\n                if newKey == key\n                then makeNode(left)(key)(newValue)(right)\n                else\n                    if newKey < key\n                    then\n                        makeNode(go(left))(key)(value)(right)\n                    else\n                        right\n                        |> go\n                        |> makeNode(left)(key)(value)\n    in go)\n\nlet recursive size (map: Tree(Int, Bool)) =\n    match map with\n        | Empty -> 0\n        | Node(_h, left, _k, _v, right) -> size(left) + 1 + size(right)\n\nlet recursive keysOf (n: Int) (keys: Tree(Int, Bool)) =\n    if n == 0\n    then keys\n    else\n        keys\n        |> setInt(n)(true)\n        |> keysOf(n - 1)\n\nEmpty\n|> keysOf(1)\n|> size\n|> Ashes.IO.print"
+
+let buildRealIrUnwrittenLoopSlotModule name context = codegenOptimizedRealSource(unwrittenLoopSlotSource)(name)(context)
+
+let testRunStaticExecutableForRealIrUnwrittenLoopSlotModule unit =
+    match emitModule(buildRealIrUnwrittenLoopSlotModule)("selfhostBackendRunUnwrittenLoopSlot")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunUnwrittenLoopSlot") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_unwritten_loop_slot_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_unwritten_loop_slot_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("/usr/bin/timeout")(["10", "./selfhost_backend_unwritten_loop_slot_e2e"]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("the loop over an unwritten owned slot printed nothing (crashed or hung)")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("1")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 let testRunStaticExecutableForRealIrMatchSomeModule unit =
     match emitModule(buildRealIrMatchSomeModule)("selfhostBackendRunMatchSome")(objectFileType) with
         | Error(message) -> test.fail(message)
@@ -3209,6 +3243,183 @@ let testRunStaticExecutableForShippedListLengthModule shipped unit =
 let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
     assertProgramPrints(buildShippedListLengthSelectorModule(shipped))("selfhostBackendRunShippedListLengthSelector")("selfhost_backend_shipped_list_length_selector_e2e")("4")
 
+// `codegenShippedSource` with the leak check on: the program counts its reference-counted cells
+// and reports the live ones on standard error at its end.
+let codegenShippedSourceLeakChecked shipped source name context =
+    match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
+        | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
+        | Ok(StitchedSyntaxProject { program = program }) ->
+            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+                | CoreLoweringResult { program = Some(lowered), error = None } -> codegenProgramWith(true)(name)(context)(lowered)
+                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("lowering produced no program")
+
+// A loop building and dropping one string per round; its live-cell report is the same at any
+// round count when nothing leaks.
+let leakCheckLoopSource rounds = "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else loop(n - 1)(total + Ashes.Text.byteLength(\"a\" + Ashes.Text.fromInt(n)))\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+// Links and runs the module, and returns the live-cell count its `ashes-rc-live N` line on
+// standard error reports.
+let liveCellsReportedBy buildModule name executablePath =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStderrLine(process) with
+                                                | None -> test.fail("expected the leak check's report on stderr, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual(0)(exitCode)
+                                                        in
+                                                            let _ =
+                                                                "ashes-rc-live "
+                                                                |> Ashes.Text.startsWith(line)
+                                                                |> test.assertEqual(true)
+                                                            in Ashes.Text.substring(line)(14)(Ashes.Text.length(line) - 14)
+
+let testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo shipped unit =
+    "selfhost_backend_leak_check_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> leakCheckLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendLeakCheckTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> leakCheckLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendLeakCheckOneRound")("selfhost_backend_leak_check_one_round_e2e"))
+
+// A loop whose map parameter is annotated with the shipped map type by its bare name, in a program
+// that reaches `Ashes.Collection.Map` through qualified references alone: the annotation names
+// the stitched map type, so the loop's result is the owned map every round releases.
+let shippedTypeAnnotationLoopSource rounds = "let recursive solve (seen: MapTree(Str, Bool)) (front: List(Str)) (fuel: Int) =\n    match front with\n        | [] -> seen\n        | key :: rest ->\n            if fuel <= 0\n            then seen\n            else solve(Ashes.Collection.Map.setStr(key)(false)(Ashes.Collection.Map.setStr(key)(true)(seen)))(rest)(fuel - 1)\n\nlet run (seed: Int) = Ashes.Collection.Map.size(solve(Ashes.Collection.Map.empty)([\"cinder\", \"ember\", \"smoke\", \"soot\"])(7)) + seed\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + run(8))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_shipped_type_annotation_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> shippedTypeAnnotationLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendShippedTypeAnnotationThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> shippedTypeAnnotationLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendShippedTypeAnnotationOneRound")("selfhost_backend_shipped_type_annotation_one_round_e2e"))
+
+// A helper called in a loop's back edge whose body calls a qualified built-in
+// (`Ashes.Text.byteLength`) is spliced into the back edge, so its fresh result is the successor
+// itself rather than a call result the loop never releases.
+let backEdgeHelperLoopSource rounds = "let targetsOf (width: Int) (name: Str) =\n    if Ashes.Text.byteLength(name) < width\n    then [name + \"a\", name + \"b\"]\n    else []\n\nlet recursive walk (stack: List(List(Str))) (seen: List(Str)) (n: Int) =\n    match stack with\n        | [] -> n\n        | [] :: rest -> walk(rest)(seen)(n)\n        | (name :: more) :: rest -> walk(targetsOf(3)(name) :: more :: rest)(name :: seen)(n + 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + walk([[\"x\"], [\"y\"]])([])(0))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testBackEdgeHelperCallingABuiltinLeavesNothingPerRound shipped unit =
+    "selfhost_backend_back_edge_helper_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> backEdgeHelperLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBackEdgeHelperTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> backEdgeHelperLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBackEdgeHelperOneRound")("selfhost_backend_back_edge_helper_one_round_e2e"))
+
+// A loop threading a map through `Map.upsertStr` routes the call to the map's reuse
+// specialization, which copies what it stores and releases it: nothing a round builds is left.
+let mapUpsertLoopSource rounds = "import Ashes.Collection.Map\n\nlet keepFirst (key: Str) value map =\n    Ashes.Collection.Map.upsertStr(key)(value)(given (existing) -> existing)(map)\n\nlet recursive adjacencyOf (n: Int) (adj: MapTree(Str, List(Str))) =\n    if n == 0\n    then adj\n    else\n        adj\n        |> keepFirst(\"k\" + Ashes.Text.fromInt(n))([\"t\" + Ashes.Text.fromInt(n)])\n        |> adjacencyOf(n - 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + Ashes.Collection.Map.size(adjacencyOf(8)(Ashes.Collection.Map.empty)))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testMapUpsertLoopLeavesNothingPerRound shipped unit =
+    "selfhost_backend_map_upsert_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> mapUpsertLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMapUpsertTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> mapUpsertLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMapUpsertOneRound")("selfhost_backend_map_upsert_one_round_e2e"))
+
+// A loop threading a `(List(Str), Int)` state returns that state inside its result: the state is
+// placed on the reference-counted heap, and each back edge releases the predecessor with its list.
+let tupleStateLoopSource rounds = "let advance (state: (List(Str), Int)) =\n    match state with\n        | (token :: tail, count) -> (token, (tail, count + 1))\n        | ([], _count) -> (\"\", state)\n\nlet currentIs (text: Str) (state: (List(Str), Int)) =\n    match state with\n        | (token :: _, _count) -> token == text\n        | ([], _count) -> false\n\nlet recursive parameters (reversed: List(Str)) (state: (List(Str), Int)) =\n    if currentIs(\"=\")(state)\n    then (reversed, state)\n    else\n        match advance(state) with\n            | (name, afterName) -> parameters(name :: reversed)(afterName)\n\nlet run (seed: Int) =\n    match parameters([])(([\"smoke\", \"coal\", \"smoke\", \"=\", \"ash\"], seed)) with\n        | (names, _after) -> Ashes.Collection.List.length(names)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + run(2))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testTupleStateLoopLeavesNothingPerRound shipped unit =
+    "selfhost_backend_tuple_state_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> tupleStateLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendTupleStateTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> tupleStateLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendTupleStateOneRound")("selfhost_backend_tuple_state_one_round_e2e"))
+
+// A nested recursive let declared `List(Int) -> Str` concatenates its own self call's result: the
+// declared result is pinned before the body is lowered, so the self call asks for no arena result
+// and the string it returns is released after the concatenation.
+let annotatedNestedRecursionSource rounds = "let recursive loop (remaining: Int) (checksum: Int) =\n    if remaining == 0\n    then checksum\n    else\n        let observed =\n            let recursive render : List(Int) -> Str =\n                given (items: List(Int)) ->\n                    match items with\n                        | [] -> \"]\"\n                        | head :: tail -> Ashes.Text.fromInt(head) + render(tail)\n            in render([-6, -8])\n        in loop(remaining - 1)(checksum + Ashes.Text.byteLength(observed))\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testAnnotatedNestedRecursionLeavesNothingPerRound shipped unit =
+    "selfhost_backend_annotated_nested_recursion_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> annotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendAnnotatedNestedRecursionTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> annotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendAnnotatedNestedRecursionOneRound")("selfhost_backend_annotated_nested_recursion_one_round_e2e"))
+
+// The same nested recursion without its annotation, inside a loop body that is lowered again:
+// the recursive member is lowered again as well once its body closes its own result, so its self
+// call asks for no arena result.
+let unannotatedNestedRecursionSource rounds = "let recursive loop (remaining: Int) (checksum: Int) =\n    if remaining == 0\n    then checksum\n    else\n        let observed =\n            let recursive render (items: List(Int)) =\n                match items with\n                    | [] -> \"]\"\n                    | head :: tail -> Ashes.Text.fromInt(head) + render(tail)\n            in render([-6, -8])\n        in loop(remaining - 1)(checksum + Ashes.Text.byteLength(observed))\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testUnannotatedNestedRecursionLeavesNothingPerRound shipped unit =
+    "selfhost_backend_unannotated_nested_recursion_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> unannotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnannotatedNestedRecursionTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> unannotatedNestedRecursionSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnannotatedNestedRecursionOneRound")("selfhost_backend_unannotated_nested_recursion_one_round_e2e"))
+
+// A `let` bound to a match whose arms are the empty list and a rebuilt list owns the join: the
+// empty list takes nothing from the rebuilt list's freshness, so the binding releases the list at
+// its scope exit.
+let emptyListJoinLoopSource rounds = "let recursive loop (remaining: Int) (checksum: Int) =\n    if remaining == 0\n    then checksum\n    else\n        let observed =\n            let generated =\n                let reuseList =\n                    let element = 9\n                    in [element]\n                in\n                    match reuseList with\n                        | [] -> []\n                        | head :: tail -> head :: tail\n            in Ashes.Collection.List.length(generated)\n        in loop(remaining - 1)(checksum + observed)\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testEmptyListJoinLoopLeavesNothingPerRound shipped unit =
+    "selfhost_backend_empty_list_join_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> emptyListJoinLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendEmptyListJoinTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> emptyListJoinLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendEmptyListJoinOneRound")("selfhost_backend_empty_list_join_one_round_e2e"))
+
+// A handler arm inside a lambda resumes with a value let-bound outside the lambda, which the
+// lambda captures: the arm binds only its parameters and `resume`.
+let buildHandlerArmCaptureModule shipped name context = codegenShippedSource(shipped)("capability Source(a) =\n    | get : Unit -> a\n\nlet result =\n    (let captured = 8\n    in\n        ((given (unit: Unit) ->\n            handle perform Source.get(Unit) with\n                | Source.get(_) -> resume(captured)\n                | return(handled) -> handled + 34))(Unit))\n\nAshes.IO.print(result)")(name)(context)
+
+let testRunStaticExecutableForHandlerArmCaptureModule shipped unit =
+    assertProgramPrints(buildHandlerArmCaptureModule(shipped))("selfhostBackendRunHandlerArmCapture")("selfhost_backend_handler_arm_capture_e2e")("42")
+
+// Parameters annotated `u8` through `u64` take arguments of those types.
+let buildUnsignedParameterAnnotationModule shipped name context = codegenShippedSource(shipped)("let f8 =\n    given (p: u8) -> p\n\nlet f16 =\n    given (p: u16) -> p\n\nlet f32 =\n    given (p: u32) -> p\n\nlet f64 =\n    given (p: u64) -> p\n\nAshes.IO.print(Ashes.Number.UInt.toInt(f8(14u8)) + Ashes.Number.UInt.toInt(f16(15u16)) + Ashes.Number.UInt.toInt(f32(16u32)) + Ashes.Number.UInt.toInt(f64(17u64)))")(name)(context)
+
+let testRunStaticExecutableForUnsignedParameterAnnotationModule shipped unit =
+    assertProgramPrints(buildUnsignedParameterAnnotationModule(shipped))("selfhostBackendRunUnsignedParameterAnnotation")("selfhost_backend_unsigned_parameter_annotation_e2e")("62")
+
+// A loop making one syscall per round: the path's NUL-terminated copy and the call's result live
+// in the arena, as stage 0 places them, so its live-cell report is the same at any round count.
+let syscallLoopSource rounds = "let recursive loop (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        match Ashes.IO.File.exists(\"missing-\" + Ashes.Text.fromInt(n) + \".txt\") with\n            | Ok(_found) -> loop(n - 1)(total + 1)\n            | Error(_message) -> loop(n - 1)(total)\n\nAshes.IO.print(loop(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testSyscallLoopLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo shipped unit =
+    "selfhost_backend_syscall_leak_check_two_rounds_e2e"
+    |> liveCellsReportedBy(2
+    |> syscallLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendSyscallLeakCheckTwoRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> syscallLoopSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendSyscallLeakCheckOneRound")("selfhost_backend_syscall_leak_check_one_round_e2e"))
+
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
@@ -3426,6 +3637,86 @@ let buildOptimizedIrExternalCallModule name context = codegenOptimizedRealSource
 
 let testRunStaticExecutableForExternalCallModule unit = assertProgramPrints(buildOptimizedIrExternalCallModule)("selfhostBackendRunExternalCall")("selfhost_backend_external_call_e2e")("5 0 0")
 
+// A file mapped once per iteration of a loop and read through the view, which is an arena block
+// over the program-lifetime mapping as stage 0 builds it (`emitArenaStringView`), not a
+// reference-counted cell no release reaches: `13` bytes per round, and the same live cells at
+// one round and three.
+let mmapViewSource rounds = "let recursive total (n: Int) (sum: Int) =\n    if n == 0\n    then sum\n    else\n        match Ashes.IO.File.mmap(\"selfhost_backend_mmap_in.txt\") with\n            | Ok(bytes) -> total(n - 1)(sum + Ashes.Byte.length(bytes))\n            | Error(_message) -> total(n - 1)(sum)\n\nmatch Ashes.IO.File.writeText(\"selfhost_backend_mmap_in.txt\")(\"hello, bytes!\") with\n    | Ok(_) -> Ashes.IO.print(Ashes.Text.fromInt(total(" + Ashes.Text.fromInt(rounds) + ")(0)))\n    | Error(message) -> Ashes.IO.print(message)"
+
+let buildOptimizedIrMmapViewModule name context =
+    codegenOptimizedRealSource(mmapViewSource(3))(name)(context)
+
+let testRunStaticExecutableForMmapViewModule unit = assertProgramPrints(buildOptimizedIrMmapViewModule)("selfhostBackendRunMmapView")("selfhost_backend_mmap_view_e2e")("39")
+
+let testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_mmap_view_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> mmapViewSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMmapViewThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> mmapViewSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendMmapViewOneRound")("selfhost_backend_mmap_view_one_round_e2e"))
+
+// A loop writing, reading back and looking up an environment variable once per round: each
+// builtin's `Result`, the `Maybe` inside `Environment.get`'s, the read text and the value are
+// arena values as stage 0 builds them, not reference-counted cells no release reaches, so the
+// live cells are the same at one round and three.
+let builtinResultsSource rounds = "let recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        match Ashes.IO.File.writeText(\"selfhost_backend_builtin_results.txt\")(\"x\") with\n            | Error(_message) -> rounds(n - 1)(total)\n            | Ok(_written) ->\n                match Ashes.IO.File.readText(\"selfhost_backend_builtin_results.txt\") with\n                    | Error(_message) -> rounds(n - 1)(total)\n                    | Ok(text) ->\n                        match Ashes.IO.Environment.get(\"HOME\") with\n                            | Ok(_home) -> rounds(n - 1)(total + Ashes.Text.byteLength(text))\n                            | Error(_message) -> rounds(n - 1)(total)\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_builtin_results_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> builtinResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBuiltinResultsThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> builtinResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBuiltinResultsOneRound")("selfhost_backend_builtin_results_one_round_e2e"))
+
+// A loop building bytes from a list, setting them and copying a range into a fresh buffer once per
+// round: each result is placed where its instruction's ownership flag says, an arena value when
+// the lowering does not manage it rather than a reference-counted cell no release reaches, so the
+// live cells are the same at one round and three.
+let bytesResultsSource rounds = "let recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        let listed = Ashes.Byte.fromList([1u8, 2u8, 3u8])\n        in\n            let written = Ashes.Byte.setU16Le(Ashes.Byte.set(listed)(0)(7u8))(1)(9u16)\n            in\n                let copied = Ashes.Byte.copyRange(Ashes.Byte.allocate(4))(1)(written)(0)(3)\n                in rounds(n - 1)(total + Ashes.Byte.length(copied))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testBytesResultLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_bytes_results_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> bytesResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBytesResultsThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> bytesResultsSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendBytesResultsOneRound")("selfhost_backend_bytes_results_one_round_e2e"))
+
+// A pairwise loop handing each head on as the next round's `Str` parameter: the head's
+// pattern-owner duplicate is promoted to a real retain once the pattern root is placed, so the
+// back edge stores it as the owned successor it is and takes no second reference, and the live
+// cells are the same at one round and three.
+let pairwiseParameterSource rounds = "let recursive collect (n: Int) (acc: List(Str)) =\n    if n == 0\n    then acc\n    else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)\n\nlet recursive pairs (prev: Str) (acc: List(Str)) (ps: List(Str)) =\n    match ps with\n        | [] -> acc\n        | first :: rest -> pairs(first)(prev :: first :: acc)(rest)\n\nlet recursive count (xs: List(Str)) (total: Int) =\n    match xs with\n        | [] -> total\n        | _ :: tail -> count(tail)(total + 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else rounds(n - 1)(total + count(pairs(Ashes.Text.fromInt(n))([])(collect(3)([])))(0))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_pairwise_parameter_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> pairwiseParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendPairwiseParameterThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> pairwiseParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendPairwiseParameterOneRound")("selfhost_backend_pairwise_parameter_one_round_e2e"))
+
+// Loops whose bodies never read one of their parameters (a `Str` handed a walked head or a fresh
+// concatenation, a list handed the walked tail): the parameter's slot is placed by its declared
+// type, starts inactive with no argument to normalize, and releases each stored successor at the
+// next back edge or the exit, so the live cells are the same at one round and three.
+let unreadParameterSource rounds = "let recursive collect (n: Int) (acc: List(Str)) =\n    if n == 0\n    then acc\n    else collect(n - 1)(Ashes.Text.fromInt(n) :: acc)\n\nlet recursive pairs (previous: Str) (acc: List(Str)) (ps: List(Str)) =\n    match ps with\n        | [] -> acc\n        | first :: rest -> pairs(first)(first :: acc)(rest)\n\nlet recursive skipLast (seen: List(Str)) (acc: List(Str)) (ps: List(Str)) =\n    match ps with\n        | [] -> acc\n        | first :: rest -> skipLast(rest)(first :: acc)(rest)\n\nlet recursive mark (label: Str) (count: Int) (ps: List(Str)) =\n    match ps with\n        | [] -> count\n        | first :: rest -> mark(first + \"!\")(count + 1)(rest)\n\nlet recursive count (xs: List(Str)) (total: Int) =\n    match xs with\n        | [] -> total\n        | _ :: tail -> count(tail)(total + 1)\n\nlet recursive rounds (n: Int) (total: Int) =\n    if n == 0\n    then total\n    else\n        let parts = collect(3)([])\n        in rounds(n - 1)(total + count(pairs(Ashes.Text.fromInt(n))([])(parts))(0) + count(skipLast([])([])(parts))(0) + mark(\"\")(0)(parts))\n\nAshes.IO.print(rounds(" + Ashes.Text.fromInt(rounds) + ")(0))"
+
+let testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree shipped unit =
+    "selfhost_backend_unread_parameter_three_rounds_e2e"
+    |> liveCellsReportedBy(3
+    |> unreadParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnreadParameterThreeRounds")
+    |> test.assertEqual(liveCellsReportedBy(1
+    |> unreadParameterSource
+    |> codegenShippedSourceLeakChecked(shipped))("selfhostBackendUnreadParameterOneRound")("selfhost_backend_unread_parameter_one_round_e2e"))
+
 // The same program with no arguments at all: the walk publishes the empty list.
 let testRunStaticExecutableForProgramArgsEmptyModule unit = assertProgramPrintsWithArgs(buildOptimizedIrProgramArgsModule)("selfhostBackendRunProgramArgsEmpty")("selfhost_backend_program_args_empty_e2e")([])("none 0")
 
@@ -3596,6 +3887,28 @@ let testRunSharedTcoRuntimeManagedFindRecordHeadPlateau shipped unit =
 // edge by the fixed-watermark compaction through its synthesized copier.
 let testRunSharedTcoArenaVariantAccumulatorPlateau shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_arena_variant_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoArenaVariantAccumulatorPlateau")("selfhost_backend_shared_tco_arena_variant_accumulator_plateau_e2e")("500499")
+
+// A curried seven-parameter loop whose closure environment an AVX-512 host builds from a 64-byte
+// vector constant, loaded with an aligned instruction: the linker places each read-only section at
+// its declared alignment, or the program faults on its first iteration.
+let testRunSharedCurriedSevenParameterLoopWithFunctionArgument shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/curried_seven_parameter_loop_with_function_argument.ash"))("selfhostBackendRunSharedCurriedSevenParameterLoop")("selfhost_backend_shared_curried_seven_parameter_loop_e2e")("5000")
+
+// A `let` whose scope closes inside an operand of the loop's self call is released at its scope
+// exit only: the back edge releases the owners still in scope, or the token's shared kind is freed
+// and later comparisons read a freed cell.
+let testRunSharedLetInSelfCallOperandReleasedOnce shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/let_in_self_call_operand_released_once.ash"))("selfhostBackendRunSharedLetInSelfCallOperandReleasedOnce")("selfhost_backend_shared_let_in_self_call_operand_released_once_e2e")("1000")
+
+// The same `let` compared with a derived `>`: a second release corrupts the free list, and the
+// program faults or hangs.
+let testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/ord_compared_let_in_self_call_operand_released_once.ash"))("selfhostBackendRunSharedOrdComparedLetInSelfCallOperandReleasedOnce")("selfhost_backend_shared_ord_compared_let_in_self_call_operand_released_once_e2e")("1000")
+
+// A closure dropper releasing a captured record may be the first to synthesize the record's
+// structural dropper; the program defines that dropper, or code generation fails on its label.
+let testRunSharedCurriedLoopCapturingRecordWithOwnedChild shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/curried_loop_capturing_record_with_owned_child.ash"))("selfhostBackendRunSharedCurriedLoopCapturingRecordWithOwnedChild")("selfhost_backend_shared_curried_loop_capturing_record_with_owned_child_e2e")("1000")
 
 let testRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_param_field_read_into_successor.ash"))("selfhostBackendRunSharedTcoRuntimeManagedParamFieldReadIntoSuccessor")("selfhost_backend_shared_tco_runtime_managed_param_field_read_into_successor_e2e")("b|2|199999")
@@ -5466,6 +5779,7 @@ let run shipped =
     |> testRunStaticExecutableForRealIrStringConcatModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
+    |> testRunStaticExecutableForRealIrUnwrittenLoopSlotModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
     |> testRunStaticExecutableForRealIrMultiConstructorModule
     |> testRunStaticExecutableForRealIrGenericTypeModule
@@ -5509,6 +5823,10 @@ let run shipped =
     |> testRunSharedTcoRuntimeManagedFindStringHeadPlateau(shipped)
     |> testRunSharedTcoRuntimeManagedFindRecordHeadPlateau(shipped)
     |> testRunSharedTcoArenaVariantAccumulatorPlateau(shipped)
+    |> testRunSharedCurriedSevenParameterLoopWithFunctionArgument(shipped)
+    |> testRunSharedLetInSelfCallOperandReleasedOnce(shipped)
+    |> testRunSharedOrdComparedLetInSelfCallOperandReleasedOnce(shipped)
+    |> testRunSharedCurriedLoopCapturingRecordWithOwnedChild(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
@@ -5516,6 +5834,17 @@ let run shipped =
     |> testRunStaticExecutableForRealIrPrintBoolFalseModule
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
+    |> testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
+    |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)
+    |> testMapUpsertLoopLeavesNothingPerRound(shipped)
+    |> testTupleStateLoopLeavesNothingPerRound(shipped)
+    |> testAnnotatedNestedRecursionLeavesNothingPerRound(shipped)
+    |> testUnannotatedNestedRecursionLeavesNothingPerRound(shipped)
+    |> testEmptyListJoinLoopLeavesNothingPerRound(shipped)
+    |> testRunStaticExecutableForHandlerArmCaptureModule(shipped)
+    |> testRunStaticExecutableForUnsignedParameterAnnotationModule(shipped)
+    |> testSyscallLoopLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
     |> testRunStaticExecutableForShippedTextJoinModule(shipped)
@@ -5589,6 +5918,12 @@ let run shipped =
     |> testRunStaticExecutableForProgramArgsModule
     |> testRunStaticExecutableForProgramArgsEmptyModule
     |> testRunStaticExecutableForExternalCallModule
+    |> testRunStaticExecutableForMmapViewModule
+    |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testBytesResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

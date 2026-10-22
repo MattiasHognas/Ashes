@@ -740,6 +740,7 @@ internal static partial class LlvmCodegen
     {
         // Process-wide on every flavor: the region is one reservation all threads allocate from.
         AddReferenceCountedRegionGlobals(target, i64);
+        AddLeakCheckGlobal(target, i64);
         return EmitProgramModulePerThreadArenaGlobals(target, program, flavor, i64, arm64UsesTlsArena);
     }
 
@@ -1842,6 +1843,7 @@ internal static partial class LlvmCodegen
         if (state.IsEntry)
         {
             EmitFlushStdout(state);
+            EmitLeakCheckReport(state);
             if (IsLinuxFlavor(state.Flavor))
             {
                 EmitExit(state, LlvmApi.ConstInt(i64, 0, 0));

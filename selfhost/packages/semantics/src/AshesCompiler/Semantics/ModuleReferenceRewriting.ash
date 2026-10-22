@@ -81,7 +81,13 @@ let rewriteTypeName project moduleName boundary typeParameters name =
                     StitchedType,
                     leaf
                 )
-            | None -> resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedType)(name)
+            | None ->
+                match resolveStitchedUnqualified(moduleName)(boundary)(StitchedType)(name)(project) with
+                    | Some(definition) -> definitionCompilerName(definition)
+                    | None ->
+                        project
+                        |> resolveStitchedShippedType(name)
+                        |> resolvedCompilerName(name)
 
 // A record literal or record pattern names the record's constructor, which the lowering looks
 // up by constructor name; a private record's type and constructor carry different compiler

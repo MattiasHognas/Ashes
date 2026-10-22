@@ -180,25 +180,19 @@ let pairScalarEnvSpecializationLabeled (text: Str) =
 let scalarEnvSpecializationNotCorrelated = "the optimizer's scalar-environment specialization of pair reports its own generated label here rather than stage 0's shared origin label"
 
 // Representation is classified by a post-hoc IR walk (DecisionSnapshot's classifyInstructionRepr)
-// that tracks each local slot's representation flowing forward through StoreLocal/LoadLocal in
-// straight-line instruction order, without regard to which branch actually produced it. The RC
-// argument-normalization prologue stores to the same slot from both its Borrow arm and its
-// CopyOutArena arm, so the walk lets the copy arm's runtime-rc representation overwrite the
-// borrow arm's, and every later read of that slot inherits runtime-rc — even ordinary reads that
-// never went through the copy. Stage 0 tags representation onto each value where it is produced
-// instead of re-deriving it from slot flow, so only the value that actually came from the copy
-// carries runtime rc, and it also counts the value the representation test joins from its retain
-// and its copy, which the slot walk folds into the copy's own.
-let argNormalizePrologueMergesRcBranchLine (line: Str) =
+// over the lowered instructions. A string parameter stored twice into a list literal, with no entry
+// normalization of its own, is read three times there (the parameter slot's load and the two
+// element reads), and the walk counts each read as conservative unknown; stage 0 tags the
+// representation where the value is produced and counts the two element reads only.
+let parameterReadCountedUnknownLine (line: Str) =
     match line with
-        | "    conservative unknown: 2" -> ["    conservative unknown: 1"]
-        | "    runtime rc:           3" -> ["    runtime rc:           2"]
+        | "    conservative unknown: 2" -> ["    conservative unknown: 3"]
         | _ -> [line]
 
-let argNormalizePrologueMergesRcBranch (targetNames: List(Str)) (text: Str) =
-    rewriteLines(scopedRewrite(targetNames)(argNormalizePrologueMergesRcBranchLine)(false))(text)
+let parameterReadCountedUnknown (targetNames: List(Str)) (text: Str) =
+    rewriteLines(scopedRewrite(targetNames)(parameterReadCountedUnknownLine)(false))(text)
 
-let argNormalizePrologueMergesRcBranchReason = "representation is classified by a post-hoc IR walk that lets a stored local's representation flow past its control-flow join, so every read of an RC-argument-normalized local after the Borrow/CopyOutArena merge inherits the copy branch's runtime-rc representation instead of only the value that actually went through the copy"
+let parameterReadCountedUnknownReason = "representation is classified by a post-hoc IR walk that counts the parameter slot's own load beside the list element reads as conservative unknown, where stage 0 counts the element reads only"
 
 let checkConsumedListArgument unit =
     unit
@@ -207,8 +201,8 @@ let checkConsumedListArgument unit =
     |> (given (_) -> checkFixture("consumed_list_argument")(ExplainReuse)("reuse"))
     |> (given (_) ->
         ["makeItems"]
-        |> argNormalizePrologueMergesRcBranch
-        |> checkKnownDifference("consumed_list_argument")(ExplainMemory)("memory")(argNormalizePrologueMergesRcBranchReason))
+        |> parameterReadCountedUnknown
+        |> checkKnownDifference("consumed_list_argument")(ExplainMemory)("memory")(parameterReadCountedUnknownReason))
 
 // The join read and the function's result reload of it are classified as runtime rc here, as stage
 // 0 classifies them: the lowering records the representation it decided for the join itself, so the
@@ -262,30 +256,20 @@ let recursive representationScopedRewrite (targetLabels: List(Str)) transform (i
                     |> append(transform(line))
                 else line :: representationScopedRewrite(targetLabels)(transform)(inBlock)(rest)
 
-// A TCO loop's own result-slot reload — read once at the loop's exit, after every iteration
-// writes its candidate result to the same slot — hits the same last-write-wins post-hoc
-// classification gap as an ordinary match's result join (see `matchResultSlotJoinReason`), and
-// the closure builder that captures the loop's initial state carries a parallel gap of its own
-// for the value copied into the environment record. Both are representation-only: ownership,
-// perceus, and every other report kind for this fixture already match exactly.
-let tcoLoopBodyReprLine (line: Str) =
-    match line with
-        | "    runtime rc:           1" -> []
-        | "    copy value:           11" -> ["    copy value:           12"]
-        | _ -> [line]
-
+// The closure builder that captures a TCO loop's initial state hits the last-write-wins post-hoc
+// classification gap of an ordinary match's result join (see `matchResultSlotJoinReason`) for the
+// value copied into the environment record. It is representation-only: ownership, perceus, the
+// loop body's representation, and every other report kind for this fixture match exactly.
 let tcoClosureBuilderReprLine (line: Str) =
     match line with
         | "    region:               3" -> ["    conservative unknown: 1", "    region:               1"]
         | "    copy value:           1" -> ["    copy value:           2"]
         | _ -> [line]
 
-let tcoScalarLoopReprReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so a TCO loop's own result-slot reload (like a match's result join) and its closure builder's environment-copied value are classified from whichever write reaches them last in program order instead of the value that actually produced them"
+let tcoScalarLoopReprReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so a TCO loop's closure builder's environment-copied value is classified from whichever write reaches it last in program order instead of the value that actually produced it"
 
 let tcoScalarLoopRepresentation (text: Str) =
-    text
-    |> rewriteLines(representationScopedRewrite(["lambda_1"])(tcoLoopBodyReprLine)(false))
-    |> rewriteLines(representationScopedRewrite(["lambda_0"])(tcoClosureBuilderReprLine)(false))
+    text |> rewriteLines(representationScopedRewrite(["lambda_0"])(tcoClosureBuilderReprLine)(false))
 
 let checkTcoScalarLoop unit =
     unit
@@ -296,15 +280,14 @@ let checkTcoScalarLoop unit =
 
 // The same TCO closure-builder gap as `tcoClosureBuilderReprLine`, plus the loop body's own
 // owned `let` (a Str built fresh each iteration, compared, and dropped without escaping) adding a
-// representation fact the post-hoc walk has no equivalent event for: one runtime-rc-classified
-// value stage 0 records around that drop has no counterpart in this walk at all, so the total
-// count itself is one short in addition to the last-write-wins reclassification.
+// representation fact the post-hoc walk has no equivalent event for: one value stage 0 records
+// around that drop has no counterpart in this walk at all, so the total count itself is one short
+// in addition to the last-write-wins reclassification of an unknown value as a region one.
 let tcoOwnedLetLoopBodyReprLine (line: Str) =
     match line with
         | "    conservative unknown: 2" -> ["    conservative unknown: 1"]
         | "    region:               1" -> ["    region:               2"]
-        | "    runtime rc:           2" -> []
-        | "    copy value:           15" -> ["    copy value:           16"]
+        | "    copy value:           17" -> ["    copy value:           16"]
         | _ -> [line]
 
 let tcoScalarOwnedLetReprReason = "representation is classified by a post-hoc walk that is last-write-wins in program order and has no event for the fact stage 0 records around an owned let's drop, so a TCO loop body with an owned local (built, compared, and dropped each iteration without escaping) is short one representation fact in addition to the usual result-slot join reclassification"
@@ -321,27 +304,18 @@ let checkTcoScalarOwnedLet unit =
     |> (given (_) -> checkFixture("tco_scalar_owned_let")(ExplainReuse)("reuse"))
     |> (given (_) -> checkKnownDifference("tco_scalar_owned_let")(ExplainMemory)("memory")(tcoScalarOwnedLetReprReason)(tcoScalarOwnedLetRepresentation))
 
-// The same TCO loop-join and closure-builder gaps as `tcoLoopBodyReprLine`/
-// `tcoClosureBuilderReprLine`, with this fixture's own counts: the unused chained parameter
-// changes which values the closure builder copies into the environment, spreading its single
-// region fact across three categories instead of two.
-let tcoUnusedChainLoopBodyReprLine (line: Str) =
-    match line with
-        | "    runtime rc:           1" -> []
-        | "    copy value:           9" -> ["    copy value:           10"]
-        | _ -> [line]
-
+// The same TCO closure-builder gap as `tcoClosureBuilderReprLine`, with this fixture's own
+// counts: the unused chained parameter changes which values the closure builder copies into the
+// environment, spreading its single region fact across three categories instead of two.
 let tcoUnusedChainClosureBuilderReprLine (line: Str) =
     match line with
         | "    region:               3" -> ["    conservative unknown: 1", "    region:               1", "    copy value:           1"]
         | _ -> [line]
 
-let tcoUnusedChainReprReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so this TCO loop's result-slot join and its closure builder's environment-copied values are classified from whichever write reaches them last in program order instead of the value that actually produced them"
+let tcoUnusedChainReprReason = "representation is classified by a post-hoc walk that is last-write-wins in program order rather than per-branch, so this TCO loop's closure builder's environment-copied values are classified from whichever write reaches them last in program order instead of the value that actually produced them"
 
 let tcoUnusedChainRepresentation (text: Str) =
-    text
-    |> rewriteLines(representationScopedRewrite(["lambda_1"])(tcoUnusedChainLoopBodyReprLine)(false))
-    |> rewriteLines(representationScopedRewrite(["lambda_0"])(tcoUnusedChainClosureBuilderReprLine)(false))
+    text |> rewriteLines(representationScopedRewrite(["lambda_0"])(tcoUnusedChainClosureBuilderReprLine)(false))
 
 let checkTcoUnusedChainParameter unit =
     unit

@@ -23,6 +23,20 @@ let checkFlatParenthesizedBlock unit =
                 | _ -> test.fail("expected outer flat binding")
         | _ -> test.fail("expected parenthesized expression body")
 
+// A parenthesized `let` after an operator, as the formatter lays it out: its value is a nested
+// `let ... in` indented left of the outer `let`, which its own `in` closes, not the layout.
+let checkParenthesizedLetWithNestedLetValue unit =
+    match expectNoDiagnostics("let r =\n    \"q\" + (let g =\n        let s = \"x\"\n        in s\n    in g)\n\nr") with
+        | ProgramSyntax { items = _binding :: [], body = Some(_body) } -> Unit
+        | _ -> test.fail("expected one binding and a body")
+
+// The same layout with a lambda value whose body starts on a line left of the `let`: after `->`
+// the line continues the value, as stage 0's call loop is the only place the layout ends one.
+let checkParenthesizedLetWithLambdaValueLeftOfTheLet unit =
+    match expectNoDiagnostics("let r =\n    \"q\" + (let recursive f : List(Int) -> Str =\n        given (items: List(Int)) ->\n            match items with\n                | [] -> \"]\"\n                | _ :: tail -> f(tail)\n    in f([1]))\n\nr") with
+        | ProgramSyntax { items = _binding :: [], body = Some(_body) } -> Unit
+        | _ -> test.fail("expected one binding and a body")
+
 let checkCapabilityBoundary unit =
     match expectNoDiagnostics(
         "capability Value(a) =\n    | get : Unit -> a\n\n(handle perform Value.get(Unit) with\n    | Value.get(_) -> resume(1)\n    | return(value) -> value)"
@@ -57,6 +71,8 @@ let expectDiagnosticCode code source =
 let run unit =
     unit
     |> checkFlatParenthesizedBlock
+    |> checkParenthesizedLetWithNestedLetValue
+    |> checkParenthesizedLetWithLambdaValueLeftOfTheLet
     |> checkCapabilityBoundary
     |> (given (_) -> expectDiagnosticCode("ASH045")("let value : out Int = 1\nvalue"))
     |> (given (_) -> expectDiagnosticCode("ASH046")("let value : FfiStr(borrowed) = 1\nvalue"))

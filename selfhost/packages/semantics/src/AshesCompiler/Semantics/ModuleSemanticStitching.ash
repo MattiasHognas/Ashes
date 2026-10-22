@@ -26,6 +26,7 @@ export (
     value buildStitchedSemanticProject,
     value resolveStitchedUnqualified,
     value resolveStitchedQualified,
+    value resolveStitchedShippedType,
     value resolveStitchedModuleAlias,
     value resolveStitchedIntrinsicSelector,
     value stitchedModulePlainImports,
@@ -899,6 +900,26 @@ let resolveShippedModuleExport qualifier kind name (project: StitchedSemanticPro
                         |> deepCopy
                         |> Some
     else None
+
+// A type a shipped module exports is in scope by its bare name wherever the program reaches that
+// module, imported or not, as stage 0's one type namespace holds every loaded standard-library
+// type: `MapTree(Str, Bool)` names the map type in a program that reaches `Ashes.Collection.Map`
+// through qualified references alone.
+let recursive resolveShippedTypeIn name (scopes: List(StitchedModuleScope)) =
+    match scopes with
+        | [] -> None
+        | moduleScope :: rest ->
+            if Ashes.Text.startsWith(moduleScope.name)("Ashes.")
+            then
+                match findExportedDefinition(name)(StitchedType)(moduleScope.definitions) with
+                    | Some(definition) ->
+                        if definition.kind == StitchedType
+                        then Some(definition)
+                        else resolveShippedTypeIn(name)(rest)
+                    | None -> resolveShippedTypeIn(name)(rest)
+            else resolveShippedTypeIn(name)(rest)
+
+let resolveStitchedShippedType name (project: StitchedSemanticProject) = resolveShippedTypeIn(name)(project.scopes)
 
 let resolveStitchedQualified moduleName qualifier kind name (project: StitchedSemanticProject) =
     match findModule(moduleName)(project.scopes) with

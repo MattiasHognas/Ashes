@@ -79,7 +79,7 @@ function __rcdrop_record_6  [RuntimeManagedAdtDropper]
     Return                Source=3   (parameter_released_behind_pair_result.ash:13:1)
 
 function lambda_2  [ClosureHelper from step]
-  locals=9 temps=51
+  locals=9 temps=53
     LoadLocal             Target=14 Slot=1   (parameter_released_behind_pair_result.ash:13:1)
     LoadArgumentOwnership Target=15   (parameter_released_behind_pair_result.ash:13:1)
     LoadConstInt          Target=16 Value=1   (parameter_released_behind_pair_result.ash:13:1)
@@ -126,66 +126,69 @@ function lambda_2  [ClosureHelper from step]
     Alloc                 Target=7 SizeBytes=16 RuntimeManaged=true   (parameter_released_behind_pair_result.ash:13:56)
     StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=0   (parameter_released_behind_pair_result.ash:13:56)
     StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=13   (parameter_released_behind_pair_result.ash:13:56)
+    LoadLocal             Target=23 Slot=1   (parameter_released_behind_pair_result.ash:13:1)
+    RcDrop                SourceTemp=23 TypeName=Where RuntimeManaged=true
     StoreLocal            Slot=5 Source=7   (parameter_released_behind_pair_result.ash:13:1)
-    IsReferenceCounted    Target=23 SourceTemp=7
-    JumpIfFalse           CondTemp=23 Target=general_rc_result_arena_copy_10   (parameter_released_behind_pair_result.ash:13:1)
+    IsReferenceCounted    Target=24 SourceTemp=7
+    JumpIfFalse           CondTemp=24 Target=general_rc_result_arena_copy_10   (parameter_released_behind_pair_result.ash:13:1)
     Jump                  Target=general_rc_result_already_owned_11   (parameter_released_behind_pair_result.ash:13:1)
   general_rc_result_arena_copy_10:
-    IsReferenceCounted    Target=24 SourceTemp=7
-    JumpIfFalse           CondTemp=24 Target=rc_representation_copy_12   (parameter_released_behind_pair_result.ash:13:1)
-    RcDup                 Target=25 SourceTemp=7 RuntimeManaged=true
-    StoreLocal            Slot=6 Source=25   (parameter_released_behind_pair_result.ash:13:1)
+    IsReferenceCounted    Target=25 SourceTemp=7
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_12   (parameter_released_behind_pair_result.ash:13:1)
+    RcDup                 Target=26 SourceTemp=7 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=26   (parameter_released_behind_pair_result.ash:13:1)
     Jump                  Target=rc_representation_done_13   (parameter_released_behind_pair_result.ash:13:1)
   rc_representation_copy_12:
-    Alloc                 Target=26 SizeBytes=16 RuntimeManaged=true   (parameter_released_behind_pair_result.ash:13:1)
-    LoadMemOffset         Target=27 BasePtr=7 OffsetBytes=0   (parameter_released_behind_pair_result.ash:13:1)
-    StoreMemOffset        BasePtr=26 OffsetBytes=0 Source=27   (parameter_released_behind_pair_result.ash:13:1)
-    LoadMemOffset         Target=28 BasePtr=7 OffsetBytes=8   (parameter_released_behind_pair_result.ash:13:1)
-    IsReferenceCounted    Target=29 SourceTemp=28
-    JumpIfFalse           CondTemp=29 Target=rc_representation_copy_14   (parameter_released_behind_pair_result.ash:13:1)
-    RcDup                 Target=30 SourceTemp=28 RuntimeManaged=true
-    StoreLocal            Slot=7 Source=30   (parameter_released_behind_pair_result.ash:13:1)
+    Alloc                 Target=27 SizeBytes=16 RuntimeManaged=true   (parameter_released_behind_pair_result.ash:13:1)
+    LoadMemOffset         Target=28 BasePtr=7 OffsetBytes=0   (parameter_released_behind_pair_result.ash:13:1)
+    StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=28   (parameter_released_behind_pair_result.ash:13:1)
+    LoadMemOffset         Target=29 BasePtr=7 OffsetBytes=8   (parameter_released_behind_pair_result.ash:13:1)
+    IsReferenceCounted    Target=30 SourceTemp=29
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_14   (parameter_released_behind_pair_result.ash:13:1)
+    RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
+    StoreLocal            Slot=7 Source=31   (parameter_released_behind_pair_result.ash:13:1)
     Jump                  Target=rc_representation_done_15   (parameter_released_behind_pair_result.ash:13:1)
   rc_representation_copy_14:
-    LoadConstInt          Target=32 Value=0   (parameter_released_behind_pair_result.ash:13:1)
-    CallKnown             Target=33 FuncLabel=__rcnorm_3 EnvTemp=32 ArgTemp=28   (parameter_released_behind_pair_result.ash:13:1)
-    StoreLocal            Slot=7 Source=33   (parameter_released_behind_pair_result.ash:13:1)
+    LoadConstInt          Target=33 Value=0   (parameter_released_behind_pair_result.ash:13:1)
+    CallKnown             Target=34 FuncLabel=__rcnorm_3 EnvTemp=33 ArgTemp=29   (parameter_released_behind_pair_result.ash:13:1)
+    StoreLocal            Slot=7 Source=34   (parameter_released_behind_pair_result.ash:13:1)
   rc_representation_done_15:
-    LoadLocal             Target=34 Slot=7   (parameter_released_behind_pair_result.ash:13:1)
-    StoreMemOffset        BasePtr=26 OffsetBytes=8 Source=34   (parameter_released_behind_pair_result.ash:13:1)
-    StoreLocal            Slot=6 Source=26   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=35 Slot=7   (parameter_released_behind_pair_result.ash:13:1)
+    StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=35   (parameter_released_behind_pair_result.ash:13:1)
+    StoreLocal            Slot=6 Source=27   (parameter_released_behind_pair_result.ash:13:1)
   rc_representation_done_13:
-    LoadLocal             Target=35 Slot=6   (parameter_released_behind_pair_result.ash:13:1)
-    StoreLocal            Slot=5 Source=35   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=36 Slot=6   (parameter_released_behind_pair_result.ash:13:1)
+    StoreLocal            Slot=5 Source=36   (parameter_released_behind_pair_result.ash:13:1)
   general_rc_result_already_owned_11:
-    LoadLocal             Target=36 Slot=5   (parameter_released_behind_pair_result.ash:13:1)
-    LoadArgumentOwnership Target=37   (parameter_released_behind_pair_result.ash:13:1)
-    LoadConstInt          Target=38 Value=1   (parameter_released_behind_pair_result.ash:13:1)
-    ShrInt                Target=39 Left=37 Right=38   (parameter_released_behind_pair_result.ash:13:1)
-    JumpIfFalse           CondTemp=39 Target=rc_result_owned_16   (parameter_released_behind_pair_result.ash:13:1)
-    Alloc                 Target=40 SizeBytes=16   (parameter_released_behind_pair_result.ash:13:1)
-    LoadMemOffset         Target=41 BasePtr=36 OffsetBytes=0   (parameter_released_behind_pair_result.ash:13:1)
-    StoreMemOffset        BasePtr=40 OffsetBytes=0 Source=41   (parameter_released_behind_pair_result.ash:13:1)
-    LoadMemOffset         Target=42 BasePtr=36 OffsetBytes=8   (parameter_released_behind_pair_result.ash:13:1)
-    Alloc                 Target=43 SizeBytes=8   (parameter_released_behind_pair_result.ash:13:1)
-    MakeClosure           Target=44 FuncLabel=__deepcopy_4 EnvPtrTemp=43 EnvSizeBytes=8   (parameter_released_behind_pair_result.ash:13:1)
-    StoreMemOffset        BasePtr=43 OffsetBytes=0 Source=44   (parameter_released_behind_pair_result.ash:13:1)
-    CallClosure           Target=45 ClosureTemp=44 ArgTemp=42   (parameter_released_behind_pair_result.ash:13:1)
-    StoreMemOffset        BasePtr=40 OffsetBytes=8 Source=45   (parameter_released_behind_pair_result.ash:13:1)
-    RcIsUnique            Target=46 SourceTemp=36
-    JumpIfFalse           CondTemp=46 Target=rc_drop_tuple_shared_18   (parameter_released_behind_pair_result.ash:13:1)
-    LoadMemOffset         Target=47 BasePtr=36 OffsetBytes=8   (parameter_released_behind_pair_result.ash:13:1)
-    LoadConstInt          Target=48 Value=0   (parameter_released_behind_pair_result.ash:13:1)
-    CallKnown             Target=49 FuncLabel=__rcdrop_record_6 EnvTemp=48 ArgTemp=47   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=37 Slot=5   (parameter_released_behind_pair_result.ash:13:1)
+    LoadArgumentOwnership Target=38   (parameter_released_behind_pair_result.ash:13:1)
+    LoadConstInt          Target=39 Value=1   (parameter_released_behind_pair_result.ash:13:1)
+    ShrInt                Target=40 Left=38 Right=39   (parameter_released_behind_pair_result.ash:13:1)
+    AndInt                Target=41 Left=40 Right=39   (parameter_released_behind_pair_result.ash:13:1)
+    JumpIfFalse           CondTemp=41 Target=rc_result_owned_16   (parameter_released_behind_pair_result.ash:13:1)
+    Alloc                 Target=42 SizeBytes=16   (parameter_released_behind_pair_result.ash:13:1)
+    LoadMemOffset         Target=43 BasePtr=37 OffsetBytes=0   (parameter_released_behind_pair_result.ash:13:1)
+    StoreMemOffset        BasePtr=42 OffsetBytes=0 Source=43   (parameter_released_behind_pair_result.ash:13:1)
+    LoadMemOffset         Target=44 BasePtr=37 OffsetBytes=8   (parameter_released_behind_pair_result.ash:13:1)
+    Alloc                 Target=45 SizeBytes=8   (parameter_released_behind_pair_result.ash:13:1)
+    MakeClosure           Target=46 FuncLabel=__deepcopy_4 EnvPtrTemp=45 EnvSizeBytes=8   (parameter_released_behind_pair_result.ash:13:1)
+    StoreMemOffset        BasePtr=45 OffsetBytes=0 Source=46   (parameter_released_behind_pair_result.ash:13:1)
+    CallClosure           Target=47 ClosureTemp=46 ArgTemp=44   (parameter_released_behind_pair_result.ash:13:1)
+    StoreMemOffset        BasePtr=42 OffsetBytes=8 Source=47   (parameter_released_behind_pair_result.ash:13:1)
+    RcIsUnique            Target=48 SourceTemp=37
+    JumpIfFalse           CondTemp=48 Target=rc_drop_tuple_shared_18   (parameter_released_behind_pair_result.ash:13:1)
+    LoadMemOffset         Target=49 BasePtr=37 OffsetBytes=8   (parameter_released_behind_pair_result.ash:13:1)
+    LoadConstInt          Target=50 Value=0   (parameter_released_behind_pair_result.ash:13:1)
+    CallKnown             Target=51 FuncLabel=__rcdrop_record_6 EnvTemp=50 ArgTemp=49   (parameter_released_behind_pair_result.ash:13:1)
   rc_drop_tuple_shared_18:
-    RcDrop                SourceTemp=36 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=8 Source=40   (parameter_released_behind_pair_result.ash:13:1)
+    RcDrop                SourceTemp=37 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=8 Source=42   (parameter_released_behind_pair_result.ash:13:1)
     Jump                  Target=rc_result_done_17   (parameter_released_behind_pair_result.ash:13:1)
   rc_result_owned_16:
-    StoreLocal            Slot=8 Source=36   (parameter_released_behind_pair_result.ash:13:1)
+    StoreLocal            Slot=8 Source=37   (parameter_released_behind_pair_result.ash:13:1)
   rc_result_done_17:
-    LoadLocal             Target=50 Slot=8   (parameter_released_behind_pair_result.ash:13:1)
-    Return                Source=50   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=52 Slot=8   (parameter_released_behind_pair_result.ash:13:1)
+    Return                Source=52   (parameter_released_behind_pair_result.ash:13:1)
 
 function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from step]
   locals=2 temps=5
@@ -226,7 +229,7 @@ function lambda_0  [SourceFunction from step]
     Return                Source=2   (parameter_released_behind_pair_result.ash:13:1)
 
 function lambda_7  [SourceFunction from rewrite]
-  locals=23 temps=49
+  locals=23 temps=50
     LoadLocal             Target=0 Slot=1   (parameter_released_behind_pair_result.ash:16:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (parameter_released_behind_pair_result.ash:16:5)
@@ -312,20 +315,21 @@ function lambda_7  [SourceFunction from rewrite]
     LoadArgumentOwnership Target=40   (parameter_released_behind_pair_result.ash:15:1)
     LoadConstInt          Target=41 Value=1   (parameter_released_behind_pair_result.ash:15:1)
     ShrInt                Target=42 Left=40 Right=41   (parameter_released_behind_pair_result.ash:15:1)
-    JumpIfFalse           CondTemp=42 Target=rc_result_owned_30   (parameter_released_behind_pair_result.ash:15:1)
-    Alloc                 Target=43 SizeBytes=8   (parameter_released_behind_pair_result.ash:15:1)
-    MakeClosure           Target=44 FuncLabel=__deepcopy_4 EnvPtrTemp=43 EnvSizeBytes=8   (parameter_released_behind_pair_result.ash:15:1)
-    StoreMemOffset        BasePtr=43 OffsetBytes=0 Source=44   (parameter_released_behind_pair_result.ash:15:1)
-    CallClosure           Target=45 ClosureTemp=44 ArgTemp=31   (parameter_released_behind_pair_result.ash:15:1)
-    LoadConstInt          Target=46 Value=0   (parameter_released_behind_pair_result.ash:15:1)
-    CallKnown             Target=47 FuncLabel=__rcdrop_record_6 EnvTemp=46 ArgTemp=31   (parameter_released_behind_pair_result.ash:15:1)
-    StoreLocal            Slot=22 Source=45   (parameter_released_behind_pair_result.ash:15:1)
+    AndInt                Target=43 Left=42 Right=41   (parameter_released_behind_pair_result.ash:15:1)
+    JumpIfFalse           CondTemp=43 Target=rc_result_owned_30   (parameter_released_behind_pair_result.ash:15:1)
+    Alloc                 Target=44 SizeBytes=8   (parameter_released_behind_pair_result.ash:15:1)
+    MakeClosure           Target=45 FuncLabel=__deepcopy_4 EnvPtrTemp=44 EnvSizeBytes=8   (parameter_released_behind_pair_result.ash:15:1)
+    StoreMemOffset        BasePtr=44 OffsetBytes=0 Source=45   (parameter_released_behind_pair_result.ash:15:1)
+    CallClosure           Target=46 ClosureTemp=45 ArgTemp=31   (parameter_released_behind_pair_result.ash:15:1)
+    LoadConstInt          Target=47 Value=0   (parameter_released_behind_pair_result.ash:15:1)
+    CallKnown             Target=48 FuncLabel=__rcdrop_record_6 EnvTemp=47 ArgTemp=31   (parameter_released_behind_pair_result.ash:15:1)
+    StoreLocal            Slot=22 Source=46   (parameter_released_behind_pair_result.ash:15:1)
     Jump                  Target=rc_result_done_31   (parameter_released_behind_pair_result.ash:15:1)
   rc_result_owned_30:
     StoreLocal            Slot=22 Source=31   (parameter_released_behind_pair_result.ash:15:1)
   rc_result_done_31:
-    LoadLocal             Target=48 Slot=22   (parameter_released_behind_pair_result.ash:15:1)
-    Return                Source=48   (parameter_released_behind_pair_result.ash:15:1)
+    LoadLocal             Target=49 Slot=22   (parameter_released_behind_pair_result.ash:15:1)
+    Return                Source=49   (parameter_released_behind_pair_result.ash:15:1)
 
 function lambda_8  [SourceFunction from weigh]
   locals=10 temps=16
@@ -365,7 +369,7 @@ function lambda_8  [SourceFunction from weigh]
     Return                Source=15   (parameter_released_behind_pair_result.ash:21:1)
 
 function _start_main  [ProgramEntry]
-  locals=22 temps=28
+  locals=22 temps=34
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (parameter_released_behind_pair_result.ash:13:1)
     MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (parameter_released_behind_pair_result.ash:13:1)
@@ -426,5 +430,15 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=21
     LoadLocal             Target=27 Slot=20   (parameter_released_behind_pair_result.ash:13:1)
+    LoadLocal             Target=28 Slot=14
+    LoadConstInt          Target=29 Value=0
+    CmpIntNe              Target=30 Left=28 Right=29
+    JumpIfFalse           CondTemp=30 Target=general_rc_owned_absent_35
+    IsReferenceCounted    Target=31 SourceTemp=28
+    JumpIfFalse           CondTemp=31 Target=general_rc_owned_absent_35
+    LoadConstInt          Target=32 Value=0
+    CallKnown             Target=33 FuncLabel=__rcdrop_record_6 EnvTemp=32 ArgTemp=28
+    StoreLocal            Slot=14 Source=29
+  general_rc_owned_absent_35:
     Return                Source=27
 

@@ -403,7 +403,7 @@ public sealed partial class Lowering
 
     private TcoRcEligibility EvaluateTcoListRcEligibility(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
     {
-        bool generalAccumulator = IsGeneralRcAccumulatorList(tco, facts, list);
+        bool generalAccumulator = IsGeneralRcAccumulatorList(tco, facts, list) || IsWalkedOrRefilledList(tco, facts, list);
         bool layoutEligible = (CanRuntimeManageTcoListElement(list.Element)
                 || (IsGeneralRcTcoListElement(list.Element) && facts.AffineConsList && !facts.ConsumedListTail)
                 || generalAccumulator)
@@ -411,7 +411,8 @@ public sealed partial class Lowering
         bool consumedTail = facts.ConsumedListTail
             && !CanArenaReset(Prune(list.Element))
             && !IsBorrowableInspectOnlyList(tco, facts.ParameterOrdinal, list);
-        TcoRcEligibilityReason reason = facts.FreshRebuiltList
+        bool freshRebuiltList = facts.FreshRebuiltList || IsHandedOnFreshScalarList(tco, facts, list);
+        TcoRcEligibilityReason reason = freshRebuiltList
             ? TcoRcEligibilityReason.FreshListRebuild
             : facts.AffineConsList
                 ? TcoRcEligibilityReason.AffineConsList
@@ -421,7 +422,7 @@ public sealed partial class Lowering
                         ? TcoRcEligibilityReason.MissingListOwnershipShape
                         : TcoRcEligibilityReason.UnsupportedListElementLayout;
         return new TcoRcEligibility(
-            facts.FreshRebuiltList || facts.AffineConsList || consumedTail || generalAccumulator,
+            freshRebuiltList || facts.AffineConsList || consumedTail || generalAccumulator,
             layoutEligible,
             TcoRuntimeManagedKind.List,
             reason);
@@ -443,12 +444,62 @@ public sealed partial class Lowering
             && !tco.TmcShapePresent
             && !facts.ConsumedListTail
             && !facts.LoopInvariant
-            && ((IsGeneralRcValueType(list.Element)
+            && ((IsCallResultAccumulatorElement(list.Element)
                     && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.AccumulatorRebuild)
                         .Contains(facts.ParameterOrdinal))
                 || (IsChoiceAccumulatorElement(list.Element)
                     && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.ChoiceAccumulatorRebuild)
                         .Contains(facts.ParameterOrdinal)));
+
+    // A list the loop walks by its consumed tail and refills with a call's result (a worklist's
+    // front queue refilled from its back queue). Left in the arena, a refill borrows the heads of
+    // whatever value the call was given, often a part of an earlier iteration's owned result, and
+    // that result could then never be released. Placed on the reference-counted heap, the refill
+    // is taken or copied at the back edge and the walk retains the tail it moves on to. Only a list
+    // of strings or of lists of strings (a worklist of paths): a head of either matched out of the
+    // list is protected wherever it escapes, where a head of any other heap type returned from the
+    // loop would be released with the list.
+    private bool IsWalkedOrRefilledList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+        => GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_WALKREFILL") is null
+            && !tco.TmcShapePresent
+            && !facts.ConsumedListTail
+            && !facts.LoopInvariant
+            && IsWalkedOrRefilledElement(Prune(list.Element))
+            && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.WalkedOrRefilled)
+                .Contains(facts.ParameterOrdinal);
+
+    // A list of scalars the loop hands on at some self-calls and rebuilds fresh at the others (one
+    // arm replaces it with a helper's result, another passes it through). Left in the arena, each
+    // rebuild that comes back reference-counted, a tail-modulo-cons helper's result, becomes the
+    // next iteration's parameter and is never released. Placed on the reference-counted heap it is
+    // taken or copied at the back edge and its predecessor released. Only scalar elements: a
+    // rebuild of a list whose elements hold heap values shares those values with the handed-on
+    // list, and the back edge would release them with the predecessor.
+    private bool IsHandedOnFreshScalarList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+        => Environment.GetEnvironmentVariable("GRC_NO_HANDEDONFRESHLIST") is null
+            && !tco.TmcShapePresent
+            && CanArenaReset(Prune(list.Element))
+            && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.FreshOrHandedOnListRebuild)
+                .Contains(facts.ParameterOrdinal);
+
+    private bool IsWalkedOrRefilledElement(TypeRef element)
+        => element is TypeRef.TStr
+            || (Environment.GetEnvironmentVariable("GRC_NO_WALKREFILLPATHS") is null
+                && element is TypeRef.TList inner
+                && Prune(inner.Element) is TypeRef.TStr);
+
+    // An accumulator one self-call replaces with a call's result: a list of the contract's values,
+    // or of any other heap element whose graph is bounded (no list). Left in the arena, the call's
+    // result is built over values the iteration owns (an earlier helper's result), which then have
+    // no owner left to release them. A list inside an element may be handed on to an arena sibling
+    // parameter, which would keep it past the predecessor the back edge releases.
+    private bool IsCallResultAccumulatorElement(TypeRef element)
+        => IsGeneralRcValueType(element)
+            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPACCUMULATOR") is null
+                && !CanArenaReset(Prune(element))
+                && CanRuntimeManageTcoListElement(element)
+                && HasBoundedCopy(element, []));
 
     private bool IsChoiceAccumulatorElement(TypeRef element)
         => Environment.GetEnvironmentVariable("GRC_NO_BRANCHACCUMULATOR") is null
@@ -480,7 +531,7 @@ public sealed partial class Lowering
             && candidateOrdinal < tco.ParamSlots.Count
             && !tco.ParamFacts[tco.ParamSlots[candidateOrdinal]].ConsumedListTail
             && parameterTypes[candidateOrdinal] is { } candidateType
-            && (Prune(candidateType) is TypeRef.TList { Element: var element } && IsHeapListAccumulatorElement(element)
+            && (Prune(candidateType) is TypeRef.TList { Element: var element } && IsUnblockedListAccumulatorElement(element)
                 || (tco.SelfCallParameterFlow is not null && IsGeneralRcValueType(Prune(candidateType))))
                 ? Prune(candidateType)
                 : null;
@@ -504,11 +555,14 @@ public sealed partial class Lowering
         return null;
     }
 
-    // A list whose cells the loop builds on the reference-counted heap whatever its placement: one of
-    // strings, or of any element that owns heap parts.
-    private bool IsHeapListAccumulatorElement(TypeRef element)
+    // A list accumulator a sibling blocks only when it may receive part of it. One of strings, or of
+    // any element that owns heap parts, has its cells built on the reference-counted heap whatever its
+    // placement. One of inline elements kept in the arena has the type of a list field of the contract
+    // values the iteration owns, so the back edge could release none of them.
+    private bool IsUnblockedListAccumulatorElement(TypeRef element)
         => Prune(element) is TypeRef.TStr
-            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPLISTUNBLOCK") is null && !CanArenaReset(Prune(element)));
+            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPLISTUNBLOCK") is null && !CanArenaReset(Prune(element)))
+            || (Environment.GetEnvironmentVariable("GRC_NO_INLINELISTUNBLOCK") is null && CanArenaReset(Prune(element)));
 
     // Whether a self-call may pass the accumulator, or a part of it, in the sibling's position: from
     // the body's parameter flow when it was followed, from the sibling's type otherwise.
@@ -518,9 +572,19 @@ public sealed partial class Lowering
         int siblingOrdinal,
         int accumulatorOrdinal,
         TypeRef accumulatorType)
-        => CallResultMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal))
-            && (tco.SelfCallParameterFlow is not { } flow
+        => TypeMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal), instantiated: false)
+            && (AccumulatorFlowFor(tco, accumulatorType) is not { } flow
                 || (flow.TryGetValue(siblingOrdinal, out HashSet<int>? sources) && sources.Contains(accumulatorOrdinal)));
+
+    // A list of strings reaches a sibling only through its spine: a string head matched out of it
+    // is retained wherever it is kept, so the sibling holding one keeps a reference of its own.
+    private Dictionary<int, HashSet<int>>? AccumulatorFlowFor(TcoContext tco, TypeRef accumulatorType)
+        => Environment.GetEnvironmentVariable("GRC_NO_SPINEFLOW") is null
+            && accumulatorType is TypeRef.TList { Element: var element }
+            && Prune(element) is TypeRef.TStr
+            && tco.SelfCallSpineFlow is { } spine
+                ? spine
+                : tco.SelfCallParameterFlow;
 
     private bool IsPermanentlyBlockingTcoParam(
         TcoContext tco,

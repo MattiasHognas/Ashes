@@ -1,0 +1,27 @@
+// A choice accumulator grown by a call's result that reads a sibling loop parameter: a call is a
+// value of its own, so the head does not count as reading the parameter, the accumulator is placed
+// on the reference-counted heap and the back edge copies its cell, releasing the call's result
+// once the copy holds its own reference.
+let recursive enqueue (pending: List(Str)) (back: List(Str)) (index: Int) =
+    match pending with
+        | [] -> back
+        | key :: rest ->
+            if index == 1
+            then enqueue(rest)(back)(index + 1)
+            else enqueue(rest)(Ashes.Text.fromInt(index) :: back)(index + 1)
+
+let recursive countAll (values: List(Str)) (total: Int) =
+    match values with
+        | [] -> total
+        | _value :: rest -> countAll(rest)(total + 1)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else
+        let keys = ["a" + "1", "b" + "2", "c" + "3", "d" + "4"]
+        in rounds(n - 1)(total + countAll(enqueue(keys)([])(0))(0))
+
+0
+|> rounds(3)
+|> Ashes.IO.print

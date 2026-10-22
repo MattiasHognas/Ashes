@@ -464,13 +464,20 @@ let resolveHostTargetMachine triple =
                             |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelDefault)(relocModeStatic)
                             |> Ok
 
+// Whether the program is built with the leak check, stage 0's `ASHES_RC_LEAKCHECK=1`: it then
+// counts its reference-counted cells and reports the live ones on standard error at its end.
+let leakCheckRequested unit =
+    match Ashes.IO.Environment.get("ASHES_RC_LEAKCHECK") with
+        | Ok(Some(value)) -> value == "1"
+        | _ -> false
+
 // The lowered program as a linux-x64 relocatable object, through `codegenProgram` and real LLVM.
 let emitObject lowered =
     (let _ = initializeX86Target(Unit)
     in
         let context = contextCreate(Unit)
         in
-            match codegenProgram(entrySymbolName)(context)(lowered) with
+            match codegenProgramWith(leakCheckRequested(Unit))(entrySymbolName)(context)(lowered) with
                 | (module_, builder) ->
                     match resolveHostTargetMachine(linuxX64Triple) with
                         | Error(message) -> Error(message)

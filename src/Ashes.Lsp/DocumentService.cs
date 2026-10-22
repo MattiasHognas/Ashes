@@ -138,6 +138,13 @@ public static partial class DocumentService
     /// Strips the import header (import lines and leading blank/comment lines) from the source.
     /// Returns the stripped source, the character offset where it starts in the original, and the import module names.
     /// </summary>
+    // The binding selectors of a header (`import M.name [as x]`), which the standalone layout binds in
+    // the entry under their local names.
+    private static ImportSelector[] BindingSelectors(IReadOnlyList<ImportItem> imports)
+        => [.. imports
+            .Where(item => item.Selector is not null)
+            .Select(item => new ImportSelector(item.ModuleName, item.Selector!, item.Alias ?? item.Selector!))];
+
     private static ImportHeaderInfo StripImportHeader(string source)
     {
         SourceTextIndex sourceIndex = new(source);
@@ -543,7 +550,9 @@ public static partial class DocumentService
         {
             var standaloneLayout = ProjectSupport.BuildStandaloneCompilationLayout(
                 header.StrippedSource,
-                header.Imports.Select(x => x.ModuleName).ToArray());
+                header.Imports.Select(x => x.ModuleName).ToArray(),
+                "<memory>",
+                BindingSelectors(header.Imports));
             layout = standaloneLayout;
             analysisSource = standaloneLayout.Source;
             SourceTextIndex analysisIndex = new(analysisSource);

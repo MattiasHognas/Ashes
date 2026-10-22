@@ -578,6 +578,38 @@ public sealed class OwnershipTests
             "a borrowed parameter part has no release of its own");
     }
 
+    // A function whose reference-counted result a caller may ask to have copied into the arena
+    // reads that request as bit 1 of the hidden ownership word alone: the shifted word is masked,
+    // so a request for a tuple result's parts (bit 2) is never taken for an arena-result request.
+    [Test]
+    public void Arena_result_request_is_read_as_one_bit_of_the_ownership_word()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let mk (n: Int) = Ashes.Text.fromInt(n) + "!"
+
+            Ashes.IO.print(mk(1))
+            """);
+
+        List<(IrInst Shift, IrInst Next)> requestReads = [];
+        foreach (IrFunction function in ir.Functions)
+        {
+            HashSet<int> words = [.. function.Instructions.OfType<IrInst.LoadArgumentOwnership>().Select(load => load.Target)];
+            for (int i = 1; i + 1 < function.Instructions.Count; i++)
+            {
+                if (function.Instructions[i] is IrInst.ShrInt shift && words.Contains(shift.Left)
+                    && function.Instructions[i - 1] is IrInst.LoadConstInt { Value: 1 } amount && amount.Target == shift.Right)
+                {
+                    requestReads.Add((shift, function.Instructions[i + 1]));
+                }
+            }
+        }
+
+        requestReads.ShouldNotBeEmpty("the function honors a request for an arena result");
+        requestReads.ShouldAllBe(read =>
+            read.Next is IrInst.AndInt && ((IrInst.AndInt)read.Next).Left == ((IrInst.ShrInt)read.Shift).Target);
+    }
+
     // The same tuple shape around a let-owned fresh string holds a reference-counted element, so
     // the tuple is placed on the reference-counted heap with its list of records copied there: it
     // takes a reference of its own to the string, and the let's scope-exit release still fires.

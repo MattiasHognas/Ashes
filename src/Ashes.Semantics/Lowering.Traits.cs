@@ -780,6 +780,20 @@ public sealed partial class Lowering
         };
     }
 
+    // A comparison's result is a Bool, which holds neither operand, and neither of its two calls
+    // passes an ownership word, so the method borrows both operands: the call just emitted gets no
+    // compensating duplicate from lifetime placement, which nothing would release. The emitted
+    // instruction is the one registered, since Emit may re-create it with its source location.
+    private void MarkComparisonOperandBorrowed(bool returnsBool)
+    {
+        if (returnsBool
+            && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCOMPARE") is null
+            && _inst[^1] is IrInst.CallClosure emitted)
+        {
+            _borrowedArgumentCalls.Add(emitted);
+        }
+    }
+
     private (int, TypeRef)? RecordMappedBinaryTrait(
         string traitName,
         string methodName,
@@ -830,9 +844,40 @@ public sealed partial class Lowering
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int first = NewTemp();
         Emit(new IrInst.CallClosure(first, methodTemp, leftTemp));
+        MarkComparisonOperandBorrowed(returnsBool);
         int result = NewTemp();
         Emit(new IrInst.CallClosure(result, first, rightTemp));
+        MarkComparisonOperandBorrowed(returnsBool);
+        if (returnsBool)
+        {
+            ReleaseFreshComparisonOperand(leftTemp, operandType);
+            ReleaseFreshComparisonOperand(rightTemp, operandType);
+        }
         return (result, returnsBool ? new TypeRef.TBool() : operandType);
+    }
+
+    /// <summary>
+    /// Releases an operand of a trait-dispatched comparison (<c>==</c>, <c>!=</c>, <c>&lt;</c>, ...)
+    /// that no binding owns: a call result, say. The method borrows both operands and its result is
+    /// a scalar <c>Bool</c> that keeps nothing of them, so the caller's reference dies with the call.
+    /// A value read out of a binding is borrowed and left to its owner.
+    /// </summary>
+    private void ReleaseFreshComparisonOperand(int operandTemp, TypeRef operandType)
+    {
+        TypeRef pruned = Prune(operandType);
+        if (Environment.GetEnvironmentVariable("GRC_NO_COMPAREOPERAND") is not null
+            || !IsNewlyProducedRcTemp(operandTemp)
+            || CanArenaReset(pruned)
+            || pruned is not (TypeRef.TNamedType or TypeRef.TList or TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt))
+        {
+            return;
+        }
+
+        EmitRuntimeManagedChildDrop(operandTemp, pruned);
+        _tempOwnershipFacts[operandTemp] = _tempOwnershipFacts[operandTemp] with
+        {
+            Ownership = LoweredTempOwnershipKind.Transferred,
+        };
     }
 
     private (int, TypeRef)? RecordMappedUnaryTrait(

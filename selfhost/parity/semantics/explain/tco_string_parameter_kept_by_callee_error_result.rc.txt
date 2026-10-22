@@ -71,15 +71,65 @@ Function: validateName
     reuse tokens:         0
     copies:               0
 
-Function: validateAll [lambda_7]
+Function: __deepcopy_9
   Operations
-    dup:                  7
-    drop:                 11
-    uniqueness checks:    3
-    allocations:          3
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               3
+    copies:               0
+
+Function: __deepcopy_10
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               6
+
+Function: __deepcopy_8
+  Operations
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_12
+  Operations
+    dup:                  0
+    drop:                 7
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: __rcdrop_11
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: validateAll [lambda_7]
+  Operations
+    dup:                  16
+    drop:                 17
+    uniqueness checks:    3
+    allocations:          4
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               14
 
 Function: validateAll [lambda_6]
   Operations
@@ -116,7 +166,7 @@ Function: run
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-    allocations:          3
+    allocations:          4
     reused allocations:   0
     reuse tokens:         0
     copies:               0
@@ -126,14 +176,14 @@ Function: run
     dup:                  0
     drop:                 0
     uniqueness checks:    0
-    allocations:          3
+    allocations:          4
     reused allocations:   0
     reuse tokens:         0
     copies:               0
 
 Function: _start_main
   Operations
-    dup:                  0
+    dup:                  1
     drop:                 1
     uniqueness checks:    0
     allocations:          2

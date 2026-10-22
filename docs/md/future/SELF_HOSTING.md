@@ -526,6 +526,96 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    would do. Two follow-ups would win it back: build a fresh contract record result on the
    reference-counted heap in place, and let a back edge take over an owned slot its successor reads
    instead of retaining the value and releasing the slot.
+
+   **The leak after #1139, named and ranked.** A reachability census of the probe at 60 seconds found
+   306.5 MB of the reference-counted heap (63%) leaked for certain. Each root class was named by the
+   record type its field count and first words fit, then by a watchpoint on one cell in a small input:
+
+   | Root class | Claim | What it is |
+   |---|---|---|
+   | 200 bytes (11,641) | 71 MB | `CoreLoweringState`: one per top-level item (the item loop keeps its state in the arena beside an unplaceable pending list) and one to three per compiled function, each holding that function's instructions |
+   | 32 bytes, pointer first | 54 MB | mostly the `(SemVariable, TypeVariableSupply)` pairs of `freshTypeVariable`, dropped by an unannotated quantifier loop |
+   | 32 bytes, integer first | 52 MB | a long tail of small cells and strings, no single source |
+   | 136 bytes (23,874) | 26 MB | `HeapLayoutFacts`: the facts table was rebuilt for every type declaration, quadratic in time and in what it left behind |
+   | 64 bytes | 21 MB | persistent-map nodes of loops that thread a map while walking a list: each earlier map was overwritten in its slot, not released |
+   | 24 bytes | 15 MB | fresh `TokenKind` cells compared with a derived `!=` and never released |
+   | 48 bytes | 15 MB | the parser's header tuples, retained for a borrowed alias and never released |
+
+   Fixed so far, each with a reproducer that leaks on `main` and a test: the facts table built once,
+   the quantifier loop annotated, an inline-element list no longer demoted beside a sibling that
+   cannot hold it (the per-argument states of the tail self-call loop), an earlier iteration's value
+   released when the other successors only walk the loop's entry values (mirrored in stage 1), a
+   fresh comparison operand released after the call (mirrored), no borrowed-owner retain for an arena
+   binding copied into an aggregate, and capture pruning and the constant folder's joins annotated.
+   The probe went from 658 MB and 75 seconds to 526 MB and about 55 seconds, and the census from 63%
+   leaked to 55%. On the way the census found #1139 freeing a record literal successor's fresh field
+   twice, and stage 1's linker placing an AVX-512 constant section at 32-byte rather than 64-byte
+   alignment, which made stage 1's output of a loop with a seven-value closure fault on this host;
+   both are fixed.
+
+   One stage-0 fix was withdrawn. A loop whose successor updates its own record retains the
+   unchanged fields and the field reads nested in the updated ones into arena cells, and the back
+   edge's copy borrows them, one reference left per iteration (stage 1 borrows these fields and does
+   not leak). Releasing them as a record literal's are exposed an older defect of that literal
+   release: it frees every child a fresh literal holds, including one the construction only
+   borrowed, such as a binding matched out of a sibling parameter kept in the arena, and the leak had
+   been hiding that. A release must follow the retain it balances, not the literal's shape; until
+   then the literal release is a latent use-after-free on `main`.
+
+   **The round of October 2026.** Landed as one pull request off `selfhost/step-e-leaks`, every rule
+   in stage 0 with its stage-1 mirror, a `leak.*` census template that leaks with the rule's
+   `GRC_NO_*` switch set, an e2e test and a C# plateau test. Measured on the same input, the module
+   probe at 60 seconds, against the stage 1 of `main` after #1139:
+
+   | | `main` | this round |
+   |---|---|---|
+   | Reference-counted heap leaked for certain | 307 MB (64%, 8.0 million cells) | 151 MB (43%, 4.0 million cells) |
+   | Probe peak | 709 MB | 534 MB |
+   | Time to the trait-evidence stop | 78.5 s | 69.6 s |
+
+   What it closed, by group:
+   - **The class-11 ABI change.** A generic function returning a tuple that holds contract values
+     hands those parts to a caller that asks, through bit 2 of the hidden ownership word. A callee
+     reports at run time which parts it handed over (a mask written to a word the caller passes), so
+     a caller of a closure it cannot name, and a generic forwarder such as `apply f k = f(k)(k)`, ask
+     too. The arena-result request is read as bit 1 alone.
+   - **Owned values left at a function's return.** A function releases owned values its result
+     cannot reach, by value flow and by the heap types its result can hold; a tuple result holding a
+     part of an owned value takes it over; a recursive function's own binding no longer hides its
+     result's phantom variables. Stage 1's own sites went from 26 (40 values) to 9 (12).
+   - **Loops and accumulators.** Exit cells passed to a call (which leaked the lexer's whole token
+     list once per file, 47 MB of the probe), fresh starts beside cons edges, cons chains whose heads
+     read a loop parameter, emptied and refilled worklists, walked-or-refilled paths, bounded heap
+     elements rebuilt by a call, a loop parameter the body never reads, a variant node holding a
+     walked head, release before a branch that last reads an owner, a consumed list's root released
+     after the successors, and a constrained call's argument handed to its successor.
+   - **Closures.** A closure call that only borrows its argument takes no duplicate (stage 0 looked
+     the call up by reference after re-creating it, so it never matched; stage 1 had no record); a
+     lambda applied where it is written hands its result over owned; a call through a captured self
+     reads the callee's returns bit; a cons onto a fresh counted call result is counted.
+   - **Builtins in stage 1.** Builtin results, error messages, syscall strings, `Bytes.subView` and
+     `File.mmap` views are built in the arena as stage 0 builds them; `Byte.allocate` and the byte
+     updates are lowered as stage 0 lowers them; a fresh buffer read by a builtin is released, and a
+     loop places a `Bytes` parameter on the counted heap.
+   - **Literals and tuples.** A list literal whose arena cell sits over a counted cell is counted; a
+     copied successor's head tuple borrows its parts.
+   - **Crashes found on the way:** a nested `let recursive` helper whose label became known exposed
+     two release-order bugs, one reachable from a 15-line program; stage 1's IR optimizer crashed
+     restoring a sibling list from an accumulator's pairs; stage 1's backend test assumed LLVM 22's
+     assembly layout and the suite loaded the system LLVM, not the bundled one.
+   - **The source workarounds are gone:** `Text.join`, the `upsertStr` map insert, `pruneCaptureList`
+     and `stepLiveness` are back in their original form, which shows the compiler rules cover them.
+
+   Signed off for this round: `regex-redux` peaks 9% higher (1436 to 1566 MB), `k-nucleotide` runs
+   6% slower and `fannkuch-redux` 4% slower, with identical output everywhere. Speed is not the
+   question while the leaks are.
+
+   Still open in E: generic named results (`Result`, `Maybe`, `List`) of contract values, which get
+   the same run-time hand-over as tuples; stage 1's remaining unreduced shapes (the `(label, index)`
+   pairs, the parser's qualified-identifier list, the lexer's string retain); the back-edge arena
+   compaction stage 1 lacks; and the exit census over N and N+1 generated functions with the memory
+   plateau that show E is done. Winning back `n-body`'s 4 to 5% and reclaiming the persistent map's
+   region are no longer part of E and follow it as tasks of their own.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
@@ -540,6 +630,26 @@ F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoi
    discovered one failure at a time. The semantics package was last swept on 2026-09-17 and is due
    again. What remained there was SEM-22, confined to its own module, and a memory cap that was mostly
    repeated lowering. Gates: BOOT-2.
+
+   The leak census run under stage 1 (2026-09-28) found five more gaps it cannot close alone.
+   Each has a reproducer under `scripts/selfhost-dev/reproducers/`:
+
+   - A static `provide` is never wired into whole-program lowering (CAP-7, typed by CAP-9), so a
+     provided operation compiles and then exits "Unhandled capability operation":
+     `provided_capability_called_in_function.ash`. It covers all 15 no-count census cases left.
+   - A generic capability's operation result is not unified with its arm's `resume` argument, so
+     a handle valued by its body keeps a type variable that `print` rejects:
+     `handle_result_of_generic_capability_printed.ash`.
+   - A type selector import of a shipped module (`import Ashes.Collection.Map.MapTree`) fails to
+     stitch with `ShippedModuleMissing`: `shipped_type_selector_import.ash`.
+   - An unknown type name in an annotation surfaces as an ASH002 mismatch at a call, not as
+     stage 0's unknown-type diagnostic (whose span points at `<std:Ashes.Trait>:1:1`):
+     `unknown_type_name_in_annotation.ash`.
+   - Both stages accept a shipped type named without an import of its module, which the
+     language reference's import rules do not allow: `unimported_shipped_type_accepted.ash`.
+
+   The same run's parse errors on a parenthesized `let` whose value is a nested `let ... in`, the
+   unbound handler-arm capture (`capabilityClosureResultNNNN`) and the `u8 vs u8` mismatch are fixed.
 G. **Compile the whole self-hosted tree with stage 1.** With step A landed this is a loop of about
    two and a half minutes, a stage-1 build and a run, rather than a run that dies of memory: read the
    first diagnostic, find where it was raised, fix it, repeat. The three known stops are the ones

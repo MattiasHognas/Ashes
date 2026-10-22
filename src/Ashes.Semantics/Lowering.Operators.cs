@@ -279,7 +279,7 @@ public sealed partial class Lowering
     /// <see cref="IrInst.ConcatStrTip"/> path above needs none of this: it extends its accumulator in
     /// place and its own fallback already releases the reference it replaces.
     /// </remarks>
-    private void ReleaseConsumedOwnedOperand(int operandTemp)
+    private void ReleaseConsumedOwnedOperand(int operandTemp, string typeName = "String")
     {
         if (_tempOwnershipFacts.GetValueOrDefault(operandTemp) is not
             {
@@ -290,11 +290,27 @@ public sealed partial class Lowering
             return;
         }
 
-        Emit(new IrInst.RcDrop(operandTemp, "String", RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(operandTemp, typeName, RuntimeManaged: true));
         _tempOwnershipFacts[operandTemp] = consumed with
         {
             Ownership = LoweredTempOwnershipKind.Transferred,
         };
+    }
+
+    /// <summary>
+    /// Releases a Bytes operand whose ownership ends at a reading builtin: a length, element or
+    /// integer read, a search, a comparison, a hash, a copied-out text, or a copyRange source. The
+    /// builtin keeps no reference to the buffer, so a newly produced one nothing owns is dead once
+    /// the read completes; a borrowed one is left to its owner.
+    /// </summary>
+    private void ReleaseConsumedOwnedBytesOperand(int operandTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_BYTESREADRELEASE") is not null)
+        {
+            return;
+        }
+
+        ReleaseConsumedOwnedOperand(operandTemp, "Bytes");
     }
 
     private (int, TypeRef) LowerSubtract(Expr.Subtract sub)

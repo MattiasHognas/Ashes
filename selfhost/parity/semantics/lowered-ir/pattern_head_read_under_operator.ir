@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_0  [SourceFunction from stamp]
-  locals=26 temps=41
+  locals=26 temps=42
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (pattern_head_read_under_operator.ash:5:1)
     StoreLocal            Slot=4 Source=0   (pattern_head_read_under_operator.ash:5:1)
@@ -88,31 +88,32 @@ function lambda_0  [SourceFunction from stamp]
     LoadArgumentOwnership Target=31   (pattern_head_read_under_operator.ash:5:1)
     LoadConstInt          Target=32 Value=1   (pattern_head_read_under_operator.ash:5:1)
     ShrInt                Target=33 Left=31 Right=32   (pattern_head_read_under_operator.ash:5:1)
-    JumpIfFalse           CondTemp=33 Target=rc_result_owned_9   (pattern_head_read_under_operator.ash:5:1)
-    CopyOutList           DestTemp=34 SrcTemp=29 HeadCopy=Inline Purpose=ArenaResultBoundary   (pattern_head_read_under_operator.ash:5:1)
+    AndInt                Target=34 Left=33 Right=32   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=34 Target=rc_result_owned_9   (pattern_head_read_under_operator.ash:5:1)
+    CopyOutList           DestTemp=35 SrcTemp=29 HeadCopy=Inline Purpose=ArenaResultBoundary   (pattern_head_read_under_operator.ash:5:1)
     StoreLocal            Slot=24 Source=29   (pattern_head_read_under_operator.ash:5:1)
   rcdrop_list_11:
-    LoadLocal             Target=35 Slot=24   (pattern_head_read_under_operator.ash:5:1)
-    LoadConstInt          Target=36 Value=0   (pattern_head_read_under_operator.ash:5:1)
-    CmpIntNe              Target=37 Left=35 Right=36   (pattern_head_read_under_operator.ash:5:1)
-    JumpIfFalse           CondTemp=37 Target=rcdrop_list_end_13   (pattern_head_read_under_operator.ash:5:1)
-    RcIsUnique            Target=38 SourceTemp=35
-    JumpIfFalse           CondTemp=38 Target=rcdrop_list_shared_12   (pattern_head_read_under_operator.ash:5:1)
-    LoadMemOffset         Target=39 BasePtr=35 OffsetBytes=8   (pattern_head_read_under_operator.ash:5:1)
-    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=24 Source=39   (pattern_head_read_under_operator.ash:5:1)
+    LoadLocal             Target=36 Slot=24   (pattern_head_read_under_operator.ash:5:1)
+    LoadConstInt          Target=37 Value=0   (pattern_head_read_under_operator.ash:5:1)
+    CmpIntNe              Target=38 Left=36 Right=37   (pattern_head_read_under_operator.ash:5:1)
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_end_13   (pattern_head_read_under_operator.ash:5:1)
+    RcIsUnique            Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=rcdrop_list_shared_12   (pattern_head_read_under_operator.ash:5:1)
+    LoadMemOffset         Target=40 BasePtr=36 OffsetBytes=8   (pattern_head_read_under_operator.ash:5:1)
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=40   (pattern_head_read_under_operator.ash:5:1)
     Jump                  Target=rcdrop_list_11   (pattern_head_read_under_operator.ash:5:1)
   rcdrop_list_shared_12:
-    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_13   (pattern_head_read_under_operator.ash:5:1)
   rcdrop_list_end_13:
-    StoreLocal            Slot=23 Source=34   (pattern_head_read_under_operator.ash:5:1)
+    StoreLocal            Slot=23 Source=35   (pattern_head_read_under_operator.ash:5:1)
     Jump                  Target=rc_result_done_10   (pattern_head_read_under_operator.ash:5:1)
   rc_result_owned_9:
     StoreLocal            Slot=23 Source=29   (pattern_head_read_under_operator.ash:5:1)
   rc_result_done_10:
-    LoadLocal             Target=40 Slot=23   (pattern_head_read_under_operator.ash:5:1)
-    Return                Source=40   (pattern_head_read_under_operator.ash:5:1)
+    LoadLocal             Target=41 Slot=23   (pattern_head_read_under_operator.ash:5:1)
+    Return                Source=41   (pattern_head_read_under_operator.ash:5:1)
 
 function lambda_1  [SourceFunction from count]
   locals=11 temps=11

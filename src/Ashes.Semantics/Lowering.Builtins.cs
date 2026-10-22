@@ -4116,6 +4116,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesLength(target, bytesTemp));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, new TypeRef.TInt());
     }
 
@@ -4163,6 +4164,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesGet(target, bytesTemp, indexTemp));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, new TypeRef.TUInt(8));
     }
 
@@ -4241,6 +4243,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesIndexOf(target, bytesTemp, needleTemp, fromTemp));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, new TypeRef.TInt());
     }
 
@@ -4260,6 +4263,11 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesCompare(target, leftTemp, rightTemp));
+        ReleaseConsumedOwnedBytesOperand(leftTemp);
+        if (rightTemp != leftTemp)
+        {
+            ReleaseConsumedOwnedBytesOperand(rightTemp);
+        }
         return (target, new TypeRef.TInt());
     }
 
@@ -4294,6 +4302,7 @@ public sealed partial class Lowering
             startTemp,
             lenTemp,
             request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, new TypeRef.TStr());
     }
 
@@ -4320,6 +4329,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesScanHash(target, bytesTemp, needleTemp, fromTemp));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, resultType);
     }
 
@@ -4519,6 +4529,11 @@ public sealed partial class Lowering
             sourceOffsetTemp,
             lengthTemp,
             CanReusePureBytesUpdateInput(destination)));
+        if (sourceTemp != destination.Temp)
+        {
+            ReleaseConsumedOwnedBytesOperand(sourceTemp);
+        }
+
         MarkRuntimeManagedTemp(target, type: new TypeRef.TBytes());
         return (target, new TypeRef.TBytes());
     }
@@ -4882,6 +4897,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(makeInst(target, bytesTemp, offsetTemp));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, resultType);
     }
 
@@ -5547,6 +5563,7 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.BytesHash(target, bytesTemp));
+        ReleaseConsumedOwnedBytesOperand(bytesTemp);
         return (target, new TypeRef.TInt());
     }
 

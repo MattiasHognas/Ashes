@@ -1105,6 +1105,16 @@ let expectBuiltinIntegration unit =
 
 let pruneInstruction kind = IrInstruction(instruction = kind, location = None)
 
+let recursive pruneBindings (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest -> CoreBinding(name = name, scheme = TypeScheme(quantified = [], body = SemInt, constraints = []), location = CoreLocal(0), ownedRead = false, patternOwner = None) :: pruneBindings(rest)
+
+let recursive bindingNames (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> []
+        | CoreBinding { name = name } :: rest -> name :: bindingNames(rest)
+
 let recursive loadEnvIndices instructions =
     match instructions with
         | [] -> []
@@ -1112,54 +1122,66 @@ let recursive loadEnvIndices instructions =
         | _ :: rest -> loadEnvIndices(rest)
 
 let expectDeadCapturesPrunedAndRenumbered unit =
-    match pruneDeadCaptures(["a", "b", "c"])([2
+    match pruneDeadCaptures(pruneBindings(["a", "b", "c"]))([2
     |> LoadEnv(0)
     |> pruneInstruction, 0
     |> LoadEnv(1)
     |> pruneInstruction, pruneInstruction(Return(1))]) with
         | (survivors, instructions) ->
             unit
-            |> (given (_) -> test.assertEqual(["a", "c"])(survivors))
+            |> (given (_) ->
+                survivors
+                |> bindingNames
+                |> test.assertEqual(["a", "c"]))
             |> (given (_) ->
                 instructions
                 |> loadEnvIndices
                 |> test.assertEqual([1, 0]))
 
 let expectAllLiveCapturesUntouched unit =
-    match pruneDeadCaptures(["a", "b"])([1
+    match pruneDeadCaptures(pruneBindings(["a", "b"]))([1
     |> LoadEnv(0)
     |> pruneInstruction, 0
     |> LoadEnv(1)
     |> pruneInstruction, pruneInstruction(Return(0))]) with
         | (survivors, instructions) ->
             unit
-            |> (given (_) -> test.assertEqual(["a", "b"])(survivors))
+            |> (given (_) ->
+                survivors
+                |> bindingNames
+                |> test.assertEqual(["a", "b"]))
             |> (given (_) ->
                 instructions
                 |> loadEnvIndices
                 |> test.assertEqual([1, 0]))
 
 let expectRepeatedReadsCountOnce unit =
-    match pruneDeadCaptures(["a", "b"])([1
+    match pruneDeadCaptures(pruneBindings(["a", "b"]))([1
     |> LoadEnv(0)
     |> pruneInstruction, 1
     |> LoadEnv(1)
     |> pruneInstruction, pruneInstruction(Return(0))]) with
         | (survivors, instructions) ->
             unit
-            |> (given (_) -> test.assertEqual(["b"])(survivors))
+            |> (given (_) ->
+                survivors
+                |> bindingNames
+                |> test.assertEqual(["b"]))
             |> (given (_) ->
                 instructions
                 |> loadEnvIndices
                 |> test.assertEqual([0, 0]))
 
 let expectUnreadEnvironmentEmptied unit =
-    match pruneDeadCaptures(["a"])([1
+    match pruneDeadCaptures(pruneBindings(["a"]))([1
     |> LoadLocal(0)
     |> pruneInstruction, pruneInstruction(Return(0))]) with
         | (survivors, instructions) ->
             unit
-            |> (given (_) -> test.assertEqual([])(survivors))
+            |> (given (_) ->
+                survivors
+                |> bindingNames
+                |> test.assertEqual([]))
             |> (given (_) ->
                 instructions
                 |> loadEnvIndices
@@ -1513,11 +1535,11 @@ let expectNestedLambdaDoesNotInheritOuterRuntimeOwners unit =
     in
         Unit
         |> (given (_) ->
-            "    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=11"
+            "    RcDrop                SourceTemp=7 TypeName=String OwnerSlot=10"
             |> linesContainExactly(lines)
             |> test.assertEqual(true))
         |> (given (_) ->
-            "    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=11 RuntimeManaged=true"
+            "    RcDrop                SourceTemp=7 TypeName=String OwnerSlot=10 RuntimeManaged=true"
             |> linesContainExactly(lines)
             |> test.assertEqual(false)))
 

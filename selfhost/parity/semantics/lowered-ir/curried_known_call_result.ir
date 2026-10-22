@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_1  [ClosureHelper from describe]
-  locals=3 temps=9
+  locals=3 temps=10
     LoadEnv               Target=0 Index=0   (curried_known_call_result.ash:1:53)
     LoadLocal             Target=1 Slot=1   (curried_known_call_result.ash:1:57)
     AddInt                Target=2 Left=0 Right=1   (curried_known_call_result.ash:1:53)
@@ -10,16 +10,17 @@ function lambda_1  [ClosureHelper from describe]
     LoadArgumentOwnership Target=4   (curried_known_call_result.ash:1:1)
     LoadConstInt          Target=5 Value=1   (curried_known_call_result.ash:1:1)
     ShrInt                Target=6 Left=4 Right=5   (curried_known_call_result.ash:1:1)
-    JumpIfFalse           CondTemp=6 Target=rc_result_owned_0   (curried_known_call_result.ash:1:1)
-    CopyOutArena          DestTemp=7 SrcTemp=3 Purpose=ArenaResultBoundary
+    AndInt                Target=7 Left=6 Right=5   (curried_known_call_result.ash:1:1)
+    JumpIfFalse           CondTemp=7 Target=rc_result_owned_0   (curried_known_call_result.ash:1:1)
+    CopyOutArena          DestTemp=8 SrcTemp=3 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=2 Source=7   (curried_known_call_result.ash:1:1)
+    StoreLocal            Slot=2 Source=8   (curried_known_call_result.ash:1:1)
     Jump                  Target=rc_result_done_1   (curried_known_call_result.ash:1:1)
   rc_result_owned_0:
     StoreLocal            Slot=2 Source=3   (curried_known_call_result.ash:1:1)
   rc_result_done_1:
-    LoadLocal             Target=8 Slot=2   (curried_known_call_result.ash:1:1)
-    Return                Source=8   (curried_known_call_result.ash:1:1)
+    LoadLocal             Target=9 Slot=2   (curried_known_call_result.ash:1:1)
+    Return                Source=9   (curried_known_call_result.ash:1:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from describe]
   locals=2 temps=4

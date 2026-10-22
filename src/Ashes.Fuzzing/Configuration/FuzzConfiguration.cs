@@ -7,6 +7,7 @@ internal enum FuzzCommandKind
     Replay,
     Corpus,
     List,
+    LeakCensus,
 }
 
 internal sealed record FuzzConfiguration(
@@ -24,7 +25,11 @@ internal sealed record FuzzConfiguration(
     int MaximumOutputBytes,
     int MaximumArtifactBytes,
     string ArtifactRoot,
-    IReadOnlySet<string> ExplicitOptions)
+    IReadOnlySet<string> ExplicitOptions,
+    string? TemplateDirectory = null,
+    string? Stage1Compiler = null,
+    bool Poison = false,
+    IReadOnlySet<string>? OnlyTemplates = null)
 {
     internal static IReadOnlySet<string> SupportedTargets { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -39,7 +44,7 @@ internal sealed record FuzzConfiguration(
     {
         if (args.Count == 0)
         {
-            throw new ArgumentException("Expected a command: smoke, run, replay, corpus, or list.");
+            throw new ArgumentException("Expected a command: smoke, run, replay, corpus, list, or leak-census.");
         }
 
         FuzzCommandKind command = args[0] switch
@@ -49,10 +54,16 @@ internal sealed record FuzzConfiguration(
             "replay" => FuzzCommandKind.Replay,
             "corpus" => FuzzCommandKind.Corpus,
             "list" => FuzzCommandKind.List,
+            "leak-census" => FuzzCommandKind.LeakCensus,
             _ => throw new ArgumentException($"Unknown fuzz command '{args[0]}'."),
         };
 
-        string profile = command == FuzzCommandKind.Smoke ? "smoke" : "all";
+        string profile = command switch
+        {
+            FuzzCommandKind.Smoke => "smoke",
+            FuzzCommandKind.LeakCensus => "memory-growth",
+            _ => "all",
+        };
         int cases = command == FuzzCommandKind.Smoke ? 40 : 100;
         ulong seed = 0xA55E5UL;
         int seedCount = 1;
@@ -65,6 +76,10 @@ internal sealed record FuzzConfiguration(
         int maximumOutputBytes = 1024 * 1024;
         int maximumArtifactBytes = 4 * 1024 * 1024;
         string artifactRoot = Path.Combine("artifacts", "fuzz");
+        string? templateDirectory = null;
+        string? stage1Compiler = null;
+        bool poison = false;
+        HashSet<string>? onlyTemplates = null;
         var explicitOptions = new HashSet<string>(StringComparer.Ordinal);
 
         for (int i = 1; i < args.Count; i++)
@@ -95,6 +110,10 @@ internal sealed record FuzzConfiguration(
                 case "--max-output-bytes": maximumOutputBytes = ParsePositiveInt(Value(), option); break;
                 case "--max-artifact-bytes": maximumArtifactBytes = ParsePositiveInt(Value(), option); break;
                 case "--artifacts": artifactRoot = Value(); break;
+                case "--templates": templateDirectory = Value(); break;
+                case "--stage1": stage1Compiler = Value(); break;
+                case "--poison": poison = true; break;
+                case "--only": onlyTemplates = new HashSet<string>(Value().Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.Ordinal); break;
                 default: throw new ArgumentException($"Unknown option '{option}'.");
             }
         }
@@ -115,7 +134,7 @@ internal sealed record FuzzConfiguration(
         return new FuzzConfiguration(command, profile, cases, seed, seedCount, caseIndex, target, maximumNodes,
             TimeSpan.FromSeconds(compilerTimeoutSeconds), TimeSpan.FromSeconds(programTimeoutSeconds),
             TimeSpan.FromSeconds(campaignTimeoutSeconds),
-            maximumOutputBytes, maximumArtifactBytes, artifactRoot, explicitOptions);
+            maximumOutputBytes, maximumArtifactBytes, artifactRoot, explicitOptions, templateDirectory, stage1Compiler, poison, onlyTemplates);
     }
 
     internal FuzzConfiguration ApplyProfileDefaults(FuzzProfile profile)

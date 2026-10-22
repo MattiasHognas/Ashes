@@ -436,7 +436,7 @@ function lambda_5  [SourceFunction from countNegated]
     Return                Source=44   (tco_non_tail_self_call_in_operator_operand.ash:44:1)
 
 function _start_main  [ProgramEntry]
-  locals=32 temps=92
+  locals=32 temps=91
     LoadConstInt          Target=0 Value=0   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
     StoreLocal            Slot=0 Source=1   (tco_non_tail_self_call_in_operator_operand.ash:9:1)
@@ -568,7 +568,6 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=74 Slot=4   (tco_non_tail_self_call_in_operator_operand.ash:55:219)
     LoadLocal             Target=75 Slot=8   (tco_non_tail_self_call_in_operator_operand.ash:55:231)
     Borrow                Target=76 SourceTemp=75
-    RcDup                 Target=91 SourceTemp=76   (tco_non_tail_self_call_in_operator_operand.ash:55:219)
     CallClosure           Target=77 ClosureTemp=74 ArgTemp=76   (tco_non_tail_self_call_in_operator_operand.ash:55:219)
     RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=26

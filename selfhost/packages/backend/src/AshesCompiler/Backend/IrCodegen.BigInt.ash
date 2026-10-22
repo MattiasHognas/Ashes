@@ -1986,7 +1986,7 @@ let emitBigIntToString context function_ builder i64 i8 ptrType (arena: ArenaRun
 
 // `BigIntToInt`: `Ok(value)` when the magnitude fits a machine integer (one limb at most
 // `2^63 - 1`, or `2^63` for a negative value), else `Error("BigInt does not fit in Int")`.
-let emitBigIntToInt context function_ builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bigAddress =
+let emitBigIntToInt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType memcpyFn memcpyType (managed: Bool) bigAddress =
     (let resultSlot = buildEntryAlloca(builder)(i64)("bi_toint_result")
     in
         let valueSlot = buildEntryAlloca(builder)(i64)("bi_toint_value")
@@ -2044,11 +2044,11 @@ let emitBigIntToInt context function_ builder i64 i8 ptrType mallocFn mallocType
                                                                 buildCondBr(builder)(buildICmp(builder)(intPredicateUle)(limb)(constInt(i64)(9223372036854775808u64)(false))("bi_toint_negok"))(okBlock)(errBlock)))
                                                         |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                                                         |> (given (_) ->
-                                                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(buildLoad(builder)(i64)(valueSlot)("bi_toint_v"))("bi_toint_okv"))(resultSlot))
+                                                            buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(0)(buildLoad(builder)(i64)(valueSlot)("bi_toint_v"))("bi_toint_okv"))(resultSlot))
                                                         |> (given (_) -> buildBr(builder)(doneBlock))
                                                         |> (given (_) -> positionBuilderAtEnd(builder)(errBlock))
                                                         |> (given (_) ->
-                                                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([66, 105, 103, 73, 110, 116, 32, 100, 111, 101, 115, 32, 110, 111, 116, 32, 102, 105, 116, 32, 105, 110, 32, 73, 110, 116])("bi_toint_msg"))("bi_toint_errv"))(resultSlot))
+                                                            buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)([66, 105, 103, 73, 110, 116, 32, 100, 111, 101, 115, 32, 110, 111, 116, 32, 102, 105, 116, 32, 105, 110, 32, 73, 110, 116])("bi_toint_msg"))("bi_toint_errv"))(resultSlot))
                                                         |> (given (_) -> buildBr(builder)(doneBlock))
                                                         |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                                         |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("bi_toint_final")))
@@ -2076,12 +2076,12 @@ let emitBigIntFromString context function_ builder i64 i8 ptrType (arena: ArenaR
                                         buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(success)(constInt(i64)(0u64)(false))("bi_parse_succeeded"))(okBlock)(errBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                                     |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(outAddress)("bi_parse_okv"))(resultSlot))
+                                        buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(0)(outAddress)("bi_parse_okv"))(resultSlot))
                                     |> (given (_) -> buildBr(builder)(doneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(errBlock))
                                     |> (given (_) -> emitBigIntScratchRelease(context)(function_)(builder)(i64)(i8)(ptrType)(freeFn)(freeType)(managed)(outAddress))
                                     |> (given (_) ->
-                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([105, 110, 118, 97, 108, 105, 100, 32, 100, 101, 99, 105, 109, 97, 108, 32, 105, 110, 116, 101, 103, 101, 114])("bi_parse_msg"))("bi_parse_errv"))(resultSlot))
+                                        buildStore(builder)(emitPlacedResultAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed)(1)(emitAsciiLiteralString(context)(builder)(i64)(i8)([105, 110, 118, 97, 108, 105, 100, 32, 100, 101, 99, 105, 109, 97, 108, 32, 105, 110, 116, 101, 103, 101, 114])("bi_parse_msg"))("bi_parse_errv"))(resultSlot))
                                     |> (given (_) -> buildBr(builder)(doneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("bi_parse_final"))

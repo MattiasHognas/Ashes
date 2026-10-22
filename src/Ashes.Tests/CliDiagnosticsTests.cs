@@ -33,6 +33,28 @@ public sealed class CliDiagnosticsTests
     }
 
     [Test]
+    public async Task Compile_should_bind_an_aliased_library_binding_selector_in_a_single_file()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            var filePath = Path.Combine(tempDir, "selector_alias.ash");
+            await File.WriteAllTextAsync(
+                filePath,
+                "import Ashes.Collection.List.reverse as reverseList\n\nlet words = reverseList([\"a\", \"b\"])\n\nAshes.IO.print(Ashes.Collection.List.length(words))\n").ConfigureAwait(false);
+
+            var result = await RunCliAsync("compile", filePath, "-o", Path.Combine(tempDir, "selector_alias")).ConfigureAwait(false);
+
+            result.Stderr.ShouldNotContain("Undefined variable");
+            result.ExitCode.ShouldBe(0);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Compile_should_render_type_errors_consistently()
     {
         var tempDir = CreateTempDir();

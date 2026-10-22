@@ -66,7 +66,7 @@ function __rcdrop_3  [RuntimeManagedAdtDropper]
     Return                Source=4   (record_head_list_producer.ash:9:1)
 
 function lambda_0  [SourceFunction from bump]
-  locals=36 temps=91
+  locals=36 temps=92
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (record_head_list_producer.ash:9:1)
     StoreLocal            Slot=4 Source=0   (record_head_list_producer.ash:9:1)
@@ -240,37 +240,38 @@ function lambda_0  [SourceFunction from bump]
     LoadArgumentOwnership Target=76   (record_head_list_producer.ash:9:1)
     LoadConstInt          Target=77 Value=1   (record_head_list_producer.ash:9:1)
     ShrInt                Target=78 Left=76 Right=77   (record_head_list_producer.ash:9:1)
-    JumpIfFalse           CondTemp=78 Target=rc_result_owned_15   (record_head_list_producer.ash:9:1)
-    Alloc                 Target=79 SizeBytes=8   (record_head_list_producer.ash:9:1)
-    MakeClosure           Target=80 FuncLabel=__deepcopy_list_1 EnvPtrTemp=79 EnvSizeBytes=8   (record_head_list_producer.ash:9:1)
-    StoreMemOffset        BasePtr=79 OffsetBytes=0 Source=80   (record_head_list_producer.ash:9:1)
-    CallClosure           Target=81 ClosureTemp=80 ArgTemp=74   (record_head_list_producer.ash:9:1)
+    AndInt                Target=79 Left=78 Right=77   (record_head_list_producer.ash:9:1)
+    JumpIfFalse           CondTemp=79 Target=rc_result_owned_15   (record_head_list_producer.ash:9:1)
+    Alloc                 Target=80 SizeBytes=8   (record_head_list_producer.ash:9:1)
+    MakeClosure           Target=81 FuncLabel=__deepcopy_list_1 EnvPtrTemp=80 EnvSizeBytes=8   (record_head_list_producer.ash:9:1)
+    StoreMemOffset        BasePtr=80 OffsetBytes=0 Source=81   (record_head_list_producer.ash:9:1)
+    CallClosure           Target=82 ClosureTemp=81 ArgTemp=74   (record_head_list_producer.ash:9:1)
     StoreLocal            Slot=33 Source=74   (record_head_list_producer.ash:9:1)
   rcdrop_list_17:
-    LoadLocal             Target=82 Slot=33   (record_head_list_producer.ash:9:1)
-    LoadConstInt          Target=83 Value=0   (record_head_list_producer.ash:9:1)
-    CmpIntNe              Target=84 Left=82 Right=83   (record_head_list_producer.ash:9:1)
-    JumpIfFalse           CondTemp=84 Target=rcdrop_list_end_19   (record_head_list_producer.ash:9:1)
-    RcIsUnique            Target=85 SourceTemp=82
-    JumpIfFalse           CondTemp=85 Target=rcdrop_list_shared_18   (record_head_list_producer.ash:9:1)
-    LoadMemOffset         Target=86 BasePtr=82 OffsetBytes=0   (record_head_list_producer.ash:9:1)
-    LoadConstInt          Target=87 Value=0   (record_head_list_producer.ash:9:1)
-    CallKnown             Target=88 FuncLabel=__rcdrop_3 EnvTemp=87 ArgTemp=86   (record_head_list_producer.ash:9:1)
-    LoadMemOffset         Target=89 BasePtr=82 OffsetBytes=8   (record_head_list_producer.ash:9:1)
-    RcDrop                SourceTemp=82 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=33 Source=89   (record_head_list_producer.ash:9:1)
+    LoadLocal             Target=83 Slot=33   (record_head_list_producer.ash:9:1)
+    LoadConstInt          Target=84 Value=0   (record_head_list_producer.ash:9:1)
+    CmpIntNe              Target=85 Left=83 Right=84   (record_head_list_producer.ash:9:1)
+    JumpIfFalse           CondTemp=85 Target=rcdrop_list_end_19   (record_head_list_producer.ash:9:1)
+    RcIsUnique            Target=86 SourceTemp=83
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_shared_18   (record_head_list_producer.ash:9:1)
+    LoadMemOffset         Target=87 BasePtr=83 OffsetBytes=0   (record_head_list_producer.ash:9:1)
+    LoadConstInt          Target=88 Value=0   (record_head_list_producer.ash:9:1)
+    CallKnown             Target=89 FuncLabel=__rcdrop_3 EnvTemp=88 ArgTemp=87   (record_head_list_producer.ash:9:1)
+    LoadMemOffset         Target=90 BasePtr=83 OffsetBytes=8   (record_head_list_producer.ash:9:1)
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=33 Source=90   (record_head_list_producer.ash:9:1)
     Jump                  Target=rcdrop_list_17   (record_head_list_producer.ash:9:1)
   rcdrop_list_shared_18:
-    RcDrop                SourceTemp=82 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_19   (record_head_list_producer.ash:9:1)
   rcdrop_list_end_19:
-    StoreLocal            Slot=32 Source=81   (record_head_list_producer.ash:9:1)
+    StoreLocal            Slot=32 Source=82   (record_head_list_producer.ash:9:1)
     Jump                  Target=rc_result_done_16   (record_head_list_producer.ash:9:1)
   rc_result_owned_15:
     StoreLocal            Slot=32 Source=74   (record_head_list_producer.ash:9:1)
   rc_result_done_16:
-    LoadLocal             Target=90 Slot=32   (record_head_list_producer.ash:9:1)
-    Return                Source=90   (record_head_list_producer.ash:9:1)
+    LoadLocal             Target=91 Slot=32   (record_head_list_producer.ash:9:1)
+    Return                Source=91   (record_head_list_producer.ash:9:1)
 
 function __rcnorm_5  [RuntimeManagedAdtNormalizer]
   locals=12 temps=46
@@ -448,7 +449,7 @@ function __rcdrop_record_7  [RuntimeManagedAdtDropper]
     Return                Source=12   (record_head_list_producer.ash:15:1)
 
 function lambda_4  [SourceFunction from optFn]
-  locals=15 temps=34
+  locals=15 temps=35
     LoadLocal             Target=0 Slot=1   (record_head_list_producer.ash:16:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (record_head_list_producer.ash:16:5)
@@ -508,20 +509,21 @@ function lambda_4  [SourceFunction from optFn]
     LoadArgumentOwnership Target=25   (record_head_list_producer.ash:15:1)
     LoadConstInt          Target=26 Value=1   (record_head_list_producer.ash:15:1)
     ShrInt                Target=27 Left=25 Right=26   (record_head_list_producer.ash:15:1)
-    JumpIfFalse           CondTemp=27 Target=rc_result_owned_52   (record_head_list_producer.ash:15:1)
-    Alloc                 Target=28 SizeBytes=8   (record_head_list_producer.ash:15:1)
-    MakeClosure           Target=29 FuncLabel=__deepcopy_6 EnvPtrTemp=28 EnvSizeBytes=8   (record_head_list_producer.ash:15:1)
-    StoreMemOffset        BasePtr=28 OffsetBytes=0 Source=29   (record_head_list_producer.ash:15:1)
-    CallClosure           Target=30 ClosureTemp=29 ArgTemp=24   (record_head_list_producer.ash:15:1)
-    LoadConstInt          Target=31 Value=0   (record_head_list_producer.ash:15:1)
-    CallKnown             Target=32 FuncLabel=__rcdrop_record_7 EnvTemp=31 ArgTemp=24   (record_head_list_producer.ash:15:1)
-    StoreLocal            Slot=14 Source=30   (record_head_list_producer.ash:15:1)
+    AndInt                Target=28 Left=27 Right=26   (record_head_list_producer.ash:15:1)
+    JumpIfFalse           CondTemp=28 Target=rc_result_owned_52   (record_head_list_producer.ash:15:1)
+    Alloc                 Target=29 SizeBytes=8   (record_head_list_producer.ash:15:1)
+    MakeClosure           Target=30 FuncLabel=__deepcopy_6 EnvPtrTemp=29 EnvSizeBytes=8   (record_head_list_producer.ash:15:1)
+    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=30   (record_head_list_producer.ash:15:1)
+    CallClosure           Target=31 ClosureTemp=30 ArgTemp=24   (record_head_list_producer.ash:15:1)
+    LoadConstInt          Target=32 Value=0   (record_head_list_producer.ash:15:1)
+    CallKnown             Target=33 FuncLabel=__rcdrop_record_7 EnvTemp=32 ArgTemp=24   (record_head_list_producer.ash:15:1)
+    StoreLocal            Slot=14 Source=31   (record_head_list_producer.ash:15:1)
     Jump                  Target=rc_result_done_53   (record_head_list_producer.ash:15:1)
   rc_result_owned_52:
     StoreLocal            Slot=14 Source=24   (record_head_list_producer.ash:15:1)
   rc_result_done_53:
-    LoadLocal             Target=33 Slot=14   (record_head_list_producer.ash:15:1)
-    Return                Source=33   (record_head_list_producer.ash:15:1)
+    LoadLocal             Target=34 Slot=14   (record_head_list_producer.ash:15:1)
+    Return                Source=34   (record_head_list_producer.ash:15:1)
 
 function __deepcopy_list_9  [ListDeepCopier]
   locals=2 temps=12
@@ -546,7 +548,7 @@ function __deepcopy_list_9  [ListDeepCopier]
     Return                Source=11   (record_head_list_producer.ash:19:1)
 
 function lambda_8  [SourceFunction from mapFns]
-  locals=40 temps=111
+  locals=40 temps=112
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadConstInt          Target=0 Value=0   (record_head_list_producer.ash:19:1)
     StoreLocal            Slot=4 Source=0   (record_head_list_producer.ash:19:1)
@@ -635,17 +637,17 @@ function lambda_8  [SourceFunction from mapFns]
     LoadLocal             Target=37 Slot=1   (record_head_list_producer.ash:22:25)
     StoreLocal            Slot=1 Source=36   (record_head_list_producer.ash:22:25)
     RcDrop                SourceTemp=8 TypeName=List OwnerSlot=18
-    LoadLocal             Target=105 Slot=23
-    LoadConstInt          Target=106 Value=0
-    CmpIntNe              Target=107 Left=105 Right=106
-    JumpIfFalse           CondTemp=107 Target=lambda_8_rc_edge_17_16
-    IsReferenceCounted    Target=108 SourceTemp=105
-    JumpIfFalse           CondTemp=108 Target=lambda_8_rc_edge_17_17
-    LoadConstInt          Target=109 Value=0
-    CallKnown             Target=110 FuncLabel=__rcdrop_record_7 EnvTemp=109 ArgTemp=105
+    LoadLocal             Target=106 Slot=23
+    LoadConstInt          Target=107 Value=0
+    CmpIntNe              Target=108 Left=106 Right=107
+    JumpIfFalse           CondTemp=108 Target=lambda_8_rc_edge_17_16
+    IsReferenceCounted    Target=109 SourceTemp=106
+    JumpIfFalse           CondTemp=109 Target=lambda_8_rc_edge_17_17
+    LoadConstInt          Target=110 Value=0
+    CallKnown             Target=111 FuncLabel=__rcdrop_record_7 EnvTemp=110 ArgTemp=106
     RcDrop                SourceTemp=7 TypeName=Fn OwnerSlot=17
-    StoreLocal            Slot=23 Source=106
-  general_rc_owned_absent_114:
+    StoreLocal            Slot=23 Source=107
+  general_rc_owned_absent_115:
     RestoreStackPointer   Slot=9   (record_head_list_producer.ash:22:25)
     Jump                  Target=lambda_8_body   (record_head_list_producer.ash:22:25)
     LoadConstInt          Target=38 Value=0   (record_head_list_producer.ash:22:25)
@@ -776,99 +778,100 @@ function lambda_8  [SourceFunction from mapFns]
     LoadArgumentOwnership Target=90   (record_head_list_producer.ash:19:1)
     LoadConstInt          Target=91 Value=1   (record_head_list_producer.ash:19:1)
     ShrInt                Target=92 Left=90 Right=91   (record_head_list_producer.ash:19:1)
-    JumpIfFalse           CondTemp=92 Target=rc_result_owned_89   (record_head_list_producer.ash:19:1)
-    Alloc                 Target=93 SizeBytes=8   (record_head_list_producer.ash:19:1)
-    MakeClosure           Target=94 FuncLabel=__deepcopy_list_9 EnvPtrTemp=93 EnvSizeBytes=8   (record_head_list_producer.ash:19:1)
-    StoreMemOffset        BasePtr=93 OffsetBytes=0 Source=94   (record_head_list_producer.ash:19:1)
-    CallClosure           Target=95 ClosureTemp=94 ArgTemp=77   (record_head_list_producer.ash:19:1)
+    AndInt                Target=93 Left=92 Right=91   (record_head_list_producer.ash:19:1)
+    JumpIfFalse           CondTemp=93 Target=rc_result_owned_89   (record_head_list_producer.ash:19:1)
+    Alloc                 Target=94 SizeBytes=8   (record_head_list_producer.ash:19:1)
+    MakeClosure           Target=95 FuncLabel=__deepcopy_list_9 EnvPtrTemp=94 EnvSizeBytes=8   (record_head_list_producer.ash:19:1)
+    StoreMemOffset        BasePtr=94 OffsetBytes=0 Source=95   (record_head_list_producer.ash:19:1)
+    CallClosure           Target=96 ClosureTemp=95 ArgTemp=77   (record_head_list_producer.ash:19:1)
     StoreLocal            Slot=38 Source=77   (record_head_list_producer.ash:19:1)
   rcdrop_list_91:
-    LoadLocal             Target=96 Slot=38   (record_head_list_producer.ash:19:1)
-    LoadConstInt          Target=97 Value=0   (record_head_list_producer.ash:19:1)
-    CmpIntNe              Target=98 Left=96 Right=97   (record_head_list_producer.ash:19:1)
-    JumpIfFalse           CondTemp=98 Target=rcdrop_list_end_93   (record_head_list_producer.ash:19:1)
-    RcIsUnique            Target=99 SourceTemp=96
-    JumpIfFalse           CondTemp=99 Target=rcdrop_list_shared_92   (record_head_list_producer.ash:19:1)
-    LoadMemOffset         Target=100 BasePtr=96 OffsetBytes=0   (record_head_list_producer.ash:19:1)
-    LoadConstInt          Target=101 Value=0   (record_head_list_producer.ash:19:1)
-    CallKnown             Target=102 FuncLabel=__rcdrop_record_7 EnvTemp=101 ArgTemp=100   (record_head_list_producer.ash:19:1)
-    LoadMemOffset         Target=103 BasePtr=96 OffsetBytes=8   (record_head_list_producer.ash:19:1)
-    RcDrop                SourceTemp=96 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=38 Source=103   (record_head_list_producer.ash:19:1)
+    LoadLocal             Target=97 Slot=38   (record_head_list_producer.ash:19:1)
+    LoadConstInt          Target=98 Value=0   (record_head_list_producer.ash:19:1)
+    CmpIntNe              Target=99 Left=97 Right=98   (record_head_list_producer.ash:19:1)
+    JumpIfFalse           CondTemp=99 Target=rcdrop_list_end_93   (record_head_list_producer.ash:19:1)
+    RcIsUnique            Target=100 SourceTemp=97
+    JumpIfFalse           CondTemp=100 Target=rcdrop_list_shared_92   (record_head_list_producer.ash:19:1)
+    LoadMemOffset         Target=101 BasePtr=97 OffsetBytes=0   (record_head_list_producer.ash:19:1)
+    LoadConstInt          Target=102 Value=0   (record_head_list_producer.ash:19:1)
+    CallKnown             Target=103 FuncLabel=__rcdrop_record_7 EnvTemp=102 ArgTemp=101   (record_head_list_producer.ash:19:1)
+    LoadMemOffset         Target=104 BasePtr=97 OffsetBytes=8   (record_head_list_producer.ash:19:1)
+    RcDrop                SourceTemp=97 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=38 Source=104   (record_head_list_producer.ash:19:1)
     Jump                  Target=rcdrop_list_91   (record_head_list_producer.ash:19:1)
   rcdrop_list_shared_92:
-    RcDrop                SourceTemp=96 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=97 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_93   (record_head_list_producer.ash:19:1)
   rcdrop_list_end_93:
-    StoreLocal            Slot=37 Source=95   (record_head_list_producer.ash:19:1)
+    StoreLocal            Slot=37 Source=96   (record_head_list_producer.ash:19:1)
     Jump                  Target=rc_result_done_90   (record_head_list_producer.ash:19:1)
   rc_result_owned_89:
     StoreLocal            Slot=37 Source=77   (record_head_list_producer.ash:19:1)
   rc_result_done_90:
-    LoadLocal             Target=104 Slot=37   (record_head_list_producer.ash:19:1)
-    Return                Source=104   (record_head_list_producer.ash:19:1)
+    LoadLocal             Target=105 Slot=37   (record_head_list_producer.ash:19:1)
+    Return                Source=105   (record_head_list_producer.ash:19:1)
   lambda_8_rc_edge_17_16:
     RcDrop                SourceTemp=7 TypeName=Fn OwnerSlot=17
-    Jump                  Target=general_rc_owned_absent_114
+    Jump                  Target=general_rc_owned_absent_115
   lambda_8_rc_edge_17_17:
     RcDrop                SourceTemp=7 TypeName=Fn OwnerSlot=17
-    Jump                  Target=general_rc_owned_absent_114
+    Jump                  Target=general_rc_owned_absent_115
 
 function lambda_11  [ClosureHelper from count]
   locals=31 temps=75
     LoadEnv               Target=0 Index=0   (record_head_list_producer.ash:24:1)
     StoreLocal            Slot=2 Source=0   (record_head_list_producer.ash:24:1)
-    LoadLocal             Target=32 Slot=2   (record_head_list_producer.ash:24:1)
-    IsReferenceCounted    Target=33 SourceTemp=32
-    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_102   (record_head_list_producer.ash:24:1)
-    RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true
-    StoreLocal            Slot=23 Source=34   (record_head_list_producer.ash:24:1)
-    Jump                  Target=rc_representation_done_103   (record_head_list_producer.ash:24:1)
-  rc_representation_copy_102:
+    LoadLocal             Target=24 Slot=2   (record_head_list_producer.ash:24:1)
+    IsReferenceCounted    Target=25 SourceTemp=24
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_99   (record_head_list_producer.ash:24:1)
+    RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=26   (record_head_list_producer.ash:24:1)
+    Jump                  Target=rc_representation_done_100   (record_head_list_producer.ash:24:1)
+  rc_representation_copy_99:
+    LoadConstInt          Target=28 Value=0   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=23 Source=24   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=24 Source=28   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=25 Source=28   (record_head_list_producer.ash:24:1)
+  rc_normalize_list_101:
+    LoadLocal             Target=29 Slot=23   (record_head_list_producer.ash:24:1)
+    CmpIntNe              Target=30 Left=29 Right=28   (record_head_list_producer.ash:24:1)
+    JumpIfFalse           CondTemp=30 Target=rc_normalize_list_end_102   (record_head_list_producer.ash:24:1)
+    LoadMemOffset         Target=31 BasePtr=29 OffsetBytes=0   (record_head_list_producer.ash:24:1)
+    LoadMemOffset         Target=32 BasePtr=29 OffsetBytes=8   (record_head_list_producer.ash:24:1)
+    IsReferenceCounted    Target=33 SourceTemp=31
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_103   (record_head_list_producer.ash:24:1)
+    RcDup                 Target=34 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=34   (record_head_list_producer.ash:24:1)
+    Jump                  Target=rc_representation_done_104   (record_head_list_producer.ash:24:1)
+  rc_representation_copy_103:
     LoadConstInt          Target=36 Value=0   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=24 Source=32   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=25 Source=36   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=26 Source=36   (record_head_list_producer.ash:24:1)
-  rc_normalize_list_104:
-    LoadLocal             Target=37 Slot=24   (record_head_list_producer.ash:24:1)
-    CmpIntNe              Target=38 Left=37 Right=36   (record_head_list_producer.ash:24:1)
-    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_end_105   (record_head_list_producer.ash:24:1)
-    LoadMemOffset         Target=39 BasePtr=37 OffsetBytes=0   (record_head_list_producer.ash:24:1)
-    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=8   (record_head_list_producer.ash:24:1)
-    IsReferenceCounted    Target=41 SourceTemp=39
-    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_106   (record_head_list_producer.ash:24:1)
-    RcDup                 Target=42 SourceTemp=39 RuntimeManaged=true
-    StoreLocal            Slot=27 Source=42   (record_head_list_producer.ash:24:1)
-    Jump                  Target=rc_representation_done_107   (record_head_list_producer.ash:24:1)
-  rc_representation_copy_106:
-    LoadConstInt          Target=44 Value=0   (record_head_list_producer.ash:24:1)
-    CallKnown             Target=45 FuncLabel=__rcnorm_5 EnvTemp=44 ArgTemp=39   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=27 Source=45   (record_head_list_producer.ash:24:1)
-  rc_representation_done_107:
-    LoadLocal             Target=46 Slot=27   (record_head_list_producer.ash:24:1)
-    Alloc                 Target=47 SizeBytes=16 RuntimeManaged=true   (record_head_list_producer.ash:24:1)
-    StoreMemOffset        BasePtr=47 OffsetBytes=0 Source=46   (record_head_list_producer.ash:24:1)
-    StoreMemOffset        BasePtr=47 OffsetBytes=8 Source=36   (record_head_list_producer.ash:24:1)
-    LoadLocal             Target=48 Slot=25   (record_head_list_producer.ash:24:1)
-    CmpIntNe              Target=49 Left=48 Right=36   (record_head_list_producer.ash:24:1)
-    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_first_108   (record_head_list_producer.ash:24:1)
-    LoadLocal             Target=50 Slot=26   (record_head_list_producer.ash:24:1)
-    StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=47   (record_head_list_producer.ash:24:1)
-    Jump                  Target=rc_normalize_list_linked_109   (record_head_list_producer.ash:24:1)
-  rc_normalize_list_first_108:
-    StoreLocal            Slot=25 Source=47   (record_head_list_producer.ash:24:1)
-  rc_normalize_list_linked_109:
-    StoreLocal            Slot=26 Source=47   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=24 Source=40   (record_head_list_producer.ash:24:1)
-    Jump                  Target=rc_normalize_list_104   (record_head_list_producer.ash:24:1)
-  rc_normalize_list_end_105:
-    LoadLocal             Target=51 Slot=25   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=23 Source=51   (record_head_list_producer.ash:24:1)
-  rc_representation_done_103:
-    LoadLocal             Target=52 Slot=23   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=2 Source=52   (record_head_list_producer.ash:24:1)
-    LoadConstInt          Target=53 Value=1   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=8 Source=53   (record_head_list_producer.ash:24:1)
+    CallKnown             Target=37 FuncLabel=__rcnorm_5 EnvTemp=36 ArgTemp=31   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=26 Source=37   (record_head_list_producer.ash:24:1)
+  rc_representation_done_104:
+    LoadLocal             Target=38 Slot=26   (record_head_list_producer.ash:24:1)
+    Alloc                 Target=39 SizeBytes=16 RuntimeManaged=true   (record_head_list_producer.ash:24:1)
+    StoreMemOffset        BasePtr=39 OffsetBytes=0 Source=38   (record_head_list_producer.ash:24:1)
+    StoreMemOffset        BasePtr=39 OffsetBytes=8 Source=28   (record_head_list_producer.ash:24:1)
+    LoadLocal             Target=40 Slot=24   (record_head_list_producer.ash:24:1)
+    CmpIntNe              Target=41 Left=40 Right=28   (record_head_list_producer.ash:24:1)
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_first_105   (record_head_list_producer.ash:24:1)
+    LoadLocal             Target=42 Slot=25   (record_head_list_producer.ash:24:1)
+    StoreMemOffset        BasePtr=42 OffsetBytes=8 Source=39   (record_head_list_producer.ash:24:1)
+    Jump                  Target=rc_normalize_list_linked_106   (record_head_list_producer.ash:24:1)
+  rc_normalize_list_first_105:
+    StoreLocal            Slot=24 Source=39   (record_head_list_producer.ash:24:1)
+  rc_normalize_list_linked_106:
+    StoreLocal            Slot=25 Source=39   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=23 Source=32   (record_head_list_producer.ash:24:1)
+    Jump                  Target=rc_normalize_list_101   (record_head_list_producer.ash:24:1)
+  rc_normalize_list_end_102:
+    LoadLocal             Target=43 Slot=24   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=22 Source=43   (record_head_list_producer.ash:24:1)
+  rc_representation_done_100:
+    LoadLocal             Target=44 Slot=22   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=2 Source=44   (record_head_list_producer.ash:24:1)
+    LoadConstInt          Target=45 Value=1   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=8 Source=45   (record_head_list_producer.ash:24:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (record_head_list_producer.ash:24:1)
     StoreLocal            Slot=5 Source=1   (record_head_list_producer.ash:24:1)
@@ -907,101 +910,101 @@ function lambda_11  [ClosureHelper from count]
     RcDup                 Target=15 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=16 Slot=2   (record_head_list_producer.ash:27:24)
-    StoreLocal            Slot=20 Source=16   (record_head_list_producer.ash:27:24)
-  rcdrop_list_99:
-    LoadLocal             Target=17 Slot=20   (record_head_list_producer.ash:27:24)
-    LoadConstInt          Target=18 Value=0   (record_head_list_producer.ash:27:24)
-    CmpIntNe              Target=19 Left=17 Right=18   (record_head_list_producer.ash:27:24)
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_101   (record_head_list_producer.ash:27:24)
-    RcIsUnique            Target=20 SourceTemp=17
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_100   (record_head_list_producer.ash:27:24)
-    LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (record_head_list_producer.ash:27:24)
-    LoadConstInt          Target=22 Value=0   (record_head_list_producer.ash:27:24)
-    CallKnown             Target=23 FuncLabel=__rcdrop_record_7 EnvTemp=22 ArgTemp=21   (record_head_list_producer.ash:27:24)
-    LoadMemOffset         Target=24 BasePtr=17 OffsetBytes=8   (record_head_list_producer.ash:27:24)
-    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=20 Source=24   (record_head_list_producer.ash:27:24)
-    Jump                  Target=rcdrop_list_99   (record_head_list_producer.ash:27:24)
-  rcdrop_list_shared_100:
-    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_101   (record_head_list_producer.ash:27:24)
-  rcdrop_list_end_101:
-    LoadConstInt          Target=25 Value=0   (record_head_list_producer.ash:27:24)
-    StoreLocal            Slot=8 Source=25   (record_head_list_producer.ash:27:24)
-    LoadLocal             Target=26 Slot=2   (record_head_list_producer.ash:27:24)
-    LoadLocal             Target=27 Slot=1   (record_head_list_producer.ash:27:24)
+    LoadConstInt          Target=17 Value=0   (record_head_list_producer.ash:27:24)
+    StoreLocal            Slot=8 Source=17   (record_head_list_producer.ash:27:24)
+    LoadLocal             Target=18 Slot=2   (record_head_list_producer.ash:27:24)
+    LoadLocal             Target=19 Slot=1   (record_head_list_producer.ash:27:24)
     StoreLocal            Slot=2 Source=15   (record_head_list_producer.ash:27:24)
     StoreLocal            Slot=1 Source=14   (record_head_list_producer.ash:27:24)
-    LoadLocal             Target=64 Slot=8
-    JumpIfFalse           CondTemp=64 Target=rc_tco_drop_inactive_115
-    StoreLocal            Slot=30 Source=26
-  rcdrop_list_116:
+    LoadLocal             Target=56 Slot=8
+    JumpIfFalse           CondTemp=56 Target=rc_tco_drop_inactive_116
+    StoreLocal            Slot=29 Source=18
+  rcdrop_list_117:
+    LoadLocal             Target=57 Slot=29
+    LoadConstInt          Target=58 Value=0
+    CmpIntNe              Target=59 Left=57 Right=58
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_119
+    RcIsUnique            Target=60 SourceTemp=57
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_118
+    LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0
+    LoadConstInt          Target=62 Value=0
+    CallKnown             Target=63 FuncLabel=__rcdrop_record_7 EnvTemp=62 ArgTemp=61
+    LoadMemOffset         Target=64 BasePtr=57 OffsetBytes=8
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=64
+    Jump                  Target=rcdrop_list_117
+  rcdrop_list_shared_118:
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_119
+  rcdrop_list_end_119:
+  rc_tco_drop_inactive_116:
+    StoreLocal            Slot=30 Source=16
+  rcdrop_list_120:
     LoadLocal             Target=65 Slot=30
     LoadConstInt          Target=66 Value=0
     CmpIntNe              Target=67 Left=65 Right=66
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_118
+    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_122
     RcIsUnique            Target=68 SourceTemp=65
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_117
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_121
     LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0
     LoadConstInt          Target=70 Value=0
     CallKnown             Target=71 FuncLabel=__rcdrop_record_7 EnvTemp=70 ArgTemp=69
     LoadMemOffset         Target=72 BasePtr=65 OffsetBytes=8
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=72
-    Jump                  Target=rcdrop_list_116
-  rcdrop_list_shared_117:
+    Jump                  Target=rcdrop_list_120
+  rcdrop_list_shared_121:
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_118
-  rcdrop_list_end_118:
-  rc_tco_drop_inactive_115:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
+    Jump                  Target=rcdrop_list_end_122
+  rcdrop_list_end_122:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
     LoadConstInt          Target=73 Value=0
     StoreLocal            Slot=6 Source=73
     StoreLocal            Slot=7 Source=73
     StoreLocal            Slot=2 Source=15
     LoadConstInt          Target=74 Value=1
     StoreLocal            Slot=8 Source=74
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=28
     RestoreStackPointer   Slot=11   (record_head_list_producer.ash:27:24)
     Jump                  Target=lambda_11_body   (record_head_list_producer.ash:27:24)
-    LoadConstInt          Target=28 Value=0   (record_head_list_producer.ash:27:24)
-    StoreLocal            Slot=12 Source=28   (record_head_list_producer.ash:25:5)
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    LoadConstInt          Target=20 Value=0   (record_head_list_producer.ash:27:24)
+    StoreLocal            Slot=12 Source=20   (record_head_list_producer.ash:25:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
     Jump                  Target=match_end_94   (record_head_list_producer.ash:25:5)
   match_arm_cleanup_98:
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
     Jump                  Target=match_none_95   (record_head_list_producer.ash:25:5)
   match_none_95:
-    LoadConstInt          Target=30 Value=0   (record_head_list_producer.ash:25:5)
-    StoreLocal            Slot=12 Source=30   (record_head_list_producer.ash:25:5)
+    LoadConstInt          Target=22 Value=0   (record_head_list_producer.ash:25:5)
+    StoreLocal            Slot=12 Source=22   (record_head_list_producer.ash:25:5)
   match_end_94:
-    LoadLocal             Target=31 Slot=12   (record_head_list_producer.ash:25:5)
-    LoadLocal             Target=54 Slot=2   (record_head_list_producer.ash:24:1)
-    LoadLocal             Target=55 Slot=8   (record_head_list_producer.ash:24:1)
-    JumpIfFalse           CondTemp=55 Target=rc_tco_exit_drop_inactive_110   (record_head_list_producer.ash:24:1)
-    StoreLocal            Slot=28 Source=54   (record_head_list_producer.ash:24:1)
-  rcdrop_list_111:
-    LoadLocal             Target=56 Slot=28   (record_head_list_producer.ash:24:1)
-    LoadConstInt          Target=57 Value=0   (record_head_list_producer.ash:24:1)
-    CmpIntNe              Target=58 Left=56 Right=57   (record_head_list_producer.ash:24:1)
-    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_113   (record_head_list_producer.ash:24:1)
-    RcIsUnique            Target=59 SourceTemp=56
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_112   (record_head_list_producer.ash:24:1)
-    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0   (record_head_list_producer.ash:24:1)
-    LoadConstInt          Target=61 Value=0   (record_head_list_producer.ash:24:1)
-    CallKnown             Target=62 FuncLabel=__rcdrop_record_7 EnvTemp=61 ArgTemp=60   (record_head_list_producer.ash:24:1)
-    LoadMemOffset         Target=63 BasePtr=56 OffsetBytes=8   (record_head_list_producer.ash:24:1)
-    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=28 Source=63   (record_head_list_producer.ash:24:1)
-    Jump                  Target=rcdrop_list_111   (record_head_list_producer.ash:24:1)
-  rcdrop_list_shared_112:
-    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_113   (record_head_list_producer.ash:24:1)
-  rcdrop_list_end_113:
-  rc_tco_exit_drop_inactive_110:
-    Return                Source=31   (record_head_list_producer.ash:24:1)
+    LoadLocal             Target=23 Slot=12   (record_head_list_producer.ash:25:5)
+    LoadLocal             Target=46 Slot=2   (record_head_list_producer.ash:24:1)
+    LoadLocal             Target=47 Slot=8   (record_head_list_producer.ash:24:1)
+    JumpIfFalse           CondTemp=47 Target=rc_tco_exit_drop_inactive_107   (record_head_list_producer.ash:24:1)
+    StoreLocal            Slot=27 Source=46   (record_head_list_producer.ash:24:1)
+  rcdrop_list_108:
+    LoadLocal             Target=48 Slot=27   (record_head_list_producer.ash:24:1)
+    LoadConstInt          Target=49 Value=0   (record_head_list_producer.ash:24:1)
+    CmpIntNe              Target=50 Left=48 Right=49   (record_head_list_producer.ash:24:1)
+    JumpIfFalse           CondTemp=50 Target=rcdrop_list_end_110   (record_head_list_producer.ash:24:1)
+    RcIsUnique            Target=51 SourceTemp=48
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_shared_109   (record_head_list_producer.ash:24:1)
+    LoadMemOffset         Target=52 BasePtr=48 OffsetBytes=0   (record_head_list_producer.ash:24:1)
+    LoadConstInt          Target=53 Value=0   (record_head_list_producer.ash:24:1)
+    CallKnown             Target=54 FuncLabel=__rcdrop_record_7 EnvTemp=53 ArgTemp=52   (record_head_list_producer.ash:24:1)
+    LoadMemOffset         Target=55 BasePtr=48 OffsetBytes=8   (record_head_list_producer.ash:24:1)
+    RcDrop                SourceTemp=48 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=55   (record_head_list_producer.ash:24:1)
+    Jump                  Target=rcdrop_list_108   (record_head_list_producer.ash:24:1)
+  rcdrop_list_shared_109:
+    RcDrop                SourceTemp=48 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_110   (record_head_list_producer.ash:24:1)
+  rcdrop_list_end_110:
+  rc_tco_exit_drop_inactive_107:
+    Return                Source=23   (record_head_list_producer.ash:24:1)
 
 function lambda_10  [SourceFunction from count]
   locals=2 temps=5
@@ -1012,7 +1015,7 @@ function lambda_10  [SourceFunction from count]
     Return                Source=4   (record_head_list_producer.ash:24:1)
 
 function _start_main  [ProgramEntry]
-  locals=20 temps=46
+  locals=21 temps=58
     LoadConstInt          Target=0 Value=0   (record_head_list_producer.ash:9:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (record_head_list_producer.ash:9:1)
     StoreLocal            Slot=0 Source=1   (record_head_list_producer.ash:9:1)
@@ -1103,5 +1106,32 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=19
     LoadLocal             Target=45 Slot=18   (record_head_list_producer.ash:15:1)
+    LoadLocal             Target=46 Slot=11
+    LoadConstInt          Target=47 Value=0
+    CmpIntNe              Target=48 Left=46 Right=47
+    JumpIfFalse           CondTemp=48 Target=general_rc_owned_absent_111
+    IsReferenceCounted    Target=49 SourceTemp=46
+    JumpIfFalse           CondTemp=49 Target=general_rc_owned_absent_111
+    StoreLocal            Slot=20 Source=46
+  rcdrop_list_112:
+    LoadLocal             Target=50 Slot=20
+    LoadConstInt          Target=51 Value=0
+    CmpIntNe              Target=52 Left=50 Right=51
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_end_114
+    RcIsUnique            Target=53 SourceTemp=50
+    JumpIfFalse           CondTemp=53 Target=rcdrop_list_shared_113
+    LoadMemOffset         Target=54 BasePtr=50 OffsetBytes=0
+    LoadConstInt          Target=55 Value=0
+    CallKnown             Target=56 FuncLabel=__rcdrop_record_7 EnvTemp=55 ArgTemp=54
+    LoadMemOffset         Target=57 BasePtr=50 OffsetBytes=8
+    RcDrop                SourceTemp=50 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=20 Source=57
+    Jump                  Target=rcdrop_list_112
+  rcdrop_list_shared_113:
+    RcDrop                SourceTemp=50 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_114
+  rcdrop_list_end_114:
+    StoreLocal            Slot=11 Source=47
+  general_rc_owned_absent_111:
     Return                Source=45
 

@@ -94,6 +94,123 @@ exceeds the output limit at 50,000 iterations and says nothing about retained me
 each case performs three native compilations and executions, but one case runs in every 50-case
 rotation of the `all` profile.
 
+The `leak-census` command checks for leaks exactly rather than by memory growth, and runs every
+case once:
+
+```sh
+dotnet run --project src/Ashes.Fuzzing -- leak-census --seeds 3 --templates scripts/selfhost-dev/reproducers
+```
+
+It forces each combination template of the profile (`memory-growth` by default) once per seed, adds
+every `.ash` file of the `--templates` directory that names its repeat count `ROUNDS`, builds each
+case with `ASHES_RC_LEAKCHECK=1` at one round of work and at two, and reports every case whose
+second round leaves reference-counted cells live that the first did not, with the number of cells a
+round leaks. The program reports its live cells at its end, and a value it keeps to its end is live
+in both runs, so the difference is exactly what one round leaked: a single leaked cell shows. A leaking
+case's source and a `report.tsv` of every case go to `<artifacts>/leak-census/`; the command exits 1
+when any case leaks or yields no count. `--only <id>[,<id>...]` keeps only the named combination
+templates, so one class is measured in seconds, under a placement switch (`GRC_NO_...=1`) to show what
+its rule fixes.
+
+With `--stage1 <path>` naming a self-hosted compiler (`bash scripts/selfhost-dev/quickstage1.sh
+<tag>` builds one at `artifacts/selfhost-dev/s1-<tag>`), every case is also compiled by that
+compiler at one round and at two, under a 1 GB stack and with the same leak check, which stage 1's
+backend keeps in its region allocator. Each case then reports one cell per compiler, `ok`, `LEAK n`
+or `SKIP reason`, and `report.tsv` carries stage 1's four columns after stage 0's; a case leaking
+under either compiler fails the run. A class that leaks under stage 1 but not stage 0 is a stage-1
+placement rule still to be ported; the reverse is a stage-0 rule stage 1 does not need.
+
+With `--poison`, every case is also built once by stage 0 at two rounds with `ASHES_RC_POISON=1`,
+which overwrites every freed cell, and run: a program that ends with a signal, a non-zero exit or a
+hang read freed memory, and the case reports `UAF` with the exit after its leak cells, fails the run
+like a leak, and has its source written beside the report. Two templates carry the use-after-free
+shapes the census knows: a generic walk whose exit arm returns a string bound under a nested pattern
+(`| last :: [] -> last` and three shapes like it) while the `[] -> ""` arm fixes the type only later,
+and a loop over a list shared by every round whose record literal successor holds a span matched out
+of that list. Neither leaks; both fail under `--poison` when their rule is switched off
+(`GRC_NO_DEFERREDPATTERNOWNER`, `GRC_NO_BORROWEDCHILDKEEP`).
+
+The `leak.*` templates give the census the shapes that leak. Each generates a parametric program of
+one class of reference-count leak found in the self-hosted compiler: a record whose list field grows
+in the record-update successor of a loop, a map threaded through `upsertStr` while a list is walked,
+a loop over a recursive ADT whose fallback arm returns its parameter whole, a helper returning a
+tuple with a `None` element, substitution walks returning a list and a supply record (through a
+nested `let recursive` helper or through pair-returning helpers), an exit arm whose record holds the
+loop's parameter, a list accumulator matched out of a helper's record result, a variant accumulator
+rebuilt by a helper, a worklist solver, an unannotated generic pruning helper returning a pair, a
+let-bound tuple destructured into a result tuple, an optimizer pass matching a helper's pair of state
+and rewritten record, a list parameter returned inside a tuple, a nested group record replaced by a
+helper, a lowering-state pipeline, two walks that leak one cell a round, an unannotated loop's state
+in its exit tuple, an item loop whose pending list blocks its state, a fresh list built in the
+program's trailing pipe, a worklist whose front queue is walked and refilled from its back queue, a
+record consed onto a producer's spine by a let, by a closure over it, or under a let-bound self call,
+three classes still open (a list accumulator replaced by a helper's rebuild in one arm and handed on
+in the other, a pairwise concatenation consed onto an accumulator, a record built through two piped
+closures and consed onto the recursive tail), and the two use-after-free shapes above. Names, list lengths, element values and types, updated fields,
+and the variant of each class vary with the seed, and every choice is recorded in the case's trace.
+
+Every leak or use-after-free fixed by a lowering rule since the census was introduced has a template
+that shows it. Measured with the rule's switch set (`--only <template> --poison` under `GRC_NO_...=1`),
+each class leaks or fails on the three default seeds, or leaks more where the class is still open,
+and the closed classes are clean with the rule on. A fix that only stage 1 needed is covered by the
+stage-1 column of the template named, with the growth its commit measured, and a fix the census cannot
+see says why.
+
+| Fix | Template | With the rule off |
+|---|---|---|
+| A comparison borrows both operands | `leak.fixpoint-compares-rebuilt-list` | `GRC_NO_BORROWEDCOMPARE`: 42, 30 and 42 cells per round |
+| A list of scalars handed on in one arm and replaced by a helper's result in another lives on the reference-counted heap | `leak.accumulator-replaced-by-helper-in-one-arm` | `GRC_NO_HANDEDONFRESHLIST`: 24, 24 and 17 cells per round |
+| A spine cell's head retained out of a let binding leaves the binding its own reference | `leak.spine-head-bound-by-let` | `GRC_NO_TMCHEADRETAIN`: 5, 5 and 2 cells per round |
+| A reference-counted cell takes a reference to a recursive producer's let-bound result, or a copy of an arena one | `leak.self-call-tail-under-owned-head` | `GRC_NO_LETCALLTAIL`: segfault on every seed poisoned (`UAF`, exit 139), plain on one (the other two leak 1 cell per round) |
+| A parameter reaching the result only as a list cell's head is not normalized at entry | `leak.closure-conses-its-parameter` | `GRC_NO_CELLHEADPARAM`: 3, 4 and 5 cells per round |
+| 59fa6dd1 A loop releases an earlier iteration's result when no successor names it or a part of it | `leak.worklist-solve-records` (still open: 6, 14 and 22 cells per round with every rule on) | `GRC_NO_PREDECESSORNAMES`: 46, 75 and 154 cells per round |
+| dd18b233 A retain of an unannotated loop parameter in an exit tuple is withdrawn behind the copy-out | `leak.unannotated-loop-state-in-exit-tuple` | `GRC_NO_DEFERREDCOPYREAD`: 5, 4 and 7 cells per round |
+| b75fc5ca A reference handed over for an arena result to keep goes to an owned slot | `leak.variant-accumulator-through-helper`, `leak.list-parameter-in-tuple-result` | `GRC_NO_HANDEDSLOT`: 5, 10 and 18, and 8, 4 and 4 cells per round (`leak.header-tuple-destructured`, still open at 1, grows to 1, 10 and 11) |
+| d7e17793 A generic type's fields are read at its instantiation when a call's result may hold an argument | `leak.lowering-state-pipeline` | `GRC_NO_FIELDINSTANCE` alone leaves it clean, since b75fc5ca's owned slot now releases the reference this rule withdraws; with `GRC_NO_FIELDINSTANCE` and `GRC_NO_HANDEDSLOT` set, 2, 3 and 2 cells per round (the class reproducers c_var_min1 and c_v2: 6) |
+| 05071e4c An arena loop parameter takes an arena copy of a successor retained for it | `leak.nested-let-recursive-helper`, `leak.helper-returns-list-and-state` | `GRC_NO_ARENASUCCESSORCOPY`: 4, 5 and 5 cells per round; 2 and 4 on two seeds |
+| 4ab593cd An arena tuple beside a generic value copies its reference-counted elements | `leak.generic-pair-pruning`, `leak.helper-returns-list-and-state` | `GRC_NO_DEMOTE`: 4 cells per round on every seed; 3, 2 and 4 |
+| 47699bd5 A loop releases an earlier iteration's result when its successors are parts of the newer one | `leak.accumulator-from-call-result-part` | `GRC_NO_OWNEDSLOTPART`: 24, 11 and 23 cells per round |
+| 19a20874 Pair each construction retain with the release that balances it (the leak half) | `leak.record-update-successor`, `leak.record-update-single-cell`, `leak.exit-arm-record-holds-loop-parameter` | `GRC_NO_COPIEDCELLRETAINS`: 5, 11 and 6; 3, 1 and 3; 2 cells per round on every seed (`GRC_NO_KEEP` alone changes nothing) |
+| 9adf95b1 The map's reuse specialization releases what it copies and borrows its arguments | `leak.map-threaded-while-walking` | 90, 30 and 54 cells per round on the three seeds before the fix (no switch; from the fix's census) |
+| 2ba42f15 A handler loop keeps a literal string match arm in the arena | `capability.recursive-list`, `capability.deterministic-handler` | 1 cell per round on three seeds and on one (no switch; from the fix's census) |
+| 84de7a26 A loop exit returning a pattern binding of its parameter hands its retain to the result | `leak.loop-parameter-returned-whole` | 2, 4 and 2 cells per round (no switch; from the fix's census) |
+| bb5c50c8 A helper pairing its state parameter with a rewrite releases the parameter after the pair | `leak.pass-state-and-rewrite-pair` | 4, 3 and 4 cells per round (no switch; from the fix's census) |
+| 622a1246 A record update of a loop parameter handed to a call releases its retains after the call | `leak.nested-group-replaced-by-helper` | 22, 10 and 18 cells per round (no switch; from the fix's census) |
+| 7e978033 The program entry releases its owned call results at its end | `leak.entry-trailing-pipe-fresh-argument` | `GRC_NO_ENTRYRELEASE`: 4, 3 and 4 cells per round |
+| 20e52bdf A worklist's front queue, walked and refilled, lives on the reference-counted heap | `leak.worklist-front-walked-and-refilled` | `GRC_NO_WALKREFILL`: 24 cells per round on every seed |
+| 781beb18 A loop exit returning a head bound under a nested pattern hands the result a reference of its own | `leak.loop-exit-head-under-nested-pattern` | `GRC_NO_DEFERREDPATTERNOWNER` with `--poison`: UAF (exit 1) on every seed |
+| 19a20874 Pair each construction retain with the release that balances it (the use-after-free half) | `leak.borrowed-child-of-literal-successor` | `GRC_NO_BORROWEDCHILDKEEP`: segfault on every seed, plain and poisoned |
+| b28f6459 A program that declares capabilities keeps the ownership contract unless a handler can leave a post pending | none | Not measurable by the census: with the contract off the program makes no reference-counted cells (classes 3, 13, 15 and 17 moved whole into the arena), so the count cannot grow; peak memory is the only measure, and `tests/capability_provided_without_handler_keeps_ownership_contract.ash` pins the lowering |
+| edef0a98 Stage 1 releases an argument handed to a call whose result is a contract type | `leak.pass-state-and-rewrite-pair`, stage-1 column | stage 1 grew 69 MB to 1257 MB between 1,000 and 20,000 rounds on the class reproducers before the fix (no switch; stage 1 has none) |
+| 6aa23e6e Stage 1 counts a loop's record parameter as placed only when no sibling blocks it | `leak.nested-item-loop-pending-blocks-state`, stage-1 column | 26 MB to 63 MB between 100,000 and 300,000 rounds before the fix; the class still leaks 9 to 14 cells per round under both compilers |
+| ad9238ca Stage 1 releases an earlier iteration's result when its successors are parts of the newer one | `leak.worklist-front-walked-and-refilled`, stage-1 column | 9.7 MB to 237 MB between 1,000 and 100,000 rounds before the fix |
+| 956aa0c9 Stage 1 owns a self call's result once its type turns out to be a contract type | `leak.worklist-front-walked-and-refilled`, stage-1 column (the tree insert inside `Node`) | 7.7 MB to 52 MB over 100,000 rounds before the fix |
+| d487a7b5 Stage 1's backend starts every local slot at zero | `leak.map-threaded-while-walking`, stage-1 column | a map built by `keysOf(1)` and folded hung or segfaulted at one round, which the census reports as `SKIP program timed out` or `SKIP program exit 139` |
+| 9412ab2c Stage 1 hands a constructor's fresh child to an owned slot | `leak.record-update-successor`, stage-1 column (a string field computed by a call) | 30 MB to 2.27 GB between 1,000 and 100,000 rounds before the fix |
+| 5a785cdc Stage 1 lowers a let-bound self-call as an ordinary call, not a back edge | none | A wrong result, not a leak: the census does not compare output; `tests/let_bound_self_call_before_tail_self_call.ash` pins it |
+| bf215f6e A back-edge helper is spliced only when every helper it calls is spliced too | none | A false ASH014, not a leak: a template with the shape would report `SKIP compile exit 1`; `tests/back_edge_helper_calling_unreachable_helper_is_called.ash` pins it |
+
+A leak template's program needs types and top-level functions that an expression cannot declare,
+so it is an `IDeclaringCombinationTemplate`: a case that forces it adds its declarations, which end
+in an entry function `Int -> Int`, and the template's expression applies that function, so the work
+runs each time the census evaluates the case's value. A class that leaks only in the program's entry
+(a fresh argument of the trailing pipe, `0 |> pass(build(N)([]))`, which a function releases at its
+return but the entry must release at its end) cannot show inside that function, so a template may
+also give the census a trailing workload: an expression naming its rounds count `ROUNDS`, which the
+census runs as the program's trailing expression after the declarations, here with the rounds count
+as the built list's length. `leak.entry-trailing-pipe-fresh-argument` is that template; the other
+profiles still call its entry function. A template whose declarations name a standard-library type
+unqualified (`MapTree`) names the module it comes from, and the rendered program imports it
+(`import Ashes.Collection.Map`): an unimported type is not in scope, and the self-hosted compiler
+reads such a name as a type of its own with no layout. The declarations widen the case's budget by
+their own size, the case records the node budget it was requested with for replay, and its prelude
+holds only the stable generation types, because a case-varying declaration such as a capability
+provider changes whether several of these classes leak. Declaring templates come last in a
+profile's rotation, so adding one leaves the case that forces every other template unchanged. They
+run in the native observable profiles (`memory-growth`, `compile`, `differential`, `cross-target`)
+and in `all`, not in the in-process profiles, whose cases keep the whole program within their node
+limit.
+
 List profiles, rules, combinations, and oracles with:
 
 ```sh
@@ -207,7 +324,9 @@ The extension points are intentionally local:
    startup rejects a rule that cannot generate an advertised type.
 4. To add a combination, implement `ICombinationTemplate` with generic type preconditions and
    truthful advertised features,
-   then register it in `CombinationRegistry`.
+   then register it in `CombinationRegistry`. A template that needs top-level declarations
+   implements `IDeclaringCombinationTemplate` and applies only where its entry binding is in scope;
+   a leak class derives from `LeakCombinationTemplate` and writes its program as Ashes source.
 5. To add an oracle, implement `IFuzzOracle` and register it in `FuzzOracleRegistry`; use in-process
    stable APIs for cheap checks and `CompilerExecution` for isolation or native behavior.
 6. To add a shrink rule, add a type-compatible candidate to `FuzzShrinker` and a focused test; every

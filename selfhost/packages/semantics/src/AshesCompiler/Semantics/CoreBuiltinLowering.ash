@@ -3,7 +3,8 @@
 // Invariants:
 // - Layouts carry schemes from the stitched semantic environment; this module never invents symbol IDs.
 // - Arguments arrive in strict source order and instruction operands retain the stage-0 order.
-// - Fresh aggregate results are marked non-runtime-managed until ownership placement classifies them.
+// - Fresh aggregate results are marked non-runtime-managed until ownership placement classifies them,
+//   except `Byte.allocate` and the pure byte updates, which stage 0 always places on the counted heap.
 // - FFI, evidence, ownership-copy, parallel, and general async operations belong to later milestones.
 
 import AshesCompiler.Semantics.IrInstructions
@@ -19,6 +20,9 @@ export (
     value standardBuiltinLayouts,
     value reservedBuiltinTypeVariableCount,
     value emitCoreBuiltin,
+    value emitCoreBuiltinReusing,
+    value isBytesUpdateBuiltinKind,
+    value isAlwaysRuntimeBytesBuiltinKind,
     value isFreshStringBuiltinKind,
     value isFreshRcBuiltinKind,
     value freshRcBuiltinCall,
@@ -1261,7 +1265,7 @@ let printValue start value semanticType =
         | SemBool -> unit([PrintBool(value)])(start)
         | other -> emissionFailure(start)("print does not support " + formatSemanticType(other))
 
-let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
+let emitCoreBuiltinReusing kind runtimeManaged reuseInput start arguments argumentTypes =
     match (kind, arguments, argumentTypes) with
         | (CoreProgramArgs, [], []) -> target0(start)(LoadProgramArgs)
         | (CorePrint, value :: [], semanticType :: []) -> printValue(start)(value)(semanticType)
@@ -1372,7 +1376,7 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
         | (CoreBytesAppendByte, value :: byte :: [], _types) -> managedTarget2(start)(value)(byte)(BytesAppendByte)
         | (CoreBytesAllocate, count :: [], _types) ->
             target1(start)(count)(given (target) ->
-                given (length) -> BytesAllocate(target)(length)(false))
+                given (length) -> BytesAllocate(target)(length)(true))
         | (CoreBytesCopyRange, destination :: destinationOffset :: source :: sourceOffset :: count :: [], _types) ->
             target5(start)(destination)(destinationOffset)(source)(sourceOffset)(count)(
                 given (target) ->
@@ -1388,30 +1392,30 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
                                             second,
                                             secondOffset,
                                             length,
-                                            false,
-                                            false
+                                            reuseInput,
+                                            true
                                         )
             )
         | (CoreBytesSet, value :: offset :: replacement :: [], _types) ->
             target3(start)(value)(offset)(replacement)(given (target) ->
                 given (bytes) ->
                     given (index) ->
-                        given (item) -> BytesSet(target)(bytes)(index)(item)(false)(false))
+                        given (item) -> BytesSet(target)(bytes)(index)(item)(reuseInput)(true))
         | (CoreBytesSetU16Le, value :: offset :: replacement :: [], _types) ->
             target3(start)(value)(offset)(replacement)(given (target) ->
                 given (bytes) ->
                     given (index) ->
-                        given (item) -> BytesSetU16Le(target)(bytes)(index)(item)(false)(false))
+                        given (item) -> BytesSetU16Le(target)(bytes)(index)(item)(reuseInput)(true))
         | (CoreBytesSetU32Le, value :: offset :: replacement :: [], _types) ->
             target3(start)(value)(offset)(replacement)(given (target) ->
                 given (bytes) ->
                     given (index) ->
-                        given (item) -> BytesSetU32Le(target)(bytes)(index)(item)(false)(false))
+                        given (item) -> BytesSetU32Le(target)(bytes)(index)(item)(reuseInput)(true))
         | (CoreBytesSetU64Le, value :: offset :: replacement :: [], _types) ->
             target3(start)(value)(offset)(replacement)(given (target) ->
                 given (bytes) ->
                     given (index) ->
-                        given (item) -> BytesSetU64Le(target)(bytes)(index)(item)(false)(false))
+                        given (item) -> BytesSetU64Le(target)(bytes)(index)(item)(reuseInput)(true))
         | (CoreBytesFromList, values :: [], _types) ->
             target1(start)(values)(given (target) ->
                 given (list) -> BytesFromList(target)(list)(false)(false))
@@ -1441,6 +1445,27 @@ let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
         | (CoreProcessWaitForExit, process :: [], _types) -> target1(start)(process)(ProcessWaitForExit)
         | (CoreProcessKill, process :: [], _types) -> target1(start)(process)(ProcessKill)
         | _ -> emissionFailure(start)("builtin arguments do not match the registered arity")
+
+let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes = emitCoreBuiltinReusing(kind)(runtimeManaged)(false)(start)(arguments)(argumentTypes)
+
+// The pure updates of a byte buffer, stage 0's `LowerBytesSetUnsigned` and `LowerBytesCopyRange`: the
+// first argument is the buffer updated, normalized onto the reference-counted heap first, and the
+// instruction may write into it in place when the lowering hands it a fresh one.
+let isBytesUpdateBuiltinKind (kind: CoreBuiltinKind) =
+    match kind with
+        | CoreBytesCopyRange -> true
+        | CoreBytesSet -> true
+        | CoreBytesSetU16Le -> true
+        | CoreBytesSetU32Le -> true
+        | CoreBytesSetU64Le -> true
+        | _ -> false
+
+// The byte-buffer builtins whose result is always reference-counted, stage 0's `BytesAllocate` and
+// pure updates marked runtime-managed whatever their consumer asks.
+let isAlwaysRuntimeBytesBuiltinKind (kind: CoreBuiltinKind) =
+    match kind with
+        | CoreBytesAllocate -> true
+        | _ -> isBytesUpdateBuiltinKind(kind)
 
 // The builtins whose result is a fresh string of their own, stage 0's `FreshRcResultKind.String`.
 let isFreshStringBuiltinKind (kind: CoreBuiltinKind) =

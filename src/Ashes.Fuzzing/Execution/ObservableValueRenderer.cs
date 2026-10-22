@@ -16,6 +16,34 @@ internal static class ObservableValueRenderer
         return AshesFormatter.Format(observable);
     }
 
+    /// <summary>
+    /// The case's declarations followed by its template's trailing expression with the rounds count
+    /// in place of <c>ROUNDS</c>: the work runs in the program's entry, not in a function.
+    /// </summary>
+    internal static string RenderTrailingWorkload(GeneratedFuzzCase testCase, string trailingWorkload, int rounds)
+    {
+        if (rounds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(rounds));
+        }
+
+        string source = trailingWorkload.Replace("ROUNDS", rounds.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        if (diagnostics.Errors.Count != 0 || parsed.Items.Count != 0)
+        {
+            throw new InvalidOperationException($"The trailing workload is not one expression: {string.Join(" ", diagnostics.Errors)}{Environment.NewLine}{source}");
+        }
+
+        return WithImports(testCase, AshesFormatter.Format(testCase.Program with { Body = parsed.Body }));
+    }
+
+    // The modules a forced template's declarations name types of, imported ahead of the program.
+    private static string WithImports(GeneratedFuzzCase testCase, string source)
+        => testCase.Imports.Count == 0
+            ? source
+            : string.Concat(testCase.Imports.Select(module => "import " + module + "\n")) + "\n" + source;
+
     internal static string RenderMemoryWorkload(GeneratedFuzzCase testCase, int iterations)
     {
         if (iterations <= 0)
@@ -62,7 +90,7 @@ internal static class ObservableValueRenderer
                     Needs = new NeedsRowSyntax([], "e"),
                 }),
         };
-        return AshesFormatter.Format(testCase.Program with { Body = workload });
+        return WithImports(testCase, AshesFormatter.Format(testCase.Program with { Body = workload }));
     }
 
     private static Expr Render(Expr value, AshesType type, ObservationNames names) => type switch

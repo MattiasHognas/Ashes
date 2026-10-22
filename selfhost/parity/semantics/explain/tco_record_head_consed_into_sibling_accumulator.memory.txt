@@ -8,7 +8,7 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_2]
-    dup:                  14
+    dup:                  15
     drop:                 5
     uniqueness checks:    2
   perceus [lambda_2$env_normalize]
@@ -24,9 +24,9 @@ Function: collect
     drop:                 0
     uniqueness checks:    0
   representation [lambda_2]
-    conservative unknown: 8
-    region:               11
-    runtime rc:           41
+    conservative unknown: 7
+    region:               10
+    runtime rc:           50
     copy value:           9
   representation [lambda_1]
     conservative unknown: 2
@@ -76,7 +76,7 @@ Function: reversed
     drop:                 11
     uniqueness checks:    5
   representation [lambda_14]
-    conservative unknown: 6
+    conservative unknown: 5
     region:               2
     runtime rc:           47
   representation [lambda_13]
@@ -102,7 +102,7 @@ Function: total
     drop:                 0
     uniqueness checks:    0
   representation [lambda_10]
-    conservative unknown: 2
+    conservative unknown: 1
     region:               1
     runtime rc:           18
     copy value:           10

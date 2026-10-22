@@ -2170,6 +2170,52 @@ public sealed partial class Lowering
     private Dictionary<string, TypeRef>? _annotationRowVars;
     private Dictionary<string, TypeRef>? _typeExprParamScope;
 
+    // The type variables written in the inline parameter annotations of the function being lowered,
+    // by name. An inline annotation reads like a whole-binding one, so a lowercase name is a type
+    // variable, and one name is one variable across the parameters of the same function: a curry
+    // stage shares its enclosing stage's names, while any other lambda starts with none.
+    private Dictionary<string, TypeRef> _inlineAnnotationTypeVariables = new(StringComparer.Ordinal);
+
+    private void EnterInlineAnnotationTypeVariables(Expr.Lambda lambda)
+    {
+        if (_curryStage is not { } stage || !ReferenceEquals(stage.Body, lambda))
+        {
+            _inlineAnnotationTypeVariables = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+        }
+    }
+
+    private TypeRef ResolveInlineParameterAnnotation(TypeExpr annotation)
+    {
+        foreach (string name in CollectTypeParameterNames([annotation]).Order(StringComparer.Ordinal))
+        {
+            if (!_inlineAnnotationTypeVariables.ContainsKey(name) && !_typeSymbols.ContainsKey(name))
+            {
+                _inlineAnnotationTypeVariables[name] = NewTypeVar();
+            }
+        }
+
+        Dictionary<string, TypeRef>? savedRowVars = _annotationRowVars;
+        Dictionary<string, TypeRef>? savedParamScope = _typeExprParamScope;
+        _annotationRowVars = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+        _typeExprParamScope = savedParamScope is null
+            ? new Dictionary<string, TypeRef>(_inlineAnnotationTypeVariables, StringComparer.Ordinal)
+            : new Dictionary<string, TypeRef>(savedParamScope, StringComparer.Ordinal);
+        foreach ((string name, TypeRef variable) in _inlineAnnotationTypeVariables)
+        {
+            _typeExprParamScope.TryAdd(name, variable);
+        }
+
+        try
+        {
+            return ResolveTypeExpr(annotation);
+        }
+        finally
+        {
+            _annotationRowVars = savedRowVars;
+            _typeExprParamScope = savedParamScope;
+        }
+    }
+
     /// <summary>
     /// Resolves a user-written annotation with a fresh row-variable scope (and, for capability
     /// operation signatures, the capability's type parameters in scope).

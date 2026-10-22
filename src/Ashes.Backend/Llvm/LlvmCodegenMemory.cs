@@ -341,6 +341,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, initializeBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, initializeBlock);
+        EmitLeakCheckCount(state, 1, name);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, name + "_base");
     }
 
@@ -469,6 +470,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle continueBlock)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
+        EmitLeakCheckCount(state, -1, "rc_drop");
         LlvmValueHandle allocationSize = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_drop_size");
         LlvmValueHandle shouldCache = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
@@ -4030,6 +4032,11 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(state.Target.Builder, continueBlock);
     }
 
+    // A string object in a stack slot of the current function, with no reference-count header in
+    // front of it: fit only for a value that never leaves the function and is never retained or
+    // released, a panic message or a comparison operand. A string a program can keep (an error
+    // message in a Result) is a heap string literal (EmitHeapStringLiteral), whose header holds the
+    // immortal count.
     private static LlvmValueHandle EmitStackStringObject(LlvmCodegenState state, string value)
     {
         byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);

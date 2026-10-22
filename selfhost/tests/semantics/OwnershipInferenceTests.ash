@@ -411,7 +411,7 @@ let testProgramOwnershipInference unit =
                     in
                         let prov2 = buildProvenanceNode("id")(false)(false)(1)([])(None)([])(false)
                         in
-                            let summaries = inferProgramOwnership([sig1, sig2])([prov1, prov2])([])([])(None)([])
+                            let summaries = inferProgramOwnership([sig1, sig2])([prov1, prov2])([])([])([])(None)([])
                             in
                                 match summaries with
                                     | s1 :: t1 ->
@@ -466,7 +466,7 @@ let testProgramLevelCaptureExcludesOtherFunctions unit =
                     in
                         let provOther = buildProvenanceNode("other")(false)(false)(1)([])(None)([])(false)
                         in
-                            let summaries = inferProgramOwnership([sigHelper, sigOther])([provHelper, provOther])([])([])(None)([])
+                            let summaries = inferProgramOwnership([sigHelper, sigOther])([provHelper, provOther])([])([])([])(None)([])
                             in
                                 match summaries with
                                     | s1 :: t1 ->
@@ -624,10 +624,46 @@ let testProgramSummariesSeeThroughHandOff unit =
         funcs
         |> provenanceNodesOf
         |> (given (provNodes) ->
-            inferProgramOwnership(signaturesOf(funcs))(provNodes)([])([])(None)(funcs))
+            inferProgramOwnership(signaturesOf(funcs))(provNodes)([])([])([])(None)(funcs))
         |> assertSummaryBorrowed("peek")(["h"])
         |> assertSummaryBorrowed("peekTwice")(["h"])
         |> (given (_summaries) -> Unit))
+
+let recursive moveSafetyInSummaries (summaries: List(FunctionOwnershipSummary)) (name: Str) (parameter: Str) =
+    match summaries with
+        | [] -> test.fail("expected a summary for " + name)
+        | FunctionOwnershipSummary { functionName = candidate, parameterMoveSafety = proofs } :: rest ->
+            if candidate == name
+            then
+                match proofs |> Ashes.Collection.List.filter(given (entry: (Str, ParameterMoveSafetyProof)) ->
+                    match entry with
+                        | (proofParameter, _proof) -> proofParameter == parameter) with
+                    | (_parameter, ParameterMoveSafetyProof { isMoveSafe = safe }) :: _rest -> safe
+                    | [] -> test.fail("expected a move-safety proof for " + name + "." + parameter)
+            else moveSafetyInSummaries(rest)(name)(parameter)
+
+// A loop hands its accumulator on once per path, in the arm that recurses and the arm that
+// returns it (stage 0's path-sensitive linearity, not a textual count), and the outer call seeds
+// it with a value binding of its type's only nullary constructor, a shared immortal cell (stage
+// 0's `IsNullarySeed`): the accumulator is move-safe.
+let nullarySeededFoldSource = "type Tree =\n    | Leaf\n    | Node(Tree, Int, Tree)\n\nlet emptyTree = Leaf\n\nlet recursive fill (keys: List(Int)) (tree: Tree) =\n    match keys with\n        | [] -> tree\n        | key :: rest -> fill(rest)(Node(tree, key, Leaf))\n\nlet recursive walk (groups: List(List(Int))) (tree: Tree) =\n    match groups with\n        | [] -> tree\n        | keys :: rest ->\n            tree\n            |> fill(keys)\n            |> walk(rest)\n\nlet run (seed: Int) = walk([[seed]])(emptyTree)\n"
+
+let testNullarySeededAccumulatorHandedOnOncePerPathIsMoveSafe unit =
+    (let program = parsedProgram(nullarySeededFoldSource)
+    in
+        let funcs = topLevelFunctions(program)
+        in
+            let summaries =
+                inferProgramOwnership(signaturesOf(funcs))(provenanceNodesOf(funcs))([("Leaf", 0), ("Node", 3)])(programSoleNullaryConstructors(program.items))([])(None)(funcs)
+            in
+                let _ =
+                    "tree"
+                    |> moveSafetyInSummaries(summaries)("walk")
+                    |> test.assertEqual(true)
+                in
+                    "tree"
+                    |> moveSafetyInSummaries(summaries)("fill")
+                    |> test.assertEqual(true))
 
 let reportOwnershipInferenceSuccess unit = Ashes.IO.print("all self-hosted ownership inference and provenance tests passed")
 
@@ -662,4 +698,5 @@ let runOwnershipInferenceTests unit =
     |> testShadowedCalleeIsConsumed
     |> testPartialHandOffIsConsumed
     |> testProgramSummariesSeeThroughHandOff
+    |> testNullarySeededAccumulatorHandedOnOncePerPathIsMoveSafe
     |> reportOwnershipInferenceSuccess

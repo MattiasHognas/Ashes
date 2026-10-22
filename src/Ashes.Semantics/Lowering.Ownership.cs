@@ -247,7 +247,7 @@ public sealed partial class Lowering
             || LookupOwnedValue(ownerName) is not
             { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
         {
-            RetainBorrowedRuntimeOwnersOfAlias(argument);
+            RetainBorrowedRuntimeOwnersOfAlias(argument, argumentTemp);
             return argumentTemp;
         }
 
@@ -350,8 +350,13 @@ public sealed partial class Lowering
 
     // A transferred read of an arena binding that borrows runtime-managed owners retains each
     // owner still live in this frame: the aggregate carries their children out of the scopes
-    // that release them, as the literal's own transfer would have retained them.
-    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument)
+    // that release them, as the literal's own transfer would have retained them. A binding
+    // already copied onto the reference-counted heap before it is stored (a reference-counted
+    // tuple normalizes an arena element) holds its own reference to every child it shares, so
+    // nothing is retained for it: an owner reference taken there has no release anywhere. The
+    // owner's graph is shared with the copy either way, so its release no longer assumes it
+    // is unique.
+    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument, int storedTemp)
     {
         if (argument is not Expr.Var variable
             || LookupOwnedValue(variable.Name) is not
@@ -360,9 +365,16 @@ public sealed partial class Lowering
             return;
         }
 
+        bool storesOwnedCopy = IsOwnedRuntimeManagedTemp(storedTemp);
         foreach (OwnershipInfo owner in borrowed)
         {
             if (owner.IsDropped || !owner.RuntimeManaged || owner.FrameDepth != _lambdaDepth)
+            {
+                continue;
+            }
+
+            owner.RuntimeDeepUnique = false;
+            if (storesOwnedCopy)
             {
                 continue;
             }
@@ -379,10 +391,15 @@ public sealed partial class Lowering
                 Emit(new IrInst.RcDup(duplicatedTemp, ownerTemp, RuntimeManaged: true));
                 MarkRuntimeManagedTemp(duplicatedTemp);
             }
-
-            owner.RuntimeDeepUnique = false;
         }
     }
+
+    // A reference-counted value the lowering produced or took a reference to, rather than a
+    // borrowed read of a slot someone else releases.
+    private bool IsOwnedRuntimeManagedTemp(int temp)
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc
+            && fact.Ownership is LoweredTempOwnershipKind.NewlyProduced or LoweredTempOwnershipKind.Transferred;
 
     /// <summary>
     /// Retains a child that an aggregate stores and will own or carry out of the scopes that own it:
@@ -492,11 +509,19 @@ public sealed partial class Lowering
     // read out of that parameter stored into the rebuilt cell, and is retained like one: the
     // back edge copies the successor's children and releases the successor's references to
     // them, then releases the old parameter's own children, so a borrowed field would be freed
-    // twice.
+    // twice. An update handed to a call instead is an arena aggregate built as a call argument: its
+    // retains are released after the call once the call's result holds its own references.
     private int RetainUnchangedRecordUpdateField(Binding.Local? targetParameter, int loadedTemp, TypeRef fieldType)
-        => targetParameter is null || CanArenaReset(Prune(fieldType))
-            ? loadedTemp
-            : DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
+    {
+        if (targetParameter is null || CanArenaReset(Prune(fieldType)))
+        {
+            return loadedTemp;
+        }
+
+        int retainedTemp = DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
+        _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType);
+        return retainedTemp;
+    }
 
     private void FinalizeTcoParameterAggregateRetains(TcoContext? tco)
     {
@@ -2389,7 +2414,7 @@ public sealed partial class Lowering
     private bool CanArenaReset(TypeRef type)
     {
         TypeRef pruned = EraseZeroCostTypeRepresentation(type);
-        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool;
+        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool or TypeRef.TNever;
     }
 
     /// <summary>

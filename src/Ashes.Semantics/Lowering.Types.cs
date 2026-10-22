@@ -232,6 +232,17 @@ public sealed partial class Lowering
         // For each parameter ordinal, the parameters a self-call may pass there whole or in part;
         // null when the body's flow was not followed.
         public Dictionary<int, HashSet<int>>? SelfCallParameterFlow { get; set; }
+
+        // The same flow followed through a list's spine alone: a head a cons pattern binds out of a
+        // parameter is not one of its parts here, only the tails and the whole values.
+        public Dictionary<int, HashSet<int>>? SelfCallSpineFlow { get; set; }
+
+        // The loop's body, the innermost lambda body of the recursive binding, read by the
+        // back-edge rules that follow the names a self call passes.
+        public Expr? Body { get; set; }
+
+        // The call policy the flow was computed under, for the rules that follow names later.
+        public FlowCallPolicy FlowPolicy { get; set; } = FlowCallPolicy.All;
         public Dictionary<int, TcoParamPlacementState> ParamPlacements { get; } = [];
 
         // Preserves the exact legacy enumeration order of the two now-collapsed per-slot membership
@@ -329,6 +340,10 @@ public sealed partial class Lowering
         // active locals are allocated during the post-body refresh and initialized retroactively at
         // the same one-time entry insertion point as the other TCO ownership setup.
         public HashSet<int> RuntimeManagedClosureSlotsNeedingEntryInitialization { get; } = [];
+
+        // Synthetic slots of parameters no expression in the body reads: nothing captured them, so
+        // they hold no argument at entry, only the successors the back edge stores.
+        public HashSet<int> UnreadParamSlots { get; } = [];
 
         public bool TryGetRuntimeManagedActiveSlot(int slot, out int activeSlot)
         {

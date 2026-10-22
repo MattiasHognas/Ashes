@@ -45,9 +45,9 @@ Function: findHeavy
     drop:                 8
     uniqueness checks:    3
   representation [lambda_7]
-    conservative unknown: 6
+    conservative unknown: 5
     region:               3
-    runtime rc:           27
+    runtime rc:           28
     copy value:           4
   representation [lambda_6]
     conservative unknown: 1
@@ -68,8 +68,7 @@ Function: run
     uniqueness checks:    0
   representation [lambda_10]
     conservative unknown: 15
-    runtime rc:           2
-    copy value:           20
+    copy value:           22
   representation [lambda_9]
     region:               3
     copy value:           1

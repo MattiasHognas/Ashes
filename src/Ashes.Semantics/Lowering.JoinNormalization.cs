@@ -116,7 +116,7 @@ public sealed partial class Lowering
 
         List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
         return reaching.Count > 0
-            && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && IsNewlyProducedRcTemp(store.Source));
+            && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && (IsNewlyProducedRcTemp(store.Source) || IsRetainedPatternOwnerArm(arm)));
     }
 
     // An arm that hands the join a reference-counted value: one it owns, or one a loop parameter owns.
@@ -127,7 +127,7 @@ public sealed partial class Lowering
 
     // A nested join already normalized holds its own reference, whatever facts its reload carries.
     private bool IsOwnedValueArm(JoinArm arm)
-        => arm.Owned || (arm.Store is { } store && IsNormalizedJoinTemp(store.Source));
+        => arm.Owned || IsRetainedPatternOwnerArm(arm) || (arm.Store is { } store && IsNormalizedJoinTemp(store.Source));
 
     // A join every reaching arm of which hands over a reference of its own (a normalized join, a cell
     // it built, nil) owns its value as the normalized joins do.
@@ -190,11 +190,61 @@ public sealed partial class Lowering
     private readonly Dictionary<List<IrInst>, HashSet<int>> _parameterBorrowingJoinTempsByBody =
         new(ReferenceEqualityComparer.Instance);
 
+    // A branch returning a pattern binding of a loop parameter retains it before the binding's scope
+    // releases it: the arm hands the join a reference of its own, not one the parameter owns.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _retainedPatternOwnerArmTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordRetainedPatternOwnerArmTemp(int temp)
+    {
+        if (!_retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _retainedPatternOwnerArmTempsByBody[_inst] = temps;
+        }
+
+        temps.Add(temp);
+    }
+
+    private bool IsRetainedPatternOwnerArm(JoinArm arm)
+        => arm.Store is { } store
+            && ((_retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
+                    && temps.Contains(store.Source))
+                || IsResolvedDeferredPatternOwnerArmTemp(store.Source));
+
+    // A branch returning a pattern binding lowered while the binding's type was still unresolved
+    // (a generic walk whose element type a later arm fixes) hands the join a reference or a copy of
+    // it (TransferDeferredPatternOwnerResult). Whether that is a reference of its own is read when
+    // the join is completed, after every arm has been lowered: it is one once the binding's type has
+    // resolved to a string, which its owner protects whatever the loop parameter's placement
+    // (FinalizePerceusPatternBindingOwners) and whose copy is the one the branch emits. The
+    // parameter's own placement is not read here, since it may still be revised before the owner is
+    // finalized.
+    private readonly Dictionary<List<IrInst>, Dictionary<int, OwnershipInfo>> _deferredPatternOwnerArmTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordDeferredPatternOwnerArmTemp(int temp, OwnershipInfo owner)
+    {
+        if (!_deferredPatternOwnerArmTempsByBody.TryGetValue(_inst, out Dictionary<int, OwnershipInfo>? temps))
+        {
+            temps = [];
+            _deferredPatternOwnerArmTempsByBody[_inst] = temps;
+        }
+
+        temps[temp] = owner;
+    }
+
+    private bool IsResolvedDeferredPatternOwnerArmTemp(int temp)
+        => _deferredPatternOwnerArmTempsByBody.TryGetValue(_inst, out Dictionary<int, OwnershipInfo>? temps)
+            && temps.TryGetValue(temp, out OwnershipInfo? owner)
+            && owner.Type is { } bindingType
+            && Prune(bindingType) is TypeRef.TStr;
+
     // Nil joins as a reference-counted list too, but it owns nothing and borrows from nothing. A
     // nested join normalized in place borrowed from a parameter before its arms were retained, and
-    // holds its own reference since.
+    // holds its own reference since, as does an arm that retained the pattern binding it returns.
     private bool BorrowsLoopParameter(JoinArm arm)
-        => (arm.JoinsRuntimeManaged && !(arm.Body is { } body && IsEmptyListLiteral(body)))
+        => (arm.JoinsRuntimeManaged && !(arm.Body is { } body && IsEmptyListLiteral(body)) && !IsRetainedPatternOwnerArm(arm))
             || (arm.Store is { } store
                 && !IsNormalizedJoinTemp(store.Source)
                 && _parameterBorrowingJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
@@ -341,8 +391,14 @@ public sealed partial class Lowering
             int ownedSlot = NewLocal();
             Emit(new IrInst.StoreLocal(ownedSlot, argumentTemps[i]));
             RegisterGeneralRcOwnedSlot(ownedSlot, fieldType);
+            _ownedSlotConstructorArguments.Add(arguments[i]);
         }
     }
+
+    // The constructor arguments whose fresh value went to an owned slot rather than to the arena cell
+    // storing it: the slot releases the value, so a release of the cell's children skips that field.
+    private readonly HashSet<Ashes.Frontend.Expr> _ownedSlotConstructorArguments =
+        new(ReferenceEqualityComparer.Instance);
 
     // A record update builds its cell in the arena, which never releases what it holds: a fresh
     // reference-counted value stored into an updated field goes to an owned slot, as a constructor's does.
@@ -379,6 +435,79 @@ public sealed partial class Lowering
         => (argument is Ashes.Frontend.Expr.Var variable
                 && LookupOwnedValue(variable.Name) is { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
             || TryResolveTcoParameterRead(argument, fieldType, out _) is not null;
+
+    // A tuple beside an element of unresolved layout (a generic value) stays in the arena, where
+    // nothing releases what it holds. An arena tuple never holds the only reference to a
+    // reference-counted value: such an element is copied into the arena beside it, a fresh one is
+    // released after the copy, and none is retained for the tuple. Returns the elements copied.
+    private bool[] DemoteElementsBesideAbstractSibling(List<LoweredValue> elements, bool runtimeManaged)
+    {
+        bool[] demoted = new bool[elements.Count];
+        if (runtimeManaged
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_DEMOTE") is not null
+            || !elements.Exists(element => ContainsUnresolvedLayoutType(Prune(element.Type), [])))
+        {
+            return demoted;
+        }
+
+        for (int i = 0; i < elements.Count; i++)
+        {
+            TypeRef type = Prune(elements[i].Type);
+            if (CanArenaReset(type)
+                || type is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(type, [])
+                || !IsGeneralRcAdmissible(type)
+                || IsGeneralRcValueType(type))
+            {
+                continue;
+            }
+
+            int sourceTemp = NeutralizeAggregateDuplicate(elements[i].Temp);
+            int copiedTemp = EmitArenaCopyOfReferenceCounted(sourceTemp, type, IsNewlyProducedRcTemp(sourceTemp));
+            elements[i] = CreateLoweredValue(copiedTemp, type);
+            demoted[i] = true;
+        }
+
+        return demoted;
+    }
+
+    // The duplicate a pattern-owner read took for the aggregate is not needed once the aggregate
+    // holds a copy; left as a marker, it could still be upgraded to a retain nothing releases.
+    // Returns the value the element was read as.
+    private int NeutralizeAggregateDuplicate(int elementTemp)
+    {
+        int index = _inst.FindLastIndex(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == elementTemp);
+        if (index < 0 || _inst[index] is not IrInst.RcDup { RuntimeManaged: false } marker)
+        {
+            return elementTemp;
+        }
+
+        _inst[index] = new IrInst.Borrow(marker.Target, marker.SourceTemp) { Location = marker.Location };
+        return marker.SourceTemp;
+    }
+
+    // An arena copy of a value that may be reference-counted, releasing the original when the
+    // caller owned it; a value already outside the reference-counted heap is used as it is.
+    private int EmitArenaCopyOfReferenceCounted(int sourceTemp, TypeRef type, bool releasesSource)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, sourceTemp));
+        string doneLabel = NewLabel("rc_arena_demote_done");
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, doneLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitDeepCopy(sourceTemp, type)));
+        if (releasesSource)
+        {
+            EmitRuntimeManagedChildDrop(sourceTemp, type);
+        }
+
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
 
     // Whether a tuple is a reference-counted one: it was requested, or it holds a reference-counted
     // element; and every element is manageable, one of the contract's types included, and those are

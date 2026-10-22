@@ -1427,7 +1427,7 @@ public sealed partial class Lowering
         ((int functionTemp, TypeRef functionType) function, IReadOnlyList<TraitConstraint> instantiatedConstraints) =
             LowerTraitDictionaryCallRoot(rootExpression);
         bool evidenceNeedsLaterArgumentTypes = TraitEvidenceNeedsLaterArgumentTypes(instantiatedConstraints);
-        (List<int> Temps, TypeRef Result)? loweredArguments = LowerTraitDictionaryRealArguments(
+        (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver)? loweredArguments = LowerTraitDictionaryRealArguments(
             arguments,
             function.functionType,
             functionName,
@@ -1461,6 +1461,7 @@ public sealed partial class Lowering
             applied = next;
         }
         TypeRef resultType = Prune(loweredArguments.Value.Result);
+        HandOverDictionaryCallArgumentsToOwnedSlots(loweredArguments.Value.HandedOver, resultType);
         return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
     }
 
@@ -1468,7 +1469,7 @@ public sealed partial class Lowering
         string functionName,
         TypeRef functionType,
         IReadOnlyList<Expr> arguments,
-        (List<int> Temps, TypeRef Result) loweredArguments,
+        (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver) loweredArguments,
         IReadOnlyList<TraitConstraint> constraints,
         TextSpan span)
     {
@@ -1506,6 +1507,7 @@ public sealed partial class Lowering
             applied = next;
         }
         TypeRef resultType = Prune(loweredArguments.Result);
+        HandOverDictionaryCallArgumentsToOwnedSlots(loweredArguments.HandedOver, resultType);
         return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
     }
 
@@ -1819,7 +1821,7 @@ public sealed partial class Lowering
         // The real arguments go first: unifying them pins the instantiated constraints, which
         // decides whether the syntactically threaded evidence is the right supply for each one.
         IReadOnlyList<Expr> realArguments = arguments.Skip(info.Dictionaries.Count).ToArray();
-        (List<int> Temps, TypeRef Result)? loweredArguments = LowerTraitDictionaryRealArguments(
+        (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver)? loweredArguments = LowerTraitDictionaryRealArguments(
             realArguments,
             exposedType,
             functionName,
@@ -1845,6 +1847,7 @@ public sealed partial class Lowering
             applied = next;
         }
         TypeRef resultType = Prune(loweredArguments.Value.Result);
+        HandOverDictionaryCallArgumentsToOwnedSlots(loweredArguments.Value.HandedOver, resultType);
         return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
     }
 
@@ -2186,7 +2189,7 @@ public sealed partial class Lowering
         return DuplicateRuntimeManagedOwnedValueForTransfer(argument, argumentTemp, argumentType);
     }
 
-    private (List<int> Temps, TypeRef Result)? LowerTraitDictionaryRealArguments(
+    private (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver)? LowerTraitDictionaryRealArguments(
         IReadOnlyList<Expr> arguments,
         TypeRef functionType,
         string functionName,
@@ -2194,6 +2197,7 @@ public sealed partial class Lowering
     {
         PreconstrainKnownCallArgumentTypes(arguments, functionType);
         List<int> argumentTemps = [];
+        List<HandedOverDictionaryArgument> handedOver = [];
         TypeRef resultType = functionType;
         foreach (Expr argument in arguments)
         {
@@ -2213,15 +2217,107 @@ public sealed partial class Lowering
                 ?? LowerExpr(
                     argument,
                     LoweredValueRequest.None.WithCallerReportedExpectedType(function.Arg)).AsPair();
-            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
-            argumentTemp = RetainOwnedDictionaryCallArgumentKeptByResult(
-                functionName, argumentTemps.Count, argument, argumentTemp, function.Arg);
-            argumentTemps.Add(argumentTemp);
+            int ownerTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+            if (ownerTemp != argumentTemp)
+            {
+                handedOver.Add(new HandedOverDictionaryArgument(ownerTemp, function.Arg, Marker: true));
+            }
+            int keptTemp = RetainOwnedDictionaryCallArgumentKeptByResult(
+                functionName, argumentTemps.Count, argument, ownerTemp, function.Arg);
+            if (keptTemp != ownerTemp)
+            {
+                handedOver.Add(new HandedOverDictionaryArgument(keptTemp, function.Arg, Marker: false));
+            }
+            argumentTemps.Add(keptTemp);
             Unify(function.Arg, argumentType);
             SubsumeCalleeRow(function.Row, span);
             resultType = function.Ret;
         }
-        return (argumentTemps, resultType);
+        return (argumentTemps, resultType, handedOver);
+    }
+
+    /// <summary>
+    /// A reference a constrained call's argument took for the callee's result: a pattern owner's
+    /// marker (<see cref="DuplicatePerceusPatternOwnerForAggregate"/>), a real retain only once the
+    /// owner is placed, or a retain of an owned value
+    /// (<see cref="RetainOwnedDictionaryCallArgumentKeptByResult"/>).
+    /// </summary>
+    private readonly record struct HandedOverDictionaryArgument(int Temp, TypeRef Type, bool Marker);
+
+    /// <summary>
+    /// The owned slot a pattern owner's marker goes to: it holds zero until the marker turns out to
+    /// be a real retain.
+    /// </summary>
+    private sealed record HandedOverMarkerSlot(List<IrInst> Body, int MarkerTemp, int Slot, int ZeroTemp);
+
+    private readonly List<HandedOverMarkerSlot> _handedOverMarkerSlots = [];
+
+    /// <summary>
+    /// A constrained callee neither adopts an argument nor reports whether it did, and its result
+    /// is an arena value that never releases what it holds: the reference taken for that result
+    /// goes to an owned slot, released once the function's result or the loop's successors hold
+    /// references of their own, as an ordinary call's handed-over argument does.
+    /// </summary>
+    private void HandOverDictionaryCallArgumentsToOwnedSlots(List<HandedOverDictionaryArgument> handedOver, TypeRef resultType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_DICTHANDEDSLOT") is not null
+            || ContainsUnresolvedLayoutType(Prune(resultType), []))
+        {
+            return;
+        }
+
+        foreach (HandedOverDictionaryArgument argument in handedOver)
+        {
+            TypeRef valueType = Prune(argument.Type);
+            if (valueType is TypeRef.TFun
+                || CanArenaReset(valueType)
+                || ContainsUnresolvedLayoutType(valueType, []))
+            {
+                continue;
+            }
+
+            int ownedSlot = NewLocal();
+            int storedTemp = argument.Temp;
+            if (argument.Marker)
+            {
+                storedTemp = NewTemp();
+                Emit(new IrInst.LoadConstInt(storedTemp, 0));
+            }
+
+            Emit(new IrInst.StoreLocal(ownedSlot, storedTemp));
+            if (argument.Marker)
+            {
+                _handedOverMarkerSlots.Add(new HandedOverMarkerSlot(_inst, argument.Temp, ownedSlot, storedTemp));
+            }
+
+            RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+        }
+    }
+
+    /// <summary>
+    /// Once the function's pattern owners are placed, a marker handed over to an owned slot that
+    /// became a real retain is stored into it; one that stayed an identity took no reference.
+    /// </summary>
+    private void SettleHandedOverMarkerSlots()
+    {
+        for (int index = _handedOverMarkerSlots.Count - 1; index >= 0; index--)
+        {
+            HandedOverMarkerSlot entry = _handedOverMarkerSlots[index];
+            if (!ReferenceEquals(entry.Body, _inst))
+            {
+                continue;
+            }
+
+            _handedOverMarkerSlots.RemoveAt(index);
+            bool retained = _inst.Exists(instruction =>
+                instruction is IrInst.RcDup { RuntimeManaged: true } duplicate && duplicate.Target == entry.MarkerTemp);
+            int storeIndex = _inst.FindIndex(instruction => instruction is IrInst.StoreLocal store && store.Slot == entry.Slot && store.Source == entry.ZeroTemp);
+            if (retained && storeIndex >= 0)
+            {
+                _inst[storeIndex] = new IrInst.StoreLocal(entry.Slot, entry.MarkerTemp);
+            }
+        }
     }
 
     private (int Temp, TypeRef Type) BuildTraitDictionary(TraitEvidencePlan plan, TextSpan span)

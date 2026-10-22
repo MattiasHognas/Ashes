@@ -1186,26 +1186,44 @@ public sealed partial class Lowering
     {
         public required TcoSelfCallArgumentShape?[] Observed { get; init; }
         public required bool?[] ArenaSelfContainedListRebuild { get; init; }
+        public required bool?[] FreshOrHandedOnListRebuild { get; init; }
         public required bool?[] FreshClosureRebuild { get; init; }
         public required bool?[] BytesProvenanceSafeListRebuild { get; init; }
         public required bool?[] AccumulatorEdges { get; init; }
         public required bool[] AnyRebuildEdge { get; init; }
         public required bool?[] ChoiceAccumulatorEdges { get; init; }
         public required bool[] AnyChoiceEdge { get; init; }
+        public required bool?[] WalkOrRefillEdges { get; init; }
+        public required bool[] AnyWalkEdge { get; init; }
+        public required bool[] AnyRefillEdge { get; init; }
+        public required bool?[] HandedOnOrGrownEdges { get; init; }
+        public required TcoSelfCallArgumentShape?[] ObservedBesideResets { get; init; }
+        public required bool[] AnyResetSite { get; init; }
         public required string SelfName { get; init; }
         public bool SawSelfCall { get; set; }
+
+        // The names a `match` arm in scope bound out of a call's result, the scrutinee: parts of a
+        // value this iteration received, as a call's result itself is.
+        public HashSet<string> CallResultParts { get; } = new(StringComparer.Ordinal);
 
         public static TcoParamFactsState ForParameters(int count, string selfName)
             => new()
             {
                 Observed = new TcoSelfCallArgumentShape?[count],
                 ArenaSelfContainedListRebuild = new bool?[count],
+                FreshOrHandedOnListRebuild = new bool?[count],
                 FreshClosureRebuild = new bool?[count],
                 BytesProvenanceSafeListRebuild = new bool?[count],
                 AccumulatorEdges = new bool?[count],
                 AnyRebuildEdge = new bool[count],
                 ChoiceAccumulatorEdges = new bool?[count],
                 AnyChoiceEdge = new bool[count],
+                WalkOrRefillEdges = new bool?[count],
+                AnyWalkEdge = new bool[count],
+                AnyRefillEdge = new bool[count],
+                HandedOnOrGrownEdges = new bool?[count],
+                ObservedBesideResets = new TcoSelfCallArgumentShape?[count],
+                AnyResetSite = new bool[count],
                 SelfName = selfName,
             };
     }
@@ -1258,7 +1276,7 @@ public sealed partial class Lowering
             ComputeAffineSelfAppendOrdinals(function, info);
         for (int i = 0; i < paramNames.Count; i++)
         {
-            if (state.Observed[i] is { } shape)
+            if (EffectiveTcoShape(state, i) is { } shape)
             {
                 result.Add(new TcoParamStructuralFacts(
                     i,
@@ -1275,7 +1293,11 @@ public sealed partial class Lowering
                         ? TcoParamReuseAffinity.SelfAppendOnly
                         : TcoParamReuseAffinity.GeneralOrUnknown,
                     state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
-                    state.ChoiceAccumulatorEdges[i] == true && state.AnyChoiceEdge[i]));
+                    state.ChoiceAccumulatorEdges[i] == true
+                        && (state.AnyChoiceEdge[i]
+                            || (shape == TcoSelfCallArgumentShape.Mixed && state.HandedOnOrGrownEdges[i] == true)),
+                    state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i],
+                    state.FreshOrHandedOnListRebuild[i] == true && state.AnyRebuildEdge[i]));
             }
         }
 
@@ -2305,7 +2327,9 @@ public sealed partial class Lowering
         IReadOnlyList<string> paramNames,
         IReadOnlyDictionary<Expr, bool> expressionFreshness,
         TcoParamFactsState state)
-        => TcoParamFactsWalk(
+    {
+        bool shadowsCallResultPart = state.CallResultParts.Remove(name);
+        TcoParamFactsWalk(
             body,
             RemoveTailOwnerNames(tailOwners, [name]),
             function,
@@ -2315,6 +2339,11 @@ public sealed partial class Lowering
             expressionFreshness,
             letValues,
             state);
+        if (shadowsCallResultPart)
+        {
+            state.CallResultParts.Add(name);
+        }
+    }
 
     // A `let` whose body tail-calls the loop passes the bound NAME, so every structural fact below
     // would be read off a bare Var and collapse to false. Recording the bound value lets the call
@@ -2372,6 +2401,7 @@ public sealed partial class Lowering
                 armTailOwners[tail.Name] = sourceParameterOrdinal;
             }
 
+            List<string> changedParts = MarkArmCallResultParts(state, binders, match.Value is Expr.Call);
             TcoParamFactsWalk(
                 matchCase.Body,
                 armTailOwners,
@@ -2382,6 +2412,38 @@ public sealed partial class Lowering
                 expressionFreshness,
                 RemoveLetValueNames(letValues, binders),
                 state);
+            RestoreArmCallResultParts(state, changedParts, match.Value is Expr.Call);
+        }
+    }
+
+    // An arm over a call's result binds parts of it; any other arm's binders shadow such a part.
+    // Returns the names whose membership changed, for the restore after the arm.
+    private static List<string> MarkArmCallResultParts(TcoParamFactsState state, HashSet<string> binders, bool callScrutinee)
+    {
+        var changed = new List<string>();
+        foreach (string binder in binders)
+        {
+            if (callScrutinee ? state.CallResultParts.Add(binder) : state.CallResultParts.Remove(binder))
+            {
+                changed.Add(binder);
+            }
+        }
+
+        return changed;
+    }
+
+    private static void RestoreArmCallResultParts(TcoParamFactsState state, List<string> changed, bool callScrutinee)
+    {
+        foreach (string binder in changed)
+        {
+            if (callScrutinee)
+            {
+                state.CallResultParts.Remove(binder);
+            }
+            else
+            {
+                state.CallResultParts.Add(binder);
+            }
         }
     }
 
@@ -2501,8 +2563,6 @@ public sealed partial class Lowering
                 && letValues.TryGetValue(letVar.Name, out Expr? boundValue)
                     ? boundValue
                     : argument;
-            bool arenaSelfContainedListRebuild =
-                IsArenaSelfContainedListRebuildExpr(structural);
             bool freshClosureRebuild = IsFreshClosureRebuildExpr(structural);
             bool bytesProvenanceSafeListRebuild =
                 IsBytesProvenanceSafeListRebuildExpr(structural);
@@ -2512,19 +2572,12 @@ public sealed partial class Lowering
             state.Observed[i] = state.Observed[i] is { } already && already != local
                 ? TcoSelfCallArgumentShape.Mixed
                 : state.Observed[i] ?? local;
-            state.ArenaSelfContainedListRebuild[i] =
-                (state.ArenaSelfContainedListRebuild[i] ?? true)
-                && arenaSelfContainedListRebuild;
-            state.FreshClosureRebuild[i] =
-                (state.FreshClosureRebuild[i] ?? true)
-                && freshClosureRebuild;
+            RecordListRebuildEdge(state, i, local, IsArenaSelfContainedListRebuildExpr(structural));
+            RecordResetSite(state, i, local, argument, parameterScope);
+            state.FreshClosureRebuild[i] = (state.FreshClosureRebuild[i] ?? true) && freshClosureRebuild;
             state.BytesProvenanceSafeListRebuild[i] =
-                (state.BytesProvenanceSafeListRebuild[i] ?? true)
-                && bytesProvenanceSafeListRebuild;
-            // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a
-            // call's result; a consumed tail or any other expression is not one.
-            bool accumulatorEdge = local is TcoSelfCallArgumentShape.UnchangedPassthrough or TcoSelfCallArgumentShape.GrownCons
-                || (local != TcoSelfCallArgumentShape.ConsumedTail && structural is Expr.Call);
+                (state.BytesProvenanceSafeListRebuild[i] ?? true) && bytesProvenanceSafeListRebuild;
+            bool accumulatorEdge = IsAccumulatorEdge(local, structural, passesParameterItself, state);
             state.AccumulatorEdges[i] = (state.AccumulatorEdges[i] ?? true) && accumulatorEdge;
             state.AnyRebuildEdge[i] |= local != TcoSelfCallArgumentShape.UnchangedPassthrough;
             bool choiceEdge = local == TcoSelfCallArgumentShape.Mixed
@@ -2532,8 +2585,116 @@ public sealed partial class Lowering
             state.ChoiceAccumulatorEdges[i] = (state.ChoiceAccumulatorEdges[i] ?? true)
                 && (choiceEdge || IsAccumulatorEdgeArm(structural, paramNames[i], i, parameterScope));
             state.AnyChoiceEdge[i] |= choiceEdge;
+            state.HandedOnOrGrownEdges[i] = (state.HandedOnOrGrownEdges[i] ?? true)
+                && IsHandedOnOrGrownEdge(local, structural, parameterScope);
+            RecordWalkOrRefillEdge(state, i, local, structural);
         }
     }
+
+    // An arena-self-contained list rebuild at every site, or at every site that does not hand the
+    // parameter on unchanged.
+    private static void RecordListRebuildEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, bool arenaSelfContainedListRebuild)
+    {
+        state.ArenaSelfContainedListRebuild[ordinal] =
+            (state.ArenaSelfContainedListRebuild[ordinal] ?? true) && arenaSelfContainedListRebuild;
+        state.FreshOrHandedOnListRebuild[ordinal] = (state.FreshOrHandedOnListRebuild[ordinal] ?? true)
+            && (arenaSelfContainedListRebuild || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+    }
+
+    // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a call's
+    // result or a part matched out of one; a consumed tail or any other expression is not one.
+    private static bool IsAccumulatorEdge(
+        TcoSelfCallArgumentShape local,
+        Expr structural,
+        bool passesParameterItself,
+        TcoParamFactsState state)
+        => local is TcoSelfCallArgumentShape.UnchangedPassthrough or TcoSelfCallArgumentShape.GrownCons
+            || (local != TcoSelfCallArgumentShape.ConsumedTail
+                && (structural is Expr.Call
+                    || (!passesParameterItself
+                        && Environment.GetEnvironmentVariable("GRC_NO_CALLPARTEDGE") is null
+                        && structural is Expr.Var part
+                        && state.CallResultParts.Contains(part.Name))));
+
+    // A site that starts the list afresh (`first :: []`), with no head reading a loop parameter,
+    // holds nothing of the predecessor, which its back edge releases. Beside sites that
+    // all grow the parameter by cons cells it leaves the parameter a grown accumulator
+    // (EffectiveTcoShape); the other shapes see it as the site it is.
+    private static void RecordResetSite(
+        TcoParamFactsState state,
+        int ordinal,
+        TcoSelfCallArgumentShape local,
+        Expr argument,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        if (local != TcoSelfCallArgumentShape.GrownCons && IsFreshResetList(argument, parameterScope))
+        {
+            state.AnyResetSite[ordinal] = true;
+            return;
+        }
+
+        state.ObservedBesideResets[ordinal] = state.ObservedBesideResets[ordinal] is { } already && already != local
+            ? TcoSelfCallArgumentShape.Mixed
+            : state.ObservedBesideResets[ordinal] ?? local;
+    }
+
+    // A list literal with elements (`[first]`), or a chain of cons cells ending in the empty list,
+    // none of whose elements reads a loop parameter. The empty list alone is left to the rules for
+    // emptied lists.
+    private static bool IsFreshResetList(Expr expression, IReadOnlyDictionary<string, int> parameterScope)
+        => expression switch
+        {
+            Expr.ListLit { Elements.Count: > 0 } list => Environment.GetEnvironmentVariable("GRC_NO_RESETLITERAL") is null
+                && list.Elements.All(element => !ReadsLoopParameter(element, parameterScope)),
+            Expr.Cons cons => !ReadsLoopParameter(cons.Head, parameterScope)
+                && (cons.Tail is Expr.ListLit { Elements.Count: 0 } || IsFreshResetList(cons.Tail, parameterScope)),
+            _ => false,
+        };
+
+    private static bool ResetSitesKeepGrownAccumulatorsEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_RESETSITE") is null;
+
+    // The parameter's shape over every self-call site, except that fresh starts beside sites that
+    // all grow it by cons cells leave it a grown accumulator.
+    private static TcoSelfCallArgumentShape? EffectiveTcoShape(TcoParamFactsState state, int ordinal)
+        => ResetSitesKeepGrownAccumulatorsEnabled
+            && state.AnyResetSite[ordinal]
+            && state.ObservedBesideResets[ordinal] == TcoSelfCallArgumentShape.GrownCons
+                ? TcoSelfCallArgumentShape.GrownCons
+                : state.Observed[ordinal];
+
+    // A site that hands the parameter on as it is, conses onto it a head reading no loop parameter,
+    // or empties it; any other fresh list, or a same-named rebinding, is none of these.
+    private static bool IsHandedOnOrGrownEdge(
+        TcoSelfCallArgumentShape local,
+        Expr structural,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        return local == TcoSelfCallArgumentShape.UnchangedPassthrough
+            || (local == TcoSelfCallArgumentShape.GrownCons
+                && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)))
+            || (EmptiedAccumulatorsEnabled && structural is Expr.ListLit { Elements.Count: 0 });
+    }
+
+    private static bool EmptiedAccumulatorsEnabled => Environment.GetEnvironmentVariable("GRC_NO_EMPTIEDACCUMULATOR") is null;
+
+    // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
+    // a call's result, or an empty list. A list only ever handed on, emptied or refilled holds
+    // nothing older than its refills, so a walk among its edges is not required of it.
+    private static void RecordWalkOrRefillEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, Expr structural)
+    {
+        bool walk = local == TcoSelfCallArgumentShape.ConsumedTail;
+        bool refill = local != TcoSelfCallArgumentShape.ConsumedTail
+            && local != TcoSelfCallArgumentShape.UnchangedPassthrough
+            && structural is Expr.Call;
+        bool emptied = RefillOnlyListsEnabled && structural is Expr.ListLit { Elements.Count: 0 };
+        state.WalkOrRefillEdges[ordinal] = (state.WalkOrRefillEdges[ordinal] ?? true)
+            && (walk || refill || emptied || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+        state.AnyWalkEdge[ordinal] |= walk;
+        state.AnyRefillEdge[ordinal] |= refill;
+    }
+
+    private static bool RefillOnlyListsEnabled => Environment.GetEnvironmentVariable("GRC_NO_REFILLONLY") is null;
 
     // A choice between accumulator edges (the parameter handed on in one arm, a cons onto it in
     // another) is one itself, as long as no arm's pattern rebinds the parameter's name.
@@ -2579,6 +2740,43 @@ public sealed partial class Lowering
             _ => EnumerateChildren(expression).Any(child => ReadsLoopParameter(child, parameterScope)),
         };
 
+    // The last tail of a cons that grows a list by one cell (`head :: tail`) or, a chain written
+    // out, by several (`first :: separator :: acc`): the accumulator the cells are consed onto.
+    // Anything else has none. A chain grows the accumulator whatever its heads read, as one cell
+    // does: a head reading a loop parameter (`first :: separator :: acc`) is retained into its
+    // reference-counted cell, which an arena cell would have kept with nothing to release it.
+    private static Expr? GrownConsChainTail(Expr expression)
+    {
+        if (expression is not Expr.Cons cons)
+        {
+            return null;
+        }
+
+        Expr tail = cons.Tail;
+        while (tail is Expr.Cons inner && ConsChainsGrowAccumulators)
+        {
+            tail = inner.Tail;
+        }
+
+        return tail;
+    }
+
+    private static bool ConsChainsGrowAccumulators
+        => Environment.GetEnvironmentVariable("GRC_NO_CONSCHAIN") is null;
+
+    private static bool ConsChainHeadsMayReadParameters
+        => Environment.GetEnvironmentVariable("GRC_NO_CHAINPARAMHEAD") is null;
+
+    // The heads of a cons chain, outermost first.
+    private static IEnumerable<Expr> ConsChainHeads(Expr expression)
+    {
+        while (expression is Expr.Cons cons)
+        {
+            yield return cons.Head;
+            expression = cons.Tail;
+        }
+    }
+
     // `argument` is how the tail call spells the value; `structural` is what it was bound to. The
     // first two shapes ask which binding the name refers to, so they read the spelling.
     private static TcoSelfCallArgumentShape ClassifyTcoSelfCallArgument(
@@ -2596,9 +2794,12 @@ public sealed partial class Lowering
             && tailOwners.TryGetValue(tailVar.Name, out int ownerOrdinal)
             && ownerOrdinal == ordinal
             ? TcoSelfCallArgumentShape.ConsumedTail
-        : structural is Expr.Cons { Tail: Expr.Var consTail }
+        : GrownConsChainTail(structural) is Expr.Var consTail
             && parameterScope.TryGetValue(consTail.Name, out int tailParameterOrdinal)
             && tailParameterOrdinal == ordinal
+            && (structural is Expr.Cons { Tail: Expr.Var }
+                || ConsChainHeadsMayReadParameters
+                || ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)))
             ? TcoSelfCallArgumentShape.GrownCons
         : expressionFreshness.TryGetValue(structural, out bool fresh) && fresh
             ? TcoSelfCallArgumentShape.FreshRebuilt

@@ -1492,7 +1492,7 @@ public sealed partial class Lowering
         bool runtimeManagedCandidate,
         IReadOnlyDictionary<string, bool>? childBindings)
     {
-        RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps);
+        RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps, runtimeManagedCandidate);
         if (!runtimeManagedCandidate)
         {
             return;
@@ -1538,23 +1538,78 @@ public sealed partial class Lowering
     private void RetainRuntimeManagedTcoConstructorArguments(
         IReadOnlyList<Expr> arguments,
         IReadOnlyList<TypeRef> argumentTypes,
-        List<int> argumentTemps)
+        List<int> argumentTemps,
+        bool runtimeManagedCandidate)
     {
         for (int index = 0; index < arguments.Count; index++)
         {
             // A parameter, or a heap-typed field read out of one (`pair.current`): the cell keeps
             // a second reference to a child the parameter's own release walks at the back edge.
-            if (TryResolveTcoParameterRead(arguments[index], argumentTypes[index], out _) is not { } local)
+            // A child the constructor already made its own (retained or copied for a
+            // reference-counted parent) holds that reference.
+            if ((_patternOwnerNormalizedTemps.Contains(argumentTemps[index])
+                    && Environment.GetEnvironmentVariable("GRC_NO_OWNEDCHILDRETAIN") is null)
+                || TryResolveTcoParameterRead(arguments[index], argumentTypes[index], out _) is not { } local)
             {
                 continue;
             }
 
-            argumentTemps[index] = IsRuntimeManagedTcoParamSlot(local)
-                ? EmitRuntimeManagedConstructorFieldRetain(
+            if (!IsRuntimeManagedTcoParamSlot(local))
+            {
+                argumentTemps[index] = EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+            }
+            else if (!runtimeManagedCandidate && TryGetArenaSuccessorDestination(out int destinationSlot))
+            {
+                argumentTemps[index] = EmitRetainOrArenaCopyForDestination(argumentTemps[index], argumentTypes[index], destinationSlot);
+            }
+            else
+            {
+                argumentTemps[index] = EmitRuntimeManagedConstructorFieldRetain(
                     argumentTemps[index],
-                    MayUseEmptyListRepresentation(argumentTypes[index]))
-                : EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+                    MayUseEmptyListRepresentation(argumentTypes[index]));
+            }
         }
+    }
+
+    // The loop parameter an arena cell under construction becomes part of, when it is built inside
+    // a tail self-call argument whose parameter is not on the reference-counted heap yet.
+    private bool TryGetArenaSuccessorDestination(out int destinationSlot)
+    {
+        destinationSlot = -1;
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARENACELLCOPY") is not null
+            || _tcoArgumentDestination is not { } destination
+            || !ReferenceEquals(destination.Loop, _tcoCtx)
+            || _tcoCtx.IsRuntimeManagedSlot(destination.Slot))
+        {
+            return false;
+        }
+
+        destinationSlot = destination.Slot;
+        return true;
+    }
+
+    // An arena cell holding a part of a reference-counted loop parameter keeps its own reference
+    // when its successor parameter ends up on the reference-counted heap, which takes that
+    // reference over. A parameter left in the arena releases nothing it holds, so the cell holds an
+    // arena copy of the part instead: an arena value never holds the only reference to a
+    // reference-counted one.
+    private int EmitRetainOrArenaCopyForDestination(int sourceTemp, TypeRef type, int destinationSlot)
+    {
+        int destinationFlagTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(destinationFlagTemp, 1));
+        _pendingRuntimeArgumentFlags[destinationFlagTemp] = destinationSlot;
+        int resultSlot = NewLocal();
+        string copyLabel = NewLabel("rc_arena_cell_part_copy");
+        string doneLabel = NewLabel("rc_arena_cell_part_done");
+        Emit(new IrInst.JumpIfFalse(destinationFlagTemp, copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitRuntimeManagedConstructorFieldRetain(sourceTemp, MayUseEmptyListRepresentation(type))));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitDeepCopy(sourceTemp, type)));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     private int EmitRuntimeManagedConstructorFieldRetain(int sourceTemp, bool mayBeEmpty)
@@ -1825,6 +1880,13 @@ public sealed partial class Lowering
         }
 
         (int Temp, TypeRef Type) lowered = loweredValue.AsPair();
+        if (runtimeManagedParent && IsRuntimeManagedResultTemp(lowered.Temp) && IsNormalizedAlwaysReturnedParameterRead(argument))
+        {
+            // A reference-counted child may be stored as it is: the parent may take the owned
+            // parameter over.
+            _normalizedParameterMovedIntoAggregate = true;
+        }
+
         if (runtimeManagedParent
             && Prune(fieldType) is TypeRef.TStr
             && !IsRuntimeManagedResultTemp(lowered.Temp)
@@ -2158,7 +2220,23 @@ public sealed partial class Lowering
     /// over-materializing an already-persistent value only costs a copy, never correctness.
     /// Returns the (possibly persisted) field temp to store into the cell.
     /// </summary>
+    /// <remarks>
+    /// The cell holds the copy, never the source: a source the caller owns (a closure's result
+    /// normalized to an owned reference-counted value, say) is released once it is copied, directly
+    /// or, for an inlined helper's parameter, once the helper body is lowered.
+    /// </remarks>
     private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless, TypeRef resultType)
+    {
+        int materialized = MaterializeSpecializationFieldCopy(argExpr, argType, fieldTemp, ptrTemp, fieldIndex, reuseNode, consumedTokenTemp, tagless, resultType);
+        if (materialized != fieldTemp)
+        {
+            ReleaseMaterializedFieldSource(argExpr, argType, fieldTemp);
+        }
+
+        return materialized;
+    }
+
+    private int MaterializeSpecializationFieldCopy(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless, TypeRef resultType)
     {
         if (!_inSpecialization || _specFreshInputNames is null
             || (argExpr is Expr.Var fieldVar && !_specFreshInputNames.Contains(fieldVar.Name)))

@@ -1,0 +1,1203 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from countInts]
+  locals=22 temps=21
+    LoadEnv               Target=0 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=2 Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=5 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=6 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=7 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadLocal             Target=2 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    LoadLocal             Target=5 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:22:17)
+    StoreLocal            Slot=11 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_0   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_2   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    StoreLocal            Slot=18 Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    LoadLocal             Target=10 Slot=18   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:34)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:40)
+    LoadConstInt          Target=13 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:48)
+    AddInt                Target=14 Left=12 Right=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:40)
+    LoadLocal             Target=15 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    LoadLocal             Target=16 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    StoreLocal            Slot=2 Source=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    StoreLocal            Slot=1 Source=14   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    RestoreStackPointer   Slot=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    Jump                  Target=lambda_1_body   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    LoadConstInt          Target=17 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:23:24)
+    StoreLocal            Slot=11 Source=17   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_0   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_1   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+  match_none_1:
+    LoadConstInt          Target=19 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    StoreLocal            Slot=11 Source=19   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+  match_end_0:
+    LoadLocal             Target=20 Slot=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:21:5)
+    Return                Source=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+
+function __rc_cdrop_2  [RuntimeManagedClosureDropper]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=2 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+  rcdrop_list_5:
+    LoadLocal             Target=2 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadConstInt          Target=3 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    CmpIntNe              Target=4 Left=2 Right=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_7   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    RcIsUnique            Target=5 SourceTemp=2
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_6   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadMemOffset         Target=6 BasePtr=2 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    Jump                  Target=rcdrop_list_5   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+  rcdrop_list_shared_6:
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_7   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+  rcdrop_list_end_7:
+    LoadConstInt          Target=7 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    Return                Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from countInts]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadLocal             Target=1 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_8   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    Jump                  Target=rc_representation_done_9   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+  rc_representation_copy_8:
+    CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=2 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+  rc_representation_done_9:
+    LoadLocal             Target=6 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_2   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    Return                Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+
+function lambda_0  [SourceFunction from countInts]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    LoadLocal             Target=1 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    Return                Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+
+function __rcnorm_6  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=8
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_16   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rc_representation_done_17   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_copy_16:
+    GetAdtTag             Target=3 Ptr=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_18   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcnorm_ctor_18:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rcnorm_end_20   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcnorm_ctor_19:
+    CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rcnorm_end_20   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcnorm_end_20:
+    LoadLocal             Target=6 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=2 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_done_17:
+    LoadLocal             Target=7 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function __rcnorm_5  [RuntimeManagedAdtNormalizer]
+  locals=5 temps=17
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rc_representation_done_13   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_copy_12:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_14   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rc_representation_done_15   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_copy_14:
+    LoadConstInt          Target=8 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallKnown             Target=9 FuncLabel=__rcnorm_6 EnvTemp=8 ArgTemp=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=3 Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_done_15:
+    LoadLocal             Target=10 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=10 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    GetAdtField           Target=11 Ptr=0 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_21   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rc_representation_done_22   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_copy_21:
+    CopyOutList           DestTemp=14 SrcTemp=11 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=4 Source=14   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_done_22:
+    LoadLocal             Target=15 Slot=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SetAdtField           Ptr=3 FieldIndex=2 Source=15 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=2 Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_done_13:
+    LoadLocal             Target=16 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function __deepcopy_8  [AdtDeepCopier]
+  locals=2 temps=6
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_8_default   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  __deepcopy_8_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  __deepcopy_8_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  __deepcopy_8_default:
+    Return                Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function __deepcopy_7  [AdtDeepCopier]
+  locals=2 temps=11
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=2 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_7_default   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  __deepcopy_7_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Alloc                 Target=5 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    MakeClosure           Target=6 FuncLabel=__deepcopy_8 EnvPtrTemp=5 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallClosure           Target=7 ClosureTemp=6 ArgTemp=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadMemOffset         Target=9 BasePtr=0 OffsetBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CopyOutList           DestTemp=10 SrcTemp=9 HeadCopy=Inline Purpose=IndependentClone   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  __deepcopy_7_default:
+    Return                Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function __rcdrop_general_10  [RuntimeManagedAdtDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_27   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_27   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_general_ctor_28:
+    Jump                  Target=rcdrop_general_shared_27   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_general_ctor_29:
+    Jump                  Target=rcdrop_general_shared_27   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_general_shared_27:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function __rcdrop_general_9  [RuntimeManagedAdtDropper]
+  locals=3 temps=13
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_25   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=2 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=rcdrop_general_shared_25   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_general_ctor_26:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=4 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallKnown             Target=5 FuncLabel=__rcdrop_general_10 EnvTemp=4 ArgTemp=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    GetAdtField           Target=6 Ptr=0 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=2 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_list_30:
+    LoadLocal             Target=7 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=8 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CmpIntNe              Target=9 Left=7 Right=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    JumpIfFalse           CondTemp=9 Target=rcdrop_list_end_32   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcIsUnique            Target=10 SourceTemp=7
+    JumpIfFalse           CondTemp=10 Target=rcdrop_list_shared_31   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadMemOffset         Target=11 BasePtr=7 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcDrop                SourceTemp=7 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rcdrop_list_30   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_list_shared_31:
+    RcDrop                SourceTemp=7 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_32   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_list_end_32:
+    Jump                  Target=rcdrop_general_shared_25   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rcdrop_general_shared_25:
+    RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
+    LoadConstInt          Target=12 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function lambda_4  [ClosureHelper from withSlot]
+  locals=4 temps=21
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:55)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    GetAdtField           Target=3 Ptr=0 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    AllocAdt              Target=4 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    SetAdtField           Ptr=4 FieldIndex=1 Source=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    SetAdtField           Ptr=4 FieldIndex=2 Source=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:37)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rc_representation_done_11   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_copy_10:
+    LoadConstInt          Target=8 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallKnown             Target=9 FuncLabel=__rcnorm_5 EnvTemp=8 ArgTemp=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=2 Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_representation_done_11:
+    LoadLocal             Target=10 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadArgumentOwnership Target=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=12 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    ShrInt                Target=13 Left=11 Right=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    AndInt                Target=14 Left=13 Right=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    JumpIfFalse           CondTemp=14 Target=rc_result_owned_23   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Alloc                 Target=15 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    MakeClosure           Target=16 FuncLabel=__deepcopy_7 EnvPtrTemp=15 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallClosure           Target=17 ClosureTemp=16 ArgTemp=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadConstInt          Target=18 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CallKnown             Target=19 FuncLabel=__rcdrop_general_9 EnvTemp=18 ArgTemp=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=3 Source=17   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Jump                  Target=rc_result_done_24   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_result_owned_23:
+    StoreLocal            Slot=3 Source=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+  rc_result_done_24:
+    LoadLocal             Target=20 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function lambda_3  [SourceFunction from withSlot]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadLocal             Target=1 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    MakeClosure           Target=2 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+
+function __rcnorm_13  [RuntimeManagedAdtNormalizer]
+  locals=7 temps=26
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_40   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_representation_done_41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_copy_40:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_42   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_representation_done_43   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_copy_42:
+    LoadConstInt          Target=8 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallKnown             Target=9 FuncLabel=__rcnorm_5 EnvTemp=8 ArgTemp=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=3 Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_done_43:
+    LoadLocal             Target=10 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=10 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    GetAdtField           Target=11 Ptr=0 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    JumpIfFalse           CondTemp=12 Target=rc_representation_copy_44   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_representation_done_45   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_copy_44:
+    GetAdtTag             Target=15 Ptr=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SwitchTag             TagTemp=15 Cases=[2] DefaultLabel=rc_normalize_adt_46   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_normalize_adt_46:
+    CopyOutArena          DestTemp=16 SrcTemp=11 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=5 Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_normalize_adt_end_48   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_normalize_adt_47:
+    CopyOutArena          DestTemp=17 SrcTemp=11 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=18 Ptr=11 FieldIndex=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    IsReferenceCounted    Target=19 SourceTemp=18
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_49   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcDup                 Target=20 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_representation_done_50   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_copy_49:
+    CopyOutArena          DestTemp=21 SrcTemp=18 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=6 Source=21   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_done_50:
+    LoadLocal             Target=22 Slot=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SetAdtField           Ptr=17 FieldIndex=0 Source=22   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=5 Source=17   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_normalize_adt_end_48   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_normalize_adt_end_48:
+    LoadLocal             Target=23 Slot=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=4 Source=23   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_done_45:
+    LoadLocal             Target=24 Slot=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SetAdtField           Ptr=3 FieldIndex=2 Source=24 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=2 Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_done_41:
+    LoadLocal             Target=25 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=25   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function __deepcopy_15  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_15_default   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  __deepcopy_15_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  __deepcopy_15_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  __deepcopy_15_default:
+    Return                Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function __deepcopy_14  [AdtDeepCopier]
+  locals=2 temps=13
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=2 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_14_default   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  __deepcopy_14_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Alloc                 Target=5 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    MakeClosure           Target=6 FuncLabel=__deepcopy_7 EnvPtrTemp=5 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallClosure           Target=7 ClosureTemp=6 ArgTemp=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadMemOffset         Target=9 BasePtr=0 OffsetBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Alloc                 Target=10 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    MakeClosure           Target=11 FuncLabel=__deepcopy_15 EnvPtrTemp=10 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallClosure           Target=12 ClosureTemp=11 ArgTemp=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  __deepcopy_14_default:
+    Return                Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function __rcdrop_17  [RuntimeManagedAdtDropper]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_55   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_55   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rcdrop_ctor_56:
+    Jump                  Target=rcdrop_shared_55   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rcdrop_ctor_57:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_55   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rcdrop_shared_55:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=4 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function __rcdrop_general_16  [RuntimeManagedAdtDropper]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_53   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=2 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=rcdrop_general_shared_53   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rcdrop_general_ctor_54:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=4 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallKnown             Target=5 FuncLabel=__rcdrop_general_9 EnvTemp=4 ArgTemp=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    GetAdtField           Target=6 Ptr=0 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=7 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallKnown             Target=8 FuncLabel=__rcdrop_17 EnvTemp=7 ArgTemp=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rcdrop_general_shared_53   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rcdrop_general_shared_53:
+    RcDrop                SourceTemp=0 TypeName=Lowered RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function lambda_12  [ClosureHelper from lowerOne]
+  locals=14 temps=52
+    LoadEnv               Target=0 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    CmpIntNe              Target=2 Left=0 Right=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_36   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    GetAdtTag             Target=3 Ptr=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    LoadConstInt          Target=5 Value=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    CmpIntEq              Target=4 Left=3 Right=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_36   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    GetAdtField           Target=6 Ptr=0 FieldIndex=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    StoreLocal            Slot=5 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    LoadLocal             Target=7 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:42)
+    GetAdtField           Target=8 Ptr=7 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:42)
+    LoadLocal             Target=9 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:61)
+    GetAdtField           Target=10 Ptr=9 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:61)
+    LoadLocal             Target=11 Slot=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:75)
+    AddInt                Target=12 Left=10 Right=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:61)
+    LoadLocal             Target=13 Slot=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:86)
+    LoadLocal             Target=14 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:91)
+    GetAdtField           Target=15 Ptr=14 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:91)
+    Alloc                 Target=16 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:86)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:86)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=15   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:86)
+    AllocAdt              Target=17 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:42)
+    SetAdtField           Ptr=17 FieldIndex=0 Source=8 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:42)
+    SetAdtField           Ptr=17 FieldIndex=1 Source=12 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:42)
+    SetAdtField           Ptr=17 FieldIndex=2 Source=16 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:42)
+    LoadLocal             Target=18 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:112)
+    GetAdtField           Target=19 Ptr=18 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:112)
+    AllocAdt              Target=20 Tag=0 FieldCount=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:133)
+    AllocAdt              Target=21 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:25)
+    SetAdtField           Ptr=21 FieldIndex=0 Source=17 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:25)
+    SetAdtField           Ptr=21 FieldIndex=1 Source=19 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:25)
+    SetAdtField           Ptr=21 FieldIndex=2 Source=20 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:29:25)
+    StoreLocal            Slot=2 Source=21   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    Jump                  Target=match_end_33   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+  match_arm_cleanup_36:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=7
+    Jump                  Target=match_next_35   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+  match_next_35:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=22 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    GetAdtField           Target=23 Ptr=22 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    GetAdtField           Target=24 Ptr=22 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    LoadConstInt          Target=25 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:52)
+    LoadLocal             Target=26 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:57)
+    GetAdtField           Target=27 Ptr=26 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:57)
+    Alloc                 Target=28 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:52)
+    StoreMemOffset        BasePtr=28 OffsetBytes=0 Source=25   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:52)
+    StoreMemOffset        BasePtr=28 OffsetBytes=8 Source=27   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:52)
+    AllocAdt              Target=29 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    SetAdtField           Ptr=29 FieldIndex=0 Source=23 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    SetAdtField           Ptr=29 FieldIndex=1 Source=24 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    SetAdtField           Ptr=29 FieldIndex=2 Source=28 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:33)
+    LoadLocal             Target=30 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:78)
+    GetAdtField           Target=31 Ptr=30 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:78)
+    AllocAdt              Target=32 Tag=0 FieldCount=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:99)
+    AllocAdt              Target=33 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:16)
+    SetAdtField           Ptr=33 FieldIndex=0 Source=29 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:16)
+    SetAdtField           Ptr=33 FieldIndex=1 Source=31 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:16)
+    SetAdtField           Ptr=33 FieldIndex=2 Source=32 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:30:16)
+    StoreLocal            Slot=2 Source=33   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    Jump                  Target=match_end_33   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+  match_arm_cleanup_37:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=11
+    Jump                  Target=match_none_34   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+  match_none_34:
+    LoadConstInt          Target=34 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    StoreLocal            Slot=2 Source=34   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+  match_end_33:
+    LoadLocal             Target=35 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:28:5)
+    IsReferenceCounted    Target=36 SourceTemp=35
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_38   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    RcDup                 Target=37 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=12 Source=37   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_representation_done_39   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_copy_38:
+    LoadConstInt          Target=39 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallKnown             Target=40 FuncLabel=__rcnorm_13 EnvTemp=39 ArgTemp=35   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=12 Source=40   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_representation_done_39:
+    LoadLocal             Target=41 Slot=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadArgumentOwnership Target=42   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=43 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    ShrInt                Target=44 Left=42 Right=43   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    AndInt                Target=45 Left=44 Right=43   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    JumpIfFalse           CondTemp=45 Target=rc_result_owned_51   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Alloc                 Target=46 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    MakeClosure           Target=47 FuncLabel=__deepcopy_14 EnvPtrTemp=46 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=47   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallClosure           Target=48 ClosureTemp=47 ArgTemp=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadConstInt          Target=49 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CallKnown             Target=50 FuncLabel=__rcdrop_general_16 EnvTemp=49 ArgTemp=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=13 Source=48   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Jump                  Target=rc_result_done_52   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_result_owned_51:
+    StoreLocal            Slot=13 Source=41   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+  rc_result_done_52:
+    LoadLocal             Target=51 Slot=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=51   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function lambda_11  [SourceFunction from lowerOne]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadLocal             Target=1 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    MakeClosure           Target=2 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Return                Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+
+function lambda_21  [ClosureHelper from loop]
+  locals=65 temps=203
+    LoadEnv               Target=0 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=2 Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=1 Index=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=3 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=2 Index=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=4 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=108 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    IsReferenceCounted    Target=109 SourceTemp=108
+    JumpIfFalse           CondTemp=109 Target=rc_representation_copy_72   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    RcDup                 Target=110 SourceTemp=108 RuntimeManaged=true
+    StoreLocal            Slot=58 Source=110   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Jump                  Target=rc_representation_done_73   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_representation_copy_72:
+    LoadConstInt          Target=113 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CallKnown             Target=114 FuncLabel=__rcnorm_5 EnvTemp=113 ArgTemp=108   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=58 Source=114   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_representation_done_73:
+    LoadLocal             Target=115 Slot=58   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=3 Source=115   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=116 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=8 Source=116   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=117 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadArgumentOwnership Target=118   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=119 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    AndInt                Target=120 Left=118 Right=119   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=120 Target=rc_arg_normalize_copy_74   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=59 Source=117   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Jump                  Target=rc_arg_normalize_done_75   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_arg_normalize_copy_74:
+    IsReferenceCounted    Target=121 SourceTemp=117
+    JumpIfFalse           CondTemp=121 Target=rc_representation_copy_76   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    RcDup                 Target=122 SourceTemp=117 RuntimeManaged=true
+    StoreLocal            Slot=60 Source=122   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Jump                  Target=rc_representation_done_77   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_representation_copy_76:
+    CopyOutList           DestTemp=123 SrcTemp=117 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=60 Source=123   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_representation_done_77:
+    LoadLocal             Target=124 Slot=60   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=59 Source=124   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_arg_normalize_done_75:
+    LoadLocal             Target=125 Slot=59   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=1 Source=125   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=126 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=9 Source=126   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=3 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=7 Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  lambda_21_body:
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    SaveStackPointer      Slot=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=4 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:11)
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=5 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    CmpIntEq              Target=6 Left=4 Right=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_61   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    LoadLocal             Target=7 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:17)
+    GetAdtField           Target=8 Ptr=7 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:17)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadEnv               Target=9 Index=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    LoadLocal             Target=10 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:41)
+    LoadMemOffset         Target=11 BasePtr=9 OffsetBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    LoadConstInt          Target=12 Value=62   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    ShrInt                Target=13 Left=11 Right=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    LoadConstInt          Target=14 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    AndInt                Target=15 Left=13 Right=14   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    StoreLocal            Slot=18 Source=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    JumpIfFalse           CondTemp=15 Target=rc_call_argument_not_retained_62   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    RcDup                 Target=16 SourceTemp=10 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=18 Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+  rc_call_argument_not_retained_62:
+    LoadLocal             Target=17 Slot=18   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    CallClosure           Target=18 ClosureTemp=9 ArgTemp=17 RuntimeManagedArgumentFlagTemp=15   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    LoadConstInt          Target=19 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:48)
+    CallClosure           Target=20 ClosureTemp=18 ArgTemp=19   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:31)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    AddInt                Target=21 Left=8 Right=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:17)
+    SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
+    LoadEnv               Target=22 Index=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:53)
+    LoadLocal             Target=23 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:63)
+    GetAdtField           Target=24 Ptr=23 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:63)
+    CallClosure           Target=25 ClosureTemp=22 ArgTemp=24   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:53)
+    LoadConstInt          Target=26 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:76)
+    CallClosure           Target=27 ClosureTemp=25 ArgTemp=26   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:53)
+    RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=22
+    AddInt                Target=28 Left=21 Right=27   (tco_state_record_and_inline_list_beside_recursive_list.ash:34:17)
+    StoreLocal            Slot=13 Source=28   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=23
+    Jump                  Target=match_end_58   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+  match_arm_cleanup_61:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=24
+    Jump                  Target=match_next_60   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+  match_next_60:
+    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
+    LoadConstInt          Target=29 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    CmpIntNe              Target=30 Left=4 Right=29   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    JumpIfFalse           CondTemp=30 Target=match_arm_cleanup_63   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    LoadMemOffset         Target=31 BasePtr=4 OffsetBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    LoadMemOffset         Target=32 BasePtr=4 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    StoreLocal            Slot=27 Source=31   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    StoreLocal            Slot=28 Source=32   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    SaveArenaState        CursorLocalSlot=29 EndLocalSlot=30
+    LoadEnv               Target=33 Index=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:38:16)
+    Borrow                Target=34 SourceTemp=33
+    LoadLocal             Target=35 Slot=27   (tco_state_record_and_inline_list_beside_recursive_list.ash:38:25)
+    Borrow                Target=36 SourceTemp=35
+    CallClosure           Target=37 ClosureTemp=34 ArgTemp=36   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    SaveArenaState        CursorLocalSlot=31 EndLocalSlot=32
+    LoadEnv               Target=38 Index=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:16)
+    Borrow                Target=39 SourceTemp=38
+    LoadLocal             Target=40 Slot=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:30)
+    LoadConstInt          Target=41 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+    StoreLocal            Slot=33 Source=40   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+    JumpIfFalse           CondTemp=41 Target=rc_constructor_field_not_retained_64   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+    RcDup                 Target=42 SourceTemp=40 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=33 Source=42   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+  rc_constructor_field_not_retained_64:
+    LoadLocal             Target=43 Slot=33   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+    AllocAdt              Target=44 Tag=1 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+    SetAdtField           Ptr=44 FieldIndex=0 Source=43   (tco_state_record_and_inline_list_beside_recursive_list.ash:37:25)
+    CallClosure           Target=45 ClosureTemp=39 ArgTemp=44   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    LoadLocal             Target=46 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    CallClosure           Target=47 ClosureTemp=45 ArgTemp=46   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    LoadLocal             Target=48 Slot=35   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    StoreLocal            Slot=36 Source=48   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    StoreLocal            Slot=35 Source=47   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=34
+    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=34
+    LoadConstInt          Target=49 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    StoreLocal            Slot=37 Source=49   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    LoadLocal             Target=50 Slot=35   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    CallClosure           Target=51 ClosureTemp=37 ArgTemp=50   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    LoadLocal             Target=52 Slot=39   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    StoreLocal            Slot=40 Source=52   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    StoreLocal            Slot=39 Source=51   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=38
+    ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=38
+    LoadConstInt          Target=53 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    StoreLocal            Slot=41 Source=53   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    LoadLocal             Target=54 Slot=39   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:19)
+    SaveArenaState        CursorLocalSlot=43 EndLocalSlot=44
+    LoadConstInt          Target=55 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    CmpIntNe              Target=56 Left=54 Right=55   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    JumpIfFalse           CondTemp=56 Target=match_arm_cleanup_68   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtField           Target=57 Ptr=54 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    StoreLocal            Slot=45 Source=57   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtField           Target=58 Ptr=54 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    LoadConstInt          Target=59 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    CmpIntNe              Target=60 Left=58 Right=59   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    JumpIfFalse           CondTemp=60 Target=match_arm_cleanup_68   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtTag             Target=61 Ptr=58   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    LoadConstInt          Target=63 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    CmpIntEq              Target=62 Left=61 Right=63   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    JumpIfFalse           CondTemp=62 Target=match_arm_cleanup_68   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    RcDrop                SourceTemp=32 TypeName=List OwnerSlot=28
+    RcDrop                SourceTemp=31 TypeName=Expr OwnerSlot=27
+    GetAdtField           Target=64 Ptr=58 FieldIndex=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    StoreLocal            Slot=46 Source=64   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    RcDrop                SourceTemp=64 TypeName=String OwnerSlot=46
+    LoadLocal             Target=65 Slot=45   (tco_state_record_and_inline_list_beside_recursive_list.ash:39:76)
+    GetAdtField           Target=66 Ptr=65 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:39:76)
+    RcDrop                SourceTemp=57 TypeName=State OwnerSlot=45
+    StoreLocal            Slot=42 Source=66   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    RestoreArenaState     CursorLocalSlot=43 EndLocalSlot=44 PreRestoreEndSlot=47
+    ReclaimArenaChunks    SavedEndSlot=44 PreRestoreEndSlot=47
+    Jump                  Target=match_end_65   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+  match_arm_cleanup_68:
+    RestoreArenaState     CursorLocalSlot=43 EndLocalSlot=44 PreRestoreEndSlot=48
+    ReclaimArenaChunks    SavedEndSlot=44 PreRestoreEndSlot=48
+    Jump                  Target=match_next_67   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+  match_next_67:
+    SaveArenaState        CursorLocalSlot=49 EndLocalSlot=50
+    LoadConstInt          Target=69 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    CmpIntNe              Target=70 Left=54 Right=69   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    JumpIfFalse           CondTemp=70 Target=match_arm_cleanup_69   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtField           Target=71 Ptr=54 FieldIndex=0 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    StoreLocal            Slot=51 Source=71   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtField           Target=72 Ptr=54 FieldIndex=1 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    StoreLocal            Slot=52 Source=72   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtField           Target=73 Ptr=54 FieldIndex=2 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    LoadConstInt          Target=74 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    CmpIntNe              Target=75 Left=73 Right=74   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    JumpIfFalse           CondTemp=75 Target=match_arm_cleanup_69   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    GetAdtTag             Target=76 Ptr=73   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    LoadConstInt          Target=78 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    CmpIntEq              Target=77 Left=76 Right=78   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    JumpIfFalse           CondTemp=77 Target=match_arm_cleanup_69   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    LoadLocal             Target=79 Slot=28   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:88)
+    Borrow                Target=80 SourceTemp=79
+    LoadLocal             Target=81 Slot=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:94)
+    LoadConstInt          Target=82 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:104)
+    AddInt                Target=83 Left=81 Right=82   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:94)
+    LoadLocal             Target=84 Slot=51   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:107)
+    Borrow                Target=85 SourceTemp=84
+    LoadLocal             Target=86 Slot=52   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    LoadLocal             Target=88 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:130)
+    IsReferenceCounted    Target=89 SourceTemp=88
+    StoreLocal            Slot=53 Source=88   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    LoadConstInt          Target=90 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    CmpIntEq              Target=91 Left=88 Right=90   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    OrInt                 Target=92 Left=89 Right=91   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    JumpIfFalse           CondTemp=92 Target=rc_tail_copy_71   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    Jump                  Target=rc_tail_done_70   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+  rc_tail_copy_71:
+    CopyOutList           DestTemp=93 SrcTemp=88 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    StoreLocal            Slot=53 Source=93   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+  rc_tail_done_70:
+    LoadLocal             Target=94 Slot=53   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    Alloc                 Target=95 SizeBytes=16 RuntimeManaged=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    StoreMemOffset        BasePtr=95 OffsetBytes=0 Source=86   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    StoreMemOffset        BasePtr=95 OffsetBytes=8 Source=94   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:122)
+    LoadLocal             Target=96 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    LoadLocal             Target=97 Slot=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    LoadLocal             Target=98 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    LoadLocal             Target=99 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    StoreLocal            Slot=2 Source=80   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    RcDrop                SourceTemp=32 TypeName=List OwnerSlot=28
+    StoreLocal            Slot=4 Source=83   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    StoreLocal            Slot=3 Source=85   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    StoreLocal            Slot=1 Source=95   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    IsReferenceCounted    Target=162 SourceTemp=85
+    JumpIfFalse           CondTemp=162 Target=rc_representation_copy_89
+    RcDup                 Target=163 SourceTemp=85 RuntimeManaged=true
+    StoreLocal            Slot=63 Source=163
+    Jump                  Target=rc_representation_done_90
+  rc_representation_copy_89:
+    IsReferenceCounted    Target=165 SourceTemp=85
+    JumpIfFalse           CondTemp=165 Target=rc_representation_copy_91
+    RcDup                 Target=166 SourceTemp=85 RuntimeManaged=true
+    StoreLocal            Slot=64 Source=166
+    Jump                  Target=rc_representation_done_92
+  rc_representation_copy_91:
+    LoadConstInt          Target=168 Value=0
+    CallKnown             Target=169 FuncLabel=__rcnorm_5 EnvTemp=168 ArgTemp=85
+    StoreLocal            Slot=64 Source=169
+  rc_representation_done_92:
+    LoadLocal             Target=170 Slot=64
+    StoreLocal            Slot=63 Source=170
+  rc_representation_done_90:
+    LoadLocal             Target=171 Slot=63
+    LoadLocal             Target=172 Slot=8
+    JumpIfFalse           CondTemp=172 Target=rc_tco_drop_inactive_93
+    LoadConstInt          Target=173 Value=0
+    CallKnown             Target=174 FuncLabel=__rcdrop_general_9 EnvTemp=173 ArgTemp=98
+  rc_tco_drop_inactive_93:
+    LoadLocal             Target=175 Slot=36
+    LoadConstInt          Target=176 Value=0
+    CmpIntNe              Target=177 Left=175 Right=176
+    JumpIfFalse           CondTemp=177 Target=general_rc_owned_absent_94
+    IsReferenceCounted    Target=178 SourceTemp=175
+    JumpIfFalse           CondTemp=178 Target=general_rc_owned_absent_94
+    LoadConstInt          Target=179 Value=0
+    CallKnown             Target=180 FuncLabel=__rcdrop_general_9 EnvTemp=179 ArgTemp=175
+    StoreLocal            Slot=36 Source=176
+  general_rc_owned_absent_94:
+    LoadLocal             Target=181 Slot=40
+    LoadConstInt          Target=182 Value=0
+    CmpIntNe              Target=183 Left=181 Right=182
+    JumpIfFalse           CondTemp=183 Target=general_rc_owned_absent_95
+    IsReferenceCounted    Target=184 SourceTemp=181
+    JumpIfFalse           CondTemp=184 Target=general_rc_owned_absent_95
+    LoadConstInt          Target=185 Value=0
+    CallKnown             Target=186 FuncLabel=__rcdrop_general_16 EnvTemp=185 ArgTemp=181
+    StoreLocal            Slot=40 Source=182
+  general_rc_owned_absent_95:
+    LoadLocal             Target=187 Slot=35
+    LoadConstInt          Target=188 Value=0
+    CmpIntNe              Target=189 Left=187 Right=188
+    JumpIfFalse           CondTemp=189 Target=general_rc_owned_absent_96
+    IsReferenceCounted    Target=190 SourceTemp=187
+    JumpIfFalse           CondTemp=190 Target=general_rc_owned_absent_96
+    LoadConstInt          Target=191 Value=0
+    CallKnown             Target=192 FuncLabel=__rcdrop_general_9 EnvTemp=191 ArgTemp=187
+    StoreLocal            Slot=35 Source=188
+  general_rc_owned_absent_96:
+    LoadLocal             Target=193 Slot=41
+    JumpIfFalse           CondTemp=193 Target=lambda_21_rc_edge_27_46
+    LoadLocal             Target=194 Slot=39
+    LoadConstInt          Target=195 Value=0
+    CmpIntNe              Target=196 Left=194 Right=195
+    JumpIfFalse           CondTemp=196 Target=lambda_21_rc_edge_27_47
+    IsReferenceCounted    Target=197 SourceTemp=194
+    JumpIfFalse           CondTemp=197 Target=lambda_21_rc_edge_27_48
+    LoadConstInt          Target=198 Value=0
+    CallKnown             Target=199 FuncLabel=__rcdrop_general_16 EnvTemp=198 ArgTemp=194
+    RcDrop                SourceTemp=31 TypeName=Expr OwnerSlot=27
+    StoreLocal            Slot=39 Source=195
+  general_rc_owned_absent_98:
+  general_rc_owned_stale_97:
+    LoadConstInt          Target=200 Value=0
+    StoreLocal            Slot=41 Source=200
+    StoreLocal            Slot=3 Source=171
+    RcDrop                SourceTemp=71 TypeName=State OwnerSlot=51
+    LoadConstInt          Target=201 Value=1
+    StoreLocal            Slot=8 Source=201
+    StoreLocal            Slot=1 Source=95
+    LoadConstInt          Target=202 Value=1
+    StoreLocal            Slot=9 Source=202
+    RestoreStackPointer   Slot=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    Jump                  Target=lambda_21_body   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    LoadConstInt          Target=100 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:40:83)
+    StoreLocal            Slot=42 Source=100   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    RestoreArenaState     CursorLocalSlot=49 EndLocalSlot=50 PreRestoreEndSlot=54
+    ReclaimArenaChunks    SavedEndSlot=50 PreRestoreEndSlot=54
+    Jump                  Target=match_end_65   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+  match_arm_cleanup_69:
+    RcDrop                SourceTemp=32 TypeName=List OwnerSlot=28
+    RcDrop                SourceTemp=31 TypeName=Expr OwnerSlot=27
+    RestoreArenaState     CursorLocalSlot=49 EndLocalSlot=50 PreRestoreEndSlot=55
+    ReclaimArenaChunks    SavedEndSlot=50 PreRestoreEndSlot=55
+    Jump                  Target=match_none_66   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+  match_none_66:
+    LoadConstInt          Target=102 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    StoreLocal            Slot=42 Source=102   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+  match_end_65:
+    LoadLocal             Target=103 Slot=42   (tco_state_record_and_inline_list_beside_recursive_list.ash:36:13)
+    StoreLocal            Slot=13 Source=103   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=56
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=56
+    Jump                  Target=match_end_58   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+  match_arm_cleanup_63:
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=57
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=57
+    Jump                  Target=match_none_59   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+  match_none_59:
+    LoadConstInt          Target=106 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    StoreLocal            Slot=13 Source=106   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+  match_end_58:
+    LoadLocal             Target=107 Slot=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:33:5)
+    LoadLocal             Target=127 Slot=35   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=128 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CmpIntNe              Target=129 Left=127 Right=128   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=129 Target=general_rc_owned_absent_78   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    IsReferenceCounted    Target=130 SourceTemp=127
+    JumpIfFalse           CondTemp=130 Target=general_rc_owned_absent_78   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=131 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CallKnown             Target=132 FuncLabel=__rcdrop_general_9 EnvTemp=131 ArgTemp=127   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=35 Source=128   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  general_rc_owned_absent_78:
+    LoadLocal             Target=133 Slot=36   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=134 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CmpIntNe              Target=135 Left=133 Right=134   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=135 Target=general_rc_owned_absent_79   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    IsReferenceCounted    Target=136 SourceTemp=133
+    JumpIfFalse           CondTemp=136 Target=general_rc_owned_absent_79   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=137 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CallKnown             Target=138 FuncLabel=__rcdrop_general_9 EnvTemp=137 ArgTemp=133   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=36 Source=134   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  general_rc_owned_absent_79:
+    LoadLocal             Target=139 Slot=39   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=140 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CmpIntNe              Target=141 Left=139 Right=140   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=141 Target=general_rc_owned_absent_80   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    IsReferenceCounted    Target=142 SourceTemp=139
+    JumpIfFalse           CondTemp=142 Target=general_rc_owned_absent_80   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=143 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CallKnown             Target=144 FuncLabel=__rcdrop_general_16 EnvTemp=143 ArgTemp=139   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=39 Source=140   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  general_rc_owned_absent_80:
+    LoadLocal             Target=145 Slot=40   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=146 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CmpIntNe              Target=147 Left=145 Right=146   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=147 Target=general_rc_owned_absent_81   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    IsReferenceCounted    Target=148 SourceTemp=145
+    JumpIfFalse           CondTemp=148 Target=general_rc_owned_absent_81   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=149 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CallKnown             Target=150 FuncLabel=__rcdrop_general_16 EnvTemp=149 ArgTemp=145   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=40 Source=146   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  general_rc_owned_absent_81:
+    LoadLocal             Target=151 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=152 Slot=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=152 Target=rc_tco_exit_drop_inactive_82   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=153 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CallKnown             Target=154 FuncLabel=__rcdrop_general_9 EnvTemp=153 ArgTemp=151   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rc_tco_exit_drop_inactive_82:
+    LoadLocal             Target=155 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=156 Slot=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=156 Target=rc_tco_exit_drop_inactive_83   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=61 Source=155   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rcdrop_list_84:
+    LoadLocal             Target=157 Slot=61   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadConstInt          Target=158 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    CmpIntNe              Target=159 Left=157 Right=158   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    JumpIfFalse           CondTemp=159 Target=rcdrop_list_end_86   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    RcIsUnique            Target=160 SourceTemp=157
+    JumpIfFalse           CondTemp=160 Target=rcdrop_list_shared_85   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadMemOffset         Target=161 BasePtr=157 OffsetBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    RcDrop                SourceTemp=157 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=61 Source=161   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Jump                  Target=rcdrop_list_84   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rcdrop_list_shared_85:
+    RcDrop                SourceTemp=157 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_86   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  rcdrop_list_end_86:
+  rc_tco_exit_drop_inactive_83:
+    Return                Source=107   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+  lambda_21_rc_edge_27_47:
+    RcDrop                SourceTemp=31 TypeName=Expr OwnerSlot=27
+    Jump                  Target=general_rc_owned_absent_98
+  lambda_21_rc_edge_27_48:
+    RcDrop                SourceTemp=31 TypeName=Expr OwnerSlot=27
+    Jump                  Target=general_rc_owned_absent_98
+  lambda_21_rc_edge_27_46:
+    RcDrop                SourceTemp=31 TypeName=Expr OwnerSlot=27
+    Jump                  Target=general_rc_owned_stale_97
+
+function lambda_20  [ClosureHelper from loop]
+  locals=2 temps=11
+    Alloc                 Target=0 SizeBytes=48   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=2 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=3 Index=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=4 Index=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=6 Index=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=7 SourceTemp=6
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=8 Index=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=40 Source=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    MakeClosure           Target=10 FuncLabel=lambda_21 EnvPtrTemp=0 EnvSizeBytes=48 AcceptsRuntimeManagedArgument=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Return                Source=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+
+function lambda_19  [ClosureHelper from loop]
+  locals=2 temps=10
+    Alloc                 Target=0 SizeBytes=40   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=1 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=2 Index=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=3 Index=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=5 Index=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=7 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    MakeClosure           Target=9 FuncLabel=lambda_20 EnvPtrTemp=0 EnvSizeBytes=40   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Return                Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+
+function lambda_18  [SourceFunction from loop]
+  locals=2 temps=10
+    Alloc                 Target=0 SizeBytes=32   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=1 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=2 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=3 Index=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadEnv               Target=5 Index=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    MakeClosure           Target=9 FuncLabel=lambda_19 EnvPtrTemp=0 EnvSizeBytes=32   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Return                Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+
+function lambda_23  [ClosureHelper from rounds]
+  locals=16 temps=49
+    LoadEnv               Target=0 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreLocal            Slot=2 Source=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreLocal            Slot=5 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreLocal            Slot=6 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreLocal            Slot=7 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+  lambda_23_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    LoadLocal             Target=2 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:8)
+    LoadConstInt          Target=3 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:8)
+    JumpIfFalse           CondTemp=4 Target=else_87   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:5)
+    LoadLocal             Target=5 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:44:10)
+    StoreLocal            Slot=11 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:5)
+    Jump                  Target=endif_88   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:5)
+  else_87:
+    LoadLocal             Target=6 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:17)
+    LoadConstInt          Target=7 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:21)
+    SubInt                Target=8 Left=6 Right=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:17)
+    LoadLocal             Target=9 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:24)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:32)
+    LoadConstInt          Target=11 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    LoadConstStr          Target=12 StrLabel=str_0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:108)
+    AllocAdt              Target=13 Tag=0 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:100)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:100)
+    Alloc                 Target=14 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    LoadConstInt          Target=15 Value=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:96)
+    AllocAdt              Target=16 Tag=2 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:88)
+    SetAdtField           Ptr=16 FieldIndex=0 Source=15   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:88)
+    Alloc                 Target=17 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=14   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    LoadConstInt          Target=18 Value=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:84)
+    AllocAdt              Target=19 Tag=2 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:76)
+    SetAdtField           Ptr=19 FieldIndex=0 Source=18   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:76)
+    Alloc                 Target=20 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=20 OffsetBytes=0 Source=19   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=20 OffsetBytes=8 Source=17   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    LoadConstInt          Target=21 Value=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:72)
+    AllocAdt              Target=22 Tag=2 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:64)
+    SetAdtField           Ptr=22 FieldIndex=0 Source=21   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:64)
+    Alloc                 Target=23 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=22   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    LoadConstStr          Target=24 StrLabel=str_1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:58)
+    AllocAdt              Target=25 Tag=0 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:50)
+    SetAdtField           Ptr=25 FieldIndex=0 Source=24   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:50)
+    Alloc                 Target=26 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=26 OffsetBytes=0 Source=25   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=26 OffsetBytes=8 Source=23   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    LoadConstInt          Target=27 Value=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:46)
+    AllocAdt              Target=28 Tag=2 FieldCount=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:38)
+    SetAdtField           Ptr=28 FieldIndex=0 Source=27   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:38)
+    Alloc                 Target=29 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=28   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=26   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:37)
+    CallClosure           Target=30 ClosureTemp=10 ArgTemp=29   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:32)
+    LoadLocal             Target=31 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:115)
+    LoadConstInt          Target=32 Value=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:119)
+    DivInt                Target=33 Left=31 Right=32   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:115)
+    MulInt                Target=34 Left=33 Right=32   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:115)
+    SubInt                Target=35 Left=31 Right=34   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:115)
+    CallClosure           Target=36 ClosureTemp=30 ArgTemp=35   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:32)
+    AllocAdt              Target=37 Tag=0 FieldCount=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:135)
+    LoadConstInt          Target=38 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:149)
+    LoadConstInt          Target=39 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:160)
+    AllocAdt              Target=40 Tag=0 FieldCount=3 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:122)
+    SetAdtField           Ptr=40 FieldIndex=0 Source=37 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:122)
+    SetAdtField           Ptr=40 FieldIndex=1 Source=38 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:122)
+    SetAdtField           Ptr=40 FieldIndex=2 Source=39 Tagless=true   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:122)
+    CallClosure           Target=41 ClosureTemp=36 ArgTemp=40   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:32)
+    LoadConstInt          Target=42 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:165)
+    CallClosure           Target=43 ClosureTemp=41 ArgTemp=42   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:32)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    AddInt                Target=44 Left=9 Right=43   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:24)
+    LoadLocal             Target=45 Slot=2   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    LoadLocal             Target=46 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    StoreLocal            Slot=2 Source=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    StoreLocal            Slot=1 Source=44   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
+    RestoreStackPointer   Slot=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    Jump                  Target=lambda_23_body   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    LoadConstInt          Target=47 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:45:10)
+    StoreLocal            Slot=11 Source=47   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:5)
+  endif_88:
+    LoadLocal             Target=48 Slot=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:43:5)
+    Return                Source=48   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+
+function lambda_22  [SourceFunction from rounds]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    LoadLocal             Target=1 Slot=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    LoadEnv               Target=4 Index=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    MakeClosure           Target=5 FuncLabel=lambda_23 EnvPtrTemp=0 EnvSizeBytes=16   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    Return                Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+
+function _start_main  [ProgramEntry]
+  locals=16 temps=26
+    LoadConstInt          Target=0 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    StoreLocal            Slot=0 Source=1   (tco_state_record_and_inline_list_beside_recursive_list.ash:20:1)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadConstInt          Target=2 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    StoreLocal            Slot=3 Source=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=4 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    MakeClosureStack      Target=5 FuncLabel=lambda_11 EnvPtrTemp=4 EnvSizeBytes=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    StoreLocal            Slot=6 Source=5   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    Alloc                 Target=6 SizeBytes=24   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=7 Slot=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=8 Slot=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=9 SourceTemp=8
+    StoreMemOffset        BasePtr=6 OffsetBytes=8 Source=9   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    LoadLocal             Target=10 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Borrow                Target=11 SourceTemp=10
+    StoreMemOffset        BasePtr=6 OffsetBytes=16 Source=11   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    MakeClosure           Target=12 FuncLabel=lambda_18 EnvPtrTemp=6 EnvSizeBytes=24   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    StoreLocal            Slot=7 Source=12   (tco_state_record_and_inline_list_beside_recursive_list.ash:32:1)
+    Alloc                 Target=13 SizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    LoadLocal             Target=14 Slot=7   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=14   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    MakeClosure           Target=15 FuncLabel=lambda_22 EnvPtrTemp=13 EnvSizeBytes=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    StoreLocal            Slot=8 Source=15   (tco_state_record_and_inline_list_beside_recursive_list.ash:42:1)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadLocal             Target=16 Slot=8   (tco_state_record_and_inline_list_beside_recursive_list.ash:48:4)
+    LoadConstInt          Target=17 Value=10   (tco_state_record_and_inline_list_beside_recursive_list.ash:48:11)
+    CallClosure           Target=18 ClosureTemp=16 ArgTemp=17   (tco_state_record_and_inline_list_beside_recursive_list.ash:47:1)
+    LoadConstInt          Target=19 Value=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:47:1)
+    CallClosure           Target=20 ClosureTemp=18 ArgTemp=19   (tco_state_record_and_inline_list_beside_recursive_list.ash:47:1)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    PrintInt              Source=20   (tco_state_record_and_inline_list_beside_recursive_list.ash:47:1)
+    AllocAdt              Target=21 Tag=0 FieldCount=0   (tco_state_record_and_inline_list_beside_recursive_list.ash:47:1)
+    StoreLocal            Slot=12 Source=21   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    LoadLocal             Target=22 Slot=6   (tco_state_record_and_inline_list_beside_recursive_list.ash:27:1)
+    CleanupResource       SourceTemp=22 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=13
+    CopyOutArena          DestTemp=23 SrcTemp=21 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=13
+    StoreLocal            Slot=14 Source=23   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    LoadLocal             Target=24 Slot=3   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    CleanupResource       SourceTemp=24 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=15
+    LoadLocal             Target=25 Slot=14   (tco_state_record_and_inline_list_beside_recursive_list.ash:25:1)
+    Return                Source=25
+

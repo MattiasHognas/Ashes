@@ -120,6 +120,27 @@ let expectOperandSelfCallLoopMatchesCompiler unit =
     |> withFunctionLocalLabels
     |> expectSameLines("[SourceFunction from sumTo] loop function")(compiledSumToLoop)
 
+let countLinesWith (fragment: Str) (lines: List(Str)) =
+    lines
+    |> Ashes.Collection.List.filter(given (line: Str) -> Ashes.Text.contains(line)(fragment))
+    |> Ashes.Collection.List.length
+
+// `let afterLeft = go(acc)(left) in go(afterLeft + value)(right)`: the bound value is not the
+// result, so its self-call is an ordinary call and only the body's self-call jumps back. The loop
+// function has stage 0's one back edge and stage 0's closure calls (the bound value's two
+// applications).
+let expectLetBoundSelfCallIsAnOrdinaryCall unit =
+    (let expected =
+        "tco_let_bound_self_call_before_tail_self_call"
+        |> stageZeroFixtureLines
+        |> functionLines("[ClosureHelper from go]")
+    in
+        let actual =
+            "tco_let_bound_self_call_before_tail_self_call"
+            |> loweredFixtureLines
+            |> functionLines("[ClosureHelper from go]")
+        in test.assertEqual((countLinesWith("Target=lambda_1_body")(expected), countLinesWith("CallClosure")(expected)))((countLinesWith("Target=lambda_1_body")(actual), countLinesWith("CallClosure")(actual))))
+
 let runTcoLoopLoweringTests unit =
     unit
     |> expectAccumulatorAppendIsAffine
@@ -130,4 +151,5 @@ let runTcoLoopLoweringTests unit =
     |> (given (_) -> expectNoSelfCallMeansNoAffinity(Unit))
     |> (given (_) -> expectListWalkLoopFunctionMatchesStageZero(Unit))
     |> (given (_) -> expectOperandSelfCallLoopMatchesCompiler(Unit))
+    |> (given (_) -> expectLetBoundSelfCallIsAnOrdinaryCall(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco loop lowering tests passed"))

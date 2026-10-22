@@ -1,0 +1,26 @@
+// A recursive function whose self call is a constructor's field: the call's result type is still
+// open when the call is emitted, so it asks for an arena result. Its type turns out to be one of
+// the contract's, so the request is withdrawn, the result is kept in an owned slot the function
+// releases once its own result holds a reference, and the call's window is reset around it.
+type Seen =
+    | Leaf
+    | Node(Seen, Str, Seen)
+
+let recursive insert (key: Str) (seen: Seen) =
+    match seen with
+        | Leaf -> Node(Leaf, key, Leaf)
+        | Node(left, current, right) -> Node(insert(key)(left), current, right)
+
+let rootLength (seen: Seen) =
+    match seen with
+        | Leaf -> 0
+        | Node(_left, current, _right) -> Ashes.Text.byteLength(current)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + rootLength(insert("c")(insert("b")(insert("a")(Leaf)))))
+
+0
+|> rounds(3)
+|> Ashes.IO.print

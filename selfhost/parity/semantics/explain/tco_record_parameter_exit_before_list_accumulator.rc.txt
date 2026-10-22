@@ -43,10 +43,10 @@ Function: __deepcopy_list_5
 
 Function: collect [lambda_2]
   Operations
-    dup:                  13
+    dup:                  14
     drop:                 5
     uniqueness checks:    2
-    allocations:          7
+    allocations:          8
     reused allocations:   0
     reuse tokens:         0
     copies:               2
@@ -114,8 +114,8 @@ Function: labelBytes [lambda_9__scalarenv0]
 Function: _start_main
   Operations
     dup:                  0
-    drop:                 0
-    uniqueness checks:    0
+    drop:                 2
+    uniqueness checks:    1
     allocations:          2
     reused allocations:   0
     reuse tokens:         0

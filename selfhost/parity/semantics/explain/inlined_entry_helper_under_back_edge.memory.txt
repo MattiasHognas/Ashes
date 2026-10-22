@@ -56,8 +56,7 @@ Function: loop
   representation [lambda_4]
     conservative unknown: 4
     region:               4
-    runtime rc:           2
-    copy value:           19
+    copy value:           21
   representation [lambda_3]
     conservative unknown: 1
     region:               3

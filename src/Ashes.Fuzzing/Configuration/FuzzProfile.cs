@@ -57,11 +57,13 @@ internal sealed class FuzzProfileRegistry
             !id.StartsWith("resource.", StringComparison.Ordinal)
             && !id.StartsWith("trait.", StringComparison.Ordinal)
             && !string.Equals(id, "match.pattern-language", StringComparison.Ordinal)
-            && !id.StartsWith("unicode.", StringComparison.Ordinal)).ToArray();
+            && !id.StartsWith("unicode.", StringComparison.Ordinal)
+            && !IsLeakTemplate(id)).ToArray();
         string[] traitCombinations = allCombinations.Where(id =>
             !id.StartsWith("resource.", StringComparison.Ordinal)
             && !string.Equals(id, "match.pattern-language", StringComparison.Ordinal)
-            && !id.StartsWith("unicode.", StringComparison.Ordinal)).ToArray();
+            && !id.StartsWith("unicode.", StringComparison.Ordinal)
+            && !IsLeakTemplate(id)).ToArray();
         Generation.AshesType[] scalarTypes = [Generation.AshesType.Int, Generation.AshesType.Bool, Generation.AshesType.Str, Generation.AshesType.Float, Generation.AshesType.BigInt, new Generation.AshesType.UInt(8), new Generation.AshesType.UInt(16), new Generation.AshesType.UInt(32), new Generation.AshesType.UInt(64)];
         Generation.AshesType[] aggregateTypes =
         [
@@ -92,7 +94,7 @@ internal sealed class FuzzProfileRegistry
         Generation.AshesType[] allFeatureTypes = [.. allTypes, Generation.AshesType.Rune];
         Generation.AshesType[] observableTypes = allTypes.Where(IsObservable).ToArray();
         string[] observableCombinations = CompatibleCombinations(
-            defaultCombinations,
+            [.. defaultCombinations, .. allCombinations.Where(IsLeakTemplate)],
             combinations,
             observableTypes);
         string[] memoryCombinations = observableCombinations
@@ -200,13 +202,24 @@ internal sealed class FuzzProfileRegistry
         IReadOnlyList<Generation.AshesType> types)
     {
         Generation.GenerationBudget budget = Generation.GenerationBudget.Create(120);
-        return ids.Where(id => types.Any(type => combinations.Get(id).CanApply(
-                type,
-                Generation.GenerationContext.Empty,
-                budget)))
+        return ids.Where(id => CanApplyToAny(combinations.Get(id), types, Generation.GenerationContext.Empty, budget))
             .Order(StringComparer.Ordinal)
             .ToArray();
     }
+
+    private static bool CanApplyToAny(
+        Combinations.ICombinationTemplate template,
+        IReadOnlyList<Generation.AshesType> types,
+        Generation.GenerationContext context,
+        Generation.GenerationBudget budget)
+    {
+        Generation.GenerationContext templateContext = Combinations.CombinationRegistry.ApplicabilityContext(template, context);
+        return types.Any(type => template.CanApply(type, templateContext, budget));
+    }
+
+    // A leak template's declarations widen its case past the profile's node limit, so it runs only in
+    // the native observable profiles, which execute its program, and in `all`.
+    private static bool IsLeakTemplate(string id) => id.StartsWith("leak.", StringComparison.Ordinal);
 
     internal void Validate(Generation.GeneratorRegistry rules, Combinations.CombinationRegistry combinations)
     {
@@ -255,10 +268,7 @@ internal sealed class FuzzProfileRegistry
                 throw new ArgumentException($"Profile '{profile.Id}' enables resource types without resource generation.");
             }
             string? incompatibleCombination = profile.EnabledCombinations.FirstOrDefault(id =>
-                !profile.Types.Any(type => combinations.Get(id).CanApply(
-                    type,
-                    context,
-                    Generation.GenerationBudget.Create(120))));
+                !CanApplyToAny(combinations.Get(id), profile.Types, context, Generation.GenerationBudget.Create(120)));
             if (incompatibleCombination is not null)
             {
                 throw new ArgumentException(

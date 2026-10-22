@@ -39,8 +39,7 @@ Function: step
   representation [lambda_1]
     conservative unknown: 3
     region:               5
-    runtime rc:           3
-    copy value:           29
+    copy value:           32
   representation [lambda_0]
     region:               3
     copy value:           1

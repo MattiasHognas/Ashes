@@ -1,0 +1,177 @@
+IR (lowered)
+============
+
+function __deepcopy_2  [AdtDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadEnv               Target=1 Index=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    GetAdtTag             Target=2 Ptr=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_2_default   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+  __deepcopy_2_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    Return                Source=3   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+  __deepcopy_2_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=3   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    CallClosure           Target=6 ClosureTemp=1 ArgTemp=5   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=16   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=16 Source=7   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=24   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    CallClosure           Target=9 ClosureTemp=1 ArgTemp=8   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=24 Source=9   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    Return                Source=4   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+  __deepcopy_2_default:
+    Return                Source=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+
+function lambda_1  [ClosureHelper from go]
+  locals=30 temps=51
+    LoadEnv               Target=0 Index=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreLocal            Slot=2 Source=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreLocal            Slot=5 Source=1   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadLocal             Target=2 Slot=1   (tco_let_bound_self_call_before_tail_self_call.ash:6:11)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    CmpIntNe              Target=4 Left=2 Right=3   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    GetAdtTag             Target=5 Ptr=2   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    LoadConstInt          Target=7 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    CmpIntEq              Target=6 Left=5 Right=7   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_3   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    DropReuse             Target=8 SourceTemp=2 FieldCount=0
+    LoadLocal             Target=9 Slot=2   (tco_let_bound_self_call_before_tail_self_call.ash:7:19)
+    StoreLocal            Slot=9 Source=9   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    Jump                  Target=match_end_0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
+    Jump                  Target=match_next_2   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=10 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    CmpIntNe              Target=11 Left=2 Right=10   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_4   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    GetAdtTag             Target=12 Ptr=2   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    LoadConstInt          Target=14 Value=1   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    CmpIntEq              Target=13 Left=12 Right=14   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_4   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    GetAdtField           Target=15 Ptr=2 FieldIndex=0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    StoreLocal            Slot=16 Source=15   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    GetAdtField           Target=16 Ptr=2 FieldIndex=1   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    StoreLocal            Slot=17 Source=16   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    GetAdtField           Target=17 Ptr=2 FieldIndex=2   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    StoreLocal            Slot=18 Source=17   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    DropReuse             Target=18 SourceTemp=2 FieldCount=3
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
+    LoadEnv               Target=19 Index=1   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadLocal             Target=20 Slot=2   (tco_let_bound_self_call_before_tail_self_call.ash:9:32)
+    LoadMemOffset         Target=21 BasePtr=19 OffsetBytes=16   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=22 Value=62   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    ShrInt                Target=23 Left=21 Right=22   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=24 Value=1   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=25 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    CallClosure           Target=26 ClosureTemp=19 ArgTemp=20 RuntimeManagedArgumentFlagTemp=25   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadLocal             Target=27 Slot=16   (tco_let_bound_self_call_before_tail_self_call.ash:9:37)
+    Borrow                Target=28 SourceTemp=27
+    LoadMemOffset         Target=29 BasePtr=26 OffsetBytes=16   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=30 Value=62   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    ShrInt                Target=31 Left=29 Right=30   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=32 Value=1   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=33 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    StoreLocal            Slot=23 Source=28   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    JumpIfFalse           CondTemp=33 Target=rc_call_argument_not_retained_5   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    RcDup                 Target=34 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=34   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+  rc_call_argument_not_retained_5:
+    LoadLocal             Target=35 Slot=23   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    LoadConstInt          Target=37 Value=2   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    OrInt                 Target=38 Left=33 Right=37   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    CallClosure           Target=36 ClosureTemp=26 ArgTemp=35 RuntimeManagedArgumentFlagTemp=38   (tco_let_bound_self_call_before_tail_self_call.ash:9:29)
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=24
+    StoreLocal            Slot=25 Source=36   (tco_let_bound_self_call_before_tail_self_call.ash:9:13)
+    LoadLocal             Target=39 Slot=25   (tco_let_bound_self_call_before_tail_self_call.ash:10:19)
+    LoadLocal             Target=40 Slot=17   (tco_let_bound_self_call_before_tail_self_call.ash:10:31)
+    AddInt                Target=41 Left=39 Right=40   (tco_let_bound_self_call_before_tail_self_call.ash:10:19)
+    RcDrop                SourceTemp=15 TypeName=T OwnerSlot=16
+    LoadLocal             Target=42 Slot=18   (tco_let_bound_self_call_before_tail_self_call.ash:10:38)
+    Borrow                Target=43 SourceTemp=42
+    LoadLocal             Target=44 Slot=2   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    LoadLocal             Target=45 Slot=1   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    StoreLocal            Slot=2 Source=41   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    StoreLocal            Slot=1 Source=43   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    RcDrop                SourceTemp=17 TypeName=T OwnerSlot=18
+    RestoreStackPointer   Slot=8   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    Jump                  Target=lambda_1_body   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    LoadConstInt          Target=46 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:10:16)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=26
+    StoreLocal            Slot=9 Source=46   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=27
+    Jump                  Target=match_end_0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=28
+    Jump                  Target=match_none_1   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+  match_none_1:
+    LoadConstInt          Target=49 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    StoreLocal            Slot=9 Source=49   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+  match_end_0:
+    LoadLocal             Target=50 Slot=9   (tco_let_bound_self_call_before_tail_self_call.ash:6:5)
+    Return                Source=50   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+
+function lambda_0  [SourceFunction from go]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadLocal             Target=1 Slot=1   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    LoadLocal             Target=3 Slot=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    MakeClosure           Target=2 FuncLabel=lambda_0 EnvPtrTemp=3 EnvSizeBytes=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=16   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    Return                Source=4   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+
+function _start_main  [ProgramEntry]
+  locals=4 temps=17
+    LoadConstInt          Target=0 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    StoreLocal            Slot=0 Source=1   (tco_let_bound_self_call_before_tail_self_call.ash:5:1)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_let_bound_self_call_before_tail_self_call.ash:15:4)
+    LoadConstInt          Target=3 Value=0   (tco_let_bound_self_call_before_tail_self_call.ash:15:7)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (tco_let_bound_self_call_before_tail_self_call.ash:14:14)
+    LoadConstInt          Target=6 Value=1   (tco_let_bound_self_call_before_tail_self_call.ash:14:20)
+    AllocAdt              Target=7 Tag=0 FieldCount=0   (tco_let_bound_self_call_before_tail_self_call.ash:14:23)
+    AllocAdt              Target=8 Tag=1 FieldCount=3   (tco_let_bound_self_call_before_tail_self_call.ash:14:9)
+    SetAdtField           Ptr=8 FieldIndex=0 Source=5   (tco_let_bound_self_call_before_tail_self_call.ash:14:9)
+    SetAdtField           Ptr=8 FieldIndex=1 Source=6   (tco_let_bound_self_call_before_tail_self_call.ash:14:9)
+    SetAdtField           Ptr=8 FieldIndex=2 Source=7   (tco_let_bound_self_call_before_tail_self_call.ash:14:9)
+    LoadConstInt          Target=9 Value=2   (tco_let_bound_self_call_before_tail_self_call.ash:14:30)
+    AllocAdt              Target=10 Tag=0 FieldCount=0   (tco_let_bound_self_call_before_tail_self_call.ash:13:9)
+    LoadConstInt          Target=11 Value=3   (tco_let_bound_self_call_before_tail_self_call.ash:13:15)
+    AllocAdt              Target=12 Tag=0 FieldCount=0   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    AllocAdt              Target=13 Tag=1 FieldCount=3   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=10   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    SetAdtField           Ptr=13 FieldIndex=1 Source=11   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    SetAdtField           Ptr=13 FieldIndex=2 Source=12   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    AllocAdt              Target=14 Tag=1 FieldCount=3   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    SetAdtField           Ptr=14 FieldIndex=0 Source=8   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    SetAdtField           Ptr=14 FieldIndex=1 Source=9   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    SetAdtField           Ptr=14 FieldIndex=2 Source=13   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    CallClosure           Target=15 ClosureTemp=4 ArgTemp=14   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    PrintInt              Source=15   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    AllocAdt              Target=16 Tag=0 FieldCount=0   (tco_let_bound_self_call_before_tail_self_call.ash:12:1)
+    Return                Source=16
+

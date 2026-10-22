@@ -110,7 +110,8 @@ public sealed class CoverageExpansionTests
                 new HashSet<string>(StringComparer.Ordinal) { template.Id },
                 ["parse", "semantic"],
                 [compatibleType],
-                0,
+                // A declaring template applies only where a case forces it and adds its declarations.
+                template is IDeclaringCombinationTemplate ? 1 : 0,
                 ContextFlags: GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
                 ResourceTypes: GenerationContext.Empty.ResourceTypes,
                 GenerateTraits: template.Id.StartsWith("trait.", StringComparison.Ordinal));
@@ -159,13 +160,13 @@ public sealed class CoverageExpansionTests
         foreach (string profileId in new[] { "compile", "differential", "memory-growth", "cross-target" })
         {
             FuzzProfile profile = fixture.Profiles.Get(profileId);
-            string[] enabled = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
+            string[] enabled = fixture.Generator.RotationOrder(profile);
             for (int caseIndex = 0; caseIndex < enabled.Length; caseIndex++)
             {
                 ICombinationTemplate template = fixture.Combinations.Get(enabled[caseIndex]);
                 profile.Types.Any(type => template.CanApply(
                     type,
-                    GenerationContext.Empty,
+                    TestFixture.ContextFor(template),
                     GenerationBudget.Create(120))).ShouldBeTrue();
 
                 GeneratedFuzzCase generated = fixture.Generator.Generate(910000, caseIndex, profile, 120);
@@ -319,6 +320,67 @@ public sealed class CoverageExpansionTests
         IReadOnlyList<string> errors = new IrInvariantVerifier().Verify(program);
 
         errors.ShouldContain(error => error.Contains("uses consumed temp %0", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void IrVerifierAcceptsReuseTokenConsumedOnceInEachBranch()
+    {
+        IrFunction entry = new(
+            "_start_main",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.DropReuse(1, 0, 0),
+                new IrInst.LoadConstBool(2, true),
+                new IrInst.JumpIfFalse(2, "other"),
+                new IrInst.AllocReusing(3, 0, 0, 1),
+                new IrInst.Return(3),
+                new IrInst.Label("other"),
+                new IrInst.AllocReusing(4, 1, 0, 1),
+                new IrInst.Return(4),
+            ],
+            LocalCount: 0,
+            TempCount: 5,
+            HasEnvAndArgParams: false);
+        IrProgram program = new(entry, [], [], false, false, false, false, false, false);
+
+        new IrInvariantVerifier().Verify(program).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void IrVerifierRejectsReuseTokenConsumedTwiceOnOnePath()
+    {
+        IrFunction entry = new(
+            "_start_main",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.DropReuse(1, 0, 0),
+                new IrInst.AllocReusing(2, 0, 0, 1),
+                new IrInst.AllocReusing(3, 1, 0, 1),
+                new IrInst.Return(3),
+            ],
+            LocalCount: 0,
+            TempCount: 4,
+            HasEnvAndArgParams: false);
+        IrProgram program = new(entry, [], [], false, false, false, false, false, false);
+
+        IReadOnlyList<string> errors = new IrInvariantVerifier().Verify(program);
+
+        errors.ShouldContain(error => error.Contains("consumes reuse token %1 a second time on one path", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void IrVerifierAcceptsLoopThreadingAPersistentMap()
+    {
+        const string source = """
+            let recursive fill (n: Int) (m: MapTree(Str, Bool)) = if n == 0 then m else fill(n - 1)(Ashes.Collection.Map.setStr(Ashes.Text.fromInt(n))(true)(m))
+            Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(fill(3)(Ashes.Collection.Map.empty))))
+            """;
+        FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(source);
+        compilation.Diagnostics.ThrowIfAny();
+        IEnumerable<IrInst.AllocReusing> reuses = AllInstructions(compilation.Ir).OfType<IrInst.AllocReusing>();
+
+        reuses.GroupBy(reuse => reuse.TokenTemp).Any(group => group.Count() > 1).ShouldBeTrue();
+        new IrInvariantVerifier().Verify(compilation.Ir).ShouldBeEmpty();
     }
 
     [Test]

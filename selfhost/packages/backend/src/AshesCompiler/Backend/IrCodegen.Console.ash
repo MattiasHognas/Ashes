@@ -10,6 +10,7 @@
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
+import AshesCompiler.Backend.IrCodegen.Arena
 import Ashes.Number.UInt
 export (
     type ConsoleGlobals(..),
@@ -173,23 +174,17 @@ let emitConsoleRestore context function_ builder i64 ptrType (globals: ConsoleGl
             |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock)))
 
 // A `Maybe(Str)` `Some` around the string built from `length` bytes at `bufferAddr`.
-let emitConsolePollSome builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bufferAddr length resultSlot doneBlock name =
-    (let stringRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(length)(name + "_string")
-    in
-        let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)(name + "_some")
-        in
-            let fieldPtr =
-                gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(someValue)(ptrType)(name + "_some_ptr"))(8)(name + "_some_field")
-            in
-                Unit
-                |> (given (_) -> buildStore(builder)(stringRef)(fieldPtr))
-                |> (given (_) -> buildStore(builder)(someValue)(resultSlot))
-                |> (given (_) -> buildBr(builder)(doneBlock)))
+let emitConsolePollSome context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType bufferAddr length resultSlot doneBlock name =
+    name + "_string"
+    |> emitArenaStringFromBytesAddr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(memcpyFn)(memcpyType)(bufferAddr)(length)
+    |> (given (stringRef) -> emitArenaSome(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(stringRef)(name + "_some"))
+    |> (given (someValue) -> buildStore(builder)(someValue)(resultSlot))
+    |> (given (_) -> buildBr(builder)(doneBlock))
 
 // `Ashes.IO.Console.pollInput(timeoutMs)`: wait up to `timeoutMs` (a negative value is `0`) for
 // stdin to become readable, then read once: `Some(bytes)` when input arrived, `Some("")` when the
 // timeout elapsed, `None` when the read reports end of input.
-let emitConsolePoll context function_ builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType timeoutMs =
+let emitConsolePoll context function_ builder i64 i8 ptrType arena mallocFn mallocType memcpyFn memcpyType timeoutMs =
     (let readBlock = appendBasicBlock(context)(function_)("console_poll_read")
     in
         let someBlock = appendBasicBlock(context)(function_)("console_poll_some")
@@ -255,13 +250,13 @@ let emitConsolePoll context function_ builder i64 i8 ptrType mallocFn mallocType
                                                                     |> (given (_) ->
                                                                         buildCondBr(builder)(buildICmp(builder)(intPredicateSgt)(bytesRead)(consoleWord(i64)(0u64))("console_poll_got_bytes"))(someBlock)(noneBlock))
                                                                     |> (given (_) -> positionBuilderAtEnd(builder)(someBlock))
-                                                                    |> (given (_) -> emitConsolePollSome(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(bytesRead)(resultSlot)(doneBlock)("console_poll")))
+                                                                    |> (given (_) -> emitConsolePollSome(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(bytesRead)(resultSlot)(doneBlock)("console_poll")))
                                                                 |> (given (_) -> positionBuilderAtEnd(builder)(emptyBlock))
                                                                 |> (given (_) ->
-                                                                    emitConsolePollSome(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(consoleWord(i64)(0u64))(resultSlot)(doneBlock)("console_poll_empty"))
+                                                                    emitConsolePollSome(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(consoleWord(i64)(0u64))(resultSlot)(doneBlock)("console_poll_empty"))
                                                                 |> (given (_) -> positionBuilderAtEnd(builder)(noneBlock))
                                                                 |> (given (_) ->
-                                                                    buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("console_poll_none"))(resultSlot))
+                                                                    buildStore(builder)(emitArenaNone(context)(function_)(builder)(i64)(i8)(ptrType)(arena)("console_poll_none"))(resultSlot))
                                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("console_poll_result_value")))

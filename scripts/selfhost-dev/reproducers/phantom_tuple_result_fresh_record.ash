@@ -1,0 +1,19 @@
+type State =
+    | counter: Int
+    | items: List(Int)
+
+let recursive build (n: Int) (acc: Int) =
+    if n == 0
+    then (State(counter = acc, items = [acc, acc + 1]), acc + 1, None)
+    else build(n - 1)(acc + n)
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else
+        match build(3)(n) with
+            | (state, m, _h) -> rounds(n - 1)(total + state.counter + m)
+
+0
+|> rounds(ROUNDS)
+|> Ashes.IO.print
