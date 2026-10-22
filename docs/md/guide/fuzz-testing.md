@@ -112,8 +112,8 @@ when any case leaks or yields no count. `--only <id>[,<id>...]` keeps only the n
 templates, so one class is measured in seconds, under a placement switch (`GRC_NO_...=1`) to show what
 its rule fixes.
 
-With `--stage1 <path>` naming a self-hosted compiler (`bash scripts/selfhost-dev/quickstage1.sh
-<tag>` builds one at `artifacts/selfhost-dev/s1-<tag>`), every case is also compiled by that
+With `--stage1 <path>` naming a self-hosted compiler
+(`bash scripts/selfhost-dev/quickstage1.sh <tag>` builds one at `artifacts/selfhost-dev/s1-<tag>`), every case is also compiled by that
 compiler at one round and at two, under a 1 GB stack and with the same leak check, which stage 1's
 backend keeps in its region allocator. Each case then reports one cell per compiler, `ok`, `LEAK n`
 or `SKIP reason`, and `report.tsv` carries stage 1's four columns after stage 0's; a case leaking
