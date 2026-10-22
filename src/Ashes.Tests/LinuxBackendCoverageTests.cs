@@ -3256,6 +3256,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_pattern_owner_handed_to_constrained_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's accumulator is replaced in every arm by a constrained call's result (an
+        // association update compared through `Eq`), whose key is a name a pattern binds out of the
+        // loop's list parameter. The reference the key takes for the call's arena result is released
+        // once the successor holds its own references; left with the arena result, every
+        // iteration's key leaks.
+        int[] roundCounts = [4000, 32000, 128000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildPatternOwnerHandedToConstrainedCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("pattern owner handed to a constrained call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_generic_call_successor_sharing_owned_value_should_run()
     {
         if (!OperatingSystem.IsLinux())
@@ -13078,6 +13104,38 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + total(addCases(["a", "b" + Ashes.Text.fromInt(n), "a"])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildPatternOwnerHandedToConstrainedCallProgram(int rounds)
+        => $$"""
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let recursive collect (groups: List(Maybe(Str))) acc =
+                match groups with
+                    | [] -> acc
+                    | Some(label) :: tail ->
+                        acc
+                        |> setAssociation(label)(1)
+                        |> collect(tail)
+                    | None :: tail -> collect(tail)(setAssociation("e")(2)(acc))
+
+            let recursive total (refs: List((Str, Int))) (sum: Int) =
+                match refs with
+                    | [] -> sum
+                    | (_, c) :: tail -> total(tail)(sum + c)
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + total(collect([Some("a"), Some("b" + Ashes.Text.fromInt(n)), None, Some("a"), Some("c")])([]))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

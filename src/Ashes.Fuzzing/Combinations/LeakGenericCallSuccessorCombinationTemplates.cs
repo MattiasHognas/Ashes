@@ -95,3 +95,52 @@ internal sealed class GenericCallSuccessorOverOwnedValueTemplate() : LeakCombina
             """;
     }
 }
+
+/// <summary>
+/// A loop's accumulator replaced in every arm by a generic call's result (an association update
+/// compared through <c>Eq</c>), one arm's key a name a pattern binds out of the loop's list
+/// parameter. The reference the key takes for the call's arena result is released once the
+/// successor holds its own references; left with the arena result, it leaks each iteration's key.
+/// </summary>
+internal sealed class PatternOwnerHandedToConstrainedCallTemplate() : LeakCombinationTemplate(
+    "leak.pattern-owner-handed-to-constrained-call", "patternOwnerConstrainedCall", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string set = names.Of("setAssociation");
+        string loop = names.Of("collectGroups");
+        string total = names.Of("totalCounts");
+        string word = names.Word();
+        string value = LeakNames.Text(names.Between(1, 9));
+        string someArm = names.Coin("piped-update")
+            ? $$"""
+                acc
+                            |> {{set}}(label)({{value}})
+                            |> {{loop}}(tail)
+                """
+            : $$"""{{loop}}(tail)({{set}}(label)({{value}})(acc))""";
+        return $$"""
+            let recursive {{set}} key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: rest ->
+                        if k == key
+                        then (key, value) :: rest
+                        else (k, v) :: {{set}}(key)(value)(rest)
+
+            let recursive {{loop}} (groups: List(Maybe(Str))) acc =
+                match groups with
+                    | [] -> acc
+                    | Some(label) :: tail ->
+                        {{someArm}}
+                    | None :: tail -> {{loop}}(tail)({{set}}({{word}})(2)(acc))
+
+            let recursive {{total}} (entries: List((Str, Int))) (sum: Int) =
+                match entries with
+                    | [] -> sum
+                    | (_, count) :: rest -> {{total}}(rest)(sum + count)
+
+            let {{names.Entry}} (seed: Int) = {{total}}({{loop}}([Some("a"), Some({{word}} + Ashes.Text.fromInt(seed)), None, Some("a"), Some("c")])([]))(0) + seed
+            """;
+    }
+}

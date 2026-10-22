@@ -8124,6 +8124,7 @@ public sealed partial class Lowering
             reuseInsertIndex);
         LowerLambdaCoreRecordAccStableFold(lam, tco, specElidedAccs);
         LowerLambdaCoreRefreshRuntimeManagedTcoResult(tco, bodyTemp);
+        SettleHandedOverMarkerSlots();
     }
 
     private void FinalizePerceusPatternBindingOwners(TcoContext? tco)

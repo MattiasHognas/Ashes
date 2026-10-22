@@ -27,6 +27,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new CallResultOntoChoiceAccumulatorTemplate());
         registry.Register(new ConsumedHeadInGenericCallSuccessorTemplate());
         registry.Register(new GenericCallSuccessorOverOwnedValueTemplate());
+        registry.Register(new PatternOwnerHandedToConstrainedCallTemplate());
         registry.Register(new ExitCellPassedToCallTemplate());
         registry.Register(new ExitCellOfRecordsPassedToCallTemplate());
         registry.Register(new AccumulatorResetByLiteralOrChoiceTemplate());
