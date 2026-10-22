@@ -21653,6 +21653,64 @@ let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resu
             else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
         | _ -> lowered
 
+// Stage 0's `IsPreparedConstructorArgument`: an argument the constructor's preparation retains
+// itself, a binding that still owns its reference-counted value or a read of a loop parameter.
+let isPreparedConstructorArgument (argument: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
+    (match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> true
+                | None -> false
+        | _ -> false) || (match constructorArgumentParameterSlot(argument)(semanticType)(state) with
+        | Some(_slot) -> true
+        | None -> false)
+
+// A field a reference-counted cell can hold: one the arena reset keeps, a fresh value handed
+// over as it is, a prepared one keeping its own retain, or one normalized into an owned value.
+let placesConstructorField (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || isFreshOwnedConstructorArgument(argument)(temp)(state) || isPreparedConstructorArgument(argument)(semanticType)(state) || containsUnresolvedLayout(semanticType)(state) == false && (normalizesIntoOwnedValue(semanticType)(state) || isGeneralRcValueType(semanticType)(state))
+
+let recursive placesConstructorFields (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, temps, semanticTypes) with
+        | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
+            placesConstructorField(argument)(temp)(resolveType(state)(semanticType))(state) && placesConstructorFields(restArguments)(restTemps)(restTypes)(state)
+        | _ -> true
+
+// The owned value a reference-counted cell stores for a field that is neither fresh nor
+// prepared: a reference of its own, or a copy of an arena value.
+let normalizePlacedConstructorField (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(semanticType)(state) || isFreshOwnedConstructorArgument(argument)(temp)(state) || isPreparedConstructorArgument(argument)(semanticType)(state)
+    then (state, temp)
+    else
+        match match ownedResultPlanOf(semanticType)(state) with
+            | Some(plan) -> Some(plan)
+            | None -> generalCopyPlanOf(semanticType)(state) with
+            | None -> (state, temp)
+            | Some(plan) ->
+                match emitGuardedDeepCopy(temp)(plan)(state) with
+                    | (copied, copyTemp) -> (markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)(copied), copyTemp)
+
+let recursive normalizePlacedConstructorFields (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+    match (arguments, temps, semanticTypes) with
+        | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
+            match normalizePlacedConstructorField(argument)(temp)(resolveType(state)(semanticType))(state) with
+                | (normalized, normalizedTemp) -> normalizePlacedConstructorFields(restArguments)(restTemps)(restTypes)(normalized)(normalizedTemp :: reversed)
+        | _ -> (state, reverse(reversed))
+
+// Stage 0's `PlaceConstructorOwningFreshChild`: an arena cell never releases what it holds, so a
+// constructor storing a fresh reference-counted value is built on the reference-counted heap
+// instead, owning that value outright and a reference of its own to every other heap field.
+// Answers the arguments and whether the cell is placed there.
+let placeConstructorOwningFreshChild (layout: CoreConstructorLayout) arguments (resultType: SemanticType) (runtimeManaged: Bool) (stackAllocate: Bool) lowered =
+    match (layout, lowered) with
+        | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> (lowered, runtimeManaged)
+        | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
+            if runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyFreshOwnedArgument(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
+            then (lowered, runtimeManaged)
+            else
+                match normalizePlacedConstructorFields(arguments)(temps)(semanticTypes)(state)([]) with
+                    | (normalized, normalizedTemps) -> ((lowered with state = normalized, temps = normalizedTemps), true)
+        | _ -> (lowered, runtimeManaged)
+
 let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
     match (arguments, fieldTypes) with
         | (argument :: restArguments, fieldType :: restTypes) ->
@@ -21733,11 +21791,13 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                                         match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
                                             | (failedState, Some(error)) -> failure(failedState)(error)
                                             | (typedState, None) ->
-                                                (lowered with state = typedState)
-                                                |> handConstructorFreshChildren(layout)(arguments)(resultType)(runtimeManaged)(stackAllocate)
-                                                |> retainConstructorLoopParameterArguments(runtimeManaged)(arguments)
-                                                |> retainRuntimeCellChildren(runtimeManaged)(arguments)
-                                                |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(runtimeManaged)
+                                                match (lowered with state = typedState) |> placeConstructorOwningFreshChild(layout)(arguments)(resultType)(runtimeManaged)(stackAllocate) with
+                                                    | (placed, placedRuntimeManaged) ->
+                                                        placed
+                                                        |> handConstructorFreshChildren(layout)(arguments)(resultType)(placedRuntimeManaged)(stackAllocate)
+                                                        |> retainConstructorLoopParameterArguments(placedRuntimeManaged)(arguments)
+                                                        |> retainRuntimeCellChildren(placedRuntimeManaged)(arguments)
+                                                        |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(placedRuntimeManaged)
 
 // The stack request is taken and cleared here, so a nested constructor argument lowered further
 // down never claims the one its parent's `let` or `match` made.

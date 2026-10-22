@@ -338,7 +338,8 @@ let fixtures =
         "choice_accumulator_call_head_reads_parameter",
         "inline_annotation_type_variable_generic_loop",
         "phantom_result_variable_recursive_loop_exit",
-        "tco_list_refilled_only_from_helper"
+        "tco_list_refilled_only_from_helper",
+        "constructor_owning_fresh_list_child"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
