@@ -25,7 +25,7 @@ jobs:
           global-json-file: global.json
 
       - name: Provision host LLVM
-        run: bash scripts/download-llvm-native.sh 22 x64
+        run: bash scripts/download-llvm-native.sh 23 x64
 
       - name: Build fuzz runner
         run: dotnet build src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release

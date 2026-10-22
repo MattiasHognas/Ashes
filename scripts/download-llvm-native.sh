@@ -24,16 +24,16 @@
 # point of vendoring them into runtimes/<target>/ with an $ORIGIN RPATH on libLLVM.so.
 #
 # Usage:
-#   ./scripts/download-llvm-native.sh              # default LLVM major = 22, auto-detect arch
+#   ./scripts/download-llvm-native.sh              # default LLVM major = 23, auto-detect arch
 #   ./scripts/download-llvm-native.sh 23            # specify a different major
-#   ./scripts/download-llvm-native.sh 22 arm64      # cross-download arm64 .so on x64 host
-#   ./scripts/download-llvm-native.sh 22 x64        # cross-download x64 .so on arm64 host
+#   ./scripts/download-llvm-native.sh 23 arm64      # cross-download arm64 .so on x64 host
+#   ./scripts/download-llvm-native.sh 23 x64        # cross-download x64 .so on arm64 host
 #   ./scripts/download-llvm-native.sh --win-x64     # download Windows x64 DLL only
-#   ./scripts/download-llvm-native.sh --win-x64 22.1.2
+#   ./scripts/download-llvm-native.sh --win-x64 23.1.4
 #   ./scripts/download-llvm-native.sh --win-arm64   # download Windows ARM64 DLL only
-#   ./scripts/download-llvm-native.sh --win-arm64 22.1.2
+#   ./scripts/download-llvm-native.sh --win-arm64 23.1.4
 #   ./scripts/download-llvm-native.sh --all         # download all four: linux-x64, linux-arm64, win-x64, win-arm64
-#   ./scripts/download-llvm-native.sh --all 22.1.2  # specify full LLVM version for the Windows DLLs
+#   ./scripts/download-llvm-native.sh --all 23.1.4  # specify full LLVM version for the Windows DLLs
 #
 # Prerequisites: wget, ar (binutils), tar, patchelf, root access (directly or via sudo, only to
 # auto-install patchelf if it's missing)
@@ -43,8 +43,8 @@ set -euo pipefail
 ALL_MODE=false
 WIN_X64_MODE=false
 WIN_ARM64_MODE=false
-LLVM_MAJOR="22"
-LLVM_FULL_VERSION="22.1.2"
+LLVM_MAJOR="23"
+LLVM_FULL_VERSION="23.1.4"
 TARGET_ARCH=""
 
 if [ "${1:-}" = "--all" ] || [ "${1:-}" = "-a" ]; then
@@ -66,7 +66,7 @@ elif [ "${1:-}" = "--win-arm64" ]; then
         LLVM_MAJOR="${LLVM_FULL_VERSION%%.*}"
     fi
 else
-    LLVM_MAJOR="${1:-22}"
+    LLVM_MAJOR="${1:-23}"
     TARGET_ARCH="${2:-}"
 fi
 
@@ -198,7 +198,7 @@ resolve_llvm_apt_codename() {
         fi
     fi
 
-    # Known apt.llvm.org suites likely to exist for LLVM 22.
+    # Known apt.llvm.org suites likely to exist for LLVM 23.
     candidates+=("noble" "jammy" "bookworm" "bullseye")
 
     local seen=""

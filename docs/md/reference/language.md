@@ -2728,7 +2728,7 @@ runs an IR optimization pass pipeline:
 
 ### 18.2 Backend Optimizations
 
-At O1 through O3, the LLVM backend runs LLVM 22's corresponding standard New
+At O1 through O3, the LLVM backend runs LLVM 23's corresponding standard New
 Pass Manager pipeline (`default<O1>`, `default<O2>`, or `default<O3>`) before
 code generation. O0 skips the pass pipeline. The target machine also applies
 the selected optimization level during instruction selection, register
