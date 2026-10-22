@@ -251,6 +251,9 @@ let recursive printEach (lines: List(Str)) =
 // tco_list_refilled_only_from_helper hands its back queue, placed at the loop entry, to the helper
 // that refills it before any back edge: the read is a reference-counted owner, retained for the
 // callee outright rather than kept pending until the loop is finalized.
+// tco_list_top_cell_compacted_at_back_edge conses onto its list accumulator at one back edge and
+// hands it on unchanged at another: the cons is copied up, the arena reset to the per-iteration
+// watermark, and the cell copied down again, its tail left below the watermark.
 let fixtures =
     [
         "simple_arith",
@@ -339,7 +342,8 @@ let fixtures =
         "inline_annotation_type_variable_generic_loop",
         "phantom_result_variable_recursive_loop_exit",
         "tco_list_refilled_only_from_helper",
-        "constructor_owning_fresh_list_child"
+        "constructor_owning_fresh_list_child",
+        "tco_list_top_cell_compacted_at_back_edge"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

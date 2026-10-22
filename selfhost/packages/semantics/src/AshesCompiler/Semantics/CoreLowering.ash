@@ -456,6 +456,9 @@ type CoreTcoReset =
     | oldTemps: List(Int)
     | argumentRuntime: List(Bool)
     | argumentExpressions: List(Expr)
+    // Per successor, whether it is written `head :: tail` over one of the loop's parameters (stage 0's
+    // `SingleFreshCons`), decided while the body's bindings are in scope.
+    | argumentSingleFreshCons: List(Bool)
     // Per successor, whether it is a retain taken for the transfer out of an iteration-local owner
     // (stage 0's `TransferRetainedArgs`).
     | argumentTransferRetained: List(Bool)
@@ -7006,6 +7009,7 @@ type TcoResetArgument =
     | managedAdt: Maybe((Int, SemanticType, Str))
     | managedStr: Maybe(Int)
     | argumentExpression: Expr
+    | singleFreshCons: Bool
 
 // The active flag, resolved type and type name of a runtime-managed ADT slot.
 let recursive lookupRuntimeManagedAdtSlot (slot: Int) (entries: List((Int, Int, SemanticType, Str))) =
@@ -7144,10 +7148,20 @@ let resetArgumentShape (shape: TcoArgumentShape) (ordinal: Int) (managedList: Ma
             else shape
         | _ -> shape
 
-let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (expressions: List(Expr)) (managed: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+let firstFlag (flags: List(Bool)) =
+    match flags with
+        | flag :: _rest -> flag
+        | [] -> false
+
+let restFlags (flags: List(Bool)) =
+    match flags with
+        | _flag :: rest -> rest
+        | [] -> []
+
+let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (expressions: List(Expr)) (freshConses: List(Bool)) (managed: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match (slots, types, temps, oldTemps, runtime, shapes, expressions) with
         | (slot :: restSlots, argumentType :: restTypes, temp :: restTemps, oldTemp :: restOld, isRuntime :: restRuntime, shape :: restShapes, expression :: restExpressions) ->
-            TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = refreshedArgumentRuntime(temp)(isRuntime)(state), shape = resetArgumentShape(shape)(ordinal)(lookupRuntimeManagedListSlot(slot)(managed))(state), managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts), managedStr = lookupManagedStrSlot(slot)(managedStrs), argumentExpression = expression) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(restExpressions)(managed)(managedAdts)(managedStrs)(state)
+            TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = refreshedArgumentRuntime(temp)(isRuntime)(state), shape = resetArgumentShape(shape)(ordinal)(lookupRuntimeManagedListSlot(slot)(managed))(state), managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts), managedStr = lookupManagedStrSlot(slot)(managedStrs), argumentExpression = expression, singleFreshCons = firstFlag(freshConses)) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(restExpressions)(restFlags(freshConses))(managed)(managedAdts)(managedStrs)(state)
         | _ -> []
 
 let isResourceHandle (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -8828,14 +8842,14 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     |> unlocatedInstruction(ReclaimArenaChunks(reset.fixedEndSlot)(preRestoreSlot)(false))
 
 // What carries an arena loop parameter's successor across the back edge's reset, stage 0's
-// `GetTcoCopyOutKind` without the list shapes (a list parameter is placed on the reference-counted
-// heap by its self-call shape or keeps the arena): a string copies by its length, a big integer by
-// its limb count, a same-arity scalar-field ADT by its cell size, and a deep-copyable ADT or tuple
-// through the synthesized clone.
+// `GetTcoCopyOutKind`: a string copies by its length, a big integer by its limb count, a
+// same-arity scalar-field ADT by its cell size, a deep-copyable ADT or tuple through the
+// synthesized clone, and a list's top cell with its head copied by the head's kind.
 type TcoCompactionCopy =
     | TcoNoCompactionCopy
     | TcoShallowCompactionCopy(Int)
     | TcoDeepCompactionCopy
+    | TcoListCellCompactionCopy(ListHeadCopyKind)
 
 let tcoCompactionCopyOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
@@ -8859,6 +8873,42 @@ let hasCompactionCopy (copy: TcoCompactionCopy) =
     match copy with
         | TcoNoCompactionCopy -> false
         | _ -> true
+
+let isDeepCompactionCopy (copy: TcoCompactionCopy) =
+    match copy with
+        | TcoDeepCompactionCopy -> true
+        | _ -> false
+
+// Stage 0's `GetTcoListCopyOutKind` and `TcoBackEdgeArgCopyOutKind`: a list of scalars copies its
+// 16-byte top cell, a list of strings or of scalar lists copies its top cell with the head, and a
+// list of deep-copyable elements is cloned whole, which costs its length at every back edge and is
+// taken only when the successor rebuilt the list this iteration.
+let tcoListCompactionCopyOf (element: SemanticType) (argument: TcoResetArgument) (state: CoreLoweringState) =
+    (let resolvedElement = resolveType(state)(element)
+    in
+        let wholeClone =
+            match heapFactsOf(resolvedElement)(state) with
+                | HeapLayoutFacts { arenaDeepCopySupported = true } ->
+                    if shapeIsFreshList(argument.argumentExpression)
+                    then TcoDeepCompactionCopy
+                    else TcoNoCompactionCopy
+                | _ -> TcoNoCompactionCopy
+        in
+            if resultSurvivesReset(resolvedElement)(state)
+            then TcoShallowCompactionCopy(16)
+            else
+                match resolvedElement with
+                    | SemString -> TcoListCellCompactionCopy(StringListHead)
+                    | SemList(inner) ->
+                        if resultSurvivesReset(inner)(state)
+                        then TcoListCellCompactionCopy(InnerListHead)
+                        else wholeClone
+                    | _ -> wholeClone)
+
+let tcoArgumentCompactionCopyOf (argument: TcoResetArgument) (state: CoreLoweringState) =
+    match resolveType(state)(argument.argumentType) with
+        | SemList(element) -> tcoListCompactionCopyOf(element)(argument)(state)
+        | _ -> tcoCompactionCopyOf(argument.argumentType)(state)
 
 let argumentTypeResolved (argument: TcoResetArgument) (state: CoreLoweringState) =
     match resolveType(state)(argument.argumentType) with
@@ -8912,19 +8962,46 @@ let recursive allArgumentsSurvivePlainReset (arguments: List(TcoResetArgument)) 
         | [] -> true
         | argument :: rest -> compactionArgumentSurvives(argument)(state) && allArgumentsSurvivePlainReset(rest)(state)
 
-// Stage 0's `TcoBackEdgeAllArgsCopyable` and `TcoBackEdgeUseFixedWatermark` together: every
-// argument survives the reset on its own or has a whole-value copy, and no argument is a list
-// (the single-cell list copies under the advancing watermark are not ported).
+// Stage 0's `TcoBackEdgeAllArgsCopyable`: every argument survives the reset on its own or has a
+// copy, and a list argument is either cloned whole or a single fresh cell over a loop parameter;
+// any other list shape gives the reset up.
+let argumentCompactable (argument: TcoResetArgument) (state: CoreLoweringState) =
+    compactionArgumentSurvives(argument)(state) || (match tcoArgumentCompactionCopyOf(argument)(state) with
+        | TcoNoCompactionCopy -> false
+        | copy ->
+            match resolveType(state)(argument.argumentType) with
+                | SemList(_element) -> isDeepCompactionCopy(copy) || argument.singleFreshCons
+                | _ -> true)
+
 let recursive allArgumentsCompactable (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> true
+        | argument :: rest -> argumentCompactable(argument)(state) && allArgumentsCompactable(rest)(state)
+
+// Stage 0's `TcoBackEdgeUseFixedWatermark`: the reset goes back to the fixed loop-entry watermark
+// unless a list argument keeps only its top cell, whose tail sits below the per-iteration watermark
+// and would be overwritten by a fixed-mark reset; that loop resets to the advancing watermark.
+let recursive compactionUsesFixedWatermark (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match arguments with
         | [] -> true
         | argument :: rest ->
             (compactionArgumentSurvives(argument)(state) || (match resolveType(state)(argument.argumentType) with
-                | SemList(_element) -> false
-                | _ ->
+                | SemList(_element) ->
                     state
-                    |> tcoCompactionCopyOf(argument.argumentType)
-                    |> hasCompactionCopy)) && allArgumentsCompactable(rest)(state)
+                    |> tcoArgumentCompactionCopyOf(argument)
+                    |> isDeepCompactionCopy
+                | _ -> true)) && compactionUsesFixedWatermark(rest)(state)
+
+// Stage 0's `TcoBackEdgeCompactionCopiesRuntimeManagedList`: a list parameter on the
+// reference-counted heap whose successor the copy-out would compact beside an arena sibling's.
+let recursive compactionCopiesManagedList (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> false
+        | argument :: rest ->
+            (match argument.managedList with
+                | Some(_managed) ->
+                    argument.shape != TcoPassThroughShape && (state |> tcoArgumentCompactionCopyOf(argument) |> hasCompactionCopy)
+                | None -> false) || compactionCopiesManagedList(rest)(state)
 
 // The inline clone of an arena value (stage 0's `EmitDeepCopy`), its copier functions synthesized
 // into the program once per type; answers the temp holding the clone.
@@ -8938,6 +9015,12 @@ let emitCompactionShallowCopy (sourceTemp: Int) (sizeBytes: Int) (state: CoreLow
     match freshTemp(state) with
         | FreshTemp { state = allocated, temp = destTemp } ->
             (unlocatedInstruction(CopyOutArena(destTemp)(sourceTemp)(sizeBytes)(false)(ArenaTcoCompaction)(None))(allocated), destTemp)
+
+// A list's top cell copied with its head, the string or scalar list the head names copied too.
+let emitCompactionListCellCopy (sourceTemp: Int) (headCopy: ListHeadCopyKind) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = destTemp } ->
+            (unlocatedInstruction(CopyOutTcoListCell(destTemp)(sourceTemp)(headCopy)(ArenaTcoCompaction))(allocated), destTemp)
 
 let nextCompactionLabel (prefix: Str) (state: CoreLoweringState) = (prefix + "_" + Ashes.Text.fromInt(state.nextLambdaId), (state with nextLambdaId = state.nextLambdaId + 1))
 
@@ -9011,7 +9094,7 @@ let recursive emitCompactionUpCopies (arguments: List(TcoResetArgument)) (state:
             if compactionArgumentSurvives(argument)(state)
             then emitCompactionUpCopies(rest)(state)(reversedCopies)
             else
-                match tcoCompactionCopyOf(argument.argumentType)(state) with
+                match tcoArgumentCompactionCopyOf(argument)(state) with
                     | TcoNoCompactionCopy -> emitCompactionUpCopies(rest)(state)(reversedCopies)
                     | TcoDeepCompactionCopy ->
                         match emitTcoDeepCopy(argument.argumentTemp)(argument.argumentType)(state) with
@@ -9021,6 +9104,9 @@ let recursive emitCompactionUpCopies (arguments: List(TcoResetArgument)) (state:
                     | TcoShallowCompactionCopy(sizeBytes) ->
                         match emitCompactionShallowCopy(argument.argumentTemp)(sizeBytes)(state) with
                             | (copied, upTemp) -> emitCompactionUpCopies(rest)(copied)((argument, upTemp, TcoShallowCompactionCopy(sizeBytes)) :: reversedCopies)
+                    | TcoListCellCompactionCopy(headCopy) ->
+                        match emitCompactionListCellCopy(argument.argumentTemp)(headCopy)(state) with
+                            | (copied, upTemp) -> emitCompactionUpCopies(rest)(copied)((argument, upTemp, TcoListCellCompactionCopy(headCopy)) :: reversedCopies)
 
 // An affine string accumulator's down copy reserves (an in-place append of the empty string: the
 // slots were just zeroed, so the fallback reserves twice the size and records fresh bounds), so
@@ -9055,6 +9141,12 @@ let recursive emitCompactionDownCopies (copies: List((TcoResetArgument, Int, Tco
                             |> emitCompactionDownCopies(rest)(reservations)
                 | (TcoShallowCompactionCopy(sizeBytes), _reservation) ->
                     match emitCompactionShallowCopy(upTemp)(sizeBytes)(state) with
+                        | (copied, downTemp) ->
+                            copied
+                            |> unlocatedInstruction(StoreLocal(argument.parameterSlot)(downTemp))
+                            |> emitCompactionDownCopies(rest)(reservations)
+                | (TcoListCellCompactionCopy(headCopy), _reservation) ->
+                    match emitCompactionListCellCopy(upTemp)(headCopy)(state) with
                         | (copied, downTemp) ->
                             copied
                             |> unlocatedInstruction(StoreLocal(argument.parameterSlot)(downTemp))
@@ -9115,6 +9207,18 @@ let emitCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(TcoResetAr
                     |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
                     |> unlocatedInstruction(ReclaimArenaChunks(frame.fixedEndSlot)(preRestoreSlot)(false))
                     |> emitCompactionRecord(frame)(skipLabel)
+
+// The same two-pass copy-out against the advancing per-iteration watermark, for a loop whose list
+// argument keeps only its top cell: every back edge copies that cell, so nothing is amortized and
+// no live size is recorded.
+let emitAdvancingCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (preRestoreSlot: Int) (state: CoreLoweringState) =
+    match emitCompactionUpCopies(arguments)(state)([]) with
+        | (copiedUp, copies) ->
+            copiedUp
+            |> unlocatedInstruction(RestoreArenaState(frame.arenaCursorSlot)(frame.arenaEndSlot)(preRestoreSlot)(false))
+            |> emitReservationZeroing(arguments)
+            |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
+            |> unlocatedInstruction(ReclaimArenaChunks(frame.arenaEndSlot)(preRestoreSlot)(false))
 
 // Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
 // value's layout.
@@ -9220,8 +9324,9 @@ let recursive ownedDropsLeftByArenaSuccessors (drops: List((Int, Str))) (facts: 
 
 // The back edge of a loop the runtime-managed reset does not admit: the iteration-local owners
 // are released, then the per-iteration watermark is restored when every argument survives a reset
-// on its own (stage 0's `TcoBackEdgeTryEmitPlainReset`), the fixed watermark compacted when every
-// heap argument has a whole-value copy, and the iteration's allocations left in place otherwise.
+// on its own (stage 0's `TcoBackEdgeTryEmitPlainReset`), the arena compacted when every heap
+// argument has a copy (to the fixed watermark, or to the advancing one when a list keeps only its
+// top cell), and the iteration's allocations left in place otherwise.
 let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
@@ -9238,7 +9343,10 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
                     |> unlocatedInstruction(ReclaimArenaChunks(reset.arenaEndSlot)(preRestoreSlot)(false))
                 else
                     if allArgumentsCompactable(arguments)(released)
-                    then emitCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
+                    then
+                        if compactionUsesFixedWatermark(arguments)(released)
+                        then emitCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
+                        else emitAdvancingCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
                     else copyTransferRetainedSuccessors(arguments)(reset.argumentTransferRetained)(released))
 
 // Stage 0's `TcoBackEdgeTryEmitRuntimeManagedSuccessorsWithoutReset`: a loop that can neither
@@ -9246,7 +9354,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
 // it placed on the reference-counted heap. Each successor takes a reference of its own and the
 // predecessor is released, as the reset path does, only without the reset; the iteration's owned
 // drops follow the successors, which may borrow from them.
-let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && !allArgumentsCompactable(arguments)(state)
+let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && (!allArgumentsCompactable(arguments)(state) || compactionCopiesManagedList(arguments)(state))
 
 let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
@@ -9266,7 +9374,7 @@ let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(frame), Some(loop)) ->
             state
-            |> tcoResetArguments(0)(frame.parameterSlots)(reset.argumentTypes)(reset.argumentTemps)(reset.oldTemps)(reset.argumentRuntime)(loop.argumentShapes)(reset.argumentExpressions)(frame.runtimeManagedListSlots)(frame.runtimeManagedAdtSlots)(frame.runtimeManagedStrSlots)
+            |> tcoResetArguments(0)(frame.parameterSlots)(reset.argumentTypes)(reset.argumentTemps)(reset.oldTemps)(reset.argumentRuntime)(loop.argumentShapes)(reset.argumentExpressions)(reset.argumentSingleFreshCons)(frame.runtimeManagedListSlots)(frame.runtimeManagedAdtSlots)(frame.runtimeManagedStrSlots)
             |> (given (arguments: List(TcoResetArgument)) ->
                 if tcoBackEdgeCanEmitRuntimeManagedReset(loop)(arguments)(state)
                 then emitRuntimeManagedTcoReset(reset)(arguments)(state)
@@ -25990,6 +26098,25 @@ let recursive ownedDropFactsOf (drops: List((Int, Str))) (argumentTypes: List(Se
                 | Some(ownedType) ->
                     (slot, typeBlockers(0)(heapPartTypesInto([ownedType])([])([])(state))(argumentTypes)(state), callResultsReaching(slot)(0)(temps)(state))) :: ownedDropFactsOf(rest)(argumentTypes)(temps)(state)
 
+// Stage 0's `SingleFreshCons`: a successor written `head :: tail` whose tail is one of the loop's
+// parameters. The single-cell list copy keeps only that top cell across the reset, which is sound
+// only while the tail already sits below the per-iteration watermark.
+let backEdgeConsOverParameter (parameterSlots: List(Int)) (state: CoreLoweringState) (argument: Expr) =
+    match unspanArgument(argument) with
+        | ExprCons(_head, tail) ->
+            match unspanArgument(tail) with
+                | ExprVar(name) ->
+                    match lookupBinding(name)(state.bindings) with
+                        | Some(CoreBinding { location = CoreLocal(slot) }) -> containsInt(slot)(parameterSlots)
+                        | _ -> false
+                | _ -> false
+        | _ -> false
+
+let recursive backEdgeConsesOverParameters (arguments: List(Expr)) (parameterSlots: List(Int)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> []
+        | argument :: rest -> backEdgeConsOverParameter(parameterSlots)(state)(argument) :: backEdgeConsesOverParameters(rest)(parameterSlots)(state)
+
 let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (rootDrops: List((Int, SemanticType))) (state: CoreLoweringState) =
     (let loopSlots =
         slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
@@ -26019,6 +26146,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     oldTemps = oldTemps,
                     argumentRuntime = runtimeTempFlags(temps)(state),
                     argumentExpressions = arguments,
+                    argumentSingleFreshCons = backEdgeConsesOverParameters(arguments)(frame.parameterSlots)(state),
                     argumentTransferRetained = transferRetainedFlags(temps)(state),
                     transferredRootDrops = rootDrops,
                     ownedDropFacts = ownedDropFactsOf(drops)(argumentTypes)(temps)(state)
