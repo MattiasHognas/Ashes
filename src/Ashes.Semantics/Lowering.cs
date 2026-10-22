@@ -15877,6 +15877,7 @@ public sealed partial class Lowering
         // The literal's own tail is the empty list, then the cell before it: only a cell that was
         // left in the arena needs its representation tested by the cell that takes it as a tail.
         bool tailIsReferenceCounted = true;
+        bool tailIsFreshCell = false;
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
             LoweredValue head = LowerRuntimeManagedListElement(
@@ -15887,8 +15888,11 @@ public sealed partial class Lowering
             {
                 Unify(head.Type, elemType);
             }
+            int headTemp = tailIsFreshCell
+                ? CopyArenaHeadOverReferenceCountedTail(head.Temp, elemType, request)
+                : head.Temp;
             (tailTemp, tailType) = LowerConsCell(
-                head.Temp,
+                headTemp,
                 tailTemp,
                 elemType,
                 tailType,
@@ -15896,11 +15900,33 @@ public sealed partial class Lowering
                 request,
                 ownTail: !tailIsReferenceCounted);
             tailIsReferenceCounted = IsFreshReferenceCountedCell(tailTemp);
+            tailIsFreshCell = tailIsReferenceCounted;
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return (tailTemp, Prune(tailType));
+    }
+
+    // A literal's cell over a reference-counted cell is reference-counted too. An arena cell would
+    // be the only holder of the cell after it, and the arena is reclaimed without releasing what
+    // its cells point at, so a head the arena would keep (a static string, a constructor over
+    // one) is copied onto the reference-counted heap, which lets its cell follow.
+    private int CopyArenaHeadOverReferenceCountedTail(int headTemp, TypeRef elementType, LoweredValueRequest request)
+    {
+        TypeRef headType = Prune(elementType);
+        if (Environment.GetEnvironmentVariable("GRC_NO_LITERALRCTAILHEAD") is not null
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || IsRuntimeManageableListElement(headType, headTemp)
+            || headType is not (TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                or TypeRef.TList or TypeRef.TNamedType))
+        {
+            return headTemp;
+        }
+
+        int copiedTemp = EmitRuntimeManagedTcoParamCopyByCopy(headTemp, headType);
+        MarkRuntimeManagedTemp(copiedTemp, type: headType);
+        return copiedTemp;
     }
 
     // The tuple representation an arena list's request carries was asked for by the tuple

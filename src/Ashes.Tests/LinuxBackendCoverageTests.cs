@@ -3282,6 +3282,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_list_literal_static_head_over_built_string_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns a list literal whose middle string is built at run time and whose other
+        // strings are static. An arena cell for a static string would be the only holder of the
+        // reference-counted cell after it and be reclaimed without releasing it; the static head is
+        // copied onto the reference-counted heap instead, so the consumer releases the whole list.
+        int[] roundCounts = [4000, 64000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildListLiteralStaticHeadOverBuiltStringProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list literal with a static head over a built string", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_generic_call_successor_sharing_owned_value_should_run()
     {
         if (!OperatingSystem.IsLinux())
@@ -13186,6 +13211,28 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + total(collect([Some("a"), Some("b" + Ashes.Text.fromInt(n)), None, Some("a"), Some("c")])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildListLiteralStaticHeadOverBuiltStringProgram(int rounds)
+        => $$"""
+            let recursive count (items: List(Str)) (n: Int) =
+                match items with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let labels (n: Int) = ["c", "d" + Ashes.Text.fromInt(n), "e"]
+
+            let recursive run (n: Int) =
+                if n < 0
+                then run(n + 1)
+                else count(labels(n))(0)
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

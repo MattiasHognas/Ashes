@@ -20858,7 +20858,22 @@ let ownedLiteralTail (runtimeManaged: Bool) (tailIsReferenceCounted: Bool) (tail
 // accumulator is started afresh with is normalized as the head of `first :: []` is.
 let literalElementTail = ExprList([])(false)
 
-let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) lower state =
+// Stage 0's `CopyArenaHeadOverReferenceCountedTail`: a literal's cell over a reference-counted
+// cell is reference-counted too. An arena cell would be the only holder of the cell after it, and
+// the arena is reclaimed without releasing what its cells point at, so a head the arena would keep
+// (a static string, a constructor over one) is copied onto the reference-counted heap, which lets
+// its cell follow.
+let copyArenaHeadOverReferenceCountedTail (request: ConsumerRequest) (tailIsFreshCell: Bool) (expression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    if tailIsFreshCell && requestsRuntimeList(request) && !isRuntimeManageableListElement(expression)(headTemp)(headType)(state) && isRuntimeManageableHeapChild(headType)(false)(state)
+    then
+        match argumentCopyPlanOf(resolveType(state)(headType))(state) with
+            | Some(plan) ->
+                match emitArgumentDeepCopy(headTemp)(entryCopyPlanOf(resolveType(state)(headType))(plan)(state))(state) with
+                    | (copied, copiedTemp) -> (markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)(copied), copiedTemp)
+            | None -> (state, headTemp)
+    else (state, headTemp)
+
+let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) (tailIsFreshCell: Bool) lower state =
     match elements with
         | [] ->
             success(tailTemp)(elementType
@@ -20875,30 +20890,33 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
                     match bindType(elementType)(headType)(valueState) with
                         | (failedState, Some(error)) -> failure(failedState)(error)
-                        | (typedState, None) ->
-                            let runtimeManaged = cellIsRuntimeManaged(request)(expression)(headTemp)(headType)(typedState)
-                            in
-                                match ownedLiteralTail(runtimeManaged)(tailIsReferenceCounted)(tailTemp)(elementType)(typedState) with
-                                    | (tailState, ownedTailTemp) ->
-                                        match allocateListCell(headTemp)(ownedTailTemp)(elementType)(runtimeManaged)(tailState) with
-                                            | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
-                                                lowerListElements(
-                                                    request,
-                                                    transfers,
-                                                    rest,
-                                                    elementType,
-                                                    cellTemp,
-                                                    isFreshReferenceCountedCell(cellTemp)(cellState),
-                                                    lower,
-                                                    cellState
-                                                )
-                                            | failed -> failed
+                        | (boundState, None) ->
+                            match copyArenaHeadOverReferenceCountedTail(request)(tailIsFreshCell)(expression)(headTemp)(headType)(boundState) with
+                                | (typedState, cellHeadTemp) ->
+                                    let runtimeManaged = cellIsRuntimeManaged(request)(expression)(cellHeadTemp)(headType)(typedState)
+                                    in
+                                        match ownedLiteralTail(runtimeManaged)(tailIsReferenceCounted)(tailTemp)(elementType)(typedState) with
+                                            | (tailState, ownedTailTemp) ->
+                                                match allocateListCell(cellHeadTemp)(ownedTailTemp)(elementType)(runtimeManaged)(tailState) with
+                                                    | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
+                                                        lowerListElements(
+                                                            request,
+                                                            transfers,
+                                                            rest,
+                                                            elementType,
+                                                            cellTemp,
+                                                            isFreshReferenceCountedCell(cellTemp)(cellState),
+                                                            isFreshReferenceCountedCell(cellTemp)(cellState),
+                                                            lower,
+                                                            cellState
+                                                        )
+                                                    | failed -> failed
 
 let finishListLiteral (request: ConsumerRequest) (transfers: Bool) elements lower empty =
     match empty with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = emptyState, temp = emptyTemp, semanticType = SemList(elementType), error = None } ->
-            lowerListElements(request)(transfers)(reverse(elements))(elementType)(emptyTemp)(true)(lower)(emptyState)
+            lowerListElements(request)(transfers)(reverse(elements))(elementType)(emptyTemp)(true)(false)(lower)(emptyState)
         | LoweredCoreValue { state = failedState } ->
             failure(
                 failedState,
