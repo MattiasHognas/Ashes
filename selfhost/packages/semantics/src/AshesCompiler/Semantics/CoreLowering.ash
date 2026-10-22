@@ -754,9 +754,12 @@ type CoreTcoState =
     // Stage 0's `CallArgumentRetainFrame`: the retains of a record update's unchanged loop-parameter
     // fields taken while an argument the callee's result may reach is lowered, with the parameter
     // slot and the field type, released after the call once its result holds its own references;
-    // and whether the argument being lowered collects them.
+    // the transfer retains an arena aggregate in the argument made of a live owner's read, with no
+    // slot (-1); whether the argument being lowered collects them; and the label count when it
+    // began, since stage 0 collects a transfer retain only on the argument's straight-line path.
     | callArgumentRecordRetains: List((Int, Int, SemanticType))
     | collectingCallArgumentRetains: Bool
+    | callArgumentLabelStart: Int
 
 type CoreReuseState =
     | reuseTransferredNames: List(Str)
@@ -1719,6 +1722,10 @@ let withCallArgumentRetainFrame (retains: List((Int, Int, SemanticType))) (colle
     (let group = state.tcoState
     in state with tcoState = (group with callArgumentRecordRetains = retains, collectingCallArgumentRetains = collecting))
 
+let stateCallArgumentLabelStart (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.callArgumentLabelStart)
+
 let stateTcoParameterRetainSites (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.tcoParameterRetainSites)
@@ -2362,7 +2369,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             selfResultDeferredNames = [],
             selfCallResultUnifications = [],
             callArgumentRecordRetains = [],
-            collectingCallArgumentRetains = false
+            collectingCallArgumentRetains = false,
+            callArgumentLabelStart = 0
         ),
         reuseState = CoreReuseState(
             reuseTransferredNames = [],
@@ -15574,7 +15582,11 @@ let deferSelfCallResultType (context: CoreCallContext) (arity: Int) (resultType:
 // Stage 0's `BeginCallArgumentRetains` and `EndCallArgumentRetains`: the argument about to be
 // lowered collects its record-update retains when the callee's result may reach it.
 let collectCallArgumentRetains (collecting: Bool) (state: CoreLoweringState) =
-    withCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(collecting)(state)
+    (let framed =
+        withCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(collecting)(state)
+    in
+        let group = framed.tcoState
+        in framed with tcoState = (group with callArgumentLabelStart = state.nextLabelId))
 
 let stopCollectingCallArgumentRetains (lowered: LoweredCoreValue) =
     match lowered with
@@ -15635,7 +15647,9 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     |> withArgumentRequest(Some(expectedType))(deferredState
                     |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
                     |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
-                    |> collectCallArgumentRetains(transfers == false && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
+                    |> collectCallArgumentRetains(arity
+                    |> argumentIndexOf(context.facts)
+                    |> calleeResultReachesArgument(context.facts))
                     |> withEscapingArgumentCell(argument)(transfers == false && mayHoldListCell(resultType)(deferredState))
                     |> lower(argument)
                     |> stopCollectingCallArgumentRetains
@@ -16898,7 +16912,10 @@ let recursive emitCallArgumentRetainReleases (retains: List((Int, Int, SemanticT
                             |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
                             |> emitOwnedValueChildDrop(temp)(semanticType)
                             |> emit(Label(skipLabel))
-                            |> (given (released: CoreLoweringState) -> withStatePendingRuntimeArgumentFlags((zeroTemp + 1, slot) :: statePendingRuntimeArgumentFlags(released))(released))
+                            |> (given (released: CoreLoweringState) ->
+                                if slot < 0
+                                then released
+                                else withStatePendingRuntimeArgumentFlags((zeroTemp + 1, slot) :: statePendingRuntimeArgumentFlags(released))(released))
                             |> emitCallArgumentRetainReleases(rest)
 
 let callResultOwnsItself (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || isRuntimeTemp(temp)(state) || isGeneralRcValueType(semanticType)(state)
@@ -17058,12 +17075,19 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage))
                                 |> withCallResultType(applied))
 
+let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state } ->
+            let group = state.tcoState
+            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start))
+
 // A call opens its own frame of argument retains; the enclosing call's is restored after it.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
     state
     |> withCallArgumentRetainFrame([])(false)
     |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(lower)
     |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
+    |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))
 
 let failedIfPlan state error =
     CoreIfPlan(
@@ -20527,6 +20551,43 @@ let recursive holdsReferenceCountedElement (elements: List(Expr)) (temps: List(I
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false || holdsReferenceCountedElement(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
+// Stage 0's `RecordCallArgumentArenaRetain` for the transfer retain an arena aggregate took of a
+// live owner's read: collected while an argument the callee's result may reach is lowered, and
+// only when no label was allocated since the argument began, so the release after the call never
+// reads a retain one branch did not take. It is released unconditionally, carrying no loop slot.
+let recordCallArgumentTransferRetain (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if retained != original && stateCollectingCallArgumentRetains(state) && state.nextLabelId == stateCallArgumentLabelStart(state)
+    then withCallArgumentRetainFrame((retained, -1, semanticType) :: stateCallArgumentRecordRetains(state))(true)(state)
+    else state
+
+let recordArenaCellTransferRetain (arenaCell: Bool) (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if arenaCell
+    then recordCallArgumentTransferRetain(original)(retained)(semanticType)(state)
+    else state
+
+// Whether the newest instruction is the loop-parameter retain marker `retainLoopParameterChild` just
+// emitted for this read.
+let newestIsParameterRetainMarker (duplicate: Int) (source: Int) (state: CoreLoweringState) =
+    match state.reversedInstructions with
+        | IrInstruction { instruction = RcDup(target, marked, false, _mayBeEmpty) } :: _rest -> target == duplicate && marked == source
+        | _ -> false
+
+// The same collection for the retain marker of a loop parameter's read (or a field read out of one)
+// stored into an arena cell: stage 0 retains a parameter already placed on the reference-counted
+// heap outright and collects that retain; here the marker is collected with the parameter's slot,
+// so its release after the call joins the flag the loop's placement decides, as a record update's
+// unchanged field does.
+let recordArenaCellParameterRetain (arenaCell: Bool) (element: Expr) (source: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if arenaCell && temp != source && !resultSurvivesReset(semanticType)(state) && stateCollectingCallArgumentRetains(state) && state.nextLabelId == stateCallArgumentLabelStart(state) && newestIsParameterRetainMarker(temp)(source)(state)
+            then
+                match loopParameterReadSlot(element)(state) with
+                    | Some(slot) -> lowered with state = withCallArgumentRetainFrame((temp, slot, semanticType) :: stateCallArgumentRecordRetains(state))(true)(state)
+                    | None -> lowered
+            else lowered
+        | _ -> lowered
+
 // Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
 // binding that still owns its reference is retained, any other child is stored as lowered. A
 // pattern owner is not (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` skips it): its
@@ -20564,20 +20625,22 @@ let restDemoted (demoted: List(Bool)) =
 
 // Stage 0's `RetainRuntimeManagedTupleChildren`: a tuple element read from a live owner or a
 // loop parameter is retained for the cell, except one the cell holds an arena copy of.
-let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (state: CoreLoweringState) (reversed: List(Int)) =
+let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (arenaCell: Bool) (state: CoreLoweringState) (reversed: List(Int)) =
     match (elements, temps, semanticTypes) with
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
             if firstDemoted(demoted)
             then
-                retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(state)(temp :: reversed)
+                retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(arenaCell)(state)(temp :: reversed)
             else
                 match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
                     | (retained, retainedTemp) ->
                         match retained
+                        |> recordArenaCellTransferRetain(arenaCell)(temp)(retainedTemp)(semanticType)
                         |> success(retainedTemp)(semanticType)
-                        |> retainLoopParameterChild(element)(temp) with
+                        |> retainLoopParameterChild(element)(temp)
+                        |> recordArenaCellParameterRetain(arenaCell)(element)(temp) with
                             | LoweredCoreValue { state = marked, temp = markedTemp } ->
-                                retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(marked)(markedTemp :: reversed)
+                                retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(arenaCell)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
 // The request each tuple element is lowered under, stage 0's `LowerTupleElement`: the tuple's
@@ -20650,9 +20713,9 @@ let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: B
                         unifyTupleElementWithExpected(expectedElements)(semanticType)(nextState)
                     )
 
-let retainTupleChildren (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (retains: Bool) (state: CoreLoweringState) =
-    if retains
-    then retainAggregateChildTemps(elements)(temps)(semanticTypes)(demoted)(state)([])
+let retainTupleChildren (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (runtimeManaged: Bool) (transfers: Bool) (state: CoreLoweringState) =
+    if runtimeManaged || transfers
+    then retainAggregateChildTemps(elements)(temps)(semanticTypes)(demoted)(!runtimeManaged)(state)([])
     else (state, temps)
 
 let markAggregateRuntimeManaged (temp: Int) (runtimeManaged: Bool) (state: CoreLoweringState) =
@@ -20765,7 +20828,7 @@ let demoteArenaTupleElements (temps: List(Int)) (semanticTypes: List(SemanticTyp
         | Some(_inputs) -> (state, temps, [])
 
 let finishPlacedTuple elements (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (tupleTemp: Int) (runtimeManaged: Bool) (transfers: Bool) (state: CoreLoweringState) =
-    match retainTupleChildren(elements)(temps)(semanticTypes)(demoted)(runtimeManaged || transfers)(state) with
+    match retainTupleChildren(elements)(temps)(semanticTypes)(demoted)(runtimeManaged)(transfers)(state) with
         | (retainedState, storedTemps) ->
             retainedState
             |> emit(Alloc(tupleTemp)(coreListLength(storedTemps) * 8)(runtimeManaged))
@@ -20893,8 +20956,10 @@ let retainListElement (request: ConsumerRequest) (transfers: Bool) (element: Exp
                     match retainAggregateChildTemp(element)(temp)(semanticType)(state) with
                         | (retained, retainedTemp) ->
                             retained
+                            |> recordArenaCellTransferRetain(!requestsRuntimeList(request))(temp)(retainedTemp)(semanticType)
                             |> success(retainedTemp)(semanticType)
                             |> retainLoopParameterChild(element)(temp)
+                            |> recordArenaCellParameterRetain(!requestsRuntimeList(request))(element)(temp)
                 else lowered
         | _ -> lowered
 
@@ -21107,11 +21172,13 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                             match retainAggregateChildTemp(tailExpression)(preparedTemp)(tailType)(preparedState) with
                                 | (retained, retainedTemp) ->
                                     retained
+                                    |> recordArenaCellTransferRetain(!managed)(preparedTemp)(retainedTemp)(tailType)
                                     |> referenceOrCopyUnplacedLetTail(managed && retainedTemp == preparedTemp)(tailExpression)(retainedTemp)(tailType)
                                     |> (given (owned: (CoreLoweringState, Int)) ->
                                         match owned with
                                             | (ownedState, ownedTemp) -> success(ownedTemp)(tailType)(ownedState))
                                     |> retainLoopParameterChild(tailExpression)(preparedTemp)
+                                    |> recordArenaCellParameterRetain(!managed)(tailExpression)(preparedTemp)
                         else tail with state = preparedState, temp = preparedTemp
         | _ -> tail
 

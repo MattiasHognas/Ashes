@@ -254,6 +254,9 @@ let recursive printEach (lines: List(Str)) =
 // tco_list_top_cell_compacted_at_back_edge conses onto its list accumulator at one back edge and
 // hands it on unchanged at another: the cons is copied up, the arena reset to the per-iteration
 // watermark, and the cell copied down again, its tail left below the watermark.
+// call_argument_cell_releases_loop_parameter_field_retain hands a helper a cons over a field of its record parameter inside the
+// record update it threads: the cell's retain of the field is collected for the call and released
+// once the helper's result holds its own references.
 let fixtures =
     [
         "simple_arith",
@@ -343,7 +346,8 @@ let fixtures =
         "phantom_result_variable_recursive_loop_exit",
         "tco_list_refilled_only_from_helper",
         "constructor_owning_fresh_list_child",
-        "tco_list_top_cell_compacted_at_back_edge"
+        "tco_list_top_cell_compacted_at_back_edge",
+        "call_argument_cell_releases_loop_parameter_field_retain"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

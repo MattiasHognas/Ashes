@@ -1,0 +1,411 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from keep]
+  locals=5 temps=17
+    LoadLocal             Target=0 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:31)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_0   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    Jump                  Target=rc_representation_done_1   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rc_representation_copy_0:
+    CopyOutList           DestTemp=3 SrcTemp=0 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    StoreLocal            Slot=2 Source=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rc_representation_done_1:
+    LoadLocal             Target=4 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    LoadArgumentOwnership Target=5   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    LoadConstInt          Target=6 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    ShrInt                Target=7 Left=5 Right=6   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    AndInt                Target=8 Left=7 Right=6   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    JumpIfFalse           CondTemp=8 Target=rc_result_owned_2   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    CopyOutList           DestTemp=9 SrcTemp=4 HeadCopy=String Purpose=ArenaResultBoundary   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    StoreLocal            Slot=4 Source=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rcdrop_list_4:
+    LoadLocal             Target=10 Slot=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    LoadConstInt          Target=11 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    CmpIntNe              Target=12 Left=10 Right=11   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    JumpIfFalse           CondTemp=12 Target=rcdrop_list_end_6   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    RcIsUnique            Target=13 SourceTemp=10
+    JumpIfFalse           CondTemp=13 Target=rcdrop_list_shared_5   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    LoadMemOffset         Target=14 BasePtr=10 OffsetBytes=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    RcDrop                SourceTemp=14 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=15 BasePtr=10 OffsetBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=4 Source=15   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    Jump                  Target=rcdrop_list_4   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rcdrop_list_shared_5:
+    RcDrop                SourceTemp=10 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_6   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rcdrop_list_end_6:
+    StoreLocal            Slot=3 Source=9   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    Jump                  Target=rc_result_done_3   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rc_result_owned_2:
+    StoreLocal            Slot=3 Source=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+  rc_result_done_3:
+    LoadLocal             Target=16 Slot=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    Return                Source=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+
+function __rcnorm_3  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=10
+    LoadLocal             Target=0 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_17   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Jump                  Target=rc_representation_done_18   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_representation_copy_17:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=1 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_19   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Jump                  Target=rc_representation_done_20   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_representation_copy_19:
+    CopyOutList           DestTemp=7 SrcTemp=4 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=3 Source=7   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_representation_done_20:
+    LoadLocal             Target=8 Slot=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=8 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=2 Source=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_representation_done_18:
+    LoadLocal             Target=9 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Return                Source=9   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+
+function __rcdrop_record_4  [RuntimeManagedAdtDropper]
+  locals=3 temps=10
+    LoadLocal             Target=0 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_26   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=2 Source=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rcdrop_list_27:
+    LoadLocal             Target=3 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadConstInt          Target=4 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    CmpIntNe              Target=5 Left=3 Right=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_29   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcIsUnique            Target=6 SourceTemp=3
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_28   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=8 BasePtr=3 OffsetBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Jump                  Target=rcdrop_list_27   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rcdrop_list_shared_28:
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_29   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rcdrop_list_end_29:
+  rc_drop_shared_26:
+    RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Return                Source=9   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+
+function lambda_2  [ClosureHelper from walk]
+  locals=24 temps=91
+    LoadEnv               Target=0 Index=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=2 Source=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadLocal             Target=40 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadArgumentOwnership Target=41   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadConstInt          Target=42 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    AndInt                Target=43 Left=41 Right=42   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    JumpIfFalse           CondTemp=43 Target=rc_arg_normalize_copy_13   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=17 Source=40   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Jump                  Target=rc_arg_normalize_done_14   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_arg_normalize_copy_13:
+    IsReferenceCounted    Target=44 SourceTemp=40
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_15   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDup                 Target=45 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=45   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Jump                  Target=rc_representation_done_16   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_representation_copy_15:
+    LoadConstInt          Target=48 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    CallKnown             Target=49 FuncLabel=__rcnorm_3 EnvTemp=48 ArgTemp=40   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=18 Source=49   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_representation_done_16:
+    LoadLocal             Target=50 Slot=18   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=17 Source=50   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_arg_normalize_done_14:
+    LoadLocal             Target=51 Slot=17   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=1 Source=51   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadConstInt          Target=52 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=6 Source=52   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=5 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadLocal             Target=2 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:8)
+    LoadConstInt          Target=3 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:8)
+    JumpIfFalse           CondTemp=4 Target=else_7   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:5)
+    LoadLocal             Target=5 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:9:10)
+    GetAdtField           Target=6 Ptr=5 FieldIndex=0 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:9:10)
+    StoreLocal            Slot=10 Source=6   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:5)
+    Jump                  Target=endif_8   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:5)
+  else_7:
+    LoadLocal             Target=7 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:15)
+    LoadConstInt          Target=8 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:19)
+    SubInt                Target=9 Left=7 Right=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:15)
+    LoadLocal             Target=10 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    LoadLocal             Target=11 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:75)
+    GetAdtField           Target=12 Ptr=11 FieldIndex=0 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:75)
+    LoadConstInt          Target=13 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:89)
+    AddInt                Target=14 Left=12 Right=13   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:75)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadEnv               Target=15 Index=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    Borrow                Target=16 SourceTemp=15
+    LoadConstStr          Target=17 StrLabel=str_0   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:46)
+    LoadLocal             Target=18 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:53)
+    GetAdtField           Target=19 Ptr=18 FieldIndex=1 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:53)
+    RcDup                 Target=20 SourceTemp=19 RuntimeManaged=true MayBeEmpty=true
+    Alloc                 Target=21 SizeBytes=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:46)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=17   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:46)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=20   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:46)
+    LoadMemOffset         Target=22 BasePtr=16 OffsetBytes=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    LoadConstInt          Target=23 Value=63   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    ShrInt                Target=24 Left=22 Right=23   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    CallClosure           Target=25 ClosureTemp=16 ArgTemp=21   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    LoadConstInt          Target=26 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    CmpIntNe              Target=27 Left=20 Right=26   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    JumpIfFalse           CondTemp=27 Target=call_argument_retain_absent_9   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    StoreLocal            Slot=14 Source=20   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+  rcdrop_list_10:
+    LoadLocal             Target=28 Slot=14   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    LoadConstInt          Target=29 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    CmpIntNe              Target=30 Left=28 Right=29   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    JumpIfFalse           CondTemp=30 Target=rcdrop_list_end_12   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    RcIsUnique            Target=31 SourceTemp=28
+    JumpIfFalse           CondTemp=31 Target=rcdrop_list_shared_11   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    LoadMemOffset         Target=32 BasePtr=28 OffsetBytes=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    RcDrop                SourceTemp=32 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=33 BasePtr=28 OffsetBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    RcDrop                SourceTemp=28 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=14 Source=33   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+    Jump                  Target=rcdrop_list_10   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+  rcdrop_list_shared_11:
+    RcDrop                SourceTemp=28 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_12   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:41)
+  rcdrop_list_end_12:
+  call_argument_retain_absent_9:
+    StoreLocal            Slot=15 Source=25   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    LoadConstInt          Target=34 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    StoreLocal            Slot=16 Source=34   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    AllocAdt              Target=35 Tag=0 FieldCount=2 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    SetAdtField           Ptr=35 FieldIndex=0 Source=14 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    SetAdtField           Ptr=35 FieldIndex=1 Source=25 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:22)
+    LoadLocal             Target=36 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    LoadLocal             Target=37 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    StoreLocal            Slot=2 Source=9   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    StoreLocal            Slot=1 Source=35   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    IsReferenceCounted    Target=67 SourceTemp=35
+    JumpIfFalse           CondTemp=67 Target=rc_representation_copy_32
+    RcDup                 Target=68 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=68
+    Jump                  Target=rc_representation_done_33
+  rc_representation_copy_32:
+    IsReferenceCounted    Target=70 SourceTemp=35
+    JumpIfFalse           CondTemp=70 Target=rc_representation_copy_34
+    RcDup                 Target=71 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=71
+    Jump                  Target=rc_representation_done_35
+  rc_representation_copy_34:
+    LoadConstInt          Target=73 Value=0
+    CallKnown             Target=74 FuncLabel=__rcnorm_3 EnvTemp=73 ArgTemp=35
+    StoreLocal            Slot=22 Source=74
+  rc_representation_done_35:
+    LoadLocal             Target=75 Slot=22
+    StoreLocal            Slot=21 Source=75
+  rc_representation_done_33:
+    LoadLocal             Target=76 Slot=21
+    LoadLocal             Target=77 Slot=6
+    JumpIfFalse           CondTemp=77 Target=rc_tco_drop_inactive_36
+    LoadConstInt          Target=78 Value=0
+    CallKnown             Target=79 FuncLabel=__rcdrop_record_4 EnvTemp=78 ArgTemp=37
+  rc_tco_drop_inactive_36:
+    LoadLocal             Target=80 Slot=15
+    LoadConstInt          Target=81 Value=0
+    CmpIntNe              Target=82 Left=80 Right=81
+    JumpIfFalse           CondTemp=82 Target=general_rc_owned_absent_37
+    IsReferenceCounted    Target=83 SourceTemp=80
+    JumpIfFalse           CondTemp=83 Target=general_rc_owned_absent_37
+    StoreLocal            Slot=23 Source=80
+  rcdrop_list_38:
+    LoadLocal             Target=84 Slot=23
+    LoadConstInt          Target=85 Value=0
+    CmpIntNe              Target=86 Left=84 Right=85
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_end_40
+    RcIsUnique            Target=87 SourceTemp=84
+    JumpIfFalse           CondTemp=87 Target=rcdrop_list_shared_39
+    LoadMemOffset         Target=88 BasePtr=84 OffsetBytes=0
+    RcDrop                SourceTemp=88 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=89 BasePtr=84 OffsetBytes=8
+    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=89
+    Jump                  Target=rcdrop_list_38
+  rcdrop_list_shared_39:
+    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_40
+  rcdrop_list_end_40:
+    StoreLocal            Slot=15 Source=81
+  general_rc_owned_absent_37:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=20
+    StoreLocal            Slot=1 Source=76
+    LoadConstInt          Target=90 Value=1
+    StoreLocal            Slot=6 Source=90
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=20
+    RestoreStackPointer   Slot=9   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    Jump                  Target=lambda_2_body   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    LoadConstInt          Target=38 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:10:10)
+    StoreLocal            Slot=10 Source=38   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:5)
+  endif_8:
+    LoadLocal             Target=39 Slot=10   (call_argument_cell_releases_loop_parameter_field_retain.ash:8:5)
+    LoadLocal             Target=53 Slot=15   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadConstInt          Target=54 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    CmpIntNe              Target=55 Left=53 Right=54   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_21   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    IsReferenceCounted    Target=56 SourceTemp=53
+    JumpIfFalse           CondTemp=56 Target=general_rc_owned_absent_21   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=19 Source=53   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rcdrop_list_22:
+    LoadLocal             Target=57 Slot=19   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadConstInt          Target=58 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    CmpIntNe              Target=59 Left=57 Right=58   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_24   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcIsUnique            Target=60 SourceTemp=57
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_23   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDrop                SourceTemp=61 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=62 BasePtr=57 OffsetBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=19 Source=62   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Jump                  Target=rcdrop_list_22   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rcdrop_list_shared_23:
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_24   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rcdrop_list_end_24:
+    StoreLocal            Slot=15 Source=54   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  general_rc_owned_absent_21:
+    LoadLocal             Target=63 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadLocal             Target=64 Slot=6   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    JumpIfFalse           CondTemp=64 Target=rc_tco_exit_drop_inactive_25   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadConstInt          Target=65 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    CallKnown             Target=66 FuncLabel=__rcdrop_record_4 EnvTemp=65 ArgTemp=63   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+  rc_tco_exit_drop_inactive_25:
+    Return                Source=39   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+
+function lambda_1  [SourceFunction from walk]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadLocal             Target=1 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadEnv               Target=4 Index=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    MakeClosure           Target=6 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16 AcceptsRuntimeManagedArgument=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Return                Source=6   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+
+function lambda_6  [ClosureHelper from rounds]
+  locals=16 temps=24
+    LoadEnv               Target=0 Index=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreLocal            Slot=2 Source=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreLocal            Slot=5 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreLocal            Slot=6 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreLocal            Slot=7 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    LoadLocal             Target=2 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:8)
+    LoadConstInt          Target=3 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:8)
+    JumpIfFalse           CondTemp=4 Target=else_30   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:5)
+    LoadLocal             Target=5 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:14:10)
+    StoreLocal            Slot=11 Source=5   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:5)
+    Jump                  Target=endif_31   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:5)
+  else_30:
+    LoadLocal             Target=6 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:17)
+    LoadConstInt          Target=7 Value=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:21)
+    SubInt                Target=8 Left=6 Right=7   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:17)
+    LoadLocal             Target=9 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:24)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:32)
+    LoadConstInt          Target=11 Value=20   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:37)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:32)
+    LoadConstInt          Target=13 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:55)
+    LoadConstInt          Target=14 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:66)
+    LoadConstStr          Target=15 StrLabel=str_1   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:67)
+    Alloc                 Target=16 SizeBytes=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:66)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:66)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=14   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:66)
+    AllocAdt              Target=17 Tag=0 FieldCount=2 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:41)
+    SetAdtField           Ptr=17 FieldIndex=0 Source=13 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:41)
+    SetAdtField           Ptr=17 FieldIndex=1 Source=16 Tagless=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:41)
+    CallClosure           Target=18 ClosureTemp=12 ArgTemp=17   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:32)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    AddInt                Target=19 Left=9 Right=18   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:24)
+    LoadLocal             Target=20 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    LoadLocal             Target=21 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    StoreLocal            Slot=2 Source=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    StoreLocal            Slot=1 Source=19   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
+    RestoreStackPointer   Slot=10   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    Jump                  Target=lambda_6_body   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    LoadConstInt          Target=22 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:15:10)
+    StoreLocal            Slot=11 Source=22   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:5)
+  endif_31:
+    LoadLocal             Target=23 Slot=11   (call_argument_cell_releases_loop_parameter_field_retain.ash:13:5)
+    Return                Source=23   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+
+function lambda_5  [SourceFunction from rounds]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    LoadLocal             Target=1 Slot=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    LoadEnv               Target=4 Index=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    MakeClosure           Target=5 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=16   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    Return                Source=5   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+
+function _start_main  [ProgramEntry]
+  locals=10 temps=17
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    StoreLocal            Slot=2 Source=1   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    Alloc                 Target=2 SizeBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    LoadLocal             Target=3 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Borrow                Target=4 SourceTemp=3
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    MakeClosure           Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    StoreLocal            Slot=3 Source=5   (call_argument_cell_releases_loop_parameter_field_retain.ash:7:1)
+    Alloc                 Target=6 SizeBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    LoadLocal             Target=7 Slot=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=7   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    MakeClosure           Target=8 FuncLabel=lambda_5 EnvPtrTemp=6 EnvSizeBytes=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    StoreLocal            Slot=4 Source=8   (call_argument_cell_releases_loop_parameter_field_retain.ash:12:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=9 Slot=4   (call_argument_cell_releases_loop_parameter_field_retain.ash:18:4)
+    LoadConstInt          Target=10 Value=3   (call_argument_cell_releases_loop_parameter_field_retain.ash:18:11)
+    CallClosure           Target=11 ClosureTemp=9 ArgTemp=10   (call_argument_cell_releases_loop_parameter_field_retain.ash:17:1)
+    LoadConstInt          Target=12 Value=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:17:1)
+    CallClosure           Target=13 ClosureTemp=11 ArgTemp=12   (call_argument_cell_releases_loop_parameter_field_retain.ash:17:1)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=7
+    PrintInt              Source=13   (call_argument_cell_releases_loop_parameter_field_retain.ash:17:1)
+    AllocAdt              Target=14 Tag=0 FieldCount=0   (call_argument_cell_releases_loop_parameter_field_retain.ash:17:1)
+    StoreLocal            Slot=8 Source=14   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    LoadLocal             Target=15 Slot=2   (call_argument_cell_releases_loop_parameter_field_retain.ash:5:1)
+    CleanupResource       SourceTemp=15 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=9
+    CopyOutArena          DestTemp=16 SrcTemp=14 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=9
+    Return                Source=16
+
