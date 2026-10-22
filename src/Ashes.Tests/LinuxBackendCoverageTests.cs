@@ -3107,6 +3107,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_result_wraps_owned_call_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function with a generic error type wraps an owned call result in `Ok`. The caller knows
+        // the concrete type, asks for the result and takes over a copy holding the owned value.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildGenericResultWrapsOwnedCallResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic result wrapping an owned call result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13146,6 +13169,41 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok("x"))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildGenericResultWrapsOwnedCallResultProgram(int rounds)
+        => $$"""
+            type Collection =
+                | items: List(Str)
+                | count: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (n: Int) = Collection(items = [wide + Ashes.Text.fromInt(n), wide], count = n)
+
+            let prepend (extra: Str) (collection: Collection) =
+                match collection with
+                    | Collection { items = items, count = count } -> Collection(items = extra :: items, count = count + 1)
+
+            let continueParsing (extra: Str) (tailResult: Result(e, Collection)) =
+                match tailResult with
+                    | Error(error) -> Error(error)
+                    | Ok(collection) ->
+                        collection
+                        |> prepend(extra)
+                        |> Ok
+
+            let countOf (result: Result(Str, Collection)) =
+                match result with
+                    | Error(_) -> 0
+                    | Ok(Collection { count = count }) -> count
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countOf(continueParsing(wide)(Ok(make(n)))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

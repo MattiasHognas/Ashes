@@ -911,7 +911,7 @@ public sealed partial class Lowering
         bool resultIndependent = contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp);
         if (resultIndependent || !TryReleaseOwnedSlotsHandingOverTupleParts(label, resultTemp, pruned, loopTco is not null))
         {
-            ReleaseOwnedSlotsBehindResult(label, resultTemp, pruned, resultIndependent, loopTco is not null);
+            resultTemp = ReleaseOwnedSlotsBehindResult(label, resultTemp, pruned, resultIndependent, loopTco is not null);
         }
 
         return resultTemp;
@@ -920,21 +920,26 @@ public sealed partial class Lowering
     // A result that holds its own references releases every owned slot behind it. Any other result
     // (a closure, a tuple) may still point into the owned values: only the ones no value flowing
     // into the result is read from, or whose type the result's cannot hold, are released, the rest
-    // are left to leak, unless one of them is the result itself and the caller asks for it. The slots
-    // stay registered: loop back edges are emitted later.
-    private void ReleaseOwnedSlotsBehindResult(string label, int resultTemp, TypeRef resultType, bool resultIndependent, bool inLoop)
+    // are left to leak, unless the result is one of them, or a cell wrapping one, and the caller asks
+    // for it. The slots stay registered: loop back edges are emitted later. Returns the temp to
+    // return.
+    private int ReleaseOwnedSlotsBehindResult(string label, int resultTemp, TypeRef resultType, bool resultIndependent, bool inLoop)
     {
         if (resultIndependent)
         {
             EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
-            return;
+            return resultTemp;
         }
 
         List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
-        if (!TryHandOverOwnedResultWhole(label, resultTemp, releasable, inLoop))
+        int handedTemp = TryHandOverOwnedResultWhole(label, resultTemp, resultType, releasable, inLoop);
+        if (handedTemp >= 0)
         {
-            EmitGeneralRcOwnedSlotDrops(releasable);
+            return handedTemp;
         }
+
+        EmitGeneralRcOwnedSlotDrops(releasable);
+        return resultTemp;
     }
 
     // A type variable of a function's result that is quantified by the function's scheme and occurs

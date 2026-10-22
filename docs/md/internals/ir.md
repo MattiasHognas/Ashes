@@ -287,7 +287,9 @@ closure parameter, or a function returning another's generic tuple result) passe
 bit 2 and address (`word & -4`) on to that call, so the callee writes the mask into the word of
 the caller that asked. Bit 62 of the mask says the whole result was handed over: a function whose
 reference-counted result is, at run time, the value one of its owned values holds leaves that
-value unreleased, and the caller takes the result as its own owned value without copying it.
+value unreleased (one whose arena result is a cell wrapping such a value returns a
+reference-counted copy of the cell holding that reference), and the caller takes the result as its
+own owned value without copying it.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

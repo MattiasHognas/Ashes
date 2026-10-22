@@ -1414,9 +1414,12 @@ say. The function cannot release that value, and its caller, which may know the 
 not know it owns it. A caller of such a function asks with the same request (no parts named); when
 it is asked and its result, a reference-counted value, is at run time the value one of its owned
 values holds, the function hands that reference over whole: it leaves that owned value unreleased
-and writes bit 62 into the mask. The caller then takes the result as the owned value of its own
-type, without copying it. A function returning another call's result of unresolved type as it is
-forwards the request to that call, as for a tuple.
+and writes bit 62 into the mask. A result that is instead an arena cell of a constructor with one
+contract field, holding such an owned value, and scalar fields otherwise (an `Ok` around an owned
+call result) is copied onto the reference-counted heap with the owned value's reference moved into
+the copy, and the copy is handed over the same way. The caller then takes the result as the owned
+value of its own type, without copying it. A function returning another call's result of unresolved
+type as it is forwards the request to that call, as for a tuple.
 
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:

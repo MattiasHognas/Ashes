@@ -10449,30 +10449,175 @@ and ownedSlotNumberIn (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int, Se
         | [] -> false
         | (_owner, candidate, _semanticType) :: rest -> candidate == slot || ownedSlotNumberIn(slot)(rest)
 
-// One candidate's test: when the result is the value the slot holds, the mask says so, the
-// releasable slots are released, and the return goes on at `doneLabel`.
-let recursive emitWholeResultCandidateTests (resultTemp: Int) (candidates: List(Int)) (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (doneLabel: Str) (state: CoreLoweringState) =
+// Stage 0's `EmitHandOverIfSame`: when the held value is the candidate, the copy `moveInto` makes,
+// the mask, the releasable slots' release, and the jump to `doneLabel`.
+let emitHandOverIfSame (heldTemp: Int) (candidateTemp: Int) (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (doneLabel: Str) (moveInto: CoreLoweringState -> CoreLoweringState) (state: CoreLoweringState) =
+    match freshLabel("whole_result_other_value")(state) with
+        | FreshLabel { state = labelled, label = nextLabel } ->
+            match freshTemp(labelled) with
+                | FreshTemp { state = allocated, temp = sameTemp } ->
+                    allocated
+                    |> emit(CmpIntEq(sameTemp)(heldTemp)(candidateTemp))
+                    |> emit(JumpIfFalse(sameTemp)(nextLabel))
+                    |> moveInto
+                    |> emitResultHandOverMask(wholeResultHandedOverBit)
+                    |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
+                    |> emit(Jump(doneLabel))
+                    |> emit(Label(nextLabel))
+
+// Each candidate slot's test against the held value.
+let recursive emitWholeResultCandidateTests (heldTemp: Int) (candidates: List(Int)) (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (doneLabel: Str) (moveInto: CoreLoweringState -> CoreLoweringState) (state: CoreLoweringState) =
     match candidates with
         | [] -> state
         | slot :: rest ->
-            match freshLabel("whole_result_other_value")(state) with
-                | FreshLabel { state = labelled, label = nextLabel } ->
-                    match freshTempRun(2)(labelled) with
-                        | FreshTemp { state = allocated, temp = valueTemp } ->
-                            allocated
-                            |> emit(LoadLocal(valueTemp)(slot))
-                            |> emit(CmpIntEq(valueTemp + 1)(resultTemp)(valueTemp))
-                            |> emit(JumpIfFalse(valueTemp + 1)(nextLabel))
-                            |> emitResultHandOverMask(wholeResultHandedOverBit)
-                            |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
-                            |> emit(Jump(doneLabel))
-                            |> emit(Label(nextLabel))
-                            |> emitWholeResultCandidateTests(resultTemp)(rest)(origin)(releasable)(doneLabel)
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = valueTemp } ->
+                    allocated
+                    |> emit(LoadLocal(valueTemp)(slot))
+                    |> emitHandOverIfSame(heldTemp)(valueTemp)(origin)(releasable)(doneLabel)(moveInto)
+                    |> emitWholeResultCandidateTests(heldTemp)(rest)(origin)(releasable)(doneLabel)(moveInto)
+
+let recursive copyWrappedResultFields (resultTemp: Int) (copyTemp: Int) (field: Int) (arity: Int) (tagless: Bool) (state: CoreLoweringState) =
+    if field >= arity
+    then state
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = allocated, temp = valueTemp } ->
+                allocated
+                |> emit(GetAdtField(valueTemp)(resultTemp)(field)(tagless))
+                |> emit(SetAdtField(copyTemp)(field)(valueTemp)(tagless))
+                |> copyWrappedResultFields(resultTemp)(copyTemp)(field + 1)(arity)(tagless)
+
+// Stage 0's `EmitWrappedResultCopy`: the arena cell copied onto the reference-counted heap field
+// by field, the copy becoming the result.
+let emitWrappedResultCopy (resultTemp: Int) (resultSlot: Int) (wrapper: (Int, Int, Bool, Int)) (state: CoreLoweringState) =
+    match (wrapper, freshTemp(state)) with
+        | ((tag, arity, tagless, _contractField), FreshTemp { state = allocated, temp = copyTemp }) ->
+            allocated
+            |> emit(AllocAdt(copyTemp)(tag)(arity)(true)(tagless))
+            |> copyWrappedResultFields(resultTemp)(copyTemp)(0)(arity)(tagless)
+            |> emit(StoreLocal(resultSlot)(copyTemp))
+
+// Stage 0's `EmitSkipUnlessPresent`.
+let emitSkipUnlessPresent (valueTemp: Int) (skipLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(2)(state) with
+        | FreshTemp { state = allocated, temp = zeroTemp } ->
+            allocated
+            |> emit(LoadConstInt(zeroTemp)(0))
+            |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+            |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
+
+let emitWrappedResultTagTest (resultTemp: Int) (tag: Int) (tagless: Bool) (otherLabel: Str) (state: CoreLoweringState) =
+    if tagless
+    then state
+    else
+        match freshTempRun(3)(state) with
+            | FreshTemp { state = allocated, temp = tagTemp } ->
+                allocated
+                |> emit(GetAdtTag(tagTemp)(resultTemp))
+                |> emit(LoadConstInt(tagTemp + 1)(tag))
+                |> emit(CmpIntEq(tagTemp + 2)(tagTemp)(tagTemp + 1))
+                |> emit(JumpIfFalse(tagTemp + 2)(otherLabel))
+
+// Stage 0's `EmitWrappedResultHandOver`: an arena result of the wrapper's constructor whose
+// contract field holds an owned slot's reference-counted value is copied onto the
+// reference-counted heap, the slot's reference moving into the copy, which becomes the result.
+let emitWrappedResultHandOver (resultTemp: Int) (resultSlot: Int) (candidates: List(Int)) (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (keepLabel: Str) (doneLabel: Str) (wrapper: (Int, Int, Bool, Int)) (state: CoreLoweringState) =
+    match (wrapper, freshLabel("whole_result_other_constructor")(state)) with
+        | ((tag, _arity, tagless, contractField), FreshLabel { state = labelled, label = otherLabel }) ->
+            match labelled
+            |> emitSkipUnlessPresent(resultTemp)(keepLabel)
+            |> emitWrappedResultTagTest(resultTemp)(tag)(tagless)(otherLabel)
+            |> freshTemp with
+                | FreshTemp { state = allocated, temp = fieldTemp } ->
+                    allocated
+                    |> emit(GetAdtField(fieldTemp)(resultTemp)(contractField)(tagless))
+                    |> emitSkipUnlessReferenceCounted(fieldTemp)(otherLabel)
+                    |> emitWholeResultCandidateTests(fieldTemp)(candidates)(origin)(releasable)(doneLabel)(emitWrappedResultCopy(resultTemp)(resultSlot)(wrapper))
+                    |> emit(Label(otherLabel))
+
+let recursive emitWrappedResultHandOvers (resultTemp: Int) (resultSlot: Int) (candidates: List(Int)) (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (keepLabel: Str) (doneLabel: Str) (wrappers: List((Int, Int, Bool, Int))) (state: CoreLoweringState) =
+    match wrappers with
+        | [] -> state
+        | wrapper :: rest ->
+            state
+            |> emitWrappedResultHandOver(resultTemp)(resultSlot)(candidates)(origin)(releasable)(keepLabel)(doneLabel)(wrapper)
+            |> emitWrappedResultHandOvers(resultTemp)(resultSlot)(candidates)(origin)(releasable)(keepLabel)(doneLabel)(rest)
+
+let isScalarFieldType (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemBool -> true
+        | SemRune -> true
+        | _ -> false
+
+// The one contract field of a constructor's fields when every other one is a scalar: its index,
+// -1 when it has none, -2 when another field rules the constructor out.
+let recursive wrappedContractField (fields: List(SemanticType)) (index: Int) (contractField: Int) (state: CoreLoweringState) =
+    match fields with
+        | [] -> contractField
+        | fieldType :: rest ->
+            if isGeneralRcValueType(fieldType)(state) && contractField < 0
+            then wrappedContractField(rest)(index + 1)(index)(state)
+            else
+                if isScalarFieldType(fieldType)
+                then wrappedContractField(rest)(index + 1)(contractField)(state)
+                else -2
+
+let layoutInstantiatedFieldTypes (layout: CoreConstructorLayout) (arguments: List(SemanticType)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (layoutFields, SemNamed(_symbolId, _name, variables)) ->
+            layoutFields
+            |> map(arguments
+            |> typeVariablePairs(variables)
+            |> replaceTypeVariables)
+            |> map(resolveType(state))
+        | (layoutFields, _resultType) ->
+            layoutFields |> map(resolveType(state))
+
+let recursive insertWrapperByTag (wrapper: (Int, Int, Bool, Int)) (wrappers: List((Int, Int, Bool, Int))) =
+    match (wrapper, wrappers) with
+        | (_wrapper, []) -> [wrapper]
+        | ((tag, _arity, _tagless, _field), (otherTag, otherArity, otherTagless, otherField) :: rest) ->
+            if tag <= otherTag
+            then wrapper :: wrappers
+            else (otherTag, otherArity, otherTagless, otherField) :: insertWrapperByTag(wrapper)(rest)
+
+let recursive collectWrappedResultConstructors (typeName: Str) (arguments: List(SemanticType)) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (wrappers: List((Int, Int, Bool, Int))) =
+    match layouts with
+        | [] -> wrappers
+        | layout :: rest ->
+            if constructorResultNameIs(typeName)(layout)
+            then
+                let fields = layoutInstantiatedFieldTypes(layout)(arguments)(state)
+                in
+                    let contractField = wrappedContractField(fields)(0)(-1)(state)
+                    in
+                        if contractField >= 0
+                        then
+                            match layout with
+                                | CoreConstructorLayout { tag = tag, tagless = tagless } ->
+                                    wrappers
+                                    |> insertWrapperByTag((tag, length(fields), tagless, contractField))
+                                    |> collectWrappedResultConstructors(typeName)(arguments)(rest)(state)
+                        else collectWrappedResultConstructors(typeName)(arguments)(rest)(state)(wrappers)
+            else collectWrappedResultConstructors(typeName)(arguments)(rest)(state)(wrappers)
+
+// Stage 0's `WrappedResultConstructors`: the constructors of a named result type whose cell can
+// wrap an owned value, by tag: exactly one field of a contract type, every other field a scalar.
+let wrappedResultConstructors (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemNamed(_symbolId, name, arguments) ->
+            collectWrappedResultConstructors(name)(arguments)(stateConstructorLayouts(state))(state)([])
+        | _ -> []
 
 // Stage 0's `TryHandOverOwnedResultWhole` behind a result outside the contract's types: the owned
 // slots out of the result's reach are released, and when the caller asked and the result is, at
-// run time, the reference-counted value one of the other owned slots holds, that slot's reference
-// is handed over whole with the mask instead of being left.
+// run time, the reference-counted value one of the other owned slots holds, or an arena cell of a
+// wrapping constructor around one, that slot's reference is handed over whole with the mask
+// instead of being left. The state and the temp to return.
 let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     (let origin = stateActiveFunctionOrigin(state)
     in
@@ -10486,23 +10631,37 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
             in
                 match (stateTcoLoopFrame(state), wholeResultCandidates(origin)(releasable)(registered)) with
                     | (None, first :: others) ->
-                        match freshLabel("whole_result_not_requested")(state) with
-                            | FreshLabel { state = keepState, label = keepLabel } ->
-                                match freshLabel("whole_result_handed_over")(keepState) with
-                                    | FreshLabel { state = doneState, label = doneLabel } ->
-                                        match doneState
-                                        |> emitJumpUnlessTuplePartsRequested(keepLabel)
-                                        |> freshTemp with
-                                            | FreshTemp { state = allocated, temp = countedTemp } ->
-                                                allocated
-                                                |> emit(IsReferenceCounted(countedTemp)(resultTemp))
-                                                |> emit(JumpIfFalse(countedTemp)(keepLabel))
-                                                |> emitWholeResultCandidateTests(resultTemp)(first :: others)(origin)(releasable)(doneLabel)
-                                                |> emit(Label(keepLabel))
-                                                |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
-                                                |> emit(Label(doneLabel))
-                                                |> withWholeResultHandOverLabel(label)
-                    | _ -> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)(state))
+                        let wrappers = wrappedResultConstructors(resultType)(state)
+                        in
+                            match freshLocal(state) with
+                                | FreshLocal { state = slotted, local = resultSlot } ->
+                                    match slotted
+                                    |> emit(StoreLocal(resultSlot)(resultTemp))
+                                    |> freshLabel("whole_result_not_requested") with
+                                        | FreshLabel { state = keepState, label = keepLabel } ->
+                                            match freshLabel("whole_result_handed_over")(keepState) with
+                                                | FreshLabel { state = doneState, label = doneLabel } ->
+                                                    match freshLabel("whole_result_arena")(doneState) with
+                                                        | FreshLabel { state = arenaState, label = arenaLabel } ->
+                                                            match arenaState
+                                                            |> emitJumpUnlessTuplePartsRequested(keepLabel)
+                                                            |> freshTemp with
+                                                                | FreshTemp { state = allocated, temp = countedTemp } ->
+                                                                    match allocated
+                                                                    |> emit(IsReferenceCounted(countedTemp)(resultTemp))
+                                                                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                                                                    |> emitWholeResultCandidateTests(resultTemp)(first :: others)(origin)(releasable)(doneLabel)(given (unchanged: CoreLoweringState) -> unchanged)
+                                                                    |> emit(Jump(keepLabel))
+                                                                    |> emit(Label(arenaLabel))
+                                                                    |> emitWrappedResultHandOvers(resultTemp)(resultSlot)(first :: others)(origin)(releasable)(keepLabel)(doneLabel)(wrappers)
+                                                                    |> emit(Label(keepLabel))
+                                                                    |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
+                                                                    |> emit(Label(doneLabel))
+                                                                    |> withWholeResultHandOverLabel(label)
+                                                                    |> freshTemp with
+                                                                        | FreshTemp { state = finished, temp = handedTemp } ->
+                                                                            (emit(LoadLocal(handedTemp)(resultSlot))(finished), handedTemp)
+                    | _ -> (emitGeneralRcOwnedSlotDropsOf(origin)(releasable)(state), resultTemp))
 
 let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
@@ -10517,7 +10676,7 @@ let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (b
                             (copied
                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
                             |> emitGeneralRcOwnedSlotDrops, resultTemp)
-                | None -> (emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state), bodyTemp)
+                | None -> emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state)
         | _ -> (state, bodyTemp)
 
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
