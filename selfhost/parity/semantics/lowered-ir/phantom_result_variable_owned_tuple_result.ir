@@ -49,31 +49,31 @@ function __rcdrop_record_3  [RuntimeManagedAdtDropper]
   locals=3 temps=9
     LoadLocal             Target=0 Slot=1   (phantom_result_variable_owned_tuple_result.ash:9:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_10   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_11   (phantom_result_variable_owned_tuple_result.ash:9:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (phantom_result_variable_owned_tuple_result.ash:9:1)
     StoreLocal            Slot=2 Source=2   (phantom_result_variable_owned_tuple_result.ash:9:1)
-  rcdrop_list_11:
+  rcdrop_list_12:
     LoadLocal             Target=3 Slot=2   (phantom_result_variable_owned_tuple_result.ash:9:1)
     LoadConstInt          Target=4 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:1)
     CmpIntNe              Target=5 Left=3 Right=4   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_13   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_14   (phantom_result_variable_owned_tuple_result.ash:9:1)
     RcIsUnique            Target=6 SourceTemp=3
-    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_12   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_13   (phantom_result_variable_owned_tuple_result.ash:9:1)
     LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
     RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=7   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    Jump                  Target=rcdrop_list_11   (phantom_result_variable_owned_tuple_result.ash:9:1)
-  rcdrop_list_shared_12:
+    Jump                  Target=rcdrop_list_12   (phantom_result_variable_owned_tuple_result.ash:9:1)
+  rcdrop_list_shared_13:
     RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_13   (phantom_result_variable_owned_tuple_result.ash:9:1)
-  rcdrop_list_end_13:
-  rc_drop_shared_10:
+    Jump                  Target=rcdrop_list_end_14   (phantom_result_variable_owned_tuple_result.ash:9:1)
+  rcdrop_list_end_14:
+  rc_drop_shared_11:
     RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
     LoadConstInt          Target=8 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:1)
     Return                Source=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
 
 function lambda_0  [SourceFunction from build]
-  locals=5 temps=31
+  locals=5 temps=40
     LoadLocal             Target=0 Slot=1   (phantom_result_variable_owned_tuple_result.ash:9:38)
     LoadConstInt          Target=1 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:49)
     LoadLocal             Target=2 Slot=1   (phantom_result_variable_owned_tuple_result.ash:9:60)
@@ -115,52 +115,64 @@ function lambda_0  [SourceFunction from build]
   general_rc_result_already_owned_1:
     LoadLocal             Target=20 Slot=2   (phantom_result_variable_owned_tuple_result.ash:9:1)
     LoadArgumentOwnership Target=21   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    LoadConstInt          Target=22 Value=1   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadConstInt          Target=22 Value=2   (phantom_result_variable_owned_tuple_result.ash:9:1)
     ShrInt                Target=23 Left=21 Right=22   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    AndInt                Target=24 Left=23 Right=22   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    JumpIfFalse           CondTemp=24 Target=rc_result_owned_8   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    Alloc                 Target=25 SizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    MakeClosure           Target=26 FuncLabel=__deepcopy_2 EnvPtrTemp=25 EnvSizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    StoreMemOffset        BasePtr=25 OffsetBytes=0 Source=26   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    CallClosure           Target=27 ClosureTemp=26 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    LoadConstInt          Target=28 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    CallKnown             Target=29 FuncLabel=__rcdrop_record_3 EnvTemp=28 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    StoreLocal            Slot=4 Source=27   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    Jump                  Target=rc_result_done_9   (phantom_result_variable_owned_tuple_result.ash:9:1)
-  rc_result_owned_8:
+    LoadConstInt          Target=24 Value=1   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    AndInt                Target=25 Left=23 Right=24   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    JumpIfFalse           CondTemp=25 Target=independent_result_not_requested_8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadArgumentOwnership Target=26   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadConstInt          Target=27 Value=-8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    AndInt                Target=28 Left=26 Right=27   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadConstInt          Target=29 Value=2305843009213693952   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    StoreMemOffset        BasePtr=28 OffsetBytes=0 Source=29   (phantom_result_variable_owned_tuple_result.ash:9:1)
+  independent_result_not_requested_8:
+    LoadArgumentOwnership Target=30   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadConstInt          Target=31 Value=1   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    ShrInt                Target=32 Left=30 Right=31   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    AndInt                Target=33 Left=32 Right=31   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    JumpIfFalse           CondTemp=33 Target=rc_result_owned_9   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    Alloc                 Target=34 SizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    MakeClosure           Target=35 FuncLabel=__deepcopy_2 EnvPtrTemp=34 EnvSizeBytes=8   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    StoreMemOffset        BasePtr=34 OffsetBytes=0 Source=35   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    CallClosure           Target=36 ClosureTemp=35 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    LoadConstInt          Target=37 Value=0   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    CallKnown             Target=38 FuncLabel=__rcdrop_record_3 EnvTemp=37 ArgTemp=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    StoreLocal            Slot=4 Source=36   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    Jump                  Target=rc_result_done_10   (phantom_result_variable_owned_tuple_result.ash:9:1)
+  rc_result_owned_9:
     StoreLocal            Slot=4 Source=20   (phantom_result_variable_owned_tuple_result.ash:9:1)
-  rc_result_done_9:
-    LoadLocal             Target=30 Slot=4   (phantom_result_variable_owned_tuple_result.ash:9:1)
-    Return                Source=30   (phantom_result_variable_owned_tuple_result.ash:9:1)
+  rc_result_done_10:
+    LoadLocal             Target=39 Slot=4   (phantom_result_variable_owned_tuple_result.ash:9:1)
+    Return                Source=39   (phantom_result_variable_owned_tuple_result.ash:9:1)
 
 function __rcnorm_5  [RuntimeManagedAdtNormalizer]
   locals=4 temps=8
     LoadLocal             Target=0 Slot=1   (phantom_result_variable_owned_tuple_result.ash:11:1)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_20   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_21   (phantom_result_variable_owned_tuple_result.ash:11:1)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    Jump                  Target=rc_representation_done_21   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_copy_20:
+    Jump                  Target=rc_representation_done_22   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rc_representation_copy_21:
     GetAdtTag             Target=3 Ptr=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_22   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rcnorm_ctor_22:
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_23   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rcnorm_ctor_23:
     CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=3 Source=4   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    Jump                  Target=rcnorm_end_24   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rcnorm_ctor_23:
+    Jump                  Target=rcnorm_end_25   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rcnorm_ctor_24:
     CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=3 Source=5   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    Jump                  Target=rcnorm_end_24   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rcnorm_end_24:
+    Jump                  Target=rcnorm_end_25   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rcnorm_end_25:
     LoadLocal             Target=6 Slot=3   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreLocal            Slot=2 Source=6   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_done_21:
+  rc_representation_done_22:
     LoadLocal             Target=7 Slot=2   (phantom_result_variable_owned_tuple_result.ash:11:1)
     Return                Source=7   (phantom_result_variable_owned_tuple_result.ash:11:1)
 
 function lambda_4  [SourceFunction from make]
-  locals=9 temps=35
+  locals=9 temps=44
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (phantom_result_variable_owned_tuple_result.ash:11:22)
     Borrow                Target=1 SourceTemp=0
@@ -179,67 +191,79 @@ function lambda_4  [SourceFunction from make]
     StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=7   (phantom_result_variable_owned_tuple_result.ash:11:21)
     StoreMemOffset        BasePtr=9 OffsetBytes=16 Source=8   (phantom_result_variable_owned_tuple_result.ash:11:21)
     IsReferenceCounted    Target=10 SourceTemp=9
-    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_14   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_15   (phantom_result_variable_owned_tuple_result.ash:11:1)
     RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
     StoreLocal            Slot=6 Source=11   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    Jump                  Target=rc_representation_done_15   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_copy_14:
+    Jump                  Target=rc_representation_done_16   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rc_representation_copy_15:
     Alloc                 Target=12 SizeBytes=24 RuntimeManaged=true   (phantom_result_variable_owned_tuple_result.ash:11:1)
     LoadMemOffset         Target=13 BasePtr=9 OffsetBytes=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
     IsReferenceCounted    Target=14 SourceTemp=13
-    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_16   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_17   (phantom_result_variable_owned_tuple_result.ash:11:1)
     RcDup                 Target=15 SourceTemp=13 RuntimeManaged=true
     StoreLocal            Slot=7 Source=15   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    Jump                  Target=rc_representation_done_17   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_copy_16:
+    Jump                  Target=rc_representation_done_18   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rc_representation_copy_17:
     LoadConstInt          Target=17 Value=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
     CallKnown             Target=18 FuncLabel=__rcnorm_1 EnvTemp=17 ArgTemp=13   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreLocal            Slot=7 Source=18   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_done_17:
+  rc_representation_done_18:
     LoadLocal             Target=19 Slot=7   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=19   (phantom_result_variable_owned_tuple_result.ash:11:1)
     LoadMemOffset         Target=20 BasePtr=9 OffsetBytes=8   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=20   (phantom_result_variable_owned_tuple_result.ash:11:1)
     LoadMemOffset         Target=21 BasePtr=9 OffsetBytes=16   (phantom_result_variable_owned_tuple_result.ash:11:1)
     IsReferenceCounted    Target=22 SourceTemp=21
-    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_18   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_19   (phantom_result_variable_owned_tuple_result.ash:11:1)
     RcDup                 Target=23 SourceTemp=21 RuntimeManaged=true
     StoreLocal            Slot=8 Source=23   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    Jump                  Target=rc_representation_done_19   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_copy_18:
+    Jump                  Target=rc_representation_done_20   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  rc_representation_copy_19:
     LoadConstInt          Target=25 Value=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
     CallKnown             Target=26 FuncLabel=__rcnorm_5 EnvTemp=25 ArgTemp=21   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreLocal            Slot=8 Source=26   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_done_19:
+  rc_representation_done_20:
     LoadLocal             Target=27 Slot=8   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreMemOffset        BasePtr=12 OffsetBytes=16 Source=27   (phantom_result_variable_owned_tuple_result.ash:11:1)
     StoreLocal            Slot=6 Source=12   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  rc_representation_done_15:
+  rc_representation_done_16:
     LoadLocal             Target=28 Slot=6   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    LoadLocal             Target=29 Slot=5   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    LoadConstInt          Target=30 Value=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    CmpIntNe              Target=31 Left=29 Right=30   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    JumpIfFalse           CondTemp=31 Target=general_rc_owned_absent_25   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    IsReferenceCounted    Target=32 SourceTemp=29
-    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_25   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    LoadConstInt          Target=33 Value=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    CallKnown             Target=34 FuncLabel=__rcdrop_record_3 EnvTemp=33 ArgTemp=29   (phantom_result_variable_owned_tuple_result.ash:11:1)
-    StoreLocal            Slot=5 Source=30   (phantom_result_variable_owned_tuple_result.ash:11:1)
-  general_rc_owned_absent_25:
+    LoadArgumentOwnership Target=29   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadConstInt          Target=30 Value=2   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    ShrInt                Target=31 Left=29 Right=30   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadConstInt          Target=32 Value=1   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    AndInt                Target=33 Left=31 Right=32   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    JumpIfFalse           CondTemp=33 Target=independent_result_not_requested_26   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadArgumentOwnership Target=34   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadConstInt          Target=35 Value=-8   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    AndInt                Target=36 Left=34 Right=35   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadConstInt          Target=37 Value=2305843009213693952   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=37   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  independent_result_not_requested_26:
+    LoadLocal             Target=38 Slot=5   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadConstInt          Target=39 Value=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    CmpIntNe              Target=40 Left=38 Right=39   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    JumpIfFalse           CondTemp=40 Target=general_rc_owned_absent_27   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    IsReferenceCounted    Target=41 SourceTemp=38
+    JumpIfFalse           CondTemp=41 Target=general_rc_owned_absent_27   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    LoadConstInt          Target=42 Value=0   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    CallKnown             Target=43 FuncLabel=__rcdrop_record_3 EnvTemp=42 ArgTemp=38   (phantom_result_variable_owned_tuple_result.ash:11:1)
+    StoreLocal            Slot=5 Source=39   (phantom_result_variable_owned_tuple_result.ash:11:1)
+  general_rc_owned_absent_27:
     Return                Source=28   (phantom_result_variable_owned_tuple_result.ash:11:1)
 
 function __rcdrop_general_8  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (phantom_result_variable_owned_tuple_result.ash:13:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_33   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_35   (phantom_result_variable_owned_tuple_result.ash:13:1)
     GetAdtTag             Target=2 Ptr=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_33   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  rcdrop_general_ctor_34:
-    Jump                  Target=rcdrop_general_shared_33   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  rcdrop_general_ctor_35:
-    Jump                  Target=rcdrop_general_shared_33   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  rcdrop_general_shared_33:
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_35   (phantom_result_variable_owned_tuple_result.ash:13:1)
+  rcdrop_general_ctor_36:
+    Jump                  Target=rcdrop_general_shared_35   (phantom_result_variable_owned_tuple_result.ash:13:1)
+  rcdrop_general_ctor_37:
+    Jump                  Target=rcdrop_general_shared_35   (phantom_result_variable_owned_tuple_result.ash:13:1)
+  rcdrop_general_shared_35:
     RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     Return                Source=3   (phantom_result_variable_owned_tuple_result.ash:13:1)
@@ -259,11 +283,11 @@ function lambda_7  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (phantom_result_variable_owned_tuple_result.ash:14:8)
     LoadConstInt          Target=3 Value=0   (phantom_result_variable_owned_tuple_result.ash:14:13)
     CmpIntEq              Target=4 Left=2 Right=3   (phantom_result_variable_owned_tuple_result.ash:14:8)
-    JumpIfFalse           CondTemp=4 Target=else_26   (phantom_result_variable_owned_tuple_result.ash:14:5)
+    JumpIfFalse           CondTemp=4 Target=else_28   (phantom_result_variable_owned_tuple_result.ash:14:5)
     LoadLocal             Target=5 Slot=1   (phantom_result_variable_owned_tuple_result.ash:15:10)
     StoreLocal            Slot=11 Source=5   (phantom_result_variable_owned_tuple_result.ash:14:5)
-    Jump                  Target=endif_27   (phantom_result_variable_owned_tuple_result.ash:14:5)
-  else_26:
+    Jump                  Target=endif_29   (phantom_result_variable_owned_tuple_result.ash:14:5)
+  else_28:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadEnv               Target=6 Index=1   (phantom_result_variable_owned_tuple_result.ash:17:15)
     Borrow                Target=7 SourceTemp=6
@@ -309,39 +333,39 @@ function lambda_7  [ClosureHelper from rounds]
     LoadLocal             Target=62 Slot=16
     LoadConstInt          Target=63 Value=0
     CmpIntNe              Target=64 Left=62 Right=63
-    JumpIfFalse           CondTemp=64 Target=general_rc_owned_absent_38
+    JumpIfFalse           CondTemp=64 Target=general_rc_owned_absent_40
     IsReferenceCounted    Target=65 SourceTemp=62
-    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_38
+    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_40
     RcIsUnique            Target=66 SourceTemp=62
-    JumpIfFalse           CondTemp=66 Target=rc_drop_tuple_shared_39
+    JumpIfFalse           CondTemp=66 Target=rc_drop_tuple_shared_41
     LoadMemOffset         Target=67 BasePtr=62 OffsetBytes=0
     LoadConstInt          Target=68 Value=0
     CallKnown             Target=69 FuncLabel=__rcdrop_record_3 EnvTemp=68 ArgTemp=67
     LoadMemOffset         Target=70 BasePtr=62 OffsetBytes=16
     LoadConstInt          Target=71 Value=0
     CallKnown             Target=72 FuncLabel=__rcdrop_general_8 EnvTemp=71 ArgTemp=70
-  rc_drop_tuple_shared_39:
+  rc_drop_tuple_shared_41:
     RcDrop                SourceTemp=62 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=16 Source=63
-  general_rc_owned_absent_38:
+  general_rc_owned_absent_40:
     LoadLocal             Target=73 Slot=15
     LoadConstInt          Target=74 Value=0
     CmpIntNe              Target=75 Left=73 Right=74
-    JumpIfFalse           CondTemp=75 Target=general_rc_owned_absent_40
+    JumpIfFalse           CondTemp=75 Target=general_rc_owned_absent_42
     IsReferenceCounted    Target=76 SourceTemp=73
-    JumpIfFalse           CondTemp=76 Target=general_rc_owned_absent_40
+    JumpIfFalse           CondTemp=76 Target=general_rc_owned_absent_42
     RcIsUnique            Target=77 SourceTemp=73
-    JumpIfFalse           CondTemp=77 Target=rc_drop_tuple_shared_41
+    JumpIfFalse           CondTemp=77 Target=rc_drop_tuple_shared_43
     LoadMemOffset         Target=78 BasePtr=73 OffsetBytes=0
     LoadConstInt          Target=79 Value=0
     CallKnown             Target=80 FuncLabel=__rcdrop_record_3 EnvTemp=79 ArgTemp=78
     LoadMemOffset         Target=81 BasePtr=73 OffsetBytes=16
     LoadConstInt          Target=82 Value=0
     CallKnown             Target=83 FuncLabel=__rcdrop_general_8 EnvTemp=82 ArgTemp=81
-  rc_drop_tuple_shared_41:
+  rc_drop_tuple_shared_43:
     RcDrop                SourceTemp=73 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=15 Source=74
-  general_rc_owned_absent_40:
+  general_rc_owned_absent_42:
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=26
     RestoreStackPointer   Slot=10   (phantom_result_variable_owned_tuple_result.ash:18:33)
@@ -350,55 +374,55 @@ function lambda_7  [ClosureHelper from rounds]
     StoreLocal            Slot=18 Source=34   (phantom_result_variable_owned_tuple_result.ash:17:9)
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=24
-    Jump                  Target=match_end_28   (phantom_result_variable_owned_tuple_result.ash:17:9)
-  match_arm_cleanup_30:
+    Jump                  Target=match_end_30   (phantom_result_variable_owned_tuple_result.ash:17:9)
+  match_arm_cleanup_32:
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=25
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=25
-    Jump                  Target=match_none_29   (phantom_result_variable_owned_tuple_result.ash:17:9)
-  match_none_29:
+    Jump                  Target=match_none_31   (phantom_result_variable_owned_tuple_result.ash:17:9)
+  match_none_31:
     LoadConstInt          Target=37 Value=0   (phantom_result_variable_owned_tuple_result.ash:17:9)
     StoreLocal            Slot=18 Source=37   (phantom_result_variable_owned_tuple_result.ash:17:9)
-  match_end_28:
+  match_end_30:
     LoadLocal             Target=38 Slot=18   (phantom_result_variable_owned_tuple_result.ash:17:9)
     StoreLocal            Slot=11 Source=38   (phantom_result_variable_owned_tuple_result.ash:14:5)
-  endif_27:
+  endif_29:
     LoadLocal             Target=39 Slot=11   (phantom_result_variable_owned_tuple_result.ash:14:5)
     LoadLocal             Target=40 Slot=15   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadConstInt          Target=41 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     CmpIntNe              Target=42 Left=40 Right=41   (phantom_result_variable_owned_tuple_result.ash:13:1)
-    JumpIfFalse           CondTemp=42 Target=general_rc_owned_absent_31   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=42 Target=general_rc_owned_absent_33   (phantom_result_variable_owned_tuple_result.ash:13:1)
     IsReferenceCounted    Target=43 SourceTemp=40
-    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_31   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_33   (phantom_result_variable_owned_tuple_result.ash:13:1)
     RcIsUnique            Target=44 SourceTemp=40
-    JumpIfFalse           CondTemp=44 Target=rc_drop_tuple_shared_32   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=44 Target=rc_drop_tuple_shared_34   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadMemOffset         Target=45 BasePtr=40 OffsetBytes=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadConstInt          Target=46 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     CallKnown             Target=47 FuncLabel=__rcdrop_record_3 EnvTemp=46 ArgTemp=45   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadMemOffset         Target=48 BasePtr=40 OffsetBytes=16   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadConstInt          Target=49 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     CallKnown             Target=50 FuncLabel=__rcdrop_general_8 EnvTemp=49 ArgTemp=48   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  rc_drop_tuple_shared_32:
+  rc_drop_tuple_shared_34:
     RcDrop                SourceTemp=40 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=15 Source=41   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  general_rc_owned_absent_31:
+  general_rc_owned_absent_33:
     LoadLocal             Target=51 Slot=16   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadConstInt          Target=52 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     CmpIntNe              Target=53 Left=51 Right=52   (phantom_result_variable_owned_tuple_result.ash:13:1)
-    JumpIfFalse           CondTemp=53 Target=general_rc_owned_absent_36   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=53 Target=general_rc_owned_absent_38   (phantom_result_variable_owned_tuple_result.ash:13:1)
     IsReferenceCounted    Target=54 SourceTemp=51
-    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_36   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_38   (phantom_result_variable_owned_tuple_result.ash:13:1)
     RcIsUnique            Target=55 SourceTemp=51
-    JumpIfFalse           CondTemp=55 Target=rc_drop_tuple_shared_37   (phantom_result_variable_owned_tuple_result.ash:13:1)
+    JumpIfFalse           CondTemp=55 Target=rc_drop_tuple_shared_39   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadMemOffset         Target=56 BasePtr=51 OffsetBytes=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadConstInt          Target=57 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     CallKnown             Target=58 FuncLabel=__rcdrop_record_3 EnvTemp=57 ArgTemp=56   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadMemOffset         Target=59 BasePtr=51 OffsetBytes=16   (phantom_result_variable_owned_tuple_result.ash:13:1)
     LoadConstInt          Target=60 Value=0   (phantom_result_variable_owned_tuple_result.ash:13:1)
     CallKnown             Target=61 FuncLabel=__rcdrop_general_8 EnvTemp=60 ArgTemp=59   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  rc_drop_tuple_shared_37:
+  rc_drop_tuple_shared_39:
     RcDrop                SourceTemp=51 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=16 Source=52   (phantom_result_variable_owned_tuple_result.ash:13:1)
-  general_rc_owned_absent_36:
+  general_rc_owned_absent_38:
     Return                Source=39   (phantom_result_variable_owned_tuple_result.ash:13:1)
 
 function lambda_6  [SourceFunction from rounds]

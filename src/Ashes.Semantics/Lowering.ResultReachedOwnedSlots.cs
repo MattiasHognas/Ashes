@@ -12,14 +12,14 @@ public sealed partial class Lowering
     /// whose type no part of an owned value's type occurs in cannot hold it either, whatever flowed
     /// into it (an owned name handed to a call returning an opaque handle, say).
     /// </summary>
-    private List<GeneralRcOwnedSlot> OwnedSlotsOutOfResultReach(int resultTemp, TypeRef resultType, List<GeneralRcOwnedSlot> ownedSlots)
+    private List<GeneralRcOwnedSlot> OwnedSlotsOutOfResultReach(int resultTemp, TypeRef resultType, List<GeneralRcOwnedSlot> ownedSlots, HashSet<int>? independentTemps = null)
     {
         if (!ResultReachedOwnedSlotsEnabled || ownedSlots.Count == 0)
         {
             return [];
         }
 
-        HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots));
+        HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots), independentTemps);
         return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot) || !ResultTypeMayHoldPartOf(resultType, owned.Type))];
     }
 
@@ -160,7 +160,7 @@ public sealed partial class Lowering
     /// </summary>
     private HashSet<int> LocalSlotsReachingTemp(int temp) => LocalSlotsReachingTemps([temp]);
 
-    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps, HashSet<int>? independentSlots = null)
+    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps, HashSet<int>? independentSlots = null, HashSet<int>? independentTemps = null)
     {
         var definitions = new Dictionary<int, List<IrInst>>();
         var slotStores = new Dictionary<int, List<int>>();
@@ -182,7 +182,7 @@ public sealed partial class Lowering
         while (pending.Count > 0)
         {
             int current = pending.Pop();
-            if (!visited.Add(current) || !definitions.TryGetValue(current, out List<IrInst>? defining))
+            if (!visited.Add(current) || !definitions.TryGetValue(current, out List<IrInst>? defining) || independentTemps?.Contains(current) == true)
             {
                 continue;
             }

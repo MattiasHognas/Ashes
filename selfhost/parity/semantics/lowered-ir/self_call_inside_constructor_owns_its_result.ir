@@ -69,12 +69,12 @@ function __rcdrop_general_3  [RuntimeManagedAdtDropper]
   locals=2 temps=11
     LoadLocal             Target=0 Slot=1   (self_call_inside_constructor_owns_its_result.ash:9:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_19   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_20   (self_call_inside_constructor_owns_its_result.ash:9:1)
     GetAdtTag             Target=2 Ptr=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_19   (self_call_inside_constructor_owns_its_result.ash:9:1)
-  rcdrop_general_ctor_20:
-    Jump                  Target=rcdrop_general_shared_19   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_20   (self_call_inside_constructor_owns_its_result.ash:9:1)
   rcdrop_general_ctor_21:
+    Jump                  Target=rcdrop_general_shared_20   (self_call_inside_constructor_owns_its_result.ash:9:1)
+  rcdrop_general_ctor_22:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
     LoadConstInt          Target=4 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
     CallKnown             Target=5 FuncLabel=__rcdrop_general_3 EnvTemp=4 ArgTemp=3   (self_call_inside_constructor_owns_its_result.ash:9:1)
@@ -83,14 +83,14 @@ function __rcdrop_general_3  [RuntimeManagedAdtDropper]
     GetAdtField           Target=7 Ptr=0 FieldIndex=2   (self_call_inside_constructor_owns_its_result.ash:9:1)
     LoadConstInt          Target=8 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
     CallKnown             Target=9 FuncLabel=__rcdrop_general_3 EnvTemp=8 ArgTemp=7   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    Jump                  Target=rcdrop_general_shared_19   (self_call_inside_constructor_owns_its_result.ash:9:1)
-  rcdrop_general_shared_19:
+    Jump                  Target=rcdrop_general_shared_20   (self_call_inside_constructor_owns_its_result.ash:9:1)
+  rcdrop_general_shared_20:
     RcDrop                SourceTemp=0 TypeName=Seen RuntimeManaged=true
     LoadConstInt          Target=10 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
     Return                Source=10   (self_call_inside_constructor_owns_its_result.ash:9:1)
 
 function lambda_1  [ClosureHelper from insert]
-  locals=19 temps=48
+  locals=19 temps=57
     LoadLocal             Target=0 Slot=1   (self_call_inside_constructor_owns_its_result.ash:10:11)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (self_call_inside_constructor_owns_its_result.ash:10:5)
@@ -173,16 +173,28 @@ function lambda_1  [ClosureHelper from insert]
     StoreLocal            Slot=18 Source=40   (self_call_inside_constructor_owns_its_result.ash:9:1)
   rc_representation_done_6:
     LoadLocal             Target=41 Slot=18   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    LoadLocal             Target=42 Slot=15   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    LoadConstInt          Target=43 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    CmpIntNe              Target=44 Left=42 Right=43   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    JumpIfFalse           CondTemp=44 Target=general_rc_owned_absent_18   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    IsReferenceCounted    Target=45 SourceTemp=42
-    JumpIfFalse           CondTemp=45 Target=general_rc_owned_absent_18   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    LoadConstInt          Target=46 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    CallKnown             Target=47 FuncLabel=__rcdrop_general_3 EnvTemp=46 ArgTemp=42   (self_call_inside_constructor_owns_its_result.ash:9:1)
-    StoreLocal            Slot=15 Source=43   (self_call_inside_constructor_owns_its_result.ash:9:1)
-  general_rc_owned_absent_18:
+    LoadArgumentOwnership Target=42   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadConstInt          Target=43 Value=2   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    ShrInt                Target=44 Left=42 Right=43   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadConstInt          Target=45 Value=1   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    AndInt                Target=46 Left=44 Right=45   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    JumpIfFalse           CondTemp=46 Target=independent_result_not_requested_18   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadArgumentOwnership Target=47   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadConstInt          Target=48 Value=-8   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    AndInt                Target=49 Left=47 Right=48   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadConstInt          Target=50 Value=2305843009213693952   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    StoreMemOffset        BasePtr=49 OffsetBytes=0 Source=50   (self_call_inside_constructor_owns_its_result.ash:9:1)
+  independent_result_not_requested_18:
+    LoadLocal             Target=51 Slot=15   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadConstInt          Target=52 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    CmpIntNe              Target=53 Left=51 Right=52   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    JumpIfFalse           CondTemp=53 Target=general_rc_owned_absent_19   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    IsReferenceCounted    Target=54 SourceTemp=51
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_19   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    LoadConstInt          Target=55 Value=0   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    CallKnown             Target=56 FuncLabel=__rcdrop_general_3 EnvTemp=55 ArgTemp=51   (self_call_inside_constructor_owns_its_result.ash:9:1)
+    StoreLocal            Slot=15 Source=52   (self_call_inside_constructor_owns_its_result.ash:9:1)
+  general_rc_owned_absent_19:
     Return                Source=41   (self_call_inside_constructor_owns_its_result.ash:9:1)
 
 function lambda_0  [SourceFunction from insert]
@@ -202,29 +214,29 @@ function lambda_4  [SourceFunction from rootLength]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     CmpIntNe              Target=2 Left=0 Right=1   (self_call_inside_constructor_owns_its_result.ash:15:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_25   (self_call_inside_constructor_owns_its_result.ash:15:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_26   (self_call_inside_constructor_owns_its_result.ash:15:5)
     GetAdtTag             Target=3 Ptr=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     LoadConstInt          Target=5 Value=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     CmpIntEq              Target=4 Left=3 Right=5   (self_call_inside_constructor_owns_its_result.ash:15:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_25   (self_call_inside_constructor_owns_its_result.ash:15:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_26   (self_call_inside_constructor_owns_its_result.ash:15:5)
     LoadConstInt          Target=6 Value=0   (self_call_inside_constructor_owns_its_result.ash:16:19)
     StoreLocal            Slot=2 Source=6   (self_call_inside_constructor_owns_its_result.ash:15:5)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    Jump                  Target=match_end_22   (self_call_inside_constructor_owns_its_result.ash:15:5)
-  match_arm_cleanup_25:
+    Jump                  Target=match_end_23   (self_call_inside_constructor_owns_its_result.ash:15:5)
+  match_arm_cleanup_26:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_24   (self_call_inside_constructor_owns_its_result.ash:15:5)
-  match_next_24:
+    Jump                  Target=match_next_25   (self_call_inside_constructor_owns_its_result.ash:15:5)
+  match_next_25:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=7 Value=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     CmpIntNe              Target=8 Left=0 Right=7   (self_call_inside_constructor_owns_its_result.ash:15:5)
-    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_26   (self_call_inside_constructor_owns_its_result.ash:15:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_27   (self_call_inside_constructor_owns_its_result.ash:15:5)
     GetAdtTag             Target=9 Ptr=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     LoadConstInt          Target=11 Value=1   (self_call_inside_constructor_owns_its_result.ash:15:5)
     CmpIntEq              Target=10 Left=9 Right=11   (self_call_inside_constructor_owns_its_result.ash:15:5)
-    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_26   (self_call_inside_constructor_owns_its_result.ash:15:5)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_27   (self_call_inside_constructor_owns_its_result.ash:15:5)
     GetAdtField           Target=12 Ptr=0 FieldIndex=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     StoreLocal            Slot=9 Source=12   (self_call_inside_constructor_owns_its_result.ash:15:5)
     RcDrop                SourceTemp=12 TypeName=Seen OwnerSlot=9
@@ -240,15 +252,15 @@ function lambda_4  [SourceFunction from rootLength]
     StoreLocal            Slot=2 Source=17   (self_call_inside_constructor_owns_its_result.ash:15:5)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=12
-    Jump                  Target=match_end_22   (self_call_inside_constructor_owns_its_result.ash:15:5)
-  match_arm_cleanup_26:
+    Jump                  Target=match_end_23   (self_call_inside_constructor_owns_its_result.ash:15:5)
+  match_arm_cleanup_27:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=13
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=13
-    Jump                  Target=match_none_23   (self_call_inside_constructor_owns_its_result.ash:15:5)
-  match_none_23:
+    Jump                  Target=match_none_24   (self_call_inside_constructor_owns_its_result.ash:15:5)
+  match_none_24:
     LoadConstInt          Target=21 Value=0   (self_call_inside_constructor_owns_its_result.ash:15:5)
     StoreLocal            Slot=2 Source=21   (self_call_inside_constructor_owns_its_result.ash:15:5)
-  match_end_22:
+  match_end_23:
     LoadLocal             Target=22 Slot=2   (self_call_inside_constructor_owns_its_result.ash:15:5)
     Return                Source=22   (self_call_inside_constructor_owns_its_result.ash:14:1)
 
@@ -267,11 +279,11 @@ function lambda_6  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (self_call_inside_constructor_owns_its_result.ash:20:8)
     LoadConstInt          Target=3 Value=0   (self_call_inside_constructor_owns_its_result.ash:20:13)
     CmpIntEq              Target=4 Left=2 Right=3   (self_call_inside_constructor_owns_its_result.ash:20:8)
-    JumpIfFalse           CondTemp=4 Target=else_27   (self_call_inside_constructor_owns_its_result.ash:20:5)
+    JumpIfFalse           CondTemp=4 Target=else_28   (self_call_inside_constructor_owns_its_result.ash:20:5)
     LoadLocal             Target=5 Slot=1   (self_call_inside_constructor_owns_its_result.ash:21:10)
     StoreLocal            Slot=11 Source=5   (self_call_inside_constructor_owns_its_result.ash:20:5)
-    Jump                  Target=endif_28   (self_call_inside_constructor_owns_its_result.ash:20:5)
-  else_27:
+    Jump                  Target=endif_29   (self_call_inside_constructor_owns_its_result.ash:20:5)
+  else_28:
     LoadLocal             Target=6 Slot=2   (self_call_inside_constructor_owns_its_result.ash:22:17)
     LoadConstInt          Target=7 Value=1   (self_call_inside_constructor_owns_its_result.ash:22:21)
     SubInt                Target=8 Left=6 Right=7   (self_call_inside_constructor_owns_its_result.ash:22:17)
@@ -330,131 +342,131 @@ function lambda_6  [ClosureHelper from rounds]
     LoadLocal             Target=76 Slot=22
     LoadConstInt          Target=77 Value=0
     CmpIntNe              Target=78 Left=76 Right=77
-    JumpIfFalse           CondTemp=78 Target=general_rc_owned_absent_35
+    JumpIfFalse           CondTemp=78 Target=general_rc_owned_absent_36
     IsReferenceCounted    Target=79 SourceTemp=76
-    JumpIfFalse           CondTemp=79 Target=general_rc_owned_absent_35
+    JumpIfFalse           CondTemp=79 Target=general_rc_owned_absent_36
     LoadConstInt          Target=80 Value=0
     CallKnown             Target=81 FuncLabel=__rcdrop_general_3 EnvTemp=80 ArgTemp=76
     StoreLocal            Slot=22 Source=77
-  general_rc_owned_absent_35:
+  general_rc_owned_absent_36:
     LoadLocal             Target=82 Slot=26
     LoadConstInt          Target=83 Value=0
     CmpIntNe              Target=84 Left=82 Right=83
-    JumpIfFalse           CondTemp=84 Target=general_rc_owned_absent_36
+    JumpIfFalse           CondTemp=84 Target=general_rc_owned_absent_37
     IsReferenceCounted    Target=85 SourceTemp=82
-    JumpIfFalse           CondTemp=85 Target=general_rc_owned_absent_36
+    JumpIfFalse           CondTemp=85 Target=general_rc_owned_absent_37
     LoadConstInt          Target=86 Value=0
     CallKnown             Target=87 FuncLabel=__rcdrop_general_3 EnvTemp=86 ArgTemp=82
     StoreLocal            Slot=26 Source=83
-  general_rc_owned_absent_36:
+  general_rc_owned_absent_37:
     LoadLocal             Target=88 Slot=30
     LoadConstInt          Target=89 Value=0
     CmpIntNe              Target=90 Left=88 Right=89
-    JumpIfFalse           CondTemp=90 Target=general_rc_owned_absent_37
+    JumpIfFalse           CondTemp=90 Target=general_rc_owned_absent_38
     IsReferenceCounted    Target=91 SourceTemp=88
-    JumpIfFalse           CondTemp=91 Target=general_rc_owned_absent_37
+    JumpIfFalse           CondTemp=91 Target=general_rc_owned_absent_38
     LoadConstInt          Target=92 Value=0
     CallKnown             Target=93 FuncLabel=__rcdrop_general_3 EnvTemp=92 ArgTemp=88
     StoreLocal            Slot=30 Source=89
-  general_rc_owned_absent_37:
+  general_rc_owned_absent_38:
     LoadLocal             Target=94 Slot=21
     LoadConstInt          Target=95 Value=0
     CmpIntNe              Target=96 Left=94 Right=95
-    JumpIfFalse           CondTemp=96 Target=general_rc_owned_absent_38
+    JumpIfFalse           CondTemp=96 Target=general_rc_owned_absent_39
     IsReferenceCounted    Target=97 SourceTemp=94
-    JumpIfFalse           CondTemp=97 Target=general_rc_owned_absent_38
+    JumpIfFalse           CondTemp=97 Target=general_rc_owned_absent_39
     LoadConstInt          Target=98 Value=0
     CallKnown             Target=99 FuncLabel=__rcdrop_general_3 EnvTemp=98 ArgTemp=94
     StoreLocal            Slot=21 Source=95
-  general_rc_owned_absent_38:
+  general_rc_owned_absent_39:
     LoadLocal             Target=100 Slot=25
     LoadConstInt          Target=101 Value=0
     CmpIntNe              Target=102 Left=100 Right=101
-    JumpIfFalse           CondTemp=102 Target=general_rc_owned_absent_39
+    JumpIfFalse           CondTemp=102 Target=general_rc_owned_absent_40
     IsReferenceCounted    Target=103 SourceTemp=100
-    JumpIfFalse           CondTemp=103 Target=general_rc_owned_absent_39
+    JumpIfFalse           CondTemp=103 Target=general_rc_owned_absent_40
     LoadConstInt          Target=104 Value=0
     CallKnown             Target=105 FuncLabel=__rcdrop_general_3 EnvTemp=104 ArgTemp=100
     StoreLocal            Slot=25 Source=101
-  general_rc_owned_absent_39:
+  general_rc_owned_absent_40:
     LoadLocal             Target=106 Slot=29
     LoadConstInt          Target=107 Value=0
     CmpIntNe              Target=108 Left=106 Right=107
-    JumpIfFalse           CondTemp=108 Target=general_rc_owned_absent_40
+    JumpIfFalse           CondTemp=108 Target=general_rc_owned_absent_41
     IsReferenceCounted    Target=109 SourceTemp=106
-    JumpIfFalse           CondTemp=109 Target=general_rc_owned_absent_40
+    JumpIfFalse           CondTemp=109 Target=general_rc_owned_absent_41
     LoadConstInt          Target=110 Value=0
     CallKnown             Target=111 FuncLabel=__rcdrop_general_3 EnvTemp=110 ArgTemp=106
     StoreLocal            Slot=29 Source=107
-  general_rc_owned_absent_40:
+  general_rc_owned_absent_41:
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=33
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=33
     RestoreStackPointer   Slot=10   (self_call_inside_constructor_owns_its_result.ash:22:10)
     Jump                  Target=lambda_6_body   (self_call_inside_constructor_owns_its_result.ash:22:10)
     LoadConstInt          Target=38 Value=0   (self_call_inside_constructor_owns_its_result.ash:22:10)
     StoreLocal            Slot=11 Source=38   (self_call_inside_constructor_owns_its_result.ash:20:5)
-  endif_28:
+  endif_29:
     LoadLocal             Target=39 Slot=11   (self_call_inside_constructor_owns_its_result.ash:20:5)
     LoadLocal             Target=40 Slot=21   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=41 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CmpIntNe              Target=42 Left=40 Right=41   (self_call_inside_constructor_owns_its_result.ash:19:1)
-    JumpIfFalse           CondTemp=42 Target=general_rc_owned_absent_29   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=42 Target=general_rc_owned_absent_30   (self_call_inside_constructor_owns_its_result.ash:19:1)
     IsReferenceCounted    Target=43 SourceTemp=40
-    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_29   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_30   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=44 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CallKnown             Target=45 FuncLabel=__rcdrop_general_3 EnvTemp=44 ArgTemp=40   (self_call_inside_constructor_owns_its_result.ash:19:1)
     StoreLocal            Slot=21 Source=41   (self_call_inside_constructor_owns_its_result.ash:19:1)
-  general_rc_owned_absent_29:
+  general_rc_owned_absent_30:
     LoadLocal             Target=46 Slot=22   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=47 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CmpIntNe              Target=48 Left=46 Right=47   (self_call_inside_constructor_owns_its_result.ash:19:1)
-    JumpIfFalse           CondTemp=48 Target=general_rc_owned_absent_30   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=48 Target=general_rc_owned_absent_31   (self_call_inside_constructor_owns_its_result.ash:19:1)
     IsReferenceCounted    Target=49 SourceTemp=46
-    JumpIfFalse           CondTemp=49 Target=general_rc_owned_absent_30   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=49 Target=general_rc_owned_absent_31   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=50 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CallKnown             Target=51 FuncLabel=__rcdrop_general_3 EnvTemp=50 ArgTemp=46   (self_call_inside_constructor_owns_its_result.ash:19:1)
     StoreLocal            Slot=22 Source=47   (self_call_inside_constructor_owns_its_result.ash:19:1)
-  general_rc_owned_absent_30:
+  general_rc_owned_absent_31:
     LoadLocal             Target=52 Slot=25   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=53 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CmpIntNe              Target=54 Left=52 Right=53   (self_call_inside_constructor_owns_its_result.ash:19:1)
-    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_31   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_32   (self_call_inside_constructor_owns_its_result.ash:19:1)
     IsReferenceCounted    Target=55 SourceTemp=52
-    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_31   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_32   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=56 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CallKnown             Target=57 FuncLabel=__rcdrop_general_3 EnvTemp=56 ArgTemp=52   (self_call_inside_constructor_owns_its_result.ash:19:1)
     StoreLocal            Slot=25 Source=53   (self_call_inside_constructor_owns_its_result.ash:19:1)
-  general_rc_owned_absent_31:
+  general_rc_owned_absent_32:
     LoadLocal             Target=58 Slot=26   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=59 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CmpIntNe              Target=60 Left=58 Right=59   (self_call_inside_constructor_owns_its_result.ash:19:1)
-    JumpIfFalse           CondTemp=60 Target=general_rc_owned_absent_32   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=60 Target=general_rc_owned_absent_33   (self_call_inside_constructor_owns_its_result.ash:19:1)
     IsReferenceCounted    Target=61 SourceTemp=58
-    JumpIfFalse           CondTemp=61 Target=general_rc_owned_absent_32   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=61 Target=general_rc_owned_absent_33   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=62 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CallKnown             Target=63 FuncLabel=__rcdrop_general_3 EnvTemp=62 ArgTemp=58   (self_call_inside_constructor_owns_its_result.ash:19:1)
     StoreLocal            Slot=26 Source=59   (self_call_inside_constructor_owns_its_result.ash:19:1)
-  general_rc_owned_absent_32:
+  general_rc_owned_absent_33:
     LoadLocal             Target=64 Slot=29   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=65 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CmpIntNe              Target=66 Left=64 Right=65   (self_call_inside_constructor_owns_its_result.ash:19:1)
-    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_33   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_34   (self_call_inside_constructor_owns_its_result.ash:19:1)
     IsReferenceCounted    Target=67 SourceTemp=64
-    JumpIfFalse           CondTemp=67 Target=general_rc_owned_absent_33   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=67 Target=general_rc_owned_absent_34   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=68 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CallKnown             Target=69 FuncLabel=__rcdrop_general_3 EnvTemp=68 ArgTemp=64   (self_call_inside_constructor_owns_its_result.ash:19:1)
     StoreLocal            Slot=29 Source=65   (self_call_inside_constructor_owns_its_result.ash:19:1)
-  general_rc_owned_absent_33:
+  general_rc_owned_absent_34:
     LoadLocal             Target=70 Slot=30   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=71 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CmpIntNe              Target=72 Left=70 Right=71   (self_call_inside_constructor_owns_its_result.ash:19:1)
-    JumpIfFalse           CondTemp=72 Target=general_rc_owned_absent_34   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=72 Target=general_rc_owned_absent_35   (self_call_inside_constructor_owns_its_result.ash:19:1)
     IsReferenceCounted    Target=73 SourceTemp=70
-    JumpIfFalse           CondTemp=73 Target=general_rc_owned_absent_34   (self_call_inside_constructor_owns_its_result.ash:19:1)
+    JumpIfFalse           CondTemp=73 Target=general_rc_owned_absent_35   (self_call_inside_constructor_owns_its_result.ash:19:1)
     LoadConstInt          Target=74 Value=0   (self_call_inside_constructor_owns_its_result.ash:19:1)
     CallKnown             Target=75 FuncLabel=__rcdrop_general_3 EnvTemp=74 ArgTemp=70   (self_call_inside_constructor_owns_its_result.ash:19:1)
     StoreLocal            Slot=30 Source=71   (self_call_inside_constructor_owns_its_result.ash:19:1)
-  general_rc_owned_absent_34:
+  general_rc_owned_absent_35:
     Return                Source=39   (self_call_inside_constructor_owns_its_result.ash:19:1)
 
 function lambda_5  [SourceFunction from rounds]

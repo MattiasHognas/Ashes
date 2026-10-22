@@ -10,6 +10,7 @@ export (
     value localSlotsReachingTemp,
     value localSlotsReachingTemps,
     value localSlotsReachingTempsThrough,
+    value localSlotsReachingTempsStopping,
 )
 
 type ValueFlowIndex =
@@ -194,18 +195,29 @@ let recursive indexReversedInstructions (instructions: List(IrInstruction)) (ind
             |> indexInstruction(index)
             |> indexReversedInstructions(rest)
 
+let recursive markVisited (temps: List(Int)) (visited: MapTree(Int, Bool)) =
+    match temps with
+        | [] -> visited
+        | temp :: rest ->
+            visited
+            |> Ashes.Collection.Map.setInt(temp)(true)
+            |> markVisited(rest)
+
 // The instructions are the function's own, most recent first; the index keeps no order. The slots of
 // `independent` hold values with references of their own (stage 0's `IndependentOwnedSlots`): the walk
-// does not follow their stores.
-let localSlotsReachingTempsThrough (temps: List(Int)) (independent: List(Int)) (reversedInstructions: List(IrInstruction)) =
+// does not follow their stores. The values of `stops` are reached but not followed: a call result
+// that holds nothing of its arguments.
+let localSlotsReachingTempsStopping (temps: List(Int)) (independent: List(Int)) (stops: List(Int)) (reversedInstructions: List(IrInstruction)) =
     (let indexed = indexReversedInstructions(reversedInstructions)(ValueFlowIndex(definitions = Ashes.Collection.Map.empty, slotStores = Ashes.Collection.Map.empty, cellStores = Ashes.Collection.Map.empty))
     in
         let index =
             indexed with slotStores = forgetSlotStores(arenaDemotedSlots(reversedInstructions)([]))(indexed.slotStores)
         in
-            match walkValueFlow(temps)(Ashes.Collection.Map.empty)(index)(independent)([]) with
+            match walkValueFlow(temps)(markVisited(stops)(Ashes.Collection.Map.empty))(index)(independent)([]) with
                 | (slots, visited) ->
                     slotsStoringVisited(Ashes.Collection.Map.toList(index.slotStores))(visited)(slots))
+
+let localSlotsReachingTempsThrough (temps: List(Int)) (independent: List(Int)) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTempsStopping(temps)(independent)([])(reversedInstructions)
 
 let localSlotsReachingTemps (temps: List(Int)) (reversedInstructions: List(IrInstruction)) = localSlotsReachingTempsThrough(temps)([])(reversedInstructions)
 

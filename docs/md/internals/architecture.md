@@ -1428,6 +1428,14 @@ Which owned values a result can point into is found by following its value back 
 instructions that built it. A call result of the contract's types kept in an owned slot holds
 references of its own, so the walk ends at that slot: the owned values the call only borrowed as
 arguments are released at the return, even when the function returns the call's result.
+A call whose result has an unresolved type may return a part of what it was passed, so the owned
+values a function passed into such a call are reached through it. When the function returns that
+call's result as it is, it forwards its own caller's request to the call, and the call can say that
+its result holds nothing of its arguments: a function of a contract result type, whose result holds
+references of its own, writes bit 61 into the mask when it is asked (a function handing its result
+over whole, bit 62, says as much). Once the call returns, the forwarding function reads the mask and,
+on either bit, releases the owned values its result reached only through the call. A function that
+was not asked keeps them, as before.
 
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:

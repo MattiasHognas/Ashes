@@ -82,7 +82,7 @@ function __rcdrop_record_4  [RuntimeManagedAdtDropper]
     Return                Source=8   (phantom_result_variable_recursive_loop_exit.ash:8:1)
 
 function lambda_1  [ClosureHelper from build]
-  locals=17 temps=55
+  locals=17 temps=64
     LoadEnv               Target=0 Index=0   (phantom_result_variable_recursive_loop_exit.ash:8:1)
     StoreLocal            Slot=2 Source=0   (phantom_result_variable_recursive_loop_exit.ash:8:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
@@ -190,6 +190,18 @@ function lambda_1  [ClosureHelper from build]
     LoadMemOffset         Target=52 BasePtr=32 OffsetBytes=0   (phantom_result_variable_recursive_loop_exit.ash:8:1)
     LoadConstInt          Target=53 Value=0   (phantom_result_variable_recursive_loop_exit.ash:8:1)
     CallKnown             Target=54 FuncLabel=__rcdrop_record_4 EnvTemp=53 ArgTemp=52   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    LoadArgumentOwnership Target=55   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    LoadConstInt          Target=56 Value=2   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    ShrInt                Target=57 Left=55 Right=56   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    LoadConstInt          Target=58 Value=1   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    AndInt                Target=59 Left=57 Right=58   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    JumpIfFalse           CondTemp=59 Target=independent_result_not_requested_22   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    LoadArgumentOwnership Target=60   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    LoadConstInt          Target=61 Value=-8   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    AndInt                Target=62 Left=60 Right=61   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    LoadConstInt          Target=63 Value=2305843009213693952   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+    StoreMemOffset        BasePtr=62 OffsetBytes=0 Source=63   (phantom_result_variable_recursive_loop_exit.ash:8:1)
+  independent_result_not_requested_22:
     Return                Source=51   (phantom_result_variable_recursive_loop_exit.ash:8:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from build]
@@ -213,14 +225,14 @@ function __rcdrop_general_7  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_29   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_30   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     GetAdtTag             Target=2 Ptr=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_29   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-  rcdrop_general_ctor_30:
-    Jump                  Target=rcdrop_general_shared_29   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_30   (phantom_result_variable_recursive_loop_exit.ash:13:1)
   rcdrop_general_ctor_31:
-    Jump                  Target=rcdrop_general_shared_29   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-  rcdrop_general_shared_29:
+    Jump                  Target=rcdrop_general_shared_30   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+  rcdrop_general_ctor_32:
+    Jump                  Target=rcdrop_general_shared_30   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+  rcdrop_general_shared_30:
     RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     Return                Source=3   (phantom_result_variable_recursive_loop_exit.ash:13:1)
@@ -240,11 +252,11 @@ function lambda_6  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (phantom_result_variable_recursive_loop_exit.ash:14:8)
     LoadConstInt          Target=3 Value=0   (phantom_result_variable_recursive_loop_exit.ash:14:13)
     CmpIntEq              Target=4 Left=2 Right=3   (phantom_result_variable_recursive_loop_exit.ash:14:8)
-    JumpIfFalse           CondTemp=4 Target=else_22   (phantom_result_variable_recursive_loop_exit.ash:14:5)
+    JumpIfFalse           CondTemp=4 Target=else_23   (phantom_result_variable_recursive_loop_exit.ash:14:5)
     LoadLocal             Target=5 Slot=1   (phantom_result_variable_recursive_loop_exit.ash:15:10)
     StoreLocal            Slot=11 Source=5   (phantom_result_variable_recursive_loop_exit.ash:14:5)
-    Jump                  Target=endif_23   (phantom_result_variable_recursive_loop_exit.ash:14:5)
-  else_22:
+    Jump                  Target=endif_24   (phantom_result_variable_recursive_loop_exit.ash:14:5)
+  else_23:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadEnv               Target=6 Index=1   (phantom_result_variable_recursive_loop_exit.ash:17:15)
     LoadConstInt          Target=7 Value=3   (phantom_result_variable_recursive_loop_exit.ash:17:21)
@@ -291,39 +303,39 @@ function lambda_6  [ClosureHelper from rounds]
     LoadLocal             Target=63 Slot=16
     LoadConstInt          Target=64 Value=0
     CmpIntNe              Target=65 Left=63 Right=64
-    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_34
+    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_35
     IsReferenceCounted    Target=66 SourceTemp=63
-    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_34
+    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_35
     RcIsUnique            Target=67 SourceTemp=63
-    JumpIfFalse           CondTemp=67 Target=rc_drop_tuple_shared_35
+    JumpIfFalse           CondTemp=67 Target=rc_drop_tuple_shared_36
     LoadMemOffset         Target=68 BasePtr=63 OffsetBytes=0
     LoadConstInt          Target=69 Value=0
     CallKnown             Target=70 FuncLabel=__rcdrop_record_4 EnvTemp=69 ArgTemp=68
     LoadMemOffset         Target=71 BasePtr=63 OffsetBytes=16
     LoadConstInt          Target=72 Value=0
     CallKnown             Target=73 FuncLabel=__rcdrop_general_7 EnvTemp=72 ArgTemp=71
-  rc_drop_tuple_shared_35:
+  rc_drop_tuple_shared_36:
     RcDrop                SourceTemp=63 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=16 Source=64
-  general_rc_owned_absent_34:
+  general_rc_owned_absent_35:
     LoadLocal             Target=74 Slot=15
     LoadConstInt          Target=75 Value=0
     CmpIntNe              Target=76 Left=74 Right=75
-    JumpIfFalse           CondTemp=76 Target=general_rc_owned_absent_36
+    JumpIfFalse           CondTemp=76 Target=general_rc_owned_absent_37
     IsReferenceCounted    Target=77 SourceTemp=74
-    JumpIfFalse           CondTemp=77 Target=general_rc_owned_absent_36
+    JumpIfFalse           CondTemp=77 Target=general_rc_owned_absent_37
     RcIsUnique            Target=78 SourceTemp=74
-    JumpIfFalse           CondTemp=78 Target=rc_drop_tuple_shared_37
+    JumpIfFalse           CondTemp=78 Target=rc_drop_tuple_shared_38
     LoadMemOffset         Target=79 BasePtr=74 OffsetBytes=0
     LoadConstInt          Target=80 Value=0
     CallKnown             Target=81 FuncLabel=__rcdrop_record_4 EnvTemp=80 ArgTemp=79
     LoadMemOffset         Target=82 BasePtr=74 OffsetBytes=16
     LoadConstInt          Target=83 Value=0
     CallKnown             Target=84 FuncLabel=__rcdrop_general_7 EnvTemp=83 ArgTemp=82
-  rc_drop_tuple_shared_37:
+  rc_drop_tuple_shared_38:
     RcDrop                SourceTemp=74 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=15 Source=75
-  general_rc_owned_absent_36:
+  general_rc_owned_absent_37:
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=26
     RestoreStackPointer   Slot=10   (phantom_result_variable_recursive_loop_exit.ash:18:33)
@@ -332,55 +344,55 @@ function lambda_6  [ClosureHelper from rounds]
     StoreLocal            Slot=18 Source=35   (phantom_result_variable_recursive_loop_exit.ash:17:9)
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=24
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=24
-    Jump                  Target=match_end_24   (phantom_result_variable_recursive_loop_exit.ash:17:9)
-  match_arm_cleanup_26:
+    Jump                  Target=match_end_25   (phantom_result_variable_recursive_loop_exit.ash:17:9)
+  match_arm_cleanup_27:
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=25
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=25
-    Jump                  Target=match_none_25   (phantom_result_variable_recursive_loop_exit.ash:17:9)
-  match_none_25:
+    Jump                  Target=match_none_26   (phantom_result_variable_recursive_loop_exit.ash:17:9)
+  match_none_26:
     LoadConstInt          Target=38 Value=0   (phantom_result_variable_recursive_loop_exit.ash:17:9)
     StoreLocal            Slot=18 Source=38   (phantom_result_variable_recursive_loop_exit.ash:17:9)
-  match_end_24:
+  match_end_25:
     LoadLocal             Target=39 Slot=18   (phantom_result_variable_recursive_loop_exit.ash:17:9)
     StoreLocal            Slot=11 Source=39   (phantom_result_variable_recursive_loop_exit.ash:14:5)
-  endif_23:
+  endif_24:
     LoadLocal             Target=40 Slot=11   (phantom_result_variable_recursive_loop_exit.ash:14:5)
     LoadLocal             Target=41 Slot=15   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadConstInt          Target=42 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     CmpIntNe              Target=43 Left=41 Right=42   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_27   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=43 Target=general_rc_owned_absent_28   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     IsReferenceCounted    Target=44 SourceTemp=41
-    JumpIfFalse           CondTemp=44 Target=general_rc_owned_absent_27   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=44 Target=general_rc_owned_absent_28   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     RcIsUnique            Target=45 SourceTemp=41
-    JumpIfFalse           CondTemp=45 Target=rc_drop_tuple_shared_28   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=45 Target=rc_drop_tuple_shared_29   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadMemOffset         Target=46 BasePtr=41 OffsetBytes=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadConstInt          Target=47 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     CallKnown             Target=48 FuncLabel=__rcdrop_record_4 EnvTemp=47 ArgTemp=46   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadMemOffset         Target=49 BasePtr=41 OffsetBytes=16   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadConstInt          Target=50 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     CallKnown             Target=51 FuncLabel=__rcdrop_general_7 EnvTemp=50 ArgTemp=49   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-  rc_drop_tuple_shared_28:
+  rc_drop_tuple_shared_29:
     RcDrop                SourceTemp=41 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=15 Source=42   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-  general_rc_owned_absent_27:
+  general_rc_owned_absent_28:
     LoadLocal             Target=52 Slot=16   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadConstInt          Target=53 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     CmpIntNe              Target=54 Left=52 Right=53   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_32   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=54 Target=general_rc_owned_absent_33   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     IsReferenceCounted    Target=55 SourceTemp=52
-    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_32   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=55 Target=general_rc_owned_absent_33   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     RcIsUnique            Target=56 SourceTemp=52
-    JumpIfFalse           CondTemp=56 Target=rc_drop_tuple_shared_33   (phantom_result_variable_recursive_loop_exit.ash:13:1)
+    JumpIfFalse           CondTemp=56 Target=rc_drop_tuple_shared_34   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadMemOffset         Target=57 BasePtr=52 OffsetBytes=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadConstInt          Target=58 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     CallKnown             Target=59 FuncLabel=__rcdrop_record_4 EnvTemp=58 ArgTemp=57   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadMemOffset         Target=60 BasePtr=52 OffsetBytes=16   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     LoadConstInt          Target=61 Value=0   (phantom_result_variable_recursive_loop_exit.ash:13:1)
     CallKnown             Target=62 FuncLabel=__rcdrop_general_7 EnvTemp=61 ArgTemp=60   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-  rc_drop_tuple_shared_33:
+  rc_drop_tuple_shared_34:
     RcDrop                SourceTemp=52 TypeName=Tuple RuntimeManaged=true
     StoreLocal            Slot=16 Source=53   (phantom_result_variable_recursive_loop_exit.ash:13:1)
-  general_rc_owned_absent_32:
+  general_rc_owned_absent_33:
     Return                Source=40   (phantom_result_variable_recursive_loop_exit.ash:13:1)
 
 function lambda_5  [SourceFunction from rounds]

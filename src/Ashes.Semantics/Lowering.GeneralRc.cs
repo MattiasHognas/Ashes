@@ -921,7 +921,7 @@ public sealed partial class Lowering
 
         if (contractResult)
         {
-            _generalRcOwnedResultLabels.Add(label);
+            NoteOwnedContractResult(label);
         }
 
         bool resultIndependent = contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp);
@@ -948,6 +948,7 @@ public sealed partial class Lowering
         }
 
         List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
+        ReleaseOwnedSlotsBehindIndependentForwardedResult(resultTemp, resultType, releasable, inLoop);
         int handedTemp = TryHandOverOwnedResultWhole(label, resultTemp, resultType, releasable, inLoop);
         if (handedTemp >= 0)
         {

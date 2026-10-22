@@ -63,6 +63,7 @@ import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsThrough
+import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsStopping
 import AshesCompiler.Semantics.FunctionOrigins.createAdtNormalizerOrigin
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
@@ -10193,8 +10194,26 @@ let tuplePartsHandOverPlan (resultTemp: Int) (parts: List(Int)) (scalars: List(I
                             (ownedSlotsOutside(localSlotsReachingTemps(pinning)(state.reversedInstructions))(registered), retainTuplePartStoresWhenRequested(retained)(state), true)
                 | _ -> (kept, state, false))
 
+let recursive withoutAbsentValues (sources: List(Int)) (state: CoreLoweringState) =
+    match sources with
+        | [] -> []
+        | source :: rest ->
+            match definitionOfTemp(source)(state.reversedInstructions) with
+                | Some(LoadConstInt(_target, value)) ->
+                    if value == 0
+                    then withoutAbsentValues(rest)(state)
+                    else source :: withoutAbsentValues(rest)(state)
+                | _ -> source :: withoutAbsentValues(rest)(state)
+
+// The values stored into a slot that a call result can be: a match's fallback storing no value
+// aside when there are others.
+let callSourcesOf (sources: List(Int)) (state: CoreLoweringState) =
+    match sources with
+        | _first :: _second :: _rest -> withoutAbsentValues(sources)(state)
+        | _ -> sources
+
 // Stage 0's `SoleCallThroughLocals`: the call result a temp is, through locals stored once and
-// borrows; -1 when it may be another value.
+// borrows (a match's fallback storing no value aside); -1 when it may be another value.
 let recursive soleCallSourceThroughLocals (temp: Int) (depth: Int) (forward: List(IrInstruction)) (state: CoreLoweringState) =
     if depth == 0
     then -1
@@ -10203,7 +10222,7 @@ let recursive soleCallSourceThroughLocals (temp: Int) (depth: Int) (forward: Lis
             | Some(CallClosure(target, _closure, _argument, _word)) -> target
             | Some(Borrow(_target, source)) -> soleCallSourceThroughLocals(source)(depth - 1)(forward)(state)
             | Some(LoadLocal(_target, slot)) ->
-                match storedSourcesOf(slot)(forward) with
+                match callSourcesOf(storedSourcesOf(slot)(forward))(state) with
                     | source :: [] -> soleCallSourceThroughLocals(source)(depth - 1)(forward)(state)
                     | _ -> -1
             | _ -> -1
@@ -10424,6 +10443,20 @@ let emitResultHandOverMask (mask: Int) (state: CoreLoweringState) =
 
 let emitTupleResultPartsMask (parts: List(Int)) (state: CoreLoweringState) =
     emitResultHandOverMask(tuplePartsMask(parts))(state)
+
+// Stage 0's `IndependentResultBit`: the mask bit a function writes when its result holds nothing of
+// the values its call borrowed.
+let independentResultBit = 2305843009213693952
+
+// Stage 0's `NoteOwnedContractResult`: a function of a contract result type that is asked writes the
+// result's independence into the caller's mask.
+let emitIndependentResultSignal (state: CoreLoweringState) =
+    match freshLabel("independent_result_not_requested")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            labelled
+            |> emitJumpUnlessTuplePartsRequested(skipLabel)
+            |> emitResultHandOverMask(independentResultBit)
+            |> emit(Label(skipLabel))
 
 let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
     match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
@@ -10650,6 +10683,91 @@ let wrappedResultConstructors (resultType: SemanticType) (state: CoreLoweringSta
             collectWrappedResultConstructors(name)(arguments)(stateConstructorLayouts(state))(state)([])
         | _ -> []
 
+// Whether a call's ownership word forwards this function's own caller's request: the function's
+// ownership word masked with -4 flows into it.
+let recursive wordForwardsRequest (word: Int) (budget: Int) (state: CoreLoweringState) =
+    if budget == 0 || word < 0
+    then false
+    else
+        match definitionOfTemp(word)(state.reversedInstructions) with
+            | Some(OrInt(_target, left, right)) -> wordForwardsRequest(left)(budget - 1)(state) || wordForwardsRequest(right)(budget - 1)(state)
+            | Some(AndInt(_target, left, right)) ->
+                match (definitionOfTemp(left)(state.reversedInstructions), definitionOfTemp(right)(state.reversedInstructions)) with
+                    | (Some(LoadArgumentOwnership(_word)), Some(LoadConstInt(_constant, value))) -> value == -4
+                    | _ -> false
+            | _ -> false
+
+// Stage 0's `_forwardedResultCallTemp`: the call a result of unresolved type returned as it is
+// forwarded this function's caller's request to; -1 when there is none.
+let forwardedResultCall (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if !isGenericResultForwardedAsIs(resultType)(state)
+    then -1
+    else
+        let callTemp =
+            soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
+        in
+            if callTemp < 0
+            then -1
+            else
+                match callWordOf(callTemp)(state.reversedInstructions) with
+                    | Some(word) ->
+                        if wordForwardsRequest(word)(8)(state)
+                        then callTemp
+                        else -1
+                    | None -> -1
+
+let recursive ownedSlotsNotIn (origin: Maybe(IrFunctionOrigin)) (excluded: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | ((owner, slot, _semanticType) as owned) :: rest ->
+            if owner == origin && !anyOwnedSlotIs(origin)(slot)(excluded)
+            then owned :: ownedSlotsNotIn(origin)(excluded)(rest)
+            else ownedSlotsNotIn(origin)(excluded)(rest)
+
+let emitIndependentForwardedResultDrops (behindCall: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (origin: Maybe(IrFunctionOrigin)) (state: CoreLoweringState) =
+    match freshLabel("forwarded_result_not_independent")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            match labelled
+            |> emitJumpUnlessTuplePartsRequested(skipLabel)
+            |> freshTempRun(8) with
+                | FreshTemp { state = allocated, temp = wordTemp } ->
+                    allocated
+                    |> emit(LoadArgumentOwnership(wordTemp))
+                    |> emit(LoadConstInt(wordTemp + 1)(-8))
+                    |> emit(AndInt(wordTemp + 2)(wordTemp)(wordTemp + 1))
+                    |> emit(LoadMemOffset(wordTemp + 3)(wordTemp + 2)(0))
+                    |> emit(LoadConstInt(wordTemp + 4)(independentResultBit + wholeResultHandedOverBit))
+                    |> emit(AndInt(wordTemp + 5)(wordTemp + 3)(wordTemp + 4))
+                    |> emit(LoadConstInt(wordTemp + 6)(0))
+                    |> emit(CmpIntNe(wordTemp + 7)(wordTemp + 5)(wordTemp + 6))
+                    |> emit(JumpIfFalse(wordTemp + 7)(skipLabel))
+                    |> emitGeneralRcOwnedSlotDropsOf(origin)(behindCall)
+                    |> emit(Label(skipLabel))
+
+// Stage 0's `ReleaseOwnedSlotsBehindIndependentForwardedResult`: after a forwarded call whose
+// result is returned as it is, the owned slots out of the result's reach once that call's result is
+// independent of its arguments, but not otherwise, are released when this function was asked and
+// the callee's mask says the result is independent.
+let releaseOwnedSlotsBehindIndependentForwardedResult (resultTemp: Int) (resultType: SemanticType) (registered: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(_frame) -> state
+        | None ->
+            let callTemp = forwardedResultCall(resultTemp)(resultType)(state)
+            in
+                if callTemp < 0
+                then state
+                else
+                    let reached =
+                        localSlotsReachingTempsStopping([resultTemp])(independentOwnedSlots(state))([callTemp])(state.reversedInstructions)
+                    in
+                        match registered
+                        |> ownedSlotsOutsideResult(resultType)(reached)
+                        |> (given (outside) -> outside(state))
+                        |> ownedSlotsNotIn(stateActiveFunctionOrigin(state))(releasable) with
+                            | [] -> state
+                            | behindCall ->
+                                emitIndependentForwardedResultDrops(behindCall)(stateActiveFunctionOrigin(state))(state)
+
 // Stage 0's `TryHandOverOwnedResultWhole` behind a result outside the contract's types: the owned
 // slots out of the result's reach are released, and when the caller asked and the result is, at
 // run time, the reference-counted value one of the other owned slots holds, or an arena cell of a
@@ -10666,39 +10784,41 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
             let releasable =
                 ownedSlotsOutsideResult(resultType)(resultReachedSlots(resultTemp)(state))(registered)(state)
             in
-                match (stateTcoLoopFrame(state), wholeResultCandidates(origin)(releasable)(registered)) with
-                    | (None, first :: others) ->
-                        let wrappers = wrappedResultConstructors(resultType)(state)
-                        in
-                            match freshLocal(state) with
-                                | FreshLocal { state = slotted, local = resultSlot } ->
-                                    match slotted
-                                    |> emit(StoreLocal(resultSlot)(resultTemp))
-                                    |> freshLabel("whole_result_not_requested") with
-                                        | FreshLabel { state = keepState, label = keepLabel } ->
-                                            match freshLabel("whole_result_handed_over")(keepState) with
-                                                | FreshLabel { state = doneState, label = doneLabel } ->
-                                                    match freshLabel("whole_result_arena")(doneState) with
-                                                        | FreshLabel { state = arenaState, label = arenaLabel } ->
-                                                            match arenaState
-                                                            |> emitJumpUnlessTuplePartsRequested(keepLabel)
-                                                            |> freshTemp with
-                                                                | FreshTemp { state = allocated, temp = countedTemp } ->
-                                                                    match allocated
-                                                                    |> emit(IsReferenceCounted(countedTemp)(resultTemp))
-                                                                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
-                                                                    |> emitWholeResultCandidateTests(resultTemp)(first :: others)(origin)(releasable)(doneLabel)(given (unchanged: CoreLoweringState) -> unchanged)
-                                                                    |> emit(Jump(keepLabel))
-                                                                    |> emit(Label(arenaLabel))
-                                                                    |> emitWrappedResultHandOvers(resultTemp)(resultSlot)(first :: others)(origin)(releasable)(keepLabel)(doneLabel)(wrappers)
-                                                                    |> emit(Label(keepLabel))
-                                                                    |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
-                                                                    |> emit(Label(doneLabel))
-                                                                    |> withWholeResultHandOverLabel(label)
-                                                                    |> freshTemp with
-                                                                        | FreshTemp { state = finished, temp = handedTemp } ->
-                                                                            (emit(LoadLocal(handedTemp)(resultSlot))(finished), handedTemp)
-                    | _ -> (emitGeneralRcOwnedSlotDropsOf(origin)(releasable)(state), resultTemp))
+                let released = releaseOwnedSlotsBehindIndependentForwardedResult(resultTemp)(resultType)(registered)(releasable)(state)
+                in
+                    match (stateTcoLoopFrame(released), wholeResultCandidates(origin)(releasable)(registered)) with
+                        | (None, first :: others) ->
+                            let wrappers = wrappedResultConstructors(resultType)(released)
+                            in
+                                match freshLocal(released) with
+                                    | FreshLocal { state = slotted, local = resultSlot } ->
+                                        match slotted
+                                        |> emit(StoreLocal(resultSlot)(resultTemp))
+                                        |> freshLabel("whole_result_not_requested") with
+                                            | FreshLabel { state = keepState, label = keepLabel } ->
+                                                match freshLabel("whole_result_handed_over")(keepState) with
+                                                    | FreshLabel { state = doneState, label = doneLabel } ->
+                                                        match freshLabel("whole_result_arena")(doneState) with
+                                                            | FreshLabel { state = arenaState, label = arenaLabel } ->
+                                                                match arenaState
+                                                                |> emitJumpUnlessTuplePartsRequested(keepLabel)
+                                                                |> freshTemp with
+                                                                    | FreshTemp { state = allocated, temp = countedTemp } ->
+                                                                        match allocated
+                                                                        |> emit(IsReferenceCounted(countedTemp)(resultTemp))
+                                                                        |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                                                                        |> emitWholeResultCandidateTests(resultTemp)(first :: others)(origin)(releasable)(doneLabel)(given (unchanged: CoreLoweringState) -> unchanged)
+                                                                        |> emit(Jump(keepLabel))
+                                                                        |> emit(Label(arenaLabel))
+                                                                        |> emitWrappedResultHandOvers(resultTemp)(resultSlot)(first :: others)(origin)(releasable)(keepLabel)(doneLabel)(wrappers)
+                                                                        |> emit(Label(keepLabel))
+                                                                        |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
+                                                                        |> emit(Label(doneLabel))
+                                                                        |> withWholeResultHandOverLabel(label)
+                                                                        |> freshTemp with
+                                                                            | FreshTemp { state = finished, temp = handedTemp } ->
+                                                                                (emit(LoadLocal(handedTemp)(resultSlot))(finished), handedTemp)
+                        | _ -> (emitGeneralRcOwnedSlotDropsOf(origin)(releasable)(released), resultTemp))
 
 let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
@@ -10734,6 +10854,7 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                             (copied
                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
                             |> (given (marked: CoreLoweringState) -> withStateGeneralRcOwnedResultLabels(label :: stateGeneralRcOwnedResultLabels(marked))(marked))
+                            |> emitIndependentResultSignal
                             |> emitGeneralRcOwnedSlotDrops, resultTemp)
         else
             if resultSurvivesReset(bodyType)(state) || isRuntimeTemp(bodyTemp)(state)

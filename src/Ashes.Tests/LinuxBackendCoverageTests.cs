@@ -3177,6 +3177,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_owned_values_behind_forwarded_contract_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns, as it is, a generic call's result built from owned values it passed
+        // in. The innermost function's contract result says through the caller's mask that it holds
+        // references of its own, so every forwarding function releases the owned values behind it.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildOwnedValuesBehindForwardedContractResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("owned values behind a forwarded contract result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13348,6 +13372,50 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildOwnedValuesBehindForwardedContractResultProgram(int rounds)
+        => $$"""
+            type St =
+                | items: List(Str)
+                | n: Int
+
+            type Fresh =
+                | state: St
+                | temp: Int
+
+            type Lowered =
+                | state: St
+                | ok: Bool
+
+            let wide = "{{new string('w', 480)}}"
+
+            let freshTemp (state: St) =
+                match state with
+                    | St { items = items, n = n } -> Fresh(state = St(items = items, n = n + 1), temp = n)
+
+            let loaded pattern lower fresh =
+                match fresh with
+                    | Fresh { state = state, temp = temp } -> lower(pattern)(temp)(state)
+
+            let loadField pattern lower (state: St) =
+                state
+                |> freshTemp
+                |> (given (fresh) ->
+                    match fresh with
+                        | Fresh { state = St { items = items, n = n }, temp = temp } -> Fresh(state = St(items = wide :: items, n = n), temp = temp))
+                |> loaded(pattern)(lower)
+
+            let lowerPattern (pattern: Str) (temp: Int) (state: St) = Lowered(state = state, ok = temp > 0)
+
+            let recursive rounds (remaining: Int) (total: Int) =
+                if remaining == 0
+                then total
+                else
+                    match loadField("p")(lowerPattern)(St(items = [wide + Ashes.Text.fromInt(remaining)], n = remaining)) with
+                        | Lowered { state = St { n = n } } -> rounds(remaining - 1)(total + n)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

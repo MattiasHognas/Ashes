@@ -96,6 +96,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new GenericResultWrapsOwnedCallResultTemplate());
         registry.Register(new ContractParameterReturnedAsItIsTemplate());
         registry.Register(new OwnedValueBehindContractCallResultTemplate());
+        registry.Register(new OwnedValuesBehindForwardedContractResultTemplate());
     }
 }
 

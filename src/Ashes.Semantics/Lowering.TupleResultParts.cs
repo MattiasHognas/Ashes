@@ -355,6 +355,7 @@ public sealed partial class Lowering
     /// </summary>
     private void ForwardTupleResultPartsRequestThroughGenericResult(string label, int resultTemp, TypeRef resultType)
     {
+        _forwardedResultCallTemp = -1;
         if (!TupleResultPartsEnabled
             || !TupleResultPartsSignalEnabled
             || !GeneralRcEnabled
@@ -371,6 +372,7 @@ public sealed partial class Lowering
             if (WholeResultHandOverEnabled && TryForwardTupleResultPartsRequest(resultTemp, withdrawn.Parts))
             {
                 NoteResultRequestForwarder(label);
+                _forwardedResultCallTemp = call.Target;
             }
 
             return;
@@ -406,6 +408,7 @@ public sealed partial class Lowering
         _inst.InsertRange(callIndex, forwarded);
         ShiftRecordedInstructionIndices(callIndex - 1, forwarded.Count);
         NoteResultRequestForwarder(label);
+        _forwardedResultCallTemp = call.Target;
     }
 
     // A result of unresolved type, or of a generic named type outside the contract's types (a
@@ -453,8 +456,8 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreMemOffset(addressTemp, 0, maskTemp));
     }
 
-    // The call whose result a temp is, through locals stored once and borrows; null when it may be
-    // another value.
+    // The call whose result a temp is, through locals stored once and borrows (a match's fallback
+    // storing no value aside); null when it may be another value.
     private IrInst.CallClosure? SoleCallThroughLocals(int temp)
     {
         for (int depth = 0; depth < 16; depth++)
@@ -468,6 +471,11 @@ public sealed partial class Lowering
                     break;
                 case IrInst.LoadLocal load:
                     List<int> sources = [.. _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == load.Slot).Select(store => store.Source)];
+                    if (IndependentResultSignalEnabled && sources.Count > 1)
+                    {
+                        sources.RemoveAll(source => DefinitionOf(source) is IrInst.LoadConstInt { Value: 0 });
+                    }
+
                     if (sources.Count != 1)
                     {
                         return null;

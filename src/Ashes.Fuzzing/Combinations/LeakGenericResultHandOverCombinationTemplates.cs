@@ -189,3 +189,58 @@ internal sealed class OwnedValueBehindContractCallResultTemplate() : LeakCombina
             """;
     }
 }
+
+/// <summary>
+/// A function returns, as it is, a generic call's result built from owned values it passed in: the
+/// innermost function's contract result holds references of its own and says so through the
+/// caller's mask, so every forwarding function releases the owned values behind it.
+/// </summary>
+internal sealed class OwnedValuesBehindForwardedContractResultTemplate() : LeakCombinationTemplate(
+    "leak.owned-values-behind-forwarded-contract-result", "ownedValuesBehindForwardedContractResult", GeneratedFeature.Record, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string state = names.Of("LeakState");
+        string fresh = names.Of("LeakFresh");
+        string lowered = names.Of("LeakLowered");
+        string freshTemp = names.Of("freshTemp");
+        string loaded = names.Of("loaded");
+        string loadField = names.Of("loadField");
+        string lowerPattern = names.Of("lowerPattern");
+        return $$"""
+            type {{state}} =
+                | items: List(Str)
+                | n: Int
+
+            type {{fresh}} =
+                | state: {{state}}
+                | temp: Int
+
+            type {{lowered}} =
+                | state: {{state}}
+                | ok: Bool
+
+            let {{freshTemp}} (state: {{state}}) =
+                match state with
+                    | {{state}} { items = items, n = n } -> {{fresh}}(state = {{state}}(items = items, n = n + 1), temp = n)
+
+            let {{loaded}} pattern lower fresh =
+                match fresh with
+                    | {{fresh}} { state = state, temp = temp } -> lower(pattern)(temp)(state)
+
+            let {{loadField}} pattern lower (state: {{state}}) =
+                state
+                |> {{freshTemp}}
+                |> (given (fresh) ->
+                    match fresh with
+                        | {{fresh}} { state = {{state}} { items = items, n = n }, temp = temp } -> {{fresh}}(state = {{state}}(items = {{names.Word()}} :: items, n = n), temp = temp))
+                |> {{loaded}}(pattern)(lower)
+
+            let {{lowerPattern}} (pattern: Str) (temp: Int) (state: {{state}}) = {{lowered}}(state = state, ok = temp > 0)
+
+            let {{names.Entry}} (seed: Int) =
+                match {{loadField}}({{names.Word()}})({{lowerPattern}})({{state}}(items = [{{names.Word()}} + Ashes.Text.fromInt(seed)], n = seed)) with
+                    | {{lowered}} { state = {{state}} { n = n } } -> n
+            """;
+    }
+}

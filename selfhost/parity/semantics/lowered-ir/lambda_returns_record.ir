@@ -49,16 +49,16 @@ function __rcdrop_record_3  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (lambda_returns_record.ash:5:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_10   (lambda_returns_record.ash:5:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_11   (lambda_returns_record.ash:5:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:5:1)
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-  rc_drop_shared_10:
+  rc_drop_shared_11:
     RcDrop                SourceTemp=0 TypeName=Label RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (lambda_returns_record.ash:5:1)
     Return                Source=3   (lambda_returns_record.ash:5:1)
 
 function lambda_0  [SourceFunction from label]
-  locals=5 temps=22
+  locals=5 temps=31
     LoadLocal             Target=0 Slot=1   (lambda_returns_record.ash:5:47)
     TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (lambda_returns_record.ash:5:28)
     LoadLocal             Target=2 Slot=1   (lambda_returns_record.ash:5:59)
@@ -85,23 +85,35 @@ function lambda_0  [SourceFunction from label]
   general_rc_result_already_owned_1:
     LoadLocal             Target=11 Slot=2   (lambda_returns_record.ash:5:1)
     LoadArgumentOwnership Target=12   (lambda_returns_record.ash:5:1)
-    LoadConstInt          Target=13 Value=1   (lambda_returns_record.ash:5:1)
+    LoadConstInt          Target=13 Value=2   (lambda_returns_record.ash:5:1)
     ShrInt                Target=14 Left=12 Right=13   (lambda_returns_record.ash:5:1)
-    AndInt                Target=15 Left=14 Right=13   (lambda_returns_record.ash:5:1)
-    JumpIfFalse           CondTemp=15 Target=rc_result_owned_8   (lambda_returns_record.ash:5:1)
-    Alloc                 Target=16 SizeBytes=8   (lambda_returns_record.ash:5:1)
-    MakeClosure           Target=17 FuncLabel=__deepcopy_2 EnvPtrTemp=16 EnvSizeBytes=8   (lambda_returns_record.ash:5:1)
-    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=17   (lambda_returns_record.ash:5:1)
-    CallClosure           Target=18 ClosureTemp=17 ArgTemp=11   (lambda_returns_record.ash:5:1)
-    LoadConstInt          Target=19 Value=0   (lambda_returns_record.ash:5:1)
-    CallKnown             Target=20 FuncLabel=__rcdrop_record_3 EnvTemp=19 ArgTemp=11   (lambda_returns_record.ash:5:1)
-    StoreLocal            Slot=4 Source=18   (lambda_returns_record.ash:5:1)
-    Jump                  Target=rc_result_done_9   (lambda_returns_record.ash:5:1)
-  rc_result_owned_8:
+    LoadConstInt          Target=15 Value=1   (lambda_returns_record.ash:5:1)
+    AndInt                Target=16 Left=14 Right=15   (lambda_returns_record.ash:5:1)
+    JumpIfFalse           CondTemp=16 Target=independent_result_not_requested_8   (lambda_returns_record.ash:5:1)
+    LoadArgumentOwnership Target=17   (lambda_returns_record.ash:5:1)
+    LoadConstInt          Target=18 Value=-8   (lambda_returns_record.ash:5:1)
+    AndInt                Target=19 Left=17 Right=18   (lambda_returns_record.ash:5:1)
+    LoadConstInt          Target=20 Value=2305843009213693952   (lambda_returns_record.ash:5:1)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=20   (lambda_returns_record.ash:5:1)
+  independent_result_not_requested_8:
+    LoadArgumentOwnership Target=21   (lambda_returns_record.ash:5:1)
+    LoadConstInt          Target=22 Value=1   (lambda_returns_record.ash:5:1)
+    ShrInt                Target=23 Left=21 Right=22   (lambda_returns_record.ash:5:1)
+    AndInt                Target=24 Left=23 Right=22   (lambda_returns_record.ash:5:1)
+    JumpIfFalse           CondTemp=24 Target=rc_result_owned_9   (lambda_returns_record.ash:5:1)
+    Alloc                 Target=25 SizeBytes=8   (lambda_returns_record.ash:5:1)
+    MakeClosure           Target=26 FuncLabel=__deepcopy_2 EnvPtrTemp=25 EnvSizeBytes=8   (lambda_returns_record.ash:5:1)
+    StoreMemOffset        BasePtr=25 OffsetBytes=0 Source=26   (lambda_returns_record.ash:5:1)
+    CallClosure           Target=27 ClosureTemp=26 ArgTemp=11   (lambda_returns_record.ash:5:1)
+    LoadConstInt          Target=28 Value=0   (lambda_returns_record.ash:5:1)
+    CallKnown             Target=29 FuncLabel=__rcdrop_record_3 EnvTemp=28 ArgTemp=11   (lambda_returns_record.ash:5:1)
+    StoreLocal            Slot=4 Source=27   (lambda_returns_record.ash:5:1)
+    Jump                  Target=rc_result_done_10   (lambda_returns_record.ash:5:1)
+  rc_result_owned_9:
     StoreLocal            Slot=4 Source=11   (lambda_returns_record.ash:5:1)
-  rc_result_done_9:
-    LoadLocal             Target=21 Slot=4   (lambda_returns_record.ash:5:1)
-    Return                Source=21   (lambda_returns_record.ash:5:1)
+  rc_result_done_10:
+    LoadLocal             Target=30 Slot=4   (lambda_returns_record.ash:5:1)
+    Return                Source=30   (lambda_returns_record.ash:5:1)
 
 function _start_main  [ProgramEntry]
   locals=20 temps=29
@@ -125,7 +137,7 @@ function _start_main  [ProgramEntry]
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadConstInt          Target=9 Value=0   (lambda_returns_record.ash:9:1)
     CmpIntNe              Target=10 Left=8 Right=9   (lambda_returns_record.ash:9:1)
-    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_13   (lambda_returns_record.ash:9:1)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_14   (lambda_returns_record.ash:9:1)
     GetAdtField           Target=11 Ptr=8 FieldIndex=0 Tagless=true   (lambda_returns_record.ash:9:1)
     RcDrop                SourceTemp=6 TypeName=Label OwnerSlot=9
     StoreLocal            Slot=13 Source=11   (lambda_returns_record.ash:9:1)
@@ -139,16 +151,16 @@ function _start_main  [ProgramEntry]
     CopyOutArena          DestTemp=16 SrcTemp=14 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
     StoreLocal            Slot=10 Source=16   (lambda_returns_record.ash:9:1)
-    Jump                  Target=match_end_11   (lambda_returns_record.ash:9:1)
-  match_arm_cleanup_13:
+    Jump                  Target=match_end_12   (lambda_returns_record.ash:9:1)
+  match_arm_cleanup_14:
     RcDrop                SourceTemp=6 TypeName=Label OwnerSlot=9
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=15
-    Jump                  Target=match_none_12   (lambda_returns_record.ash:9:1)
-  match_none_12:
+    Jump                  Target=match_none_13   (lambda_returns_record.ash:9:1)
+  match_none_13:
     LoadConstInt          Target=17 Value=0   (lambda_returns_record.ash:9:1)
     StoreLocal            Slot=10 Source=17   (lambda_returns_record.ash:9:1)
-  match_end_11:
+  match_end_12:
     LoadLocal             Target=18 Slot=10   (lambda_returns_record.ash:9:1)
     StoreLocal            Slot=16 Source=18   (lambda_returns_record.ash:7:1)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=17
@@ -163,12 +175,12 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=23 Slot=8
     LoadConstInt          Target=24 Value=0
     CmpIntNe              Target=25 Left=23 Right=24
-    JumpIfFalse           CondTemp=25 Target=general_rc_owned_absent_14
+    JumpIfFalse           CondTemp=25 Target=general_rc_owned_absent_15
     IsReferenceCounted    Target=26 SourceTemp=23
-    JumpIfFalse           CondTemp=26 Target=general_rc_owned_absent_14
+    JumpIfFalse           CondTemp=26 Target=general_rc_owned_absent_15
     LoadConstInt          Target=27 Value=0
     CallKnown             Target=28 FuncLabel=__rcdrop_record_3 EnvTemp=27 ArgTemp=23
     StoreLocal            Slot=8 Source=24
-  general_rc_owned_absent_14:
+  general_rc_owned_absent_15:
     Return                Source=22
 
