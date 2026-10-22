@@ -3231,6 +3231,23 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_call_successor_sharing_owned_value_should_run()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's accumulator, handed on in one arm, is replaced in another by a generic call's
+        // result built over an owned value of the iteration. Left in the arena, that result shares
+        // the owned value's cells, so the back edge must not release the value under it.
+        const int rounds = 2000;
+        IrProgram ir = LowerProgramWithStandardTraits(BuildGenericCallSuccessorSharingOwnedValueProgram(rounds));
+        MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+        sample.Stdout.ShouldBe($"{rounds * 6}\n");
+    }
+
+    [Test]
     public async Task Linux_backend_phantom_tuple_result_fresh_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13036,6 +13053,52 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + total(addCases(["a", "b" + Ashes.Text.fromInt(n), "a"])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildGenericCallSuccessorSharingOwnedValueProgram(int rounds)
+        => $$"""
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let recursive addCases (cs: List(Str)) entries =
+                match cs with
+                    | [] -> entries
+                    | label :: cTail ->
+                        entries
+                        |> setAssociation(label)(1)
+                        |> addCases(cTail)
+
+            let recursive loop (groups: List(Maybe(List(Str)))) acc =
+                match groups with
+                    | [] -> acc
+                    | Some(cases) :: tail ->
+                        let mapWithCases = addCases(cases)(acc)
+                        in
+                            mapWithCases
+                            |> setAssociation("d")(1)
+                            |> loop(tail)
+                    | None :: tail -> loop(tail)(acc)
+
+            let recursive total (refs: List((Str, Int))) (sum: Int) =
+                match refs with
+                    | [] -> sum
+                    | (_, c) :: tail -> total(tail)(sum + c)
+
+            let run (n: Int) =
+                (let refs = loop([Some(["a", "b" + Ashes.Text.fromInt(n)]), None, Some([])])([])
+                in total(refs)(0) + total(refs)(0))
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

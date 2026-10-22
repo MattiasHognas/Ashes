@@ -456,6 +456,10 @@ type CoreTcoReset =
     // the self call with its type, released at the back edge once the other successors hold their
     // own references (stage 0's `TransferredRootDrops`).
     | transferredRootDrops: List((Int, SemanticType))
+    // Per owned drop, the ordinals of the successors whose type may hold a part of its value and
+    // the ordinals of the successors that are a call's result reaching its slot (stage 0's
+    // `ArenaSuccessorMayHoldPartOf`).
+    | ownedDropFacts: List((Int, List(Int), List(Int)))
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
 // `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one
@@ -9033,6 +9037,29 @@ let recursive copyTransferRetainedSuccessors (arguments: List(TcoResetArgument))
             |> copyTransferRetainedSuccessors(rest)(restFlags)
         | _ -> state
 
+// Whether a successor at one of these ordinals is a call's result left in the arena: neither
+// handed on unchanged nor of a type a reset leaves alone.
+let recursive arenaCallResultAmong (ordinals: List(Int)) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match ordinals with
+        | [] -> false
+        | ordinal :: rest ->
+            (match resetArgumentAt(ordinal)(arguments) with
+                | Some(argument) -> argument.shape != TcoPassThroughShape && !resultSurvivesReset(argument.argumentType)(state)
+                | None -> false) || arenaCallResultAmong(rest)(arguments)(state)
+
+// Stage 0's `ArenaSuccessorMayHoldPartOf`: on a back edge that normalizes no successor, a call's
+// result left in the arena may share an iteration's owned value's cells without references of its
+// own (a generic callee rebuilds a list around the tail it was given). A value such a successor
+// reaches, and that a successor's type can hold a part of, is left unreleased, as an owned slot of
+// the contract is in the same place.
+let recursive ownedDropsLeftByArenaSuccessors (drops: List((Int, Str))) (facts: List((Int, List(Int), List(Int)))) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match (drops, facts) with
+        | (drop :: rest, (_slot, blockers, reachedBy) :: restFacts) ->
+            if !typeBlockersExempt(blockers)(arguments)([])(false)(false)(false) && arenaCallResultAmong(reachedBy)(arguments)(state)
+            then ownedDropsLeftByArenaSuccessors(rest)(restFacts)(arguments)(state)
+            else drop :: ownedDropsLeftByArenaSuccessors(rest)(restFacts)(arguments)(state)
+        | _ -> drops
+
 // The back edge of a loop the runtime-managed reset does not admit: the iteration-local owners
 // are released, then the per-iteration watermark is restored when every argument survives a reset
 // on its own (stage 0's `TcoBackEdgeTryEmitPlainReset`), the fixed watermark compacted when every
@@ -9042,7 +9069,8 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
             allocated
             |> emitTransferredRootDrops(reset.transferredRootDrops)
-            |> emitResolvedOwnedDrops(reset.ownedDrops)
+            |> (given (rootsReleased: CoreLoweringState) ->
+                emitResolvedOwnedDrops(ownedDropsLeftByArenaSuccessors(reset.ownedDrops)(reset.ownedDropFacts)(arguments)(rootsReleased))(rootsReleased))
             |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(false)
             |> (given (released: CoreLoweringState) ->
                 if allArgumentsSurvivePlainReset(arguments)(released)
@@ -25250,6 +25278,31 @@ let recursive transferredRootTemps (drops: List((Int, SemanticType))) =
         | [] -> []
         | (rootTemp, _rootType) :: rest -> rootTemp :: transferredRootTemps(rest)
 
+let isCallDefinition (instruction: Maybe(IrInstructionKind)) =
+    match instruction with
+        | Some(CallClosure(_target, _closure, _argument, _flag)) -> true
+        | Some(CallKnown(_target, _label, _environment, _argument, _flag, _requestsArena)) -> true
+        | _ -> false
+
+// The ordinals of the successors that are a call's result whose value can have been read from
+// this slot.
+let recursive callResultsReaching (slot: Int) (ordinal: Int) (temps: List(Int)) (state: CoreLoweringState) =
+    match temps with
+        | [] -> []
+        | temp :: rest ->
+            if isCallDefinition(definitionOfTemp(temp)(state.reversedInstructions)) && containsInt(slot)(localSlotsReachingTemp(temp)(state.reversedInstructions))
+            then ordinal :: callResultsReaching(slot)(ordinal + 1)(rest)(state)
+            else callResultsReaching(slot)(ordinal + 1)(rest)(state)
+
+let recursive ownedDropFactsOf (drops: List((Int, Str))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (state: CoreLoweringState) =
+    match drops with
+        | [] -> []
+        | (slot, _typeName) :: rest ->
+            (match slotResolvedType(slot)(state.bindings)(state) with
+                | None -> (slot, [], [])
+                | Some(ownedType) ->
+                    (slot, typeBlockers(0)(heapPartTypesInto([ownedType])([])([])(state))(argumentTypes)(state), callResultsReaching(slot)(0)(temps)(state))) :: ownedDropFactsOf(rest)(argumentTypes)(temps)(state)
+
 let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (rootDrops: List((Int, SemanticType))) (state: CoreLoweringState) =
     (let loopSlots =
         slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
@@ -25280,7 +25333,8 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     argumentRuntime = runtimeTempFlags(temps)(state),
                     argumentExpressions = arguments,
                     argumentTransferRetained = transferRetainedFlags(temps)(state),
-                    transferredRootDrops = rootDrops
+                    transferredRootDrops = rootDrops,
+                    ownedDropFacts = ownedDropFactsOf(drops)(argumentTypes)(temps)(state)
                 ))
             |> (given (reset: CoreTcoReset) ->
                 state

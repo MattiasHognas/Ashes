@@ -1393,7 +1393,7 @@ public sealed partial class Lowering
         // locals. Every other reset path preserves the historical ordering and releases them before
         // deciding whether an arena reset can run.
         EmitDeferredTransferredRootDrops(info);
-        EmitDeferredTcoBackEdgeOwnedDrops(info);
+        EmitDeferredTcoBackEdgeOwnedDrops(info, successorsNormalized: false);
         EmitGeneralRcBackEdgeDrops(info, successorsNormalized: false);
 
         if (TcoBackEdgeTryEmitPlainReset(info, tcoPreRestoreEndSlot))
@@ -1559,18 +1559,48 @@ public sealed partial class Lowering
         // until every successor has normalized its own RC graph, then release them before the arena
         // reset invalidates the borrowed shells.
         EmitDeferredTransferredRootDrops(info);
-        EmitDeferredTcoBackEdgeOwnedDrops(info);
+        EmitDeferredTcoBackEdgeOwnedDrops(info, successorsNormalized: true);
         EmitGeneralRcBackEdgeDrops(info, successorsNormalized: true);
 
         return normalizedTemps;
     }
 
-    private void EmitDeferredTcoBackEdgeOwnedDrops(PendingTcoReset info)
+    // An iteration's owned value is released at the back edge, after the successors are normalized
+    // where they are. Where none is, a successor that is a call's result left in the arena may share
+    // the value's cells without references of its own (a generic callee rebuilds a list around the
+    // tail it was given): a value such a successor reaches is left unreleased, as an owned slot of
+    // the contract is in the same place.
+    private void EmitDeferredTcoBackEdgeOwnedDrops(PendingTcoReset info, bool successorsNormalized)
     {
+        HashSet<int>? reachedSlots = null;
         foreach (OwnershipInfo owned in info.IterationOwnedDrops)
         {
+            if (ArenaSuccessorMayHoldPartOf(info, owned, successorsNormalized, ref reachedSlots))
+            {
+                continue;
+            }
+
             EmitOwnedValueDrop(owned);
         }
+    }
+
+    private bool ArenaSuccessorMayHoldPartOf(PendingTcoReset info, OwnershipInfo owned, bool successorsNormalized, ref HashSet<int>? reachedSlots)
+    {
+        if (successorsNormalized
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENASUCCESSORPARTS") is not null
+            || !IsPlainRuntimeManagedData(owned)
+            || owned.Type is not { } type
+            || NoSuccessorCanHoldPartOf(info, Prune(type), [], successorsNormalized: false, useParameterParts: false))
+        {
+            return false;
+        }
+
+        reachedSlots ??= LocalSlotsReachingTemps(Enumerable.Range(0, info.ArgTemps.Length)
+            .Where(index => !info.PassThrough[index]
+                && !CanArenaReset(Prune(info.ArgTypes[index]))
+                && DefinitionOf(info.ArgTemps[index]) is IrInst.CallClosure or IrInst.CallKnown)
+            .Select(index => info.ArgTemps[index]));
+        return reachedSlots.Contains(owned.Slot);
     }
 
     /// <summary>
