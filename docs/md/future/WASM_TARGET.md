@@ -12,7 +12,7 @@ hosts, alongside the existing native targets (`linux-x64`, `linux-arm64`, `win-x
 - **Fit.** The backend already lowers IR to LLVM, and LLVM emits `wasm32` — much of the codegen path
   is reusable.
 
-## Caveats (be honest about this one)
+## Caveats
 
 WebAssembly is somewhat *off-brand*: the project's identity is "standalone native, zero runtime". A
 WASM module is not standalone — it needs a host (a browser JS shim or a WASI runtime), and the
