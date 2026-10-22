@@ -8067,34 +8067,6 @@ let emitGeneralRcOwnedSlotDrops (state: CoreLoweringState) =
     |> stateGeneralRcOwnedSlots
     |> reverse)(state)
 
-let recursive ownedSlotsOutside (reached: List(Int)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
-    match slots with
-        | [] -> []
-        | ((_owner, slot, _semanticType) as owned) :: rest ->
-            if containsInt(slot)(reached)
-            then ownedSlotsOutside(reached)(rest)
-            else owned :: ownedSlotsOutside(reached)(rest)
-
-// Stage 0's `OwnedSlotsOutOfResultReach`: a result outside the contract's types may still point
-// into the function's owned values, so only the owned slots no value flowing into the result is
-// read from are released behind it; the others are left.
-let emitOwnedSlotDropsOutOfResultReach (resultTemp: Int) (state: CoreLoweringState) =
-    emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(state
-    |> stateGeneralRcOwnedSlots
-    |> reverse
-    |> ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions)))(state)
-
-// Whether the result reaches any owned slot of the function being finished.
-let resultReachesOwnedSlots (resultTemp: Int) (state: CoreLoweringState) =
-    (let slots = stateGeneralRcOwnedSlots(state)
-    in
-        let outside =
-            slots
-            |> ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))
-            |> ownedSlotsOf(stateActiveFunctionOrigin(state))
-        in
-            length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
-
 let backEdgeCopyBorrows (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
         | NormalizerArgumentCopy(_named) -> true
@@ -8165,6 +8137,178 @@ let recursive typeVariablePairs (variables: List(SemanticType)) (arguments: List
         | (SemVariable(variableId) :: restVariables, argument :: restArguments) -> (variableId, argument) :: typeVariablePairs(restVariables)(restArguments)
         | (_variable :: restVariables, _argument :: restArguments) -> typeVariablePairs(restVariables)(restArguments)
         | _ -> []
+
+// Every constructor field of a named type, resolved, with whether the type has any constructor at
+// all: a type the lowering knows no constructor for proves nothing about its own layout.
+let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (found: Bool) (fieldTypes: List(SemanticType)) =
+    match layouts with
+        | [] -> (found, fieldTypes)
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName
+                    then
+                        match layoutFieldTypes(layout)(state) with
+                            | (layoutFields, _resultType) ->
+                                layoutFields
+                                |> map(resolveType(state))
+                                |> append(fieldTypes)
+                                |> namedTypeConstructorFieldTypes(typeName)(rest)(state)(true)
+                    else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
+                | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
+
+// Stage 0's `InstantiatedFieldType` over every constructor of a named type: each field at the
+// instantiation the type arguments give, so a field of the declaration's own type parameter is
+// the argument in its place rather than a value of any type.
+let recursive namedTypeInstantiatedFieldTypes (typeName: Str) (arguments: List(SemanticType)) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (fieldTypes: List(SemanticType)) =
+    match layouts with
+        | [] -> fieldTypes
+        | layout :: rest ->
+            if constructorResultNameIs(typeName)(layout)
+            then
+                match layoutFieldTypes(layout)(state) with
+                    | (layoutFields, SemNamed(_symbolId, _name, variables)) ->
+                        layoutFields
+                        |> map(arguments
+                        |> typeVariablePairs(variables)
+                        |> replaceTypeVariables)
+                        |> map(resolveType(state))
+                        |> append(fieldTypes)
+                        |> namedTypeInstantiatedFieldTypes(typeName)(arguments)(rest)(state)
+                    | (layoutFields, _resultType) ->
+                        layoutFields
+                        |> map(resolveType(state))
+                        |> append(fieldTypes)
+                        |> namedTypeInstantiatedFieldTypes(typeName)(arguments)(rest)(state)
+            else namedTypeInstantiatedFieldTypes(typeName)(arguments)(rest)(state)(fieldTypes)
+
+// Stage 0's `StructuralComponentTypes`: what a value of this type structurally contains as far as the
+// type itself says. A named type's fields are not among its type arguments, which the walk below
+// expands separately.
+let structuralComponentTypes (semanticType: SemanticType) =
+    match semanticType with
+        | SemList(element) -> [element]
+        | SemPointer(pointee) -> [pointee]
+        | SemTuple(elements) -> elements
+        | SemNamed(_id, _name, arguments) -> arguments
+        | SemCapability(_name, arguments) -> arguments
+        | _ -> []
+
+let namedTypeFieldTypesAs (instantiated: Bool) (name: Str) (arguments: List(SemanticType)) (state: CoreLoweringState) =
+    if instantiated
+    then
+        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorLayouts(state))(state)([])
+    else
+        match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+            | (_found, fieldTypes) -> fieldTypes
+
+// Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
+// reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
+// (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
+// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
+// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
+// time regardless, so the same generic type at two instantiations still has both compared. A named
+// type's fields are read at its instantiation (`instantiated`), so a field of its own type parameter
+// is the argument in its place; the loop placement's sibling question reads them as declared.
+let recursive typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemFunction(_parameter, _result, _row) -> true
+        | resolved ->
+            resolved == argumentType || anyTypeMayContainArgumentType(instantiated)(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
+                | SemNamed(_id, name, arguments) ->
+                    if containsName(name)(expanded)
+                    then false
+                    else
+                        anyTypeMayContainArgumentType(instantiated)(namedTypeFieldTypesAs(instantiated)(name)(arguments)(state))(argumentType)(name :: expanded)(state)
+                | _ -> false)
+and anyTypeMayContainArgumentType (instantiated: Bool) (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> false
+        | candidate :: rest -> typeMayContainArgumentType(instantiated)(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(instantiated)(rest)(argumentType)(expanded)(state)
+
+let callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) = typeMayContainArgumentType(true)(resultType)(argumentType)(expanded)(state)
+
+// Stage 0's `CollectHeapComponentTypes`: every heap type a value of the type is built from, itself
+// included, beside the type names already expanded, and whether all of them are known: false when
+// some part may be a value of any type.
+let recursive collectHeapComponentTypes (semanticType: SemanticType) (state: CoreLoweringState) (collected: (List(SemanticType), List(Str))) =
+    match (resolveType(state)(semanticType), collected) with
+        | (SemString, (parts, expanded)) -> (true, (SemString :: parts, expanded))
+        | (SemBytes, (parts, expanded)) -> (true, (SemBytes :: parts, expanded))
+        | (SemBigInt, (parts, expanded)) -> (true, (SemBigInt :: parts, expanded))
+        | (SemList(element), (parts, expanded)) -> collectHeapComponentTypes(element)(state)((SemList(element) :: parts, expanded))
+        | (SemTuple(elements), (parts, expanded)) -> collectAllHeapComponentTypes(elements)(state)((SemTuple(elements) :: parts, expanded))
+        | (SemNamed(symbolId, name, arguments), (parts, expanded)) ->
+            if containsName(name)(expanded)
+            then (true, (SemNamed(symbolId)(name)(arguments) :: parts, expanded))
+            else
+                collectAllHeapComponentTypes(namedTypeFieldTypesAs(true)(name)(arguments)(state))(state)((SemNamed(symbolId)(name)(arguments) :: parts, name :: expanded))
+        | (SemVariable(_id), _collected) -> (false, collected)
+        | (SemParameter(_id, _name), _collected) -> (false, collected)
+        | (SemFunction(_parameter, _result, _row), _collected) -> (false, collected)
+        | (SemCapability(_name, _arguments), _collected) -> (false, collected)
+        | (SemRow(_capabilities, _tail), _collected) -> (false, collected)
+        | (SemPointer(_pointee), _collected) -> (false, collected)
+        | _scalar -> (true, collected)
+and collectAllHeapComponentTypes (types: List(SemanticType)) (state: CoreLoweringState) (collected: (List(SemanticType), List(Str))) =
+    match types with
+        | [] -> (true, collected)
+        | semanticType :: rest ->
+            match collectHeapComponentTypes(semanticType)(state)(collected) with
+                | (true, next) -> collectAllHeapComponentTypes(rest)(state)(next)
+                | (false, next) -> (false, next)
+
+let recursive anyPartMayBeInResult (resultType: SemanticType) (parts: List(SemanticType)) (state: CoreLoweringState) =
+    match parts with
+        | [] -> false
+        | part :: rest -> callResultMayContainArgumentType(resultType)(part)([])(state) || anyPartMayBeInResult(resultType)(rest)(state)
+
+// Stage 0's `ResultTypeMayHoldPartOf`: whether a value of the result's type can hold an owned value
+// of the owned type or one of its heap parts. An owned type with a part of unresolved type or a
+// function inside may share a value with any result.
+let resultTypeMayHoldPartOf (resultType: SemanticType) (ownedType: SemanticType) (state: CoreLoweringState) =
+    match collectHeapComponentTypes(ownedType)(state)(([], [])) with
+        | (false, _collected) -> true
+        | (true, (parts, _expanded)) -> anyPartMayBeInResult(resultType)(parts)(state)
+
+let recursive ownedSlotsOutside (reached: List(Int)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | ((_owner, slot, _semanticType) as owned) :: rest ->
+            if containsInt(slot)(reached)
+            then ownedSlotsOutside(reached)(rest)
+            else owned :: ownedSlotsOutside(reached)(rest)
+
+// The owned slots a result of the given type cannot point into: none of the reached slots, and none
+// whose type no part of occurs in the result's type.
+let recursive ownedSlotsOutsideResult (resultType: SemanticType) (reached: List(Int)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | ((_owner, slot, semanticType) as owned) :: rest ->
+            if containsInt(slot)(reached) && resultTypeMayHoldPartOf(resultType)(semanticType)(state)
+            then ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
+            else owned :: ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
+
+// Stage 0's `OwnedSlotsOutOfResultReach`: a result outside the contract's types may still point
+// into the function's owned values, so only the owned slots no value flowing into the result is
+// read from, or whose type the result's cannot hold, are released behind it; the others are left.
+let emitOwnedSlotDropsOutOfResultReach (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(state
+    |> stateGeneralRcOwnedSlots
+    |> reverse)(state))(state)
+
+// Whether the result reaches any owned slot of the function being finished.
+let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let slots = stateGeneralRcOwnedSlots(state)
+    in
+        let outside =
+            state
+            |> ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(slots)
+            |> ownedSlotsOf(stateActiveFunctionOrigin(state))
+        in
+            length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
 
 let recursive typeAtIndex (index: Int) (types: List(SemanticType)) =
     match types with
@@ -9669,7 +9813,7 @@ let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state:
 let ownedTupleResultPlan (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(bodyType) with
         | SemTuple(elements) as tuple ->
-            if !containsUnresolvedLayout(tuple)(state) && allRuntimeOwnedCopyElements(elements)(state) && resultReachesOwnedSlots(bodyTemp)(state)
+            if !containsUnresolvedLayout(tuple)(state) && allRuntimeOwnedCopyElements(elements)(state) && resultReachesOwnedSlots(bodyTemp)(tuple)(state)
             then argumentCopyPlanOf(tuple)(state)
             else None
         | _ -> None
@@ -10236,7 +10380,7 @@ let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalar
                                 |> stateTupleResultPartLabels
                                 |> Ashes.Collection.Map.setStr(label)(parts))(finished))
 
-let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) (state: CoreLoweringState) =
+let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (resultType: SemanticType) (parts: List(Int)) (scalars: List(Int)) (state: CoreLoweringState) =
     (let origin = stateActiveFunctionOrigin(state)
     in
         let registered =
@@ -10245,7 +10389,7 @@ let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (parts
             |> reverse
         in
             let kept =
-                ownedSlotsOutside(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)
+                ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)(state)
             in
                 match forwardTupleResultPartsRequest(resultTemp)(parts)(state) with
                     | Some(forwarded) ->
@@ -10272,7 +10416,7 @@ let finishGeneralRcFunctionResultOutsideContract (bodyTemp: Int) (bodyType: Sema
                             (copied
                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
                             |> emitGeneralRcOwnedSlotDrops, resultTemp)
-                | None -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(state), bodyTemp)
+                | None -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(bodyType)(state), bodyTemp)
         | _ -> (state, bodyTemp)
 
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
@@ -10304,7 +10448,7 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                         |> forwardTupleResultPartsRequestThroughGenericResult(label)(bodyTemp)(bodyType)
                         |> finishGeneralRcFunctionResultOutsideContract(bodyTemp)(bodyType)
                     | parts ->
-                        (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
+                        (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(bodyType)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
 
 let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(resolvePhantomResultLayout(label)(bodyType)(state))(state)
@@ -11731,98 +11875,6 @@ let candidateAdtManaged (candidate: TcoManagedCandidate) =
     match candidate.adtCopy with
         | Some(_copy) -> true
         | None -> false
-
-// Every constructor field of a named type, resolved, with whether the type has any constructor at
-// all: a type the lowering knows no constructor for proves nothing about its own layout.
-let recursive namedTypeConstructorFieldTypes (typeName: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (found: Bool) (fieldTypes: List(SemanticType)) =
-    match layouts with
-        | [] -> (found, fieldTypes)
-        | layout :: rest ->
-            match constructorResultName(layout) with
-                | Some(resultName) ->
-                    if resultName == typeName
-                    then
-                        match layoutFieldTypes(layout)(state) with
-                            | (layoutFields, _resultType) ->
-                                layoutFields
-                                |> map(resolveType(state))
-                                |> append(fieldTypes)
-                                |> namedTypeConstructorFieldTypes(typeName)(rest)(state)(true)
-                    else namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
-                | None -> namedTypeConstructorFieldTypes(typeName)(rest)(state)(found)(fieldTypes)
-
-// Stage 0's `InstantiatedFieldType` over every constructor of a named type: each field at the
-// instantiation the type arguments give, so a field of the declaration's own type parameter is
-// the argument in its place rather than a value of any type.
-let recursive namedTypeInstantiatedFieldTypes (typeName: Str) (arguments: List(SemanticType)) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) (fieldTypes: List(SemanticType)) =
-    match layouts with
-        | [] -> fieldTypes
-        | layout :: rest ->
-            if constructorResultNameIs(typeName)(layout)
-            then
-                match layoutFieldTypes(layout)(state) with
-                    | (layoutFields, SemNamed(_symbolId, _name, variables)) ->
-                        layoutFields
-                        |> map(arguments
-                        |> typeVariablePairs(variables)
-                        |> replaceTypeVariables)
-                        |> map(resolveType(state))
-                        |> append(fieldTypes)
-                        |> namedTypeInstantiatedFieldTypes(typeName)(arguments)(rest)(state)
-                    | (layoutFields, _resultType) ->
-                        layoutFields
-                        |> map(resolveType(state))
-                        |> append(fieldTypes)
-                        |> namedTypeInstantiatedFieldTypes(typeName)(arguments)(rest)(state)
-            else namedTypeInstantiatedFieldTypes(typeName)(arguments)(rest)(state)(fieldTypes)
-
-// Stage 0's `StructuralComponentTypes`: what a value of this type structurally contains as far as the
-// type itself says. A named type's fields are not among its type arguments, which the walk below
-// expands separately.
-let structuralComponentTypes (semanticType: SemanticType) =
-    match semanticType with
-        | SemList(element) -> [element]
-        | SemPointer(pointee) -> [pointee]
-        | SemTuple(elements) -> elements
-        | SemNamed(_id, _name, arguments) -> arguments
-        | SemCapability(_name, arguments) -> arguments
-        | _ -> []
-
-let namedTypeFieldTypesAs (instantiated: Bool) (name: Str) (arguments: List(SemanticType)) (state: CoreLoweringState) =
-    if instantiated
-    then
-        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorLayouts(state))(state)([])
-    else
-        match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
-            | (_found, fieldTypes) -> fieldTypes
-
-// Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
-// reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
-// (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
-// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
-// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
-// time regardless, so the same generic type at two instantiations still has both compared. A named
-// type's fields are read at its instantiation (`instantiated`), so a field of its own type parameter
-// is the argument in its place; the loop placement's sibling question reads them as declared.
-let recursive typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemFunction(_parameter, _result, _row) -> true
-        | resolved ->
-            resolved == argumentType || anyTypeMayContainArgumentType(instantiated)(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
-                | SemNamed(_id, name, arguments) ->
-                    if containsName(name)(expanded)
-                    then false
-                    else
-                        anyTypeMayContainArgumentType(instantiated)(namedTypeFieldTypesAs(instantiated)(name)(arguments)(state))(argumentType)(name :: expanded)(state)
-                | _ -> false)
-and anyTypeMayContainArgumentType (instantiated: Bool) (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match candidates with
-        | [] -> false
-        | candidate :: rest -> typeMayContainArgumentType(instantiated)(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(instantiated)(rest)(argumentType)(expanded)(state)
-
-let callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) = typeMayContainArgumentType(true)(resultType)(argumentType)(expanded)(state)
 
 // Stage 0's `IsPermanentlyBlockingTcoParam`: a sibling that keeps the frame's per-iteration
 // reclaim from ever running — heap-typed, neither a resource handle nor the loop's own unchanged

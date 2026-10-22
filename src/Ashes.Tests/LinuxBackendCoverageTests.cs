@@ -3061,6 +3061,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_opaque_handle_result_of_owned_record_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function hands an owned record a call built to a function returning an opaque foreign
+        // handle. The handle cannot hold the record, so it is released at the return.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildOpaqueHandleResultOfOwnedRecordProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("opaque handle result of an owned record", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13033,6 +13056,34 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countAll(keepIfLarge(n)(n))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildOpaqueHandleResultOfOwnedRecordProgram(int rounds)
+        => $$"""
+            external type Handle
+
+            external handleOf(Str) -> Handle = "strlen"
+
+            type Box =
+                | name: Str
+                | items: List(Str)
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (n: Int) = Box(name = wide + Ashes.Text.fromInt(n), items = [wide + Ashes.Text.fromInt(n), wide])
+
+            let register (box: Box) = handleOf(box.name)
+
+            let registerNew (n: Int) = register(make(n))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match registerNew(n) with
+                        | _handle -> rounds(n - 1)(total + 1)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

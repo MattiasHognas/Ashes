@@ -8,9 +8,11 @@ public sealed partial class Lowering
     /// <summary>
     /// The owned slots of <paramref name="ownedSlots"/> a function's result cannot point into: no
     /// value that can flow into the result is read from them. A result outside the contract's types
-    /// that holds no part of an owned value leaves that value to be released at the return.
+    /// that holds no part of an owned value leaves that value to be released at the return. A value
+    /// whose type no part of an owned value's type occurs in cannot hold it either, whatever flowed
+    /// into it (an owned name handed to a call returning an opaque handle, say).
     /// </summary>
-    private List<GeneralRcOwnedSlot> OwnedSlotsOutOfResultReach(int resultTemp, List<GeneralRcOwnedSlot> ownedSlots)
+    private List<GeneralRcOwnedSlot> OwnedSlotsOutOfResultReach(int resultTemp, TypeRef resultType, List<GeneralRcOwnedSlot> ownedSlots)
     {
         if (!ResultReachedOwnedSlotsEnabled || ownedSlots.Count == 0)
         {
@@ -18,7 +20,7 @@ public sealed partial class Lowering
         }
 
         HashSet<int> reached = LocalSlotsReachingTemp(resultTemp);
-        return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot))];
+        return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot) || !ResultTypeMayHoldPartOf(resultType, owned.Type))];
     }
 
     private static bool OwnedTupleResultEnabled =>
@@ -39,7 +41,7 @@ public sealed partial class Lowering
             && !IsRuntimeManagedResultTemp(bodyTemp)
             && !ContainsUnresolvedLayoutType(tuple, [])
             && CanRuntimeManageOwnedTupleType(tuple)
-            && OwnedSlotsOutOfResultReach(bodyTemp, _generalRcOwnedSlots).Count < _generalRcOwnedSlots.Count;
+            && OwnedSlotsOutOfResultReach(bodyTemp, resultType, _generalRcOwnedSlots).Count < _generalRcOwnedSlots.Count;
 
     private static bool ArenaTupleChildMoveEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_ARENATUPLECHILDMOVE") is null;

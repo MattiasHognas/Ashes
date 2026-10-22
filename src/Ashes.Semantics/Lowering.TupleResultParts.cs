@@ -260,7 +260,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        List<GeneralRcOwnedSlot> kept = OwnedSlotsOutOfResultReach(resultTemp, _generalRcOwnedSlots);
+        List<GeneralRcOwnedSlot> kept = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
         if (TryForwardTupleResultPartsRequest(resultTemp, parts))
         {
             EmitGeneralRcOwnedSlotDrops(kept);
