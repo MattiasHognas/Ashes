@@ -395,7 +395,7 @@ let expectOwnedChildRecordLoopParameterIsRuntimeManaged unit =
     |> loopLines("[ClosureHelper from step]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request and twice more when asked for the result's independence")(countContaining("LoadArgumentOwnership")(lines) == 4))
         |> (given (_) -> check("the entry copy and the result copy through the normalization helper")(countContaining("__rcnorm_")(lines) == 2))
         |> (given (_) -> check("the back-edge copy of the cell")(countContainingBoth("CopyOutArena")("StaticSizeBytes=16 RuntimeManaged=true")(lines) == 1))
         |> (given (_) -> check("the string child copies out with the cell copy")(countContainingBoth("CopyOutArena")("SrcTemp")(lines) == 2))
@@ -438,7 +438,7 @@ let expectNestedRecordLoopParameterIsRuntimeManaged unit =
     |> loopLines("[ClosureHelper from walk]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
+        |> (given (_) -> check("the entry normalizes the borrowed cell under the ownership flag, and the epilogue reads the word for the arena-result request and twice more when asked for the result's independence")(countContaining("LoadArgumentOwnership")(lines) == 4))
         |> (given (_) -> check("the field read is retained before the successor stores it, beside the skeleton's guarded duplicate of the scalar field")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 2 && countContaining("rc_constructor_field_not_retained")(lines) == 2))
         |> (given (_) -> check("the entry, the two children at the back edge, and the result copy through a normalization helper")(countContaining("__rcnorm_")(lines) == 4))
         |> (given (_) -> check("only the fresh literal's string releases inline")(countContainingBoth("RcDrop")("TypeName=String RuntimeManaged=true")(lines) == 1))
@@ -461,7 +461,7 @@ let expectRecordListAccumulatorIsRuntimeManaged unit =
     |> loopLines("[ClosureHelper from collect]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the entry normalizes the borrowed list under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
+        |> (given (_) -> check("the entry normalizes the borrowed list under the ownership flag, and the epilogue reads the word for the arena-result request and twice more when asked for the result's independence")(countContaining("LoadArgumentOwnership")(lines) == 4))
         |> (given (_) -> check("the entry deep-copies the list cell by cell")(countContaining("rc_normalize_list")(lines) > 0))
         |> (given (_) -> check("the record read is retained for the exit arm's cell and for the back edge's")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 2))
         |> (given (_) -> check("the exit arm's tail takes no retain")(countContainingBoth("RcDup")("MayBeEmpty=true")(lines) == 0))
@@ -519,7 +519,7 @@ let expectConsumedRecordHeadsEscapeIntoAccumulator unit =
     |> (given (lines) ->
         Unit
         |> (given (_) -> check("the list is normalized at entry through the cell walk")(countContaining("rc_normalize_list")(lines) > 0))
-        |> (given (_) -> check("the accumulator is normalized under the ownership flag, and the epilogue reads the word for the arena-result request")(countContaining("LoadArgumentOwnership")(lines) == 2))
+        |> (given (_) -> check("the accumulator is normalized under the ownership flag, and the epilogue reads the word for the arena-result request and twice more when asked for the result's independence")(countContaining("LoadArgumentOwnership")(lines) == 4))
         |> (given (_) -> check("the head's owner release names the structural dropper in both branches")(countContainingBoth("TypeName=Item OwnerSlot=")("StructuralDropperLabel=__rcdrop_structural")(lines) == 2))
         |> (given (_) -> check("the head is retained by its owner and once more for the successor, and the passed-through accumulator at its back edge")(countContainingBoth("RcDup")("RuntimeManaged=true")(lines) == 5))
         |> (given (_) -> check("no exit transfer for a result the function owns")(countContaining("rc_tco_exit_transfer")(lines) == 0)))
