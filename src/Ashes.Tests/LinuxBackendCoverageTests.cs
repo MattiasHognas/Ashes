@@ -3307,6 +3307,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_copied_successor_head_tuple_unannotated_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's accumulator, its type left to inference, grows by a cell whose head is a tuple
+        // holding a label a pattern binds out of the loop's list parameter. The parameter is placed
+        // on the reference-counted heap only once the self call's argument types resolve; the
+        // reference the tuple took for the label is released after the back edge copies the
+        // successor, or every iteration's label leaks.
+        int[] roundCounts = [4000, 64000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildCopiedSuccessorHeadTupleUnannotatedProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("copied successor head tuple with an inferred accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_generic_call_successor_sharing_owned_value_should_run()
     {
         if (!OperatingSystem.IsLinux())
@@ -13233,6 +13259,35 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildCopiedSuccessorHeadTupleUnannotatedProgram(int rounds)
+        => $$"""
+            type Kind =
+                | Target(Int, List(Str), Str)
+                | Other(Int)
+
+            let recursive collect instructions acc =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | Target(_, _, label) -> collect(tail)((label, 1) :: acc)
+                            | _ -> collect(tail)(acc)
+
+            let recursive total (entries: List((Str, Int))) (sum: Int) =
+                match entries with
+                    | [] -> sum
+                    | (_, c) :: rest -> total(rest)(sum + c)
+
+            let program n = [Target(1)(["a", "b" + Ashes.Text.fromInt(n)])("c"), Other(1), Target(2)([])("ab")]
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + total(collect(program(n))([]))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

@@ -583,6 +583,22 @@ public sealed partial class Lowering
     // The cons cells at the arms of a choice argument whose successor the back edge copies.
     private readonly HashSet<Expr> _backEdgeCopiedArmCells = new(ReferenceEqualityComparer.Instance);
 
+    // The tuples written as the heads of those cells: the back edge copies an arena head with the
+    // cell, its parts taking references of their own, so the tuple borrows them as the cell does.
+    private readonly HashSet<Expr> _backEdgeCopiedHeadTuples = new(ReferenceEqualityComparer.Instance);
+
+    // The head tuples of cells a back edge may yet copy: a successor whose parameter is placed on
+    // the reference-counted heap only once the self call's argument types resolve. Such a tuple
+    // is lowered as one the back edge keeps, so a pattern owner stored in it takes a duplicate.
+    private readonly HashSet<Expr> _backEdgeLateCopiedHeadTuples = new(ReferenceEqualityComparer.Instance);
+
+    // The duplicates those tuples took, by loop and argument position: released after the back
+    // edge has copied the successor, when the parameter did end up on the reference-counted heap.
+    private readonly List<LateCopiedHeadTupleDuplicate> _lateCopiedHeadTupleDuplicates = [];
+
+    // The loop and argument position of the self-call argument being lowered.
+    private (TcoContext Loop, int Index)? _backEdgeArgumentPosition;
+
     // The cons a loop returns onto one of its list parameters, while it is lowered.
     private Expr.Cons? _loopExitCell;
 
@@ -1293,6 +1309,10 @@ public sealed partial class Lowering
         // the other successors hold their own references.
         public (int Slot, int Temp)[] TransferredRootDrops { get; init; } = [];
 
+        // Duplicates a successor's head tuple took before its parameter was placed on the
+        // reference-counted heap, with the argument position they belong to.
+        public LateCopiedHeadTupleDuplicate[] LateCopiedHeadTupleDuplicates { get; init; } = [];
+
         public bool MovesPredecessorIntoTail(int index)
             => SingleFreshCons[index] || (index < ConsChainOverParameter.Length && ConsChainOverParameter[index]);
     }
@@ -1559,6 +1579,7 @@ public sealed partial class Lowering
         // until every successor has normalized its own RC graph, then release them before the arena
         // reset invalidates the borrowed shells.
         EmitDeferredTransferredRootDrops(info);
+        EmitLateCopiedHeadTupleDuplicateDrops(info);
         EmitDeferredTcoBackEdgeOwnedDrops(info, successorsNormalized: true);
         EmitGeneralRcBackEdgeDrops(info, successorsNormalized: true);
 
@@ -8114,6 +8135,7 @@ public sealed partial class Lowering
     {
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
         FinalizePerceusPatternBindingOwners(tco);
+        SettleLateCopiedHeadTupleDuplicates(tco);
         FinalizeTcoParameterAggregateRetains(tco);
         FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
@@ -11736,9 +11758,17 @@ public sealed partial class Lowering
         finally
         {
             _affineAppendCtx = savedAffineCtx;
-            _backEdgeCopiedCell = null;
-            _backEdgeCopiedArmCells.Clear();
+            ClearBackEdgeCopiedCells();
         }
+    }
+
+    private void ClearBackEdgeCopiedCells()
+    {
+        _backEdgeCopiedCell = null;
+        _backEdgeCopiedArmCells.Clear();
+        _backEdgeCopiedHeadTuples.Clear();
+        _backEdgeLateCopiedHeadTuples.Clear();
+        _backEdgeArgumentPosition = null;
     }
 
     // The cells of a successor the back edge copies, which borrow their parts: the argument's own
@@ -11753,6 +11783,135 @@ public sealed partial class Lowering
         {
             CollectChoiceArmCells(argument, _backEdgeCopiedArmCells);
         }
+
+        if (Environment.GetEnvironmentVariable("GRC_NO_COPIEDHEADTUPLE") is null)
+        {
+            CollectCopiedHeadTuple(_backEdgeCopiedCell, _backEdgeCopiedHeadTuples);
+            foreach (Expr cell in _backEdgeCopiedArmCells)
+            {
+                CollectCopiedHeadTuple(cell, _backEdgeCopiedHeadTuples);
+            }
+        }
+
+        NoteLateCopiedHeadTuples(tco, index, argument, copiedSuccessor);
+    }
+
+    // A successor not yet known to be copied (its parameter's type resolves with this argument)
+    // may still be copied once the loop's placement is final; its head tuples are noted so the
+    // duplicates they take can be released after that copy.
+    private void NoteLateCopiedHeadTuples(TcoContext tco, int index, Expr argument, bool copiedSuccessor)
+    {
+        if (copiedSuccessor
+            || !CopiedCellBorrowsEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LATECOPIEDHEADTUPLE") is not null
+            || index >= tco.ParamSlots.Count)
+        {
+            return;
+        }
+
+        _backEdgeArgumentPosition = (tco, index);
+        CollectCopiedHeadTuple(argument, _backEdgeLateCopiedHeadTuples);
+        var armCells = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+        CollectChoiceArmCells(argument, armCells);
+        foreach (Expr cell in armCells)
+        {
+            CollectCopiedHeadTuple(cell, _backEdgeLateCopiedHeadTuples);
+        }
+    }
+
+    private static void CollectCopiedHeadTuple(Expr? cell, HashSet<Expr> tuples)
+    {
+        if (cell is Expr.Cons { Head: Expr.TupleLit head })
+        {
+            tuples.Add(head);
+        }
+    }
+
+    // A late-copied head tuple left in the arena keeps the duplicates its pattern owners took.
+    private void RecordLateCopiedHeadTupleDuplicates(Expr.TupleLit tuple, List<(int Temp, TypeRef Type)> duplicates, bool runtimeManaged)
+    {
+        if (runtimeManaged
+            || duplicates.Count == 0
+            || _backEdgeArgumentPosition is not (TcoContext loop, int index)
+            || !_backEdgeLateCopiedHeadTuples.Contains(tuple))
+        {
+            return;
+        }
+
+        foreach ((int temp, TypeRef type) in duplicates)
+        {
+            _lateCopiedHeadTupleDuplicates.Add(new LateCopiedHeadTupleDuplicate(loop, index, temp, type));
+        }
+    }
+
+    private LateCopiedHeadTupleDuplicate[] TakeLateCopiedHeadTupleDuplicates(TcoContext tco)
+    {
+        LateCopiedHeadTupleDuplicate[] taken = [.. _lateCopiedHeadTupleDuplicates
+            .Where(duplicate => ReferenceEquals(duplicate.Loop, tco) && !duplicate.Taken)];
+        foreach (LateCopiedHeadTupleDuplicate duplicate in taken)
+        {
+            duplicate.Taken = true;
+        }
+
+        return taken;
+    }
+
+    // A duplicate is a marker until the loop's pattern owners are placed: it retains only where
+    // its owner's root parameter ended up on the reference-counted heap.
+    private void SettleLateCopiedHeadTupleDuplicates(TcoContext? tco)
+    {
+        if (tco is null || _lateCopiedHeadTupleDuplicates.Count == 0)
+        {
+            return;
+        }
+
+        var retaining = new HashSet<int>();
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is IrInst.RcDup { RuntimeManaged: true } dup)
+            {
+                retaining.Add(dup.Target);
+            }
+        }
+
+        foreach (LateCopiedHeadTupleDuplicate duplicate in _lateCopiedHeadTupleDuplicates)
+        {
+            if (ReferenceEquals(duplicate.Loop, tco))
+            {
+                duplicate.Retains = retaining.Contains(duplicate.Temp);
+            }
+        }
+
+        _lateCopiedHeadTupleDuplicates.RemoveAll(duplicate => ReferenceEquals(duplicate.Loop, tco));
+    }
+
+    // After the back edge has copied its successors: a successor whose parameter ended up on the
+    // reference-counted heap was copied with references of its own, so the duplicates its arena
+    // head tuples took are released.
+    private void EmitLateCopiedHeadTupleDuplicateDrops(PendingTcoReset info)
+    {
+        foreach (LateCopiedHeadTupleDuplicate duplicate in info.LateCopiedHeadTupleDuplicates)
+        {
+            if (duplicate.Retains && BackEdgeCopiesListSuccessor(info.Tco, duplicate.Index))
+            {
+                EmitRuntimeManagedResultDrop(duplicate.Temp, duplicate.Type);
+            }
+        }
+    }
+
+    private sealed class LateCopiedHeadTupleDuplicate(TcoContext loop, int index, int temp, TypeRef type)
+    {
+        public TcoContext Loop { get; } = loop;
+
+        public int Index { get; } = index;
+
+        public int Temp { get; } = temp;
+
+        public TypeRef Type { get; } = type;
+
+        public bool Taken { get; set; }
+
+        public bool Retains { get; set; }
     }
 
     // The cons cells a choice argument builds at its arms (`go(match acc with | [] -> [first]
@@ -12097,6 +12256,7 @@ public sealed partial class Lowering
                     && IsConsChainOverParameter(tco, argument, index))
                 .ToArray(),
             TransferredRootDrops = [.. _transferredRootDrops],
+            LateCopiedHeadTupleDuplicates = TakeLateCopiedHeadTupleDuplicates(tco),
         };
 
         // Every reset is resolved after the complete lambda body has been lowered. A later sibling
@@ -12113,7 +12273,8 @@ public sealed partial class Lowering
     }
 
     private static int[] PendingTcoResetUsedTemps(PendingTcoReset info)
-        => [.. info.ArgTemps, .. info.OldRuntimeParamTemps, .. info.TransferredRootDrops.Select(drop => drop.Temp)];
+        => [.. info.ArgTemps, .. info.OldRuntimeParamTemps, .. info.TransferredRootDrops.Select(drop => drop.Temp),
+            .. info.LateCopiedHeadTupleDuplicates.Select(duplicate => duplicate.Temp)];
 
     private static int[] PendingTcoResetReadLocalSlots(PendingTcoReset info)
     {
@@ -16159,11 +16320,13 @@ public sealed partial class Lowering
         // A successor tuple the back edge copies borrows its parts, as a copied successor cell does
         // (LowerConsTail): the copy takes references of its own before the iteration's owners are
         // released, so a pattern owner's duplicate stored in an arena tuple would never be released.
-        bool copiedSuccessor = ReferenceEquals(tuple, _backEdgeCopiedCell);
-        List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor);
+        bool copiedSuccessor = ReferenceEquals(tuple, _backEdgeCopiedCell) || _backEdgeCopiedHeadTuples.Contains(tuple);
+        var duplicates = new List<(int Temp, TypeRef Type)>();
+        List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor, duplicates);
 
         int tupleTemp = NewTemp();
         bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request);
+        RecordLateCopiedHeadTupleDuplicates(tuple, duplicates, runtimeManaged);
         if (copiedSuccessor && runtimeManaged)
         {
             DuplicatePatternOwnerElements(tuple, elements);
@@ -16196,7 +16359,8 @@ public sealed partial class Lowering
         LoweredValueRequest request,
         LoweredValueRequest elementRequest,
         LoweredValueRequest expectedRequest,
-        bool copiedSuccessor)
+        bool copiedSuccessor,
+        List<(int Temp, TypeRef Type)> duplicates)
     {
         var elements = new List<LoweredValue>(tuple.Elements.Count);
         for (int i = 0; i < tuple.Elements.Count; i++)
@@ -16215,6 +16379,10 @@ public sealed partial class Lowering
             int ownedTemp = copiedSuccessor
                 ? materialized.Temp
                 : DuplicatePerceusPatternOwnerForAggregate(element, materialized.Temp);
+            if (ownedTemp != materialized.Temp)
+            {
+                duplicates.Add((ownedTemp, materialized.Type));
+            }
             elements.Add(CreateLoweredValue(ownedTemp, materialized.Type));
             MarkResourceArgMoved(tuple.Elements[i]);
         }

@@ -47,3 +47,47 @@ internal sealed class LiteralArenaCellOverReferenceCountedCellTemplate() : LeakC
             """;
     }
 }
+
+/// <summary>
+/// A loop's accumulator grows by a cell whose head is a tuple holding a name a pattern binds out of
+/// the loop's list parameter. The back edge copies that successor with references of its own, so
+/// the tuple borrows the name; a duplicate it took would never be released. The accumulator's type
+/// is written out or left to inference, which places the parameter only once the self call's
+/// argument types resolve.
+/// </summary>
+internal sealed class CopiedSuccessorHeadTupleTemplate() : LeakCombinationTemplate(
+    "leak.copied-successor-head-tuple", "copiedHeadTuple", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string kind = names.Of("JumpKind");
+        string target = names.Of("Target");
+        string other = names.Of("OtherJump");
+        string collect = names.Of("collectTargets");
+        string total = names.Of("totalCounts");
+        string word = names.Word();
+        string parameters = names.Coin("annotated")
+            ? $$"""(instructions: List({{kind}})) (acc: List((Str, Int)))"""
+            : "instructions acc";
+        return $$"""
+            type {{kind}} =
+                | {{target}}(Int, List(Str), Str)
+                | {{other}}(Int)
+
+            let recursive {{collect}} {{parameters}} =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | {{target}}(_, _, label) -> {{collect}}(tail)((label, 1) :: acc)
+                            | _ -> {{collect}}(tail)(acc)
+
+            let recursive {{total}} (entries: List((Str, Int))) (sum: Int) =
+                match entries with
+                    | [] -> sum
+                    | (_, count) :: rest -> {{total}}(rest)(sum + count)
+
+            let {{names.Entry}} (seed: Int) = {{total}}({{collect}}([{{target}}(1)([{{word}}, {{word}} + Ashes.Text.fromInt(seed)])({{word}}), {{other}}(1), {{target}}(2)([])({{word}})])([]))(0) + seed
+            """;
+    }
+}

@@ -865,6 +865,7 @@ function lambda_8  [ClosureHelper from addKnown]
     RcDrop                SourceTemp=225 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_210
   rcdrop_list_end_210:
+    RcDrop                SourceTemp=28 TypeName=String RuntimeManaged=true
     StoreLocal            Slot=2 Source=35
     LoadConstInt          Target=233 Value=1
     StoreLocal            Slot=24 Source=233

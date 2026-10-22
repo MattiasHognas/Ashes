@@ -283,6 +283,10 @@ type ConsumerRequest =
     // parameter whose back edge copies its successor with references of its own borrows its head
     // and tail, taking no pattern-owner duplicate of them.
     | borrowsCellParts: Bool
+    // The same cons when the loop's placement of that parameter waits on the self call's argument
+    // types (an accumulator whose type is left to inference): its cells borrow their parts once
+    // those types say the back edge copies the successor.
+    | lateCopiedCellParts: Bool
     // Stage 0's `_callArgumentCell`: the cons written as a call's argument and asked for as a loop's
     // exit cell (`withEscapingArgumentCell`). It reaches the cons itself, through its spans, and
     // nothing else.
@@ -310,6 +314,7 @@ let emptyConsumerRequest =
         consTailPosition = false,
         runtimeTcoListTailSlot = None,
         borrowsCellParts = false,
+        lateCopiedCellParts = false,
         escapingArgumentCell = false
     )
 
@@ -3233,6 +3238,7 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         then request.runtimeTcoListTailSlot
         else None,
         borrowsCellParts = consPartsRequestForwards(expression) && request.borrowsCellParts,
+        lateCopiedCellParts = consPartsRequestForwards(expression) && request.lateCopiedCellParts,
         escapingArgumentCell = argumentCellRequestForwards(expression) && request.escapingArgumentCell
     )
 
@@ -20511,8 +20517,39 @@ let borrowedConsParts (headExpression: Expr) (head: LoweredCoreValue) (tail: Low
             in ((head with state = kept), (tail with state = kept))
         | _ -> (head, tail)
 
+// Stage 0's `BackEdgeCopiesListSuccessor`: a choice accumulator already placed on the
+// reference-counted heap has its successor copied at the back edge with references of its own,
+// before the iteration's owners are released, so an arena cell built for it borrows its children;
+// a retain stored in that cell would never be released.
+let backEdgeCopiesListSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (shape, slot, stateTcoLoopFrame(state)) with
+        | (TcoChoiceAccumulatorShape, Some(parameterSlot), Some(frame)) -> loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
+        | (_shape, Some(parameterSlot), Some(frame)) ->
+            if accumulatorRouteShape(shape)
+            then
+                match ordinalOfSlot(parameterSlot)(frame.parameterSlots)(0) with
+                    | Some(ordinal) -> isAccumulatorRebuildListSlot(ordinal)(parameterSlot)(loop)(state) && loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
+                    | None -> false
+            else false
+        | _ -> false
+
+// Stage 0's `NoteLateCopiedHeadTuples`: whether the back edge now copies the successor of the
+// self-call argument being lowered, once the cell's own types have resolved the parameter's.
+let backEdgeArgumentNowCopied (state: CoreLoweringState) =
+    match (stateBackEdgeArgumentSlot(state), stateTcoLoop(state), stateTcoLoopFrame(state)) with
+        | (Some(slot), Some(loop), Some(frame)) ->
+            match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
+                | Some(ordinal) ->
+                    backEdgeCopiesListSuccessor(Some(slot))(shapeAtOrdinal(ordinal)(loop.argumentShapes))(loop)(state)
+                | None -> false
+        | _ -> false
+
+let tailStateOf (tail: LoweredCoreValue) =
+    match tail with
+        | LoweredCoreValue { state = state } -> state
+
 let consPartsFor (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
-    if request.borrowsCellParts
+    if request.borrowsCellParts || request.lateCopiedCellParts && backEdgeArgumentNowCopied(tailStateOf(tail))
     then borrowedConsParts(headExpression)(head)(tail)
     else duplicatePatternOwnerConsParts(headExpression)(tailExpression)(head)(tail)
 
@@ -24915,22 +24952,6 @@ let loweredTailSelfCallArguments (state: CoreLoweringState) (reversedTemps: List
 // its runtime-managed parameter reaches, so the back edge stores it as the parameter's own value;
 // a fresh string that reads no parameter (`fromInt(n) + "-x"`) is built in the arena and copied
 // out by the back edge.
-// Stage 0's `BackEdgeCopiesListSuccessor`: a choice accumulator already placed on the
-// reference-counted heap has its successor copied at the back edge with references of its own,
-// before the iteration's owners are released, so an arena cell built for it borrows its children;
-// a retain stored in that cell would never be released.
-let backEdgeCopiesListSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
-    match (shape, slot, stateTcoLoopFrame(state)) with
-        | (TcoChoiceAccumulatorShape, Some(parameterSlot), Some(frame)) -> loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
-        | (_shape, Some(parameterSlot), Some(frame)) ->
-            if accumulatorRouteShape(shape)
-            then
-                match ordinalOfSlot(parameterSlot)(frame.parameterSlots)(0) with
-                    | Some(ordinal) -> isAccumulatorRebuildListSlot(ordinal)(parameterSlot)(loop)(state) && loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
-                    | None -> false
-            else false
-        | _ -> false
-
 let isConsExpression (expression: Expr) =
     match unspanArgument(expression) with
         | ExprCons(_head, _tail) -> true
@@ -24949,7 +24970,7 @@ let buildsCopiedCells (expression: Expr) =
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
     withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
     then tailSlot
-    else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument)))(state)
+    else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument), lateCopiedCellParts = !copiesSuccessor && buildsCopiedCells(argument)))(state)
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
 // A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was
