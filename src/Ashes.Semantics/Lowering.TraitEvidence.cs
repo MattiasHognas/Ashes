@@ -2272,8 +2272,7 @@ public sealed partial class Lowering
             TypeRef valueType = Prune(argument.Type);
             if (valueType is TypeRef.TFun
                 || CanArenaReset(valueType)
-                || ContainsUnresolvedLayoutType(valueType, [])
-                || !CallResultMayContainArgumentType(resultType, valueType, new HashSet<string>(StringComparer.Ordinal)))
+                || ContainsUnresolvedLayoutType(valueType, []))
             {
                 continue;
             }

@@ -3299,6 +3299,56 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_call_successor_sharing_owned_value_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The same loop's accumulator is a list of pairs, replaced in one arm by a generic call's
+        // result built over an owned value of the iteration. Placed on the reference-counted heap,
+        // the back edge copies that result and the owned value is released under the copy; left in
+        // the arena, the owned value has no owner and leaks every round.
+        int[] roundCounts = [4000, 32000, 128000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildGenericCallSuccessorSharingOwnedValueProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic call's successor over an owned value", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_nested_constrained_helper_list_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A nested constrained helper (it compares through `Eq`) is handed a list a pattern binds
+        // out of the loop's list parameter. Its result keeps the list's strings, never the list
+        // itself, yet the reference the list takes for that result is released only once the
+        // loop's successor holds references of its own; left with the arena result, it leaks.
+        int[] roundCounts = [4000, 32000, 128000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildNestedConstrainedHelperListArgumentProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nested constrained helper's list argument", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_phantom_tuple_result_fresh_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13136,6 +13186,50 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + total(collect([Some("a"), Some("b" + Ashes.Text.fromInt(n)), None, Some("a"), Some("c")])([]))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildNestedConstrainedHelperListArgumentProgram(int rounds)
+        => $$"""
+            type Kind =
+                | SwitchTag(List(Str), Str)
+                | Other(Int)
+
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let recursive countRefs instructions acc =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | SwitchTag(cases, defaultLabel) ->
+                                let recursive addCases cs entries =
+                                    match cs with
+                                        | [] -> entries
+                                        | l :: cTail -> addCases(cTail)(setAssociation(l)(1)(entries))
+                                in
+                                    let mapWithCases = addCases(cases)(acc)
+                                    in countRefs(tail)(setAssociation(defaultLabel)(1)(mapWithCases))
+                            | _ -> countRefs(tail)(acc)
+
+            let recursive total (refs: List((Str, Int))) (sum: Int) =
+                match refs with
+                    | [] -> sum
+                    | (_, c) :: tail -> total(tail)(sum + c)
+
+            let run n = total(countRefs([SwitchTag(["a", "b" + Ashes.Text.fromInt(n)])("c"), Other(1), SwitchTag([])("a")])([]))(0)
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

@@ -7078,12 +7078,48 @@ let refreshedArgumentRuntime (temp: Int) (scheduled: Bool) (state: CoreLoweringS
 // handed on and replaced by a call's result, whose own route places only strings and scalars.
 let accumulatorRouteShape (shape: TcoArgumentShape) = !isTcoListShape(shape) || shape == TcoRefilledFreshListShape
 
+// Stage 0's `HasBoundedCopy`: a value of the type is a bounded graph, no list and no recursive
+// type, so copying it on every iteration costs the same each time rather than growing with what
+// the loop builds.
+let recursive hasBoundedCopy (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(_element) -> false
+        | SemTuple(elements) -> allBoundedCopies(elements)(path)(state)
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            if containsType(named)(path)
+            then false
+            else
+                match heapFactsOf(named)(state) with
+                    | HeapLayoutFacts { children = children } -> allChildrenBoundedCopies(children)(named :: path)(state)
+        | _ -> true
+and allBoundedCopies (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> true
+        | semanticType :: rest -> hasBoundedCopy(semanticType)(path)(state) && allBoundedCopies(rest)(path)(state)
+and allChildrenBoundedCopies (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match children with
+        | [] -> true
+        | HeapLayoutChild { childType = childType } :: rest -> hasBoundedCopy(childType)(path)(state) && allChildrenBoundedCopies(rest)(path)(state)
+
+// Whether a loop can place a list of this element on the reference-counted heap, as
+// `tcoListElementSupported` answers.
+let placesTcoListElement (element: SemanticType) (state: CoreLoweringState) =
+    match heapFactsOf(element)(state) with
+        | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
+
+// Stage 0's `IsCallResultAccumulatorElement`: an accumulator a self-call replaces with a call's
+// result holds the contract's values or any other heap element the loop can place whose graph is
+// bounded (no list): its arena cells would otherwise keep values the iteration owns with no owner
+// left to release them. A list inside an element may be handed to an arena sibling parameter,
+// which would keep it past the predecessor the back edge releases.
+let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcNamedType(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state) && hasBoundedCopy(element)([])(state)
+
 // A list placed on the reference-counted heap as an accumulator rebuild is normalized and released
 // at a back edge like a choice accumulator: its reset argument carries that shape.
 let resetArgumentShape (shape: TcoArgumentShape) (ordinal: Int) (managedList: Maybe((Int, SemanticType))) (state: CoreLoweringState) =
     match (managedList, stateTcoLoop(state)) with
         | (Some((_activeSlot, elementType)), Some(loop)) ->
-            if accumulatorRouteShape(shape) && isGeneralRcNamedType(elementType)(state) && containsInt(ordinal)(loop.accumulatorRebuildOrdinals)
+            if accumulatorRouteShape(shape) && isCallResultAccumulatorElement(elementType)(state) && containsInt(ordinal)(loop.accumulatorRebuildOrdinals)
             then TcoAccumulatorRebuildShape
             else shape
         | _ -> shape
@@ -8985,29 +9021,6 @@ let emitArenaCopyOfReferenceCounted (sourceTemp: Int) (semanticType: SemanticTyp
                                     |> freshTemp with
                                         | FreshTemp { state = loaded, temp = resultTemp } ->
                                             (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
-
-// Stage 0's `HasBoundedCopy`: a value of the type is a bounded graph, no list and no recursive
-// type, so copying it on every iteration costs the same each time rather than growing with what
-// the loop builds.
-let recursive hasBoundedCopy (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemList(_element) -> false
-        | SemTuple(elements) -> allBoundedCopies(elements)(path)(state)
-        | SemNamed(_symbolId, _name, _arguments) as named ->
-            if containsType(named)(path)
-            then false
-            else
-                match heapFactsOf(named)(state) with
-                    | HeapLayoutFacts { children = children } -> allChildrenBoundedCopies(children)(named :: path)(state)
-        | _ -> true
-and allBoundedCopies (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> true
-        | semanticType :: rest -> hasBoundedCopy(semanticType)(path)(state) && allBoundedCopies(rest)(path)(state)
-and allChildrenBoundedCopies (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match children with
-        | [] -> true
-        | HeapLayoutChild { childType = childType } :: rest -> hasBoundedCopy(childType)(path)(state) && allChildrenBoundedCopies(rest)(path)(state)
 
 // Stage 0's `CopyTransferRetainedSuccessorsIntoArena` for one parameter: a back edge that keeps
 // the iteration's arena hands an arena parameter a successor it retained out of an owner the
@@ -11505,7 +11518,7 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (sta
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && (shape == TcoGrownConsShape || shape == TcoAccumulatorRebuildShape) || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
@@ -14273,6 +14286,17 @@ let readsEntryPlacedLoopParameter (argument: Expr) (state: CoreLoweringState) =
                 | None -> false
         | _ -> false
 
+// A pattern binding extracted from a loop parameter stage 0 places on the reference-counted heap
+// at the loop's entry: stage 0's `TryGetRuntimeManagedPatternBindingArgument` leaves no pending
+// slot for it, its root's placement being settled already.
+let readsEntryPlacedPatternRoot (argument: Expr) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (Some(frame), Some(loop)) ->
+            match patternBindingArgumentRootSlot(argument)(state) with
+                | Some(rootSlot) -> rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
+                | None -> false
+        | _ -> false
+
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
 // the callee's result may keep is retained outright, its flag registered as pending. A value of
 // the contract's types is always passed borrowed, whatever the callee's own summary says; the type
@@ -14281,7 +14305,7 @@ let readsEntryPlacedLoopParameter (argument: Expr) (state: CoreLoweringState) =
 // here. A function's call to itself has no summary yet (stage 0's `GetOwnershipSummaryForCallRoot`
 // answers nothing for a bound name), so no reach of it retains a borrowed loop argument.
 let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argumentTemp (resultNormalizedOwned: Bool) state =
-    match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state) || readsEntryPlacedLoopParameter(argument)(state), argumentRootSlotOf(argument)(state), isFreshRuntimeArgument(argument)(argumentTemp)(state)) with
+    match (isRuntimeManagedCallArgument(argument)(argumentTemp)(state) || readsEntryPlacedLoopParameter(argument)(state) || readsEntryPlacedPatternRoot(argument)(state), argumentRootSlotOf(argument)(state), isFreshRuntimeArgument(argument)(argumentTemp)(state)) with
         | (runtimeArgument, rootSlot, fresh) ->
             let calleeBorrows = calleeParameterBorrows(facts)(index)
             in

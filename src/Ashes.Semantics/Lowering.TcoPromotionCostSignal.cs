@@ -444,7 +444,7 @@ public sealed partial class Lowering
             && !tco.TmcShapePresent
             && !facts.ConsumedListTail
             && !facts.LoopInvariant
-            && ((IsGeneralRcValueType(list.Element)
+            && ((IsCallResultAccumulatorElement(list.Element)
                     && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.AccumulatorRebuild)
                         .Contains(facts.ParameterOrdinal))
                 || (IsChoiceAccumulatorElement(list.Element)
@@ -488,6 +488,18 @@ public sealed partial class Lowering
             || (Environment.GetEnvironmentVariable("GRC_NO_WALKREFILLPATHS") is null
                 && element is TypeRef.TList inner
                 && Prune(inner.Element) is TypeRef.TStr);
+
+    // An accumulator one self-call replaces with a call's result: a list of the contract's values,
+    // or of any other heap element whose graph is bounded (no list). Left in the arena, the call's
+    // result is built over values the iteration owns (an earlier helper's result), which then have
+    // no owner left to release them. A list inside an element may be handed on to an arena sibling
+    // parameter, which would keep it past the predecessor the back edge releases.
+    private bool IsCallResultAccumulatorElement(TypeRef element)
+        => IsGeneralRcValueType(element)
+            || (Environment.GetEnvironmentVariable("GRC_NO_HEAPACCUMULATOR") is null
+                && !CanArenaReset(Prune(element))
+                && CanRuntimeManageTcoListElement(element)
+                && HasBoundedCopy(element, []));
 
     private bool IsChoiceAccumulatorElement(TypeRef element)
         => Environment.GetEnvironmentVariable("GRC_NO_BRANCHACCUMULATOR") is null

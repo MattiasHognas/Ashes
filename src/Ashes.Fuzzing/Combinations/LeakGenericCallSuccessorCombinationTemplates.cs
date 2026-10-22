@@ -144,3 +144,60 @@ internal sealed class PatternOwnerHandedToConstrainedCallTemplate() : LeakCombin
             """;
     }
 }
+
+/// <summary>
+/// A loop over instructions hands a list a pattern binds out of its list parameter to a nested
+/// constrained helper (it compares labels through <c>Eq</c>), then replaces its accumulator with a
+/// generic call's result over the helper's. The helper's result keeps the list's strings, never the
+/// list; the reference the list takes for the call is released once the successor holds its own.
+/// </summary>
+internal sealed class NestedConstrainedHelperListArgumentTemplate() : LeakCombinationTemplate(
+    "leak.nested-constrained-helper-list-argument", "nestedConstrainedHelperList", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string kind = names.Of("SwitchKind");
+        string switchTag = names.Of("SwitchTag");
+        string other = names.Of("OtherKind");
+        string set = names.Of("setAssociation");
+        string count = names.Of("countRefs");
+        string total = names.Of("totalCounts");
+        string word = names.Word();
+        string value = LeakNames.Text(names.Between(1, 9));
+        return $$"""
+            type {{kind}} =
+                | {{switchTag}}(List(Str), Str)
+                | {{other}}(Int)
+
+            let recursive {{set}} key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: rest ->
+                        if k == key
+                        then (key, value) :: rest
+                        else (k, v) :: {{set}}(key)(value)(rest)
+
+            let recursive {{count}} instructions acc =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | {{switchTag}}(cases, defaultLabel) ->
+                                let recursive addCases cs entries =
+                                    match cs with
+                                        | [] -> entries
+                                        | l :: cTail -> addCases(cTail)({{set}}(l)({{value}})(entries))
+                                in
+                                    let mapWithCases = addCases(cases)(acc)
+                                    in {{count}}(tail)({{set}}(defaultLabel)(1)(mapWithCases))
+                            | _ -> {{count}}(tail)(acc)
+
+            let recursive {{total}} (entries: List((Str, Int))) (sum: Int) =
+                match entries with
+                    | [] -> sum
+                    | (_, n) :: rest -> {{total}}(rest)(sum + n)
+
+            let {{names.Entry}} (seed: Int) = {{total}}({{count}}([{{switchTag}}([{{word}}, {{word}} + Ashes.Text.fromInt(seed)])("c"), {{other}}(1), {{switchTag}}([])({{word}})])([]))(0) + seed
+            """;
+    }
+}
