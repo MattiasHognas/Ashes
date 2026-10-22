@@ -561,6 +561,61 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    borrowed, such as a binding matched out of a sibling parameter kept in the arena, and the leak had
    been hiding that. A release must follow the retain it balances, not the literal's shape; until
    then the literal release is a latent use-after-free on `main`.
+
+   **The round of October 2026.** Landed as one pull request off `selfhost/step-e-leaks`, every rule
+   in stage 0 with its stage-1 mirror, a `leak.*` census template that leaks with the rule's
+   `GRC_NO_*` switch set, an e2e test and a C# plateau test. Measured on the same input, the module
+   probe at 60 seconds, against the stage 1 of `main` after #1139:
+
+   | | `main` | this round |
+   |---|---|---|
+   | Reference-counted heap leaked for certain | 307 MB (64%, 8.0 million cells) | 151 MB (43%, 4.0 million cells) |
+   | Probe peak | 709 MB | 534 MB |
+   | Time to the trait-evidence stop | 78.5 s | 69.6 s |
+
+   What it closed, by group:
+   - **The class-11 ABI change.** A generic function returning a tuple that holds contract values
+     hands those parts to a caller that asks, through bit 2 of the hidden ownership word. A callee
+     reports at run time which parts it handed over (a mask written to a word the caller passes), so
+     a caller of a closure it cannot name, and a generic forwarder such as `apply f k = f(k)(k)`, ask
+     too. The arena-result request is read as bit 1 alone.
+   - **Owned values left at a function's return.** A function releases owned values its result
+     cannot reach, by value flow and by the heap types its result can hold; a tuple result holding a
+     part of an owned value takes it over; a recursive function's own binding no longer hides its
+     result's phantom variables. Stage 1's own sites went from 26 (40 values) to 9 (12).
+   - **Loops and accumulators.** Exit cells passed to a call (which leaked the lexer's whole token
+     list once per file, 47 MB of the probe), fresh starts beside cons edges, cons chains whose heads
+     read a loop parameter, emptied and refilled worklists, walked-or-refilled paths, bounded heap
+     elements rebuilt by a call, a loop parameter the body never reads, a variant node holding a
+     walked head, release before a branch that last reads an owner, a consumed list's root released
+     after the successors, and a constrained call's argument handed to its successor.
+   - **Closures.** A closure call that only borrows its argument takes no duplicate (stage 0 looked
+     the call up by reference after re-creating it, so it never matched; stage 1 had no record); a
+     lambda applied where it is written hands its result over owned; a call through a captured self
+     reads the callee's returns bit; a cons onto a fresh counted call result is counted.
+   - **Builtins in stage 1.** Builtin results, error messages, syscall strings, `Bytes.subView` and
+     `File.mmap` views are built in the arena as stage 0 builds them; `Byte.allocate` and the byte
+     updates are lowered as stage 0 lowers them; a fresh buffer read by a builtin is released, and a
+     loop places a `Bytes` parameter on the counted heap.
+   - **Literals and tuples.** A list literal whose arena cell sits over a counted cell is counted; a
+     copied successor's head tuple borrows its parts.
+   - **Crashes found on the way:** a nested `let recursive` helper whose label became known exposed
+     two release-order bugs, one reachable from a 15-line program; stage 1's IR optimizer crashed
+     restoring a sibling list from an accumulator's pairs; stage 1's backend test assumed LLVM 22's
+     assembly layout and the suite loaded the system LLVM, not the bundled one.
+   - **The source workarounds are gone:** `Text.join`, the `upsertStr` map insert, `pruneCaptureList`
+     and `stepLiveness` are back in their original form, which shows the compiler rules cover them.
+
+   Signed off for this round: `regex-redux` peaks 9% higher (1436 to 1566 MB), `k-nucleotide` runs
+   6% slower and `fannkuch-redux` 4% slower, with identical output everywhere. Speed is not the
+   question while the leaks are.
+
+   Still open in E: generic named results (`Result`, `Maybe`, `List`) of contract values, which get
+   the same run-time hand-over as tuples; stage 1's remaining unreduced shapes (the `(label, index)`
+   pairs, the parser's qualified-identifier list, the lexer's string retain); the back-edge arena
+   compaction stage 1 lacks; and the exit census over N and N+1 generated functions with the memory
+   plateau that show E is done. Winning back `n-body`'s 4 to 5% and reclaiming the persistent map's
+   region are no longer part of E and follow it as tasks of their own.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
