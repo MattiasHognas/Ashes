@@ -304,5 +304,6 @@ function _start_main  [ProgramEntry]
     Return                Source=78
   _start_main_rc_edge_10_9:
     RcDrop                SourceTemp=14 TypeName=Tree OwnerSlot=10
+    RcDrop                SourceTemp=8 TypeName=Tree OwnerSlot=4
     Jump                  Target=match_group_default_16
 

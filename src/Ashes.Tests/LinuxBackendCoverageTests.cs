@@ -3307,6 +3307,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_owner_released_on_earlier_owner_split_edge_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop binds a record's name and its list of uses, matches the list, and under a condition
+        // skips the name. The release of the matched list's head binding splits the edges out of
+        // the accumulator's release loop first; the name's release must reach those split edges
+        // too, or every skipped name leaks.
+        int[] roundCounts = [4000, 64000, 256000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildOwnerReleasedOnSplitEdgeProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = (5L * rounds) + ((long)rounds * (rounds + 1) / 2);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("owner released on an earlier owner's split edge", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_copied_successor_head_tuple_unannotated_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13259,6 +13285,41 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildOwnerReleasedOnSplitEdgeProgram(int rounds)
+        => $$"""
+            type Fact =
+                | name: Str
+                | uses: List(Int)
+
+            let recursive withFacts items acc =
+                match items with
+                    | [] -> acc
+                    | item :: rest -> withFacts(rest)(Fact(name = "a fact whose name is long enough that one leaked copy per round shows in the peak resident set: " + Ashes.Text.fromInt(item), uses = [item, item + 1]) :: acc)
+
+            let recursive addKnown facts known =
+                match facts with
+                    | [] -> known
+                    | Fact { name = name, uses = uses } :: rest ->
+                        match uses with
+                            | first :: _ ->
+                                if first > 1
+                                then addKnown(rest)((name, first) :: known)
+                                else addKnown(rest)(known)
+                            | [] -> addKnown(rest)((name, 0) :: known)
+
+            let recursive total (names: List((Str, Int))) (sum: Int) =
+                match names with
+                    | [] -> sum
+                    | (_, first) :: rest -> total(rest)(sum + first)
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + total(addKnown(withFacts([1, 2, n + 3])([]))([]))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
