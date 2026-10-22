@@ -1408,6 +1408,16 @@ function's such tuple, or a result of unresolved type, as a generic `apply f x =
 forwards its own caller's request and address to that call, in place of a request of its own, and
 takes no parts itself; the callee answers the caller that asked.
 
+A result outside the contract's types can also be one of the function's owned values returned as it
+is: a generic `Result(e, T)` whose `Ok` arm returns an owned call result of type `Result(Never, T)`,
+say. The function cannot release that value, and its caller, which may know the concrete type, does
+not know it owns it. A caller of such a function asks with the same request (no parts named); when
+it is asked and its result, a reference-counted value, is at run time the value one of its owned
+values holds, the function hands that reference over whole: it leaves that owned value unreleased
+and writes bit 62 into the mask. The caller then takes the result as the owned value of its own
+type, without copying it. A function returning another call's result of unresolved type as it is
+forwards the request to that call, as for a tuple.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:
 exactly those, read back from the instructions that built the cell, so a child the construction only

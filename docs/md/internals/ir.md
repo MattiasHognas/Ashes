@@ -285,7 +285,9 @@ one it names whose compiled body may hand the parts over or forward the request,
 it cannot name. A function that returns a call's result as it is (a generic forwarder applying a
 closure parameter, or a function returning another's generic tuple result) passes its own word's
 bit 2 and address (`word & -4`) on to that call, so the callee writes the mask into the word of
-the caller that asked.
+the caller that asked. Bit 62 of the mask says the whole result was handed over: a function whose
+reference-counted result is, at run time, the value one of its owned values holds leaves that
+value unreleased, and the caller takes the result as its own owned value without copying it.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

@@ -85,7 +85,7 @@ public sealed partial class Lowering
         }
 
         int[] parts = candidates.Length > 0 ? candidates : calleeParts;
-        return parts.Length > 0 ? parts : null;
+        return parts.Length > 0 || (_wholeResultHandOverLabels.Contains(label) && IsGeneralRcValueType(resultType)) ? parts : null;
     }
 
     private static int[]? UnknownCalleeTupleResultParts(int[] candidates)
@@ -359,11 +359,20 @@ public sealed partial class Lowering
             || !TupleResultPartsSignalEnabled
             || !GeneralRcEnabled
             || _inCoroutineBody
-            || Prune(resultType) is not TypeRef.TVar
+            || !IsGenericResultForwardedAsIs(resultType)
             || SoleCallThroughLocals(resultTemp) is not { } call
-            || _tupleResultPartsRequests.ContainsKey(call)
-            || _withdrawnTupleResultPartsRequests.ContainsKey(call))
+            || _tupleResultPartsRequests.ContainsKey(call))
         {
+            return;
+        }
+
+        if (_withdrawnTupleResultPartsRequests.TryGetValue(call, out TupleResultPartsRequest? withdrawn))
+        {
+            if (WholeResultHandOverEnabled && TryForwardTupleResultPartsRequest(resultTemp, withdrawn.Parts))
+            {
+                NoteResultRequestForwarder(label);
+            }
+
             return;
         }
 
@@ -396,7 +405,26 @@ public sealed partial class Lowering
 
         _inst.InsertRange(callIndex, forwarded);
         ShiftRecordedInstructionIndices(callIndex - 1, forwarded.Count);
+        NoteResultRequestForwarder(label);
+    }
+
+    // A result of unresolved type, or of a generic named type outside the contract's types (a
+    // `Result(e, T)` with `e` unresolved), whose caller may know a concrete type to ask for.
+    private bool IsGenericResultForwardedAsIs(TypeRef resultType)
+        => Prune(resultType) is TypeRef.TVar
+            || (WholeResultHandOverEnabled
+                && Prune(resultType) is TypeRef.TNamedType named
+                && ContainsUnresolvedLayoutType(named, [])
+                && !IsGeneralRcValueType(named));
+
+    // A function forwarding its caller's request: callers ask it as they ask the function it calls.
+    private void NoteResultRequestForwarder(string label)
+    {
         _tupleResultPartLabels.TryAdd(label, []);
+        if (WholeResultHandOverEnabled)
+        {
+            _wholeResultHandOverLabels.Add(label);
+        }
     }
 
     // On the hand-over path: the mask of the parts handed over, written into the caller's word.
@@ -408,6 +436,12 @@ public sealed partial class Lowering
             mask |= 1L << part;
         }
 
+        EmitResultHandOverMask(mask);
+    }
+
+    // The mask of what was handed over, written into the word the caller's request addresses.
+    private void EmitResultHandOverMask(long mask)
+    {
         int wordTemp = NewTemp();
         Emit(new IrInst.LoadArgumentOwnership(wordTemp));
         int addressBitsTemp = NewTemp();

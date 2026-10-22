@@ -91,6 +91,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new BytesFreshReadOperandTemplate());
         registry.Register(new BytesLoopBufferTemplate());
         registry.Register(new OpaqueHandleResultOfOwnedRecordTemplate());
+        registry.Register(new GenericResultHandsOverOwnedCallResultTemplate());
     }
 }
 

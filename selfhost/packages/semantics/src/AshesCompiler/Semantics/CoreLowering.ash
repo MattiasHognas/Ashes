@@ -8291,14 +8291,6 @@ let recursive ownedSlotsOutsideResult (resultType: SemanticType) (reached: List(
             then ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
             else owned :: ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
 
-// Stage 0's `OwnedSlotsOutOfResultReach`: a result outside the contract's types may still point
-// into the function's owned values, so only the owned slots no value flowing into the result is
-// read from, or whose type the result's cannot hold, are released behind it; the others are left.
-let emitOwnedSlotDropsOutOfResultReach (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    emitGeneralRcOwnedSlotDropsOf(stateActiveFunctionOrigin(state))(ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(state
-    |> stateGeneralRcOwnedSlots
-    |> reverse)(state))(state)
-
 // Whether the result reaches any owned slot of the function being finished.
 let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     (let slots = stateGeneralRcOwnedSlots(state)
@@ -10262,12 +10254,6 @@ let forwardTupleResultPartsRequest (resultTemp: Int) (parts: List(Int)) (state: 
                     match freshTempRun(2)(state) with
                         | FreshTemp { state = allocated, temp = wordTemp } -> Some((allocated with reversedInstructions = forwardRequestWord(request)(wordTemp)(allocated.reversedInstructions))))
 
-// Whether a call has a withdrawn request on record.
-let recursive hasWithdrawnRequest (callTemp: Int) (requests: List((Int, Int, List(Int)))) =
-    match requests with
-        | [] -> false
-        | (resultTemp, _request, _asked) :: rest -> resultTemp == callTemp || hasWithdrawnRequest(callTemp)(rest)
-
 // The call producing `callTemp` with its ownership word replaced by `word` and the forwarded
 // request instructions placed before it. The instructions are most recent first.
 let recursive forwardRequestIntoCall (callTemp: Int) (word: Int) (forwarded: List(IrInstruction)) (instructions: List(IrInstruction)) =
@@ -10288,50 +10274,94 @@ let recursive callWordOf (callTemp: Int) (instructions: List(IrInstruction)) =
             else callWordOf(callTemp)(rest)
         | _ :: rest -> callWordOf(callTemp)(rest)
 
+// Stage 0's `WholeResultHandedOverBit`: the mask bit a function writes when it handed its whole
+// result over.
+let wholeResultHandedOverBit = 4611686018427387904
+
+// The part a function's entry in the tuple-result part labels carries when callers may ask it for
+// its whole result (stage 0's `_wholeResultHandOverLabels`): it hands its owned result over whole,
+// or forwards the request.
+let wholeResultHandOverMarker = -1
+
+// A function's entry in the tuple-result part labels with the whole-result marker added.
+let withWholeResultHandOverLabel (label: Str) (state: CoreLoweringState) =
+    (let existing =
+        match state
+        |> stateTupleResultPartLabels
+        |> Ashes.Collection.Map.getStr(label) with
+            | Some(parts) -> parts
+            | None -> []
+    in
+        if containsInt(wholeResultHandOverMarker)(existing)
+        then state
+        else
+            withStateTupleResultPartLabels(state
+            |> stateTupleResultPartLabels
+            |> Ashes.Collection.Map.setStr(label)(wholeResultHandOverMarker :: existing))(state))
+
+// Stage 0's `IsGenericResultForwardedAsIs`: a result of unresolved type, or of a generic named
+// type outside the contract's types (a `Result(e, T)` with `e` unresolved), whose caller may know a
+// concrete type to ask for.
+let isGenericResultForwardedAsIs (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemVariable(_variable) -> true
+        | SemNamed(symbolId, name, arguments) ->
+            containsUnresolvedLayout(SemNamed(symbolId)(name)(arguments))(state) && !isGeneralRcValueType(SemNamed(symbolId)(name)(arguments))(state)
+        | _ -> false
+
+// The parts a call's withdrawn request asked for, when it has one on record.
+let recursive withdrawnAskedFor (callTemp: Int) (requests: List((Int, Int, List(Int)))) =
+    match requests with
+        | [] -> None
+        | (resultTemp, _request, asked) :: rest ->
+            if resultTemp == callTemp
+            then Some(asked)
+            else withdrawnAskedFor(callTemp)(rest)
+
 // Stage 0's `ForwardTupleResultPartsRequestThroughGenericResult`: a result of unresolved type that
 // is a call's result returned as it is forwards its own caller's request and mask address to that
 // call, beside whatever its word already passes; the mask the callee writes says whether it handed
 // anything over.
 let forwardTupleResultPartsRequestThroughGenericResult (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemVariable(_variable) ->
-            let callTemp =
-                soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
-            in
-                if callTemp < 0 || hasWithdrawnRequest(callTemp)(stateWithdrawnTuplePartsRequests(state))
-                then state
-                else
-                    match callWordOf(callTemp)(state.reversedInstructions) with
-                        | None -> state
-                        | Some(callWord) ->
-                            match callTuplePartsRequest(callTemp)(64)(state.reversedInstructions) with
-                                | Some(_request) -> state
-                                | None ->
-                                    match freshTempRun(if callWord < 0
-                                    then 3
-                                    else 4)(state) with
-                                        | FreshTemp { state = allocated, temp = requestTemp } ->
-                                            let forwarded =
-                                                [
-                                                    IrInstruction(instruction = AndInt(requestTemp)(requestTemp + 1)(requestTemp + 2), location = None),
-                                                    IrInstruction(instruction = LoadConstInt(requestTemp + 2)(-4), location = None),
-                                                    IrInstruction(instruction = LoadArgumentOwnership(requestTemp + 1), location = None)
-                                                ]
-                                            in
-                                                let rewritten =
-                                                    if callWord < 0
-                                                    then allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp)(forwarded)(allocated.reversedInstructions)
-                                                    else allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp + 3)(IrInstruction(instruction = OrInt(requestTemp + 3)(requestTemp)(callWord), location = None) :: forwarded)(allocated.reversedInstructions)
+    if isGenericResultForwardedAsIs(resultType)(state)
+    then
+        let callTemp =
+            soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
+        in
+            if callTemp < 0
+            then state
+            else
+                match state
+                |> stateWithdrawnTuplePartsRequests
+                |> withdrawnAskedFor(callTemp) with
+                    | Some(asked) ->
+                        match forwardTupleResultPartsRequest(resultTemp)(asked)(state) with
+                            | Some(forwarded) -> withWholeResultHandOverLabel(label)(forwarded)
+                            | None -> state
+                    | None ->
+                        match callWordOf(callTemp)(state.reversedInstructions) with
+                            | None -> state
+                            | Some(callWord) ->
+                                match callTuplePartsRequest(callTemp)(64)(state.reversedInstructions) with
+                                    | Some(_request) -> state
+                                    | None ->
+                                        match freshTempRun(if callWord < 0
+                                        then 3
+                                        else 4)(state) with
+                                            | FreshTemp { state = allocated, temp = requestTemp } ->
+                                                let forwarded =
+                                                    [
+                                                        IrInstruction(instruction = AndInt(requestTemp)(requestTemp + 1)(requestTemp + 2), location = None),
+                                                        IrInstruction(instruction = LoadConstInt(requestTemp + 2)(-4), location = None),
+                                                        IrInstruction(instruction = LoadArgumentOwnership(requestTemp + 1), location = None)
+                                                    ]
                                                 in
-                                                    match rewritten
-                                                    |> stateTupleResultPartLabels
-                                                    |> Ashes.Collection.Map.getStr(label) with
-                                                        | Some(_parts) -> rewritten
-                                                        | None ->
-                                                            withStateTupleResultPartLabels(rewritten
-                                                            |> stateTupleResultPartLabels
-                                                            |> Ashes.Collection.Map.setStr(label)([]))(rewritten)
-        | _ -> state
+                                                    let rewritten =
+                                                        if callWord < 0
+                                                        then allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp)(forwarded)(allocated.reversedInstructions)
+                                                        else allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp + 3)(IrInstruction(instruction = OrInt(requestTemp + 3)(requestTemp)(callWord), location = None) :: forwarded)(allocated.reversedInstructions)
+                                                    in withWholeResultHandOverLabel(label)(rewritten)
+    else state
 
 let recursive powerOfTwo (exponent: Int) =
     if exponent <= 0
@@ -10344,17 +10374,19 @@ let recursive tuplePartsMask (parts: List(Int)) =
         | [] -> 0
         | part :: rest -> powerOfTwo(part) + tuplePartsMask(rest)
 
-let emitTupleResultPartsMask (parts: List(Int)) (state: CoreLoweringState) =
+// The mask of what was handed over, written into the word the caller's request addresses.
+let emitResultHandOverMask (mask: Int) (state: CoreLoweringState) =
     match freshTempRun(4)(state) with
         | FreshTemp { state = allocated, temp = wordTemp } ->
             allocated
             |> emit(LoadArgumentOwnership(wordTemp))
             |> emit(LoadConstInt(wordTemp + 1)(-8))
             |> emit(AndInt(wordTemp + 2)(wordTemp)(wordTemp + 1))
-            |> emit(parts
-            |> tuplePartsMask
-            |> LoadConstInt(wordTemp + 3))
+            |> emit(LoadConstInt(wordTemp + 3)(mask))
             |> emit(StoreMemOffset(wordTemp + 2)(0)(wordTemp + 3))
+
+let emitTupleResultPartsMask (parts: List(Int)) (state: CoreLoweringState) =
+    emitResultHandOverMask(tuplePartsMask(parts))(state)
 
 let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
     match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
@@ -10403,7 +10435,76 @@ let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (resul
 
 // The return of a function whose result is outside the contract's types and holds no part of
 // a generic tuple: an independent copy, a move onto the heap, or the owned slots out of reach.
-let finishGeneralRcFunctionResultOutsideContract (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+// The owned slots the result may be as it is (stage 0's `WholeResultCandidates`): the active
+// function's slots outside the releasable ones, none of them while a loop is being lowered.
+let recursive wholeResultCandidates (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | (owner, slot, _semanticType) :: rest ->
+            if owner == origin && !ownedSlotNumberIn(slot)(releasable)
+            then slot :: wholeResultCandidates(origin)(releasable)(rest)
+            else wholeResultCandidates(origin)(releasable)(rest)
+and ownedSlotNumberIn (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (_owner, candidate, _semanticType) :: rest -> candidate == slot || ownedSlotNumberIn(slot)(rest)
+
+// One candidate's test: when the result is the value the slot holds, the mask says so, the
+// releasable slots are released, and the return goes on at `doneLabel`.
+let recursive emitWholeResultCandidateTests (resultTemp: Int) (candidates: List(Int)) (origin: Maybe(IrFunctionOrigin)) (releasable: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (doneLabel: Str) (state: CoreLoweringState) =
+    match candidates with
+        | [] -> state
+        | slot :: rest ->
+            match freshLabel("whole_result_other_value")(state) with
+                | FreshLabel { state = labelled, label = nextLabel } ->
+                    match freshTempRun(2)(labelled) with
+                        | FreshTemp { state = allocated, temp = valueTemp } ->
+                            allocated
+                            |> emit(LoadLocal(valueTemp)(slot))
+                            |> emit(CmpIntEq(valueTemp + 1)(resultTemp)(valueTemp))
+                            |> emit(JumpIfFalse(valueTemp + 1)(nextLabel))
+                            |> emitResultHandOverMask(wholeResultHandedOverBit)
+                            |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
+                            |> emit(Jump(doneLabel))
+                            |> emit(Label(nextLabel))
+                            |> emitWholeResultCandidateTests(resultTemp)(rest)(origin)(releasable)(doneLabel)
+
+// Stage 0's `TryHandOverOwnedResultWhole` behind a result outside the contract's types: the owned
+// slots out of the result's reach are released, and when the caller asked and the result is, at
+// run time, the reference-counted value one of the other owned slots holds, that slot's reference
+// is handed over whole with the mask instead of being left.
+let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let origin = stateActiveFunctionOrigin(state)
+    in
+        let registered =
+            state
+            |> stateGeneralRcOwnedSlots
+            |> reverse
+        in
+            let releasable =
+                ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)(state)
+            in
+                match (stateTcoLoopFrame(state), wholeResultCandidates(origin)(releasable)(registered)) with
+                    | (None, first :: others) ->
+                        match freshLabel("whole_result_not_requested")(state) with
+                            | FreshLabel { state = keepState, label = keepLabel } ->
+                                match freshLabel("whole_result_handed_over")(keepState) with
+                                    | FreshLabel { state = doneState, label = doneLabel } ->
+                                        match doneState
+                                        |> emitJumpUnlessTuplePartsRequested(keepLabel)
+                                        |> freshTemp with
+                                            | FreshTemp { state = allocated, temp = countedTemp } ->
+                                                allocated
+                                                |> emit(IsReferenceCounted(countedTemp)(resultTemp))
+                                                |> emit(JumpIfFalse(countedTemp)(keepLabel))
+                                                |> emitWholeResultCandidateTests(resultTemp)(first :: others)(origin)(releasable)(doneLabel)
+                                                |> emit(Label(keepLabel))
+                                                |> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)
+                                                |> emit(Label(doneLabel))
+                                                |> withWholeResultHandOverLabel(label)
+                    | _ -> emitGeneralRcOwnedSlotDropsOf(origin)(releasable)(state))
+
+let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
         | (true, Some(copy)) ->
             match emitIndependentResultCopy(copy)(bodyTemp)(state) with
@@ -10416,7 +10517,7 @@ let finishGeneralRcFunctionResultOutsideContract (bodyTemp: Int) (bodyType: Sema
                             (copied
                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
                             |> emitGeneralRcOwnedSlotDrops, resultTemp)
-                | None -> (emitOwnedSlotDropsOutOfResultReach(bodyTemp)(bodyType)(state), bodyTemp)
+                | None -> (emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state), bodyTemp)
         | _ -> (state, bodyTemp)
 
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
@@ -10446,7 +10547,7 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                     | [] ->
                         state
                         |> forwardTupleResultPartsRequestThroughGenericResult(label)(bodyTemp)(bodyType)
-                        |> finishGeneralRcFunctionResultOutsideContract(bodyTemp)(bodyType)
+                        |> finishGeneralRcFunctionResultOutsideContract(label)(bodyTemp)(bodyType)
                     | parts ->
                         (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(bodyType)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
 
@@ -14866,6 +14967,25 @@ let unknownCalleeTupleResultParts (candidates: List(Int)) =
         | [] -> None
         | _ -> Some(candidates)
 
+let recursive partsWithoutMarker (parts: List(Int)) =
+    match parts with
+        | [] -> []
+        | part :: rest ->
+            if part == wholeResultHandOverMarker
+            then partsWithoutMarker(rest)
+            else part :: partsWithoutMarker(rest)
+
+// The parts a call asks a known callee for when its own result type names none: the callee's
+// parts, or none at all from a callee that may hand its whole result over when the call's result
+// is of the contract's types.
+let askedCalleeParts (calleeParts: List(Int)) (contractResult: Bool) =
+    match partsWithoutMarker(calleeParts) with
+        | [] ->
+            if contractResult && containsInt(wholeResultHandOverMarker)(calleeParts)
+            then Some([])
+            else None
+        | parts -> Some(parts)
+
 // Stage 0's `CalleeTupleResultParts`: the parts a call asks its callee for, the contract elements
 // of its tuple result type (the callee's own parts when that type is not yet a tuple). A call asks a
 // known function that may hand them over, reached along the returned-closure chain one hop per
@@ -14885,7 +15005,10 @@ let calleeTupleResultParts (context: CoreCallContext) (resultType: SemanticType)
                         |> Ashes.Collection.Map.getStr(stageLabel) with
                             | Some(calleeParts) ->
                                 match candidates with
-                                    | [] -> unknownCalleeTupleResultParts(calleeParts)
+                                    | [] ->
+                                        state
+                                        |> isGeneralRcValueType(resultType)
+                                        |> askedCalleeParts(calleeParts)
                                     | _ -> Some(candidates)
                             | None -> None
                     | None -> unknownCalleeTupleResultParts(candidates)
@@ -16020,9 +16143,26 @@ let releaseHandedOverTupleParts (semanticType: SemanticType) (parts: List(Int)) 
         | SemTuple(elementTypes) -> releaseHandedOverTuplePartList(parts)(partTemps)(maskTemp)(elementTypes)(state)
         | _ -> state
 
+// Stage 0's `EmitJumpIfWholeResultHandedOver`: after a call that asked for its result's hand-over,
+// jumps to the owned path when the callee's mask says it handed the whole result over, which the
+// owned slot then holds as it is.
+let emitJumpIfWholeResultHandedOver (maskTemp: Int) (ownedLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(4)(state) with
+        | FreshTemp { state = allocated, temp = bitTemp } ->
+            match freshLabel("whole_result_not_handed_over")(allocated) with
+                | FreshLabel { state = labelled, label = copyLabel } ->
+                    labelled
+                    |> emit(LoadConstInt(bitTemp)(wholeResultHandedOverBit))
+                    |> emit(AndInt(bitTemp + 1)(maskTemp)(bitTemp))
+                    |> emit(LoadConstInt(bitTemp + 2)(0))
+                    |> emit(CmpIntNe(bitTemp + 3)(bitTemp + 1)(bitTemp + 2))
+                    |> emit(JumpIfFalse(bitTemp + 3)(copyLabel))
+                    |> emit(Jump(ownedLabel))
+                    |> emit(Label(copyLabel))
+
 // The normalizing copy of a call's contract result, with the mask and the parts the callee handed
 // over read before it and the parts the mask names released after it.
-let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe((List(Int), Int))) (state: CoreLoweringState) =
+let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe((List(Int), Int))) (ownedLabel: Str) (state: CoreLoweringState) =
     match handedParts with
         | None ->
             match emitGuardedDeepCopy(temp)(plan)(state) with
@@ -16031,7 +16171,9 @@ let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan
         | Some((parts, cell)) ->
             match loadHandedOverMaskAndParts(temp)(parts)(cell)(state) with
                 | (loaded, maskTemp, partTemps) ->
-                    match emitGuardedDeepCopy(temp)(plan)(loaded) with
+                    match loaded
+                    |> emitJumpIfWholeResultHandedOver(maskTemp)(ownedLabel)
+                    |> emitGuardedDeepCopy(temp)(plan) with
                         | (copied, copyTemp) ->
                             copied
                             |> emit(StoreLocal(ownedSlot)(copyTemp))
@@ -16076,7 +16218,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                                                 | FreshLabel { state = labelled, label = ownedLabel } ->
                                                     labelled
                                                     |> emitOwnedFlagTest(ownedFlagTemp)(ownedLabel)
-                                                    |> emitCallResultCopyTakingParts(temp)(semanticType)(plan)(ownedSlot)(handedParts)
+                                                    |> emitCallResultCopyTakingParts(temp)(semanticType)(plan)(ownedSlot)(handedParts)(ownedLabel)
                                                     |> emit(Label(ownedLabel))
                                         | _ -> restored
                                 in

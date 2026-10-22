@@ -3084,6 +3084,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_result_hands_over_owned_call_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function with a generic error type returns an owned call result as it is in its `Ok`
+        // arm. The caller knows the concrete type, asks for the result and takes it over.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildGenericResultHandsOverOwnedCallResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * (rounds + 1) / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic result handing over an owned call result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13084,6 +13107,45 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match registerNew(n) with
                         | _handle -> rounds(n - 1)(total + 1)
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildGenericResultHandsOverOwnedCallResultProgram(int rounds)
+        => $$"""
+            type Collection =
+                | items: List(Str)
+                | count: Int
+
+            type Loaded =
+                | names: List(Str)
+                | total: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (n: Int) = Collection(items = [wide + Ashes.Text.fromInt(n), wide], count = n)
+
+            let complete (collection: Collection) =
+                match collection with
+                    | Collection { items = items, count = count } ->
+                        Loaded(names = items, total = count)
+                        |> Ashes.Internal.deepCopy
+                        |> Ok
+
+            let finish (collection: Collection) (result: Result(e, Str)) =
+                match result with
+                    | Error(error) -> Error(error)
+                    | Ok(_outer) -> complete(collection)
+
+            let totalOf (result: Result(Str, Loaded)) =
+                match result with
+                    | Error(_) -> 0
+                    | Ok(Loaded { total = total }) -> total
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + totalOf(finish(make(n))(Ok("x"))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

@@ -833,6 +833,7 @@ public sealed partial class Lowering
             }
 
             (int MaskTemp, int[] PartTemps) partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
+            EmitJumpIfWholeResultHandedOver(partTemps.MaskTemp, ownedLabel);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
             ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
 
@@ -910,7 +911,7 @@ public sealed partial class Lowering
         bool resultIndependent = contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp);
         if (resultIndependent || !TryReleaseOwnedSlotsHandingOverTupleParts(label, resultTemp, pruned, loopTco is not null))
         {
-            ReleaseOwnedSlotsBehindResult(resultTemp, pruned, resultIndependent);
+            ReleaseOwnedSlotsBehindResult(label, resultTemp, pruned, resultIndependent, loopTco is not null);
         }
 
         return resultTemp;
@@ -919,8 +920,9 @@ public sealed partial class Lowering
     // A result that holds its own references releases every owned slot behind it. Any other result
     // (a closure, a tuple) may still point into the owned values: only the ones no value flowing
     // into the result is read from, or whose type the result's cannot hold, are released, the rest
-    // are left to leak. The slots stay registered: loop back edges are emitted later.
-    private void ReleaseOwnedSlotsBehindResult(int resultTemp, TypeRef resultType, bool resultIndependent)
+    // are left to leak, unless one of them is the result itself and the caller asks for it. The slots
+    // stay registered: loop back edges are emitted later.
+    private void ReleaseOwnedSlotsBehindResult(string label, int resultTemp, TypeRef resultType, bool resultIndependent, bool inLoop)
     {
         if (resultIndependent)
         {
@@ -928,7 +930,11 @@ public sealed partial class Lowering
             return;
         }
 
-        EmitGeneralRcOwnedSlotDrops(OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots));
+        List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
+        if (!TryHandOverOwnedResultWhole(label, resultTemp, releasable, inLoop))
+        {
+            EmitGeneralRcOwnedSlotDrops(releasable);
+        }
     }
 
     // A type variable of a function's result that is quantified by the function's scheme and occurs
