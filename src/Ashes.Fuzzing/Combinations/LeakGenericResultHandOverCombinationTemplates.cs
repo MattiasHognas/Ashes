@@ -97,3 +97,38 @@ internal sealed class GenericResultWrapsOwnedCallResultTemplate() : LeakCombinat
             """;
     }
 }
+
+/// <summary>
+/// A function returns its contract-typed parameter as it is: its entry adopts the owned call result
+/// its caller hands over, and its return hands that reference on rather than retaining it again.
+/// </summary>
+internal sealed class ContractParameterReturnedAsItIsTemplate() : LeakCombinationTemplate(
+    "leak.contract-parameter-returned-as-is", "contractParameterReturnedAsItIs", GeneratedFeature.Record, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string collection = names.Of("LeakCollection");
+        string make = names.Of("make");
+        string wrap = names.Of("wrap");
+        string pinned = names.Of("pinned");
+        string countOf = names.Of("countOf");
+        return $$"""
+            type {{collection}} =
+                | items: List(Str)
+                | count: Int
+
+            let {{make}} (n: Int) = {{collection}}(items = [{{names.Word()}} + Ashes.Text.fromInt(n), {{names.Word()}}], count = n)
+
+            let {{wrap}} (n: Int) = Ok({{make}}(n))
+
+            let {{pinned}} (result: Result(Str, {{collection}})) = result
+
+            let {{countOf}} (result: Result(Str, {{collection}})) =
+                match result with
+                    | Error(_) -> 0
+                    | Ok({{collection}} { count = count }) -> count
+
+            let {{names.Entry}} (seed: Int) = {{countOf}}({{pinned}}({{wrap}}(seed)))
+            """;
+    }
+}

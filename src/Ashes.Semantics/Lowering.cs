@@ -7562,6 +7562,14 @@ public sealed partial class Lowering
         bool plainFunction)
     {
         TypeRef resultType = Prune(bodyType);
+        if (plainFunction
+            && !_inCoroutineBody
+            && OwnedParameterResultRuleEnabled
+            && ReturnsNormalizedAlwaysReturnedParameter(label, argumentSlot, bodyTemp))
+        {
+            _generalRcOwnedParameterResultTemp = bodyTemp;
+        }
+
         if (!plainFunction
             || _inCoroutineBody
             || !_runtimeNormalizedFunctionArgumentLabels.Contains(label)

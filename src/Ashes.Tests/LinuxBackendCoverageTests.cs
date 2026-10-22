@@ -3130,6 +3130,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns its contract-typed parameter as it is. Its entry adopts the owned call
+        // result the caller hands over, and its return hands that reference on.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildContractParameterReturnedAsIsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * (rounds + 1) / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("contract parameter returned as it is", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13204,6 +13227,33 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countOf(continueParsing(wide)(Ok(make(n)))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildContractParameterReturnedAsIsProgram(int rounds)
+        => $$"""
+            type Collection =
+                | items: List(Str)
+                | count: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (n: Int) = Collection(items = [wide + Ashes.Text.fromInt(n), wide], count = n)
+
+            let wrap (n: Int) = Ok(make(n))
+
+            let pinned (result: Result(Str, Collection)) = result
+
+            let countOf (result: Result(Str, Collection)) =
+                match result with
+                    | Error(_) -> 0
+                    | Ok(Collection { count = count }) -> count
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + countOf(pinned(wrap(n))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

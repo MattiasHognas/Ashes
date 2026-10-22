@@ -1373,6 +1373,9 @@ result type retains or normalizes its result at its return; a caller keeps each 
 owned slot and releases it after its last use, at a loop's back edge, or at the function's exit. A
 record of the contract is released through one dropper synthesized per type (`__rcdrop_record_N`),
 so a loop releasing it at many back edges carries one call each rather than the whole release.
+A function whose entry normalizes a parameter its result always reaches owns that value (it adopts
+the reference a caller handed over, or copies a borrowed argument), so when it returns the parameter
+as it is, its return hands that reference over instead of retaining it as it would a borrowed one.
 
 The contract is one calling convention for the whole program. A function that may run while a
 one-shot handler's post is pending keeps its values in the arena the post captures, so a program

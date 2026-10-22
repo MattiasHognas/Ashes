@@ -368,6 +368,21 @@ public sealed partial class Lowering
     // loop's exit that follows releases its parameters instead of transferring one as the result.
     private int _generalRcIndependentResultTemp = -1;
 
+    // The result temp of the function being finished that reads its entry-normalized parameter: the
+    // entry adopted or copied that value, so the function owns it and its return hands it over as it
+    // is, where a borrowed parameter's read would be retained.
+    private int _generalRcOwnedParameterResultTemp = -1;
+
+    private static bool OwnedParameterResultRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_OWNEDPARAMRESULT") is null;
+
+    private int TakeOwnedParameterResultTemp()
+    {
+        int temp = _generalRcOwnedParameterResultTemp;
+        _generalRcOwnedParameterResultTemp = -1;
+        return temp;
+    }
+
     /// <summary>
     /// Marks every closure over a function that normalizes its result at its return, once the whole
     /// program is lowered (a recursive function's own closure is built before its body is done), so
@@ -859,6 +874,7 @@ public sealed partial class Lowering
     {
         LeaveGeneralRcFunction(label);
         _generalRcIndependentResultTemp = -1;
+        int ownedParameterTemp = TakeOwnedParameterResultTemp();
         if (_generalRcCommittedResultTypes.Remove(label, out TypeRef? committed))
         {
             Unify(bodyType, committed);
@@ -893,7 +909,7 @@ public sealed partial class Lowering
         // join of a recursive producer's arms carries it while an arm's cells stay in the arena.
         else if (contractResult || (normalizesOwnedResult && !IsRuntimeManagedResultTemp(bodyTemp)))
         {
-            resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain, loopTco);
+            resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain || bodyTemp == ownedParameterTemp, loopTco);
             _generalRcIndependentResultTemp = resultTemp;
         }
         else if (MovesOwnedPartsIntoTupleResult(bodyTemp, pruned))
