@@ -3206,6 +3206,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_nested_recursive_helper_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A `let recursive` helper declared inside a function body, with annotated parameters, builds
+        // its accumulated result on the reference-counted heap. The enclosing function calls it
+        // through its local slot and must know that result is reference-counted, or the caller
+        // treats it as an arena value and the whole result graph leaks every round.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildNestedRecursiveHelperResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(rounds * 17) / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nested recursive helper's reference-counted result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_consumed_list_head_kept_by_generic_call_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13099,6 +13124,45 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then sum
                 else rounds(n - 1)(sum + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildNestedRecursiveHelperResultProgram(int rounds)
+        => $$"""
+            type Sem =
+                | SemVariable(Int)
+                | SemName(Str)
+
+            type Supply =
+                | nextId: Int
+
+            let fresh (supply: Supply) =
+                match supply with
+                    | Supply { nextId = nextId } -> (SemVariable(nextId), Supply(nextId = nextId + 1))
+
+            let instantiateAll (quantified: List(Int)) (supply: Supply) =
+                let recursive go (items: List(Int)) (current: Supply) (substitution: List((Int, Sem))) =
+                    match items with
+                        | [] -> (substitution, current)
+                        | variableId :: tail ->
+                            match fresh(current) with
+                                | (freshVariable, nextSupply) -> go(tail, nextSupply, (variableId, freshVariable) :: substitution)
+                in go(quantified, supply, [])
+
+            let recursive count (items: List((Int, Sem))) (total: Int) =
+                match items with
+                    | [] -> total
+                    | _ :: rest -> count(rest)(total + 1)
+
+            let quantified = [1, 2, 3, 4, 5, 6, 7, 8]
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match instantiateAll(quantified)(Supply(nextId = n)) with
+                        | (substitution, Supply { nextId = next }) -> rounds(n - 1)(total + count(substitution)(0) + next % 2)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

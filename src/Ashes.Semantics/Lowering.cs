@@ -6674,6 +6674,32 @@ public sealed partial class Lowering
             GetDeclaredHoverParameterNames(letRecursive.Value));
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
         RegisterLoweredRecursiveFunctionIdentity(letRecursive, slot, recursiveScheme);
+        RegisterNestedRecursiveFunctionLabel(letRecursive, slot, valueAndType.valTemp);
+    }
+
+    // A `let recursive` helper declared inside a function body is called through its local slot,
+    // whose closure has a statically known code label just as a top-level one does. Registering it
+    // lets a call to the helper resolve the helper's compiled result ownership; without it, a
+    // helper that returns a reference-counted result hands it to a caller that treats it as an
+    // arena value and never releases it.
+    private void RegisterNestedRecursiveFunctionLabel(Expr.LetRecursive letRecursive, int slot, int valueTemp)
+    {
+        if (_lambdaDepth == 0
+            || letRecursive.Value is not Expr.Lambda
+            || Environment.GetEnvironmentVariable("GRC_NO_NESTEDRECURSIVELABEL") is not null)
+        {
+            return;
+        }
+
+        string? label = _inst.LastOrDefault(instruction => instruction is IrInst.MakeClosure { Target: var target } && target == valueTemp) switch
+        {
+            IrInst.MakeClosure closure => closure.FuncLabel,
+            _ => null,
+        };
+        if (label is not null)
+        {
+            _knownFunctionLabelsBySlot[slot] = label;
+        }
     }
 
     private void RegisterLoweredRecursiveFunctionIdentity(
