@@ -28,7 +28,7 @@ Function: bumpInto
     drop:                 0
     uniqueness checks:    0
   representation [lambda_4]
-    conservative unknown: 11
+    conservative unknown: 9
     region:               8
     runtime rc:           80
     copy value:           9
@@ -54,7 +54,7 @@ Function: count
     drop:                 6
     uniqueness checks:    3
   representation [lambda_12]
-    conservative unknown: 2
+    conservative unknown: 1
     runtime rc:           16
     copy value:           6
   representation [lambda_11]

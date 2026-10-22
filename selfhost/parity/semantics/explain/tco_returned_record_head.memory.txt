@@ -45,7 +45,7 @@ Function: findHeavy
     drop:                 8
     uniqueness checks:    3
   representation [lambda_7]
-    conservative unknown: 6
+    conservative unknown: 5
     region:               3
     runtime rc:           28
     copy value:           4

@@ -20,7 +20,7 @@ Function: total
     drop:                 0
     uniqueness checks:    0
   representation [lambda_2]
-    conservative unknown: 2
+    conservative unknown: 1
     region:               1
     runtime rc:           24
     copy value:           10

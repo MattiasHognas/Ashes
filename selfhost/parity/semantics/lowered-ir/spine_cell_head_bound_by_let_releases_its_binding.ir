@@ -215,56 +215,56 @@ function lambda_5  [ClosureHelper from countLive]
   locals=39 temps=101
     LoadEnv               Target=0 Index=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
     StoreLocal            Slot=2 Source=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadLocal             Target=55 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    IsReferenceCounted    Target=56 SourceTemp=55
-    JumpIfFalse           CondTemp=56 Target=rc_representation_copy_29   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    RcDup                 Target=57 SourceTemp=55 RuntimeManaged=true
-    StoreLocal            Slot=29 Source=57   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    Jump                  Target=rc_representation_done_30   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_representation_copy_29:
-    LoadConstInt          Target=59 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=30 Source=55   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=31 Source=59   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=32 Source=59   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_normalize_list_31:
-    LoadLocal             Target=60 Slot=30   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    CmpIntNe              Target=61 Left=60 Right=59   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_end_32   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadMemOffset         Target=62 BasePtr=60 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadMemOffset         Target=63 BasePtr=60 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    IsReferenceCounted    Target=64 SourceTemp=62
-    JumpIfFalse           CondTemp=64 Target=rc_representation_copy_33   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    RcDup                 Target=65 SourceTemp=62 RuntimeManaged=true
-    StoreLocal            Slot=33 Source=65   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    Jump                  Target=rc_representation_done_34   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_representation_copy_33:
-    CopyOutArena          DestTemp=66 SrcTemp=62 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=33 Source=66   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_representation_done_34:
-    LoadLocal             Target=67 Slot=33   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    Alloc                 Target=68 SizeBytes=16 RuntimeManaged=true   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreMemOffset        BasePtr=68 OffsetBytes=0 Source=67   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreMemOffset        BasePtr=68 OffsetBytes=8 Source=59   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadLocal             Target=69 Slot=31   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    CmpIntNe              Target=70 Left=69 Right=59   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    JumpIfFalse           CondTemp=70 Target=rc_normalize_list_first_35   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadLocal             Target=71 Slot=32   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreMemOffset        BasePtr=71 OffsetBytes=8 Source=68   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    Jump                  Target=rc_normalize_list_linked_36   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_normalize_list_first_35:
-    StoreLocal            Slot=31 Source=68   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_normalize_list_linked_36:
-    StoreLocal            Slot=32 Source=68   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=30 Source=63   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    Jump                  Target=rc_normalize_list_31   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_normalize_list_end_32:
-    LoadLocal             Target=72 Slot=31   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=29 Source=72   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rc_representation_done_30:
-    LoadLocal             Target=73 Slot=29   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=2 Source=73   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadConstInt          Target=74 Value=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=8 Source=74   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadLocal             Target=43 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    IsReferenceCounted    Target=44 SourceTemp=43
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_23   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    RcDup                 Target=45 SourceTemp=43 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=45   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    Jump                  Target=rc_representation_done_24   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_representation_copy_23:
+    LoadConstInt          Target=47 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=28 Source=43   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=29 Source=47   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=30 Source=47   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_normalize_list_25:
+    LoadLocal             Target=48 Slot=28   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    CmpIntNe              Target=49 Left=48 Right=47   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_end_26   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadMemOffset         Target=50 BasePtr=48 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadMemOffset         Target=51 BasePtr=48 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    IsReferenceCounted    Target=52 SourceTemp=50
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_27   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    RcDup                 Target=53 SourceTemp=50 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=53   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    Jump                  Target=rc_representation_done_28   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_representation_copy_27:
+    CopyOutArena          DestTemp=54 SrcTemp=50 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=31 Source=54   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_representation_done_28:
+    LoadLocal             Target=55 Slot=31   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    Alloc                 Target=56 SizeBytes=16 RuntimeManaged=true   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreMemOffset        BasePtr=56 OffsetBytes=0 Source=55   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreMemOffset        BasePtr=56 OffsetBytes=8 Source=47   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadLocal             Target=57 Slot=29   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    CmpIntNe              Target=58 Left=57 Right=47   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    JumpIfFalse           CondTemp=58 Target=rc_normalize_list_first_29   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadLocal             Target=59 Slot=30   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=8 Source=56   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    Jump                  Target=rc_normalize_list_linked_30   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_normalize_list_first_29:
+    StoreLocal            Slot=29 Source=56   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_normalize_list_linked_30:
+    StoreLocal            Slot=30 Source=56   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=28 Source=51   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    Jump                  Target=rc_normalize_list_25   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_normalize_list_end_26:
+    LoadLocal             Target=60 Slot=29   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=27 Source=60   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rc_representation_done_24:
+    LoadLocal             Target=61 Slot=27   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=2 Source=61   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadConstInt          Target=62 Value=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=8 Source=62   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
     StoreLocal            Slot=5 Source=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
@@ -310,111 +310,112 @@ function lambda_5  [ClosureHelper from countLive]
     RcDup                 Target=20 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=21 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    StoreLocal            Slot=20 Source=21   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-  rcdrop_list_22:
-    LoadLocal             Target=22 Slot=20   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    LoadConstInt          Target=23 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    CmpIntNe              Target=24 Left=22 Right=23   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_24   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    RcIsUnique            Target=25 SourceTemp=22
-    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_23   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    RcDrop                SourceTemp=26 TypeName=Liveness RuntimeManaged=true
-    LoadMemOffset         Target=27 BasePtr=22 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=20 Source=27   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    Jump                  Target=rcdrop_list_22   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-  rcdrop_list_shared_23:
-    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_24   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-  rcdrop_list_end_24:
-    LoadConstInt          Target=28 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    StoreLocal            Slot=8 Source=28   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    LoadLocal             Target=29 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    LoadLocal             Target=30 Slot=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
+    LoadConstInt          Target=22 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
+    StoreLocal            Slot=8 Source=22   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
+    LoadLocal             Target=23 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
+    LoadLocal             Target=24 Slot=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
     StoreLocal            Slot=2 Source=20   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
     StoreLocal            Slot=1 Source=19   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    LoadLocal             Target=83 Slot=8
-    JumpIfFalse           CondTemp=83 Target=rc_tco_drop_inactive_45
-    StoreLocal            Slot=36 Source=29
-  rcdrop_list_46:
-    LoadLocal             Target=84 Slot=36
-    LoadConstInt          Target=85 Value=0
-    CmpIntNe              Target=86 Left=84 Right=85
-    JumpIfFalse           CondTemp=86 Target=rcdrop_list_end_48
-    RcIsUnique            Target=87 SourceTemp=84
-    JumpIfFalse           CondTemp=87 Target=rcdrop_list_shared_47
-    LoadMemOffset         Target=88 BasePtr=84 OffsetBytes=0
-    RcDrop                SourceTemp=88 TypeName=Liveness RuntimeManaged=true
-    LoadMemOffset         Target=89 BasePtr=84 OffsetBytes=8
-    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=36 Source=89
-    Jump                  Target=rcdrop_list_46
-  rcdrop_list_shared_47:
-    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_48
-  rcdrop_list_end_48:
-  rc_tco_drop_inactive_45:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=35
-    LoadConstInt          Target=90 Value=0
-    StoreLocal            Slot=6 Source=90
-    StoreLocal            Slot=7 Source=90
+    LoadLocal             Target=71 Slot=8
+    JumpIfFalse           CondTemp=71 Target=rc_tco_drop_inactive_39
+    StoreLocal            Slot=34 Source=23
+  rcdrop_list_40:
+    LoadLocal             Target=72 Slot=34
+    LoadConstInt          Target=73 Value=0
+    CmpIntNe              Target=74 Left=72 Right=73
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_end_42
+    RcIsUnique            Target=75 SourceTemp=72
+    JumpIfFalse           CondTemp=75 Target=rcdrop_list_shared_41
+    LoadMemOffset         Target=76 BasePtr=72 OffsetBytes=0
+    RcDrop                SourceTemp=76 TypeName=Liveness RuntimeManaged=true
+    LoadMemOffset         Target=77 BasePtr=72 OffsetBytes=8
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=34 Source=77
+    Jump                  Target=rcdrop_list_40
+  rcdrop_list_shared_41:
+    RcDrop                SourceTemp=72 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_42
+  rcdrop_list_end_42:
+  rc_tco_drop_inactive_39:
+    StoreLocal            Slot=35 Source=21
+  rcdrop_list_43:
+    LoadLocal             Target=78 Slot=35
+    LoadConstInt          Target=79 Value=0
+    CmpIntNe              Target=80 Left=78 Right=79
+    JumpIfFalse           CondTemp=80 Target=rcdrop_list_end_45
+    RcIsUnique            Target=81 SourceTemp=78
+    JumpIfFalse           CondTemp=81 Target=rcdrop_list_shared_44
+    LoadMemOffset         Target=82 BasePtr=78 OffsetBytes=0
+    RcDrop                SourceTemp=82 TypeName=Liveness RuntimeManaged=true
+    LoadMemOffset         Target=83 BasePtr=78 OffsetBytes=8
+    RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=83
+    Jump                  Target=rcdrop_list_43
+  rcdrop_list_shared_44:
+    RcDrop                SourceTemp=78 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_45
+  rcdrop_list_end_45:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=33
+    LoadConstInt          Target=84 Value=0
+    StoreLocal            Slot=6 Source=84
+    StoreLocal            Slot=7 Source=84
     StoreLocal            Slot=2 Source=20
-    LoadConstInt          Target=91 Value=1
-    StoreLocal            Slot=8 Source=91
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=35
+    LoadConstInt          Target=85 Value=1
+    StoreLocal            Slot=8 Source=85
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=33
     RestoreStackPointer   Slot=11   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
     Jump                  Target=lambda_5_body   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    LoadConstInt          Target=31 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
-    StoreLocal            Slot=12 Source=31   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    LoadConstInt          Target=25 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:21:49)
+    StoreLocal            Slot=12 Source=25   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
     Jump                  Target=match_end_16   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
   match_arm_cleanup_21:
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
     Jump                  Target=match_next_20   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
   match_next_20:
-    SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
-    LoadConstInt          Target=33 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    CmpIntNe              Target=34 Left=2 Right=33   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    JumpIfFalse           CondTemp=34 Target=match_arm_cleanup_25   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    LoadMemOffset         Target=35 BasePtr=2 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    LoadMemOffset         Target=36 BasePtr=2 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    StoreLocal            Slot=25 Source=36   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    LoadLocal             Target=37 Slot=25   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:34)
-    Borrow                Target=38 SourceTemp=37
-    LoadLocal             Target=39 Slot=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:40)
-    RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true MayBeEmpty=true
-    RcDrop                SourceTemp=36 TypeName=List OwnerSlot=25
-    LoadLocal             Target=41 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    StoreLocal            Slot=26 Source=41   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-  rcdrop_list_26:
-    LoadLocal             Target=42 Slot=26   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    LoadConstInt          Target=43 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    CmpIntNe              Target=44 Left=42 Right=43   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    JumpIfFalse           CondTemp=44 Target=rcdrop_list_end_28   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    RcIsUnique            Target=45 SourceTemp=42
-    JumpIfFalse           CondTemp=45 Target=rcdrop_list_shared_27   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    LoadMemOffset         Target=46 BasePtr=42 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    RcDrop                SourceTemp=46 TypeName=Liveness RuntimeManaged=true
-    LoadMemOffset         Target=47 BasePtr=42 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=26 Source=47   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    Jump                  Target=rcdrop_list_26   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-  rcdrop_list_shared_27:
-    RcDrop                SourceTemp=42 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_28   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-  rcdrop_list_end_28:
-    LoadConstInt          Target=48 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    StoreLocal            Slot=8 Source=48   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    LoadLocal             Target=49 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    LoadLocal             Target=50 Slot=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    StoreLocal            Slot=2 Source=40   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    StoreLocal            Slot=1 Source=39   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    LoadLocal             Target=92 Slot=8
-    JumpIfFalse           CondTemp=92 Target=rc_tco_drop_inactive_49
-    StoreLocal            Slot=38 Source=49
+    SaveArenaState        CursorLocalSlot=22 EndLocalSlot=23
+    LoadConstInt          Target=27 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    CmpIntNe              Target=28 Left=2 Right=27   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    JumpIfFalse           CondTemp=28 Target=match_arm_cleanup_22   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    LoadMemOffset         Target=29 BasePtr=2 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    LoadMemOffset         Target=30 BasePtr=2 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    StoreLocal            Slot=24 Source=30   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    LoadLocal             Target=31 Slot=24   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:34)
+    Borrow                Target=32 SourceTemp=31
+    LoadLocal             Target=33 Slot=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:40)
+    RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=30 TypeName=List OwnerSlot=24
+    LoadLocal             Target=35 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    LoadConstInt          Target=36 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    StoreLocal            Slot=8 Source=36   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    LoadLocal             Target=37 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    LoadLocal             Target=38 Slot=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    StoreLocal            Slot=2 Source=34   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    StoreLocal            Slot=1 Source=33   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    LoadLocal             Target=86 Slot=8
+    JumpIfFalse           CondTemp=86 Target=rc_tco_drop_inactive_46
+    StoreLocal            Slot=37 Source=37
+  rcdrop_list_47:
+    LoadLocal             Target=87 Slot=37
+    LoadConstInt          Target=88 Value=0
+    CmpIntNe              Target=89 Left=87 Right=88
+    JumpIfFalse           CondTemp=89 Target=rcdrop_list_end_49
+    RcIsUnique            Target=90 SourceTemp=87
+    JumpIfFalse           CondTemp=90 Target=rcdrop_list_shared_48
+    LoadMemOffset         Target=91 BasePtr=87 OffsetBytes=0
+    RcDrop                SourceTemp=91 TypeName=Liveness RuntimeManaged=true
+    LoadMemOffset         Target=92 BasePtr=87 OffsetBytes=8
+    RcDrop                SourceTemp=87 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=37 Source=92
+    Jump                  Target=rcdrop_list_47
+  rcdrop_list_shared_48:
+    RcDrop                SourceTemp=87 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_49
+  rcdrop_list_end_49:
+  rc_tco_drop_inactive_46:
+    StoreLocal            Slot=38 Source=35
   rcdrop_list_50:
     LoadLocal             Target=93 Slot=38
     LoadConstInt          Target=94 Value=0
@@ -432,54 +433,53 @@ function lambda_5  [ClosureHelper from countLive]
     RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_52
   rcdrop_list_end_52:
-  rc_tco_drop_inactive_49:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=37
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=36
     LoadConstInt          Target=99 Value=0
     StoreLocal            Slot=6 Source=99
     StoreLocal            Slot=7 Source=99
-    StoreLocal            Slot=2 Source=40
+    StoreLocal            Slot=2 Source=34
     LoadConstInt          Target=100 Value=1
     StoreLocal            Slot=8 Source=100
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=37
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=36
     RestoreStackPointer   Slot=11   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
     Jump                  Target=lambda_5_body   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    LoadConstInt          Target=51 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
-    StoreLocal            Slot=12 Source=51   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=27
-    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=27
+    LoadConstInt          Target=39 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:22:24)
+    StoreLocal            Slot=12 Source=39   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=25
     Jump                  Target=match_end_16   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-  match_arm_cleanup_25:
-    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=28
-    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=28
+  match_arm_cleanup_22:
+    RestoreArenaState     CursorLocalSlot=22 EndLocalSlot=23 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=23 PreRestoreEndSlot=26
     Jump                  Target=match_none_17   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
   match_none_17:
-    LoadConstInt          Target=53 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    StoreLocal            Slot=12 Source=53   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    LoadConstInt          Target=41 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    StoreLocal            Slot=12 Source=41   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
   match_end_16:
-    LoadLocal             Target=54 Slot=12   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
-    LoadLocal             Target=75 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadLocal             Target=76 Slot=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_37   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    StoreLocal            Slot=34 Source=75   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rcdrop_list_38:
-    LoadLocal             Target=77 Slot=34   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadConstInt          Target=78 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    CmpIntNe              Target=79 Left=77 Right=78   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    JumpIfFalse           CondTemp=79 Target=rcdrop_list_end_40   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    RcIsUnique            Target=80 SourceTemp=77
-    JumpIfFalse           CondTemp=80 Target=rcdrop_list_shared_39   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    LoadMemOffset         Target=81 BasePtr=77 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    RcDrop                SourceTemp=81 TypeName=Liveness RuntimeManaged=true
-    LoadMemOffset         Target=82 BasePtr=77 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=34 Source=82   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-    Jump                  Target=rcdrop_list_38   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rcdrop_list_shared_39:
-    RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_40   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
-  rcdrop_list_end_40:
-  rc_tco_exit_drop_inactive_37:
-    Return                Source=54   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadLocal             Target=42 Slot=12   (spine_cell_head_bound_by_let_releases_its_binding.ash:19:5)
+    LoadLocal             Target=63 Slot=2   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadLocal             Target=64 Slot=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    JumpIfFalse           CondTemp=64 Target=rc_tco_exit_drop_inactive_31   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    StoreLocal            Slot=32 Source=63   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rcdrop_list_32:
+    LoadLocal             Target=65 Slot=32   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadConstInt          Target=66 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    CmpIntNe              Target=67 Left=65 Right=66   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_34   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    RcIsUnique            Target=68 SourceTemp=65
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_33   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    RcDrop                SourceTemp=69 TypeName=Liveness RuntimeManaged=true
+    LoadMemOffset         Target=70 BasePtr=65 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=70   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+    Jump                  Target=rcdrop_list_32   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rcdrop_list_shared_33:
+    RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_34   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
+  rcdrop_list_end_34:
+  rc_tco_exit_drop_inactive_31:
+    Return                Source=42   (spine_cell_head_bound_by_let_releases_its_binding.ash:18:1)
 
 function lambda_4  [SourceFunction from countLive]
   locals=2 temps=5
@@ -538,10 +538,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=25 Value=1   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     AndInt                Target=26 Left=24 Right=25   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     StoreLocal            Slot=10 Source=21   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-    JumpIfFalse           CondTemp=26 Target=rc_call_argument_not_retained_41   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
+    JumpIfFalse           CondTemp=26 Target=rc_call_argument_not_retained_35   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     RcDup                 Target=27 SourceTemp=21 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=10 Source=27   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-  rc_call_argument_not_retained_41:
+  rc_call_argument_not_retained_35:
     LoadLocal             Target=28 Slot=10   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     CallClosure           Target=29 ClosureTemp=8 ArgTemp=28 RuntimeManagedArgumentFlagTemp=26   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     LoadConstInt          Target=30 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
@@ -549,23 +549,23 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=11
     StoreLocal            Slot=12 Source=21   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-  rcdrop_list_42:
+  rcdrop_list_36:
     LoadLocal             Target=32 Slot=12   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     LoadConstInt          Target=33 Value=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     CmpIntNe              Target=34 Left=32 Right=33   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_44   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_38   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     RcIsUnique            Target=35 SourceTemp=32
-    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_43   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_37   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     RcDrop                SourceTemp=36 TypeName=Liveness RuntimeManaged=true
     LoadMemOffset         Target=37 BasePtr=32 OffsetBytes=8   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=12 Source=37   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-    Jump                  Target=rcdrop_list_42   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-  rcdrop_list_shared_43:
+    Jump                  Target=rcdrop_list_36   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
+  rcdrop_list_shared_37:
     RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_44   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
-  rcdrop_list_end_44:
+    Jump                  Target=rcdrop_list_end_38   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
+  rcdrop_list_end_38:
     PrintInt              Source=31   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     AllocAdt              Target=38 Tag=0 FieldCount=0   (spine_cell_head_bound_by_let_releases_its_binding.ash:24:1)
     StoreLocal            Slot=13 Source=38   (spine_cell_head_bound_by_let_releases_its_binding.ash:9:1)

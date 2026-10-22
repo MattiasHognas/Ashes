@@ -54,7 +54,7 @@ Function: labelBytes
     drop:                 6
     uniqueness checks:    3
   representation [lambda_9]
-    conservative unknown: 3
+    conservative unknown: 2
     runtime rc:           11
     copy value:           6
   representation [lambda_8]

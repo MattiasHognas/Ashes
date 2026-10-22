@@ -1,117 +1,117 @@
 IR (lowered)
 ============
 
-function __rcdrop_record_2  [RuntimeManagedAdtDropper]
-  locals=3 temps=10
-    LoadLocal             Target=0 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    StoreLocal            Slot=2 Source=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-  rcdrop_list_9:
-    LoadLocal             Target=3 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadConstInt          Target=4 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    CmpIntNe              Target=5 Left=3 Right=4   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_11   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    RcIsUnique            Target=6 SourceTemp=3
-    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_10   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=8 BasePtr=3 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=2 Source=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    Jump                  Target=rcdrop_list_9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-  rcdrop_list_shared_10:
-    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_11   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-  rcdrop_list_end_11:
-  rc_drop_shared_8:
-    RcDrop                SourceTemp=0 TypeName=Close RuntimeManaged=true
-    LoadConstInt          Target=9 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    Return                Source=9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-
-function __rcnorm_3  [RuntimeManagedAdtNormalizer]
+function __rcnorm_2  [RuntimeManagedAdtNormalizer]
   locals=4 temps=10
     LoadLocal             Target=0 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_18   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_11   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rc_representation_done_19   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_copy_18:
+    Jump                  Target=rc_representation_done_12   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_representation_copy_11:
     CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=4 Ptr=0 FieldIndex=1 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     IsReferenceCounted    Target=5 SourceTemp=4
-    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_20   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_13   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
     StoreLocal            Slot=3 Source=6   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rc_representation_done_21   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_copy_20:
+    Jump                  Target=rc_representation_done_14   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_representation_copy_13:
     CopyOutList           DestTemp=7 SrcTemp=4 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     StoreLocal            Slot=3 Source=7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_done_21:
+  rc_representation_done_14:
     LoadLocal             Target=8 Slot=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     SetAdtField           Ptr=3 FieldIndex=1 Source=8 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     StoreLocal            Slot=2 Source=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_done_19:
+  rc_representation_done_12:
     LoadLocal             Target=9 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Return                Source=9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+
+function __rcdrop_record_3  [RuntimeManagedAdtDropper]
+  locals=3 temps=10
+    LoadLocal             Target=0 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_21   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=2 Source=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rcdrop_list_22:
+    LoadLocal             Target=3 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadConstInt          Target=4 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    CmpIntNe              Target=5 Left=3 Right=4   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcIsUnique            Target=6 SourceTemp=3
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_23   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=8 BasePtr=3 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Jump                  Target=rcdrop_list_22   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rcdrop_list_shared_23:
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rcdrop_list_end_24:
+  rc_drop_shared_21:
+    RcDrop                SourceTemp=0 TypeName=Close RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     Return                Source=9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
 
 function lambda_1  [ClosureHelper from countCloses]
   locals=31 temps=75
     LoadEnv               Target=0 Index=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     StoreLocal            Slot=2 Source=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadLocal             Target=32 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    IsReferenceCounted    Target=33 SourceTemp=32
-    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_12   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    RcDup                 Target=34 SourceTemp=32 RuntimeManaged=true
-    StoreLocal            Slot=23 Source=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rc_representation_done_13   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_copy_12:
+    LoadLocal             Target=24 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    IsReferenceCounted    Target=25 SourceTemp=24
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_5   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Jump                  Target=rc_representation_done_6   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_representation_copy_5:
+    LoadConstInt          Target=28 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=23 Source=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=24 Source=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=25 Source=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_normalize_list_7:
+    LoadLocal             Target=29 Slot=23   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    CmpIntNe              Target=30 Left=29 Right=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=30 Target=rc_normalize_list_end_8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadMemOffset         Target=31 BasePtr=29 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadMemOffset         Target=32 BasePtr=29 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    IsReferenceCounted    Target=33 SourceTemp=31
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcDup                 Target=34 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Jump                  Target=rc_representation_done_10   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_representation_copy_9:
     LoadConstInt          Target=36 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=24 Source=32   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=25 Source=36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=26 Source=36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_normalize_list_14:
-    LoadLocal             Target=37 Slot=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    CmpIntNe              Target=38 Left=37 Right=36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    JumpIfFalse           CondTemp=38 Target=rc_normalize_list_end_15   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadMemOffset         Target=39 BasePtr=37 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadMemOffset         Target=40 BasePtr=37 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    IsReferenceCounted    Target=41 SourceTemp=39
-    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_16   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    RcDup                 Target=42 SourceTemp=39 RuntimeManaged=true
-    StoreLocal            Slot=27 Source=42   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rc_representation_done_17   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_copy_16:
-    LoadConstInt          Target=44 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    CallKnown             Target=45 FuncLabel=__rcnorm_3 EnvTemp=44 ArgTemp=39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=27 Source=45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_done_17:
-    LoadLocal             Target=46 Slot=27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Alloc                 Target=47 SizeBytes=16 RuntimeManaged=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreMemOffset        BasePtr=47 OffsetBytes=0 Source=46   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreMemOffset        BasePtr=47 OffsetBytes=8 Source=36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadLocal             Target=48 Slot=25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    CmpIntNe              Target=49 Left=48 Right=36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_first_22   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadLocal             Target=50 Slot=26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=47   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rc_normalize_list_linked_23   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_normalize_list_first_22:
-    StoreLocal            Slot=25 Source=47   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_normalize_list_linked_23:
-    StoreLocal            Slot=26 Source=47   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=24 Source=40   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rc_normalize_list_14   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_normalize_list_end_15:
-    LoadLocal             Target=51 Slot=25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=23 Source=51   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rc_representation_done_13:
-    LoadLocal             Target=52 Slot=23   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=2 Source=52   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadConstInt          Target=53 Value=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=8 Source=53   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    CallKnown             Target=37 FuncLabel=__rcnorm_2 EnvTemp=36 ArgTemp=31   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=26 Source=37   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_representation_done_10:
+    LoadLocal             Target=38 Slot=26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Alloc                 Target=39 SizeBytes=16 RuntimeManaged=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreMemOffset        BasePtr=39 OffsetBytes=0 Source=38   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreMemOffset        BasePtr=39 OffsetBytes=8 Source=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadLocal             Target=40 Slot=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    CmpIntNe              Target=41 Left=40 Right=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_first_15   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadLocal             Target=42 Slot=25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreMemOffset        BasePtr=42 OffsetBytes=8 Source=39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Jump                  Target=rc_normalize_list_linked_16   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_normalize_list_first_15:
+    StoreLocal            Slot=24 Source=39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_normalize_list_linked_16:
+    StoreLocal            Slot=25 Source=39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=23 Source=32   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Jump                  Target=rc_normalize_list_7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_normalize_list_end_8:
+    LoadLocal             Target=43 Slot=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=22 Source=43   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rc_representation_done_6:
+    LoadLocal             Target=44 Slot=22   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=2 Source=44   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadConstInt          Target=45 Value=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=8 Source=45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
     StoreLocal            Slot=5 Source=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
@@ -150,34 +150,35 @@ function lambda_1  [ClosureHelper from countCloses]
     RcDup                 Target=15 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=16 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    StoreLocal            Slot=20 Source=16   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-  rcdrop_list_5:
-    LoadLocal             Target=17 Slot=20   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadConstInt          Target=18 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    CmpIntNe              Target=19 Left=17 Right=18   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    RcIsUnique            Target=20 SourceTemp=17
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_6   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadConstInt          Target=22 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    CallKnown             Target=23 FuncLabel=__rcdrop_record_2 EnvTemp=22 ArgTemp=21   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadMemOffset         Target=24 BasePtr=17 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=20 Source=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    Jump                  Target=rcdrop_list_5   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-  rcdrop_list_shared_6:
-    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-  rcdrop_list_end_7:
-    LoadConstInt          Target=25 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    StoreLocal            Slot=8 Source=25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadLocal             Target=26 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadLocal             Target=27 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
+    LoadConstInt          Target=17 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
+    StoreLocal            Slot=8 Source=17   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
+    LoadLocal             Target=18 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
+    LoadLocal             Target=19 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
     StoreLocal            Slot=2 Source=15   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
     StoreLocal            Slot=1 Source=14   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadLocal             Target=64 Slot=8
-    JumpIfFalse           CondTemp=64 Target=rc_tco_drop_inactive_71
-    StoreLocal            Slot=30 Source=26
+    LoadLocal             Target=56 Slot=8
+    JumpIfFalse           CondTemp=56 Target=rc_tco_drop_inactive_68
+    StoreLocal            Slot=29 Source=18
+  rcdrop_list_69:
+    LoadLocal             Target=57 Slot=29
+    LoadConstInt          Target=58 Value=0
+    CmpIntNe              Target=59 Left=57 Right=58
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_71
+    RcIsUnique            Target=60 SourceTemp=57
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_70
+    LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0
+    LoadConstInt          Target=62 Value=0
+    CallKnown             Target=63 FuncLabel=__rcdrop_record_3 EnvTemp=62 ArgTemp=61
+    LoadMemOffset         Target=64 BasePtr=57 OffsetBytes=8
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=64
+    Jump                  Target=rcdrop_list_69
+  rcdrop_list_shared_70:
+    RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_71
+  rcdrop_list_end_71:
+  rc_tco_drop_inactive_68:
+    StoreLocal            Slot=30 Source=16
   rcdrop_list_72:
     LoadLocal             Target=65 Slot=30
     LoadConstInt          Target=66 Value=0
@@ -187,7 +188,7 @@ function lambda_1  [ClosureHelper from countCloses]
     JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_73
     LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0
     LoadConstInt          Target=70 Value=0
-    CallKnown             Target=71 FuncLabel=__rcdrop_record_2 EnvTemp=70 ArgTemp=69
+    CallKnown             Target=71 FuncLabel=__rcdrop_record_3 EnvTemp=70 ArgTemp=69
     LoadMemOffset         Target=72 BasePtr=65 OffsetBytes=8
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=72
@@ -196,55 +197,54 @@ function lambda_1  [ClosureHelper from countCloses]
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_74
   rcdrop_list_end_74:
-  rc_tco_drop_inactive_71:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
     LoadConstInt          Target=73 Value=0
     StoreLocal            Slot=6 Source=73
     StoreLocal            Slot=7 Source=73
     StoreLocal            Slot=2 Source=15
     LoadConstInt          Target=74 Value=1
     StoreLocal            Slot=8 Source=74
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=28
     RestoreStackPointer   Slot=11   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
     Jump                  Target=lambda_1_body   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    LoadConstInt          Target=28 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
-    StoreLocal            Slot=12 Source=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    LoadConstInt          Target=20 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:15:24)
+    StoreLocal            Slot=12 Source=20   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
     Jump                  Target=match_end_0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
   match_arm_cleanup_4:
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
     Jump                  Target=match_none_1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
   match_none_1:
-    LoadConstInt          Target=30 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
-    StoreLocal            Slot=12 Source=30   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
+    LoadConstInt          Target=22 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
+    StoreLocal            Slot=12 Source=22   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
   match_end_0:
-    LoadLocal             Target=31 Slot=12   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
-    LoadLocal             Target=54 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadLocal             Target=55 Slot=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    JumpIfFalse           CondTemp=55 Target=rc_tco_exit_drop_inactive_24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    StoreLocal            Slot=28 Source=54   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rcdrop_list_25:
-    LoadLocal             Target=56 Slot=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadConstInt          Target=57 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    CmpIntNe              Target=58 Left=56 Right=57   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    RcIsUnique            Target=59 SourceTemp=56
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadConstInt          Target=61 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    CallKnown             Target=62 FuncLabel=__rcdrop_record_2 EnvTemp=61 ArgTemp=60   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    LoadMemOffset         Target=63 BasePtr=56 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=28 Source=63   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-    Jump                  Target=rcdrop_list_25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rcdrop_list_shared_26:
-    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
-  rcdrop_list_end_27:
-  rc_tco_exit_drop_inactive_24:
-    Return                Source=31   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadLocal             Target=23 Slot=12   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:13:5)
+    LoadLocal             Target=46 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadLocal             Target=47 Slot=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=47 Target=rc_tco_exit_drop_inactive_17   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    StoreLocal            Slot=27 Source=46   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rcdrop_list_18:
+    LoadLocal             Target=48 Slot=27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadConstInt          Target=49 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    CmpIntNe              Target=50 Left=48 Right=49   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    JumpIfFalse           CondTemp=50 Target=rcdrop_list_end_20   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcIsUnique            Target=51 SourceTemp=48
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_shared_19   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadMemOffset         Target=52 BasePtr=48 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadConstInt          Target=53 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    CallKnown             Target=54 FuncLabel=__rcdrop_record_3 EnvTemp=53 ArgTemp=52   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    LoadMemOffset         Target=55 BasePtr=48 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    RcDrop                SourceTemp=48 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=55   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+    Jump                  Target=rcdrop_list_18   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rcdrop_list_shared_19:
+    RcDrop                SourceTemp=48 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_20   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
+  rcdrop_list_end_20:
+  rc_tco_exit_drop_inactive_17:
+    Return                Source=23   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:12:1)
 
 function lambda_0  [SourceFunction from countCloses]
   locals=2 temps=5
@@ -258,26 +258,26 @@ function __rcnorm_7  [RuntimeManagedAdtNormalizer]
   locals=4 temps=10
     LoadLocal             Target=0 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_55   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_52   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_representation_done_56   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_copy_55:
+    Jump                  Target=rc_representation_done_53   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_representation_copy_52:
     CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     IsReferenceCounted    Target=5 SourceTemp=4
-    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_57   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_54   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
     StoreLocal            Slot=3 Source=6   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_representation_done_58   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_copy_57:
+    Jump                  Target=rc_representation_done_55   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_representation_copy_54:
     CopyOutList           DestTemp=7 SrcTemp=4 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=3 Source=7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_done_58:
+  rc_representation_done_55:
     LoadLocal             Target=8 Slot=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=2 Source=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_done_56:
+  rc_representation_done_53:
     LoadLocal             Target=9 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     Return                Source=9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
 
@@ -285,27 +285,27 @@ function __rcdrop_record_8  [RuntimeManagedAdtDropper]
   locals=3 temps=10
     LoadLocal             Target=0 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_64   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_61   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=2 Source=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rcdrop_list_65:
+  rcdrop_list_62:
     LoadLocal             Target=3 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=4 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     CmpIntNe              Target=5 Left=3 Right=4   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_67   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_64   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcIsUnique            Target=6 SourceTemp=3
-    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_66   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_63   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=8 BasePtr=3 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rcdrop_list_65   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rcdrop_list_shared_66:
+    Jump                  Target=rcdrop_list_62   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rcdrop_list_shared_63:
     RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_67   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rcdrop_list_end_67:
-  rc_drop_shared_64:
+    Jump                  Target=rcdrop_list_end_64   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rcdrop_list_end_64:
+  rc_drop_shared_61:
     RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
     LoadConstInt          Target=9 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     Return                Source=9   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
@@ -318,51 +318,51 @@ function lambda_6  [ClosureHelper from lowerItems]
     StoreLocal            Slot=3 Source=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadLocal             Target=67 Slot=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     IsReferenceCounted    Target=68 SourceTemp=67
-    JumpIfFalse           CondTemp=68 Target=rc_representation_copy_43   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=68 Target=rc_representation_copy_40   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDup                 Target=69 SourceTemp=67 RuntimeManaged=true
     StoreLocal            Slot=32 Source=69   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_representation_done_44   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_copy_43:
+    Jump                  Target=rc_representation_done_41   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_representation_copy_40:
     LoadConstInt          Target=71 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=33 Source=67   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=34 Source=71   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=35 Source=71   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_normalize_list_45:
+  rc_normalize_list_42:
     LoadLocal             Target=72 Slot=33   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     CmpIntNe              Target=73 Left=72 Right=71   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=73 Target=rc_normalize_list_end_46   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=73 Target=rc_normalize_list_end_43   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadMemOffset         Target=74 BasePtr=72 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadMemOffset         Target=75 BasePtr=72 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     IsReferenceCounted    Target=76 SourceTemp=74
-    JumpIfFalse           CondTemp=76 Target=rc_representation_copy_47   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=76 Target=rc_representation_copy_44   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDup                 Target=77 SourceTemp=74 RuntimeManaged=true
     StoreLocal            Slot=36 Source=77   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_representation_done_48   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_copy_47:
+    Jump                  Target=rc_representation_done_45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_representation_copy_44:
     LoadConstInt          Target=79 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    CallKnown             Target=80 FuncLabel=__rcnorm_3 EnvTemp=79 ArgTemp=74   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    CallKnown             Target=80 FuncLabel=__rcnorm_2 EnvTemp=79 ArgTemp=74   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=36 Source=80   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_done_48:
+  rc_representation_done_45:
     LoadLocal             Target=81 Slot=36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     Alloc                 Target=82 SizeBytes=16 RuntimeManaged=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreMemOffset        BasePtr=82 OffsetBytes=0 Source=81   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreMemOffset        BasePtr=82 OffsetBytes=8 Source=71   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadLocal             Target=83 Slot=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     CmpIntNe              Target=84 Left=83 Right=71   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=84 Target=rc_normalize_list_first_49   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=84 Target=rc_normalize_list_first_46   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadLocal             Target=85 Slot=35   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreMemOffset        BasePtr=85 OffsetBytes=8 Source=82   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_normalize_list_linked_50   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_normalize_list_first_49:
+    Jump                  Target=rc_normalize_list_linked_47   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_normalize_list_first_46:
     StoreLocal            Slot=34 Source=82   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_normalize_list_linked_50:
+  rc_normalize_list_linked_47:
     StoreLocal            Slot=35 Source=82   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=33 Source=75   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_normalize_list_45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_normalize_list_end_46:
+    Jump                  Target=rc_normalize_list_42   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_normalize_list_end_43:
     LoadLocal             Target=86 Slot=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=32 Source=86   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_done_44:
+  rc_representation_done_41:
     LoadLocal             Target=87 Slot=32   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=3 Source=87   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=88 Value=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
@@ -371,23 +371,23 @@ function lambda_6  [ClosureHelper from lowerItems]
     LoadArgumentOwnership Target=90   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=91 Value=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     AndInt                Target=92 Left=90 Right=91   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=92 Target=rc_arg_normalize_copy_51   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=92 Target=rc_arg_normalize_copy_48   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=37 Source=89   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_arg_normalize_done_52   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_arg_normalize_copy_51:
+    Jump                  Target=rc_arg_normalize_done_49   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_arg_normalize_copy_48:
     IsReferenceCounted    Target=93 SourceTemp=89
-    JumpIfFalse           CondTemp=93 Target=rc_representation_copy_53   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=93 Target=rc_representation_copy_50   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDup                 Target=94 SourceTemp=89 RuntimeManaged=true
     StoreLocal            Slot=38 Source=94   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rc_representation_done_54   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_copy_53:
+    Jump                  Target=rc_representation_done_51   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rc_representation_copy_50:
     LoadConstInt          Target=97 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     CallKnown             Target=98 FuncLabel=__rcnorm_7 EnvTemp=97 ArgTemp=89   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=38 Source=98   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_representation_done_54:
+  rc_representation_done_51:
     LoadLocal             Target=99 Slot=38   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=37 Source=99   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_arg_normalize_done_52:
+  rc_arg_normalize_done_49:
     LoadLocal             Target=100 Slot=37   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=1 Source=100   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=101 Value=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
@@ -402,7 +402,7 @@ function lambda_6  [ClosureHelper from lowerItems]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=4 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     CmpIntEq              Target=5 Left=3 Right=4   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_31   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     LoadLocal             Target=6 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:19:17)
     GetAdtField           Target=7 Ptr=6 FieldIndex=1 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:19:17)
     SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
@@ -417,16 +417,16 @@ function lambda_6  [ClosureHelper from lowerItems]
     StoreLocal            Slot=12 Source=13   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=18
-    Jump                  Target=match_end_28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-  match_arm_cleanup_31:
+    Jump                  Target=match_end_25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
+  match_arm_cleanup_28:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=19
-    Jump                  Target=match_next_30   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-  match_next_30:
+    Jump                  Target=match_next_27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
+  match_next_27:
     SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
     LoadConstInt          Target=14 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     CmpIntNe              Target=15 Left=3 Right=14   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_32   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_29   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     LoadMemOffset         Target=16 BasePtr=3 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     LoadMemOffset         Target=17 BasePtr=3 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     StoreLocal            Slot=22 Source=16   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
@@ -437,14 +437,14 @@ function lambda_6  [ClosureHelper from lowerItems]
     LoadLocal             Target=21 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:83)
     GetAdtField           Target=22 Ptr=21 FieldIndex=0 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:83)
     IsReferenceCounted    Target=23 SourceTemp=22
-    JumpIfFalse           CondTemp=23 Target=rc_representation_copy_33   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+    JumpIfFalse           CondTemp=23 Target=rc_representation_copy_30   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     RcDup                 Target=24 SourceTemp=22 RuntimeManaged=true
     StoreLocal            Slot=24 Source=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    Jump                  Target=rc_representation_done_34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_representation_copy_33:
+    Jump                  Target=rc_representation_done_31   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+  rc_representation_copy_30:
     CopyOutList           DestTemp=25 SrcTemp=22 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=24 Source=25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_representation_done_34:
+  rc_representation_done_31:
     LoadLocal             Target=26 Slot=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     AllocAdt              Target=27 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     SetAdtField           Ptr=27 FieldIndex=0 Source=20 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
@@ -455,49 +455,49 @@ function lambda_6  [ClosureHelper from lowerItems]
     LoadConstInt          Target=30 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     CmpIntEq              Target=31 Left=28 Right=30   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     OrInt                 Target=32 Left=29 Right=31   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    JumpIfFalse           CondTemp=32 Target=rc_tail_copy_36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    Jump                  Target=rc_tail_done_35   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_tail_copy_36:
+    JumpIfFalse           CondTemp=32 Target=rc_tail_copy_33   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+    Jump                  Target=rc_tail_done_32   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+  rc_tail_copy_33:
     LoadConstInt          Target=34 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=26 Source=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=27 Source=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=28 Source=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_normalize_list_37:
+  rc_normalize_list_34:
     LoadLocal             Target=35 Slot=26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     CmpIntNe              Target=36 Left=35 Right=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_end_38   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_end_35   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     LoadMemOffset         Target=37 BasePtr=35 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     LoadMemOffset         Target=38 BasePtr=35 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     IsReferenceCounted    Target=39 SourceTemp=37
-    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_36   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     RcDup                 Target=40 SourceTemp=37 RuntimeManaged=true
     StoreLocal            Slot=29 Source=40   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    Jump                  Target=rc_representation_done_40   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_representation_copy_39:
+    Jump                  Target=rc_representation_done_37   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+  rc_representation_copy_36:
     LoadConstInt          Target=42 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    CallKnown             Target=43 FuncLabel=__rcnorm_3 EnvTemp=42 ArgTemp=37   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+    CallKnown             Target=43 FuncLabel=__rcnorm_2 EnvTemp=42 ArgTemp=37   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=29 Source=43   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_representation_done_40:
+  rc_representation_done_37:
     LoadLocal             Target=44 Slot=29   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     Alloc                 Target=45 SizeBytes=16 RuntimeManaged=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreMemOffset        BasePtr=45 OffsetBytes=0 Source=44   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreMemOffset        BasePtr=45 OffsetBytes=8 Source=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     LoadLocal             Target=46 Slot=27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     CmpIntNe              Target=47 Left=46 Right=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    JumpIfFalse           CondTemp=47 Target=rc_normalize_list_first_41   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+    JumpIfFalse           CondTemp=47 Target=rc_normalize_list_first_38   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     LoadLocal             Target=48 Slot=28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreMemOffset        BasePtr=48 OffsetBytes=8 Source=45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    Jump                  Target=rc_normalize_list_linked_42   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_normalize_list_first_41:
+    Jump                  Target=rc_normalize_list_linked_39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+  rc_normalize_list_first_38:
     StoreLocal            Slot=27 Source=45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_normalize_list_linked_42:
+  rc_normalize_list_linked_39:
     StoreLocal            Slot=28 Source=45   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=26 Source=38   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-    Jump                  Target=rc_normalize_list_37   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_normalize_list_end_38:
+    Jump                  Target=rc_normalize_list_34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
+  rc_normalize_list_end_35:
     LoadLocal             Target=49 Slot=27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreLocal            Slot=25 Source=49   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
-  rc_tail_done_35:
+  rc_tail_done_32:
     LoadLocal             Target=50 Slot=25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     Alloc                 Target=51 SizeBytes=16 RuntimeManaged=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
     StoreMemOffset        BasePtr=51 OffsetBytes=0 Source=27   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:20:46)
@@ -558,45 +558,45 @@ function lambda_6  [ClosureHelper from lowerItems]
     StoreLocal            Slot=12 Source=63   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=30
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=30
-    Jump                  Target=match_end_28   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-  match_arm_cleanup_32:
+    Jump                  Target=match_end_25   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
+  match_arm_cleanup_29:
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=31
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=31
-    Jump                  Target=match_none_29   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-  match_none_29:
+    Jump                  Target=match_none_26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
+  match_none_26:
     LoadConstInt          Target=65 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     StoreLocal            Slot=12 Source=65   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
-  match_end_28:
+  match_end_25:
     LoadLocal             Target=66 Slot=12   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:18:5)
     LoadLocal             Target=102 Slot=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadLocal             Target=103 Slot=7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=103 Target=rc_tco_exit_drop_inactive_59   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=103 Target=rc_tco_exit_drop_inactive_56   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     StoreLocal            Slot=39 Source=102   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rcdrop_list_60:
+  rcdrop_list_57:
     LoadLocal             Target=104 Slot=39   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=105 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     CmpIntNe              Target=106 Left=104 Right=105   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=106 Target=rcdrop_list_end_62   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=106 Target=rcdrop_list_end_59   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcIsUnique            Target=107 SourceTemp=104
-    JumpIfFalse           CondTemp=107 Target=rcdrop_list_shared_61   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=107 Target=rcdrop_list_shared_58   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadMemOffset         Target=108 BasePtr=104 OffsetBytes=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=109 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    CallKnown             Target=110 FuncLabel=__rcdrop_record_2 EnvTemp=109 ArgTemp=108   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    CallKnown             Target=110 FuncLabel=__rcdrop_record_3 EnvTemp=109 ArgTemp=108   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadMemOffset         Target=111 BasePtr=104 OffsetBytes=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     RcDrop                SourceTemp=104 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=39 Source=111   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    Jump                  Target=rcdrop_list_60   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rcdrop_list_shared_61:
+    Jump                  Target=rcdrop_list_57   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rcdrop_list_shared_58:
     RcDrop                SourceTemp=104 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_62   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rcdrop_list_end_62:
-  rc_tco_exit_drop_inactive_59:
+    Jump                  Target=rcdrop_list_end_59   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+  rcdrop_list_end_59:
+  rc_tco_exit_drop_inactive_56:
     LoadLocal             Target=112 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadLocal             Target=113 Slot=8   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-    JumpIfFalse           CondTemp=113 Target=rc_tco_exit_drop_inactive_63   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
+    JumpIfFalse           CondTemp=113 Target=rc_tco_exit_drop_inactive_60   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     LoadConstInt          Target=114 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
     CallKnown             Target=115 FuncLabel=__rcdrop_record_8 EnvTemp=114 ArgTemp=112   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
-  rc_tco_exit_drop_inactive_63:
+  rc_tco_exit_drop_inactive_60:
     Return                Source=66   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:17:1)
 
 function lambda_5  [ClosureHelper from lowerItems]
@@ -636,11 +636,11 @@ function lambda_10  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:8)
     LoadConstInt          Target=3 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:13)
     CmpIntEq              Target=4 Left=2 Right=3   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:8)
-    JumpIfFalse           CondTemp=4 Target=else_68   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
+    JumpIfFalse           CondTemp=4 Target=else_65   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
     LoadLocal             Target=5 Slot=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:24:10)
     StoreLocal            Slot=11 Source=5   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
-    Jump                  Target=endif_69   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
-  else_68:
+    Jump                  Target=endif_66   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
+  else_65:
     LoadLocal             Target=6 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:17)
     LoadConstInt          Target=7 Value=1   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:21)
     SubInt                Target=8 Left=6 Right=7   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:17)
@@ -671,10 +671,10 @@ function lambda_10  [ClosureHelper from rounds]
     LoadLocal             Target=24 Slot=2   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:101)
     LoadConstInt          Target=25 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
     StoreLocal            Slot=14 Source=24   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
-    JumpIfFalse           CondTemp=25 Target=rc_constructor_field_not_retained_70   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
+    JumpIfFalse           CondTemp=25 Target=rc_constructor_field_not_retained_67   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
     RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=14 Source=26   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
-  rc_constructor_field_not_retained_70:
+  rc_constructor_field_not_retained_67:
     LoadLocal             Target=27 Slot=14   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
     AllocAdt              Target=28 Tag=0 FieldCount=2 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
     SetAdtField           Ptr=28 FieldIndex=0 Source=23 Tagless=true   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:55)
@@ -693,7 +693,7 @@ function lambda_10  [ClosureHelper from rounds]
     Jump                  Target=lambda_10_body   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:10)
     LoadConstInt          Target=33 Value=0   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:25:10)
     StoreLocal            Slot=11 Source=33   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
-  endif_69:
+  endif_66:
     LoadLocal             Target=34 Slot=11   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:23:5)
     Return                Source=34   (loop_record_cell_keeps_one_reference_to_parameter_field.ash:22:1)
 

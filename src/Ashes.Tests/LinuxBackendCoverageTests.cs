@@ -3206,6 +3206,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_consumed_list_head_kept_by_generic_call_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop walking its list parameter's consumed tail hands the head to a generic call whose
+        // result, the other parameter's successor, keeps the head in its arena cells. The old list
+        // is released at the back edge only after that successor is normalized: released at the
+        // self call, the head is freed while the successor still names it.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildConsumedListHeadKeptBySuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("consumed list head kept by a generic call's successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_phantom_tuple_result_fresh_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -12983,6 +13008,34 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countAll(tagged(n)(n))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsumedListHeadKeptBySuccessorProgram(int rounds)
+        => $$"""
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let recursive addCases (cs: List(Str)) entries =
+                match cs with
+                    | [] -> entries
+                    | label :: cTail -> addCases(cTail)(setAssociation(label)(1)(entries))
+
+            let recursive total (refs: List((Str, Int))) (sum: Int) =
+                match refs with
+                    | [] -> sum
+                    | (_, c) :: tail -> total(tail)(sum + c)
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + total(addCases(["a", "b" + Ashes.Text.fromInt(n), "a"])([]))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

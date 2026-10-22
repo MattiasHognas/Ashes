@@ -452,6 +452,10 @@ type CoreTcoReset =
     // Per successor, whether it is a retain taken for the transfer out of an iteration-local owner
     // (stage 0's `TransferRetainedArgs`).
     | argumentTransferRetained: List(Bool)
+    // The roots of pattern bindings handed on as their own parameter's successor, each loaded at
+    // the self call with its type, released at the back edge once the other successors hold their
+    // own references (stage 0's `TransferredRootDrops`).
+    | transferredRootDrops: List((Int, SemanticType))
 
 // A call result whose copy-out kind was undecidable when the call closed its window, stage 0's
 // `PendingCallResultCopyOut`: the result travels through `resultSlot`, its reload is the one
@@ -7233,6 +7237,15 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
                         spliceInlineReleaseWith(emitter)(synthesizeChildDrop(valueTemp)(tuple)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
         | _ -> state
 
+// The deferred root releases of a back edge, unlocated as the rest of its block.
+let recursive emitTransferredRootDrops (drops: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match drops with
+        | [] -> state
+        | (rootTemp, rootType) :: rest ->
+            state
+            |> emitOwnedValueRelease(unlocatedInstruction)(rootTemp)(rootType)
+            |> emitTransferredRootDrops(rest)
+
 // The release of a runtime-managed ADT slot's old value under its active flag.
 let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match freshTemp(state) with
@@ -8621,6 +8634,7 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                 | (normalized, stores) ->
                     normalized
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
+                    |> emitTransferredRootDrops(reset.transferredRootDrops)
                     |> emitResolvedOwnedDrops(reset.ownedDrops)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> unlocatedInstruction(RestoreArenaState(reset.fixedCursorSlot)(reset.fixedEndSlot)(preRestoreSlot)(false))
@@ -9027,6 +9041,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
             allocated
+            |> emitTransferredRootDrops(reset.transferredRootDrops)
             |> emitResolvedOwnedDrops(reset.ownedDrops)
             |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(false)
             |> (given (released: CoreLoweringState) ->
@@ -9056,6 +9071,7 @@ let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: L
                 | (normalized, stores) ->
                     normalized
                     |> dropRuntimeManagedBackEdgePredecessors(arguments)
+                    |> emitTransferredRootDrops(reset.transferredRootDrops)
                     |> emitResolvedOwnedDrops(reset.ownedDrops)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
                     |> emitRuntimeManagedBackEdgeStores(stores)
@@ -25229,7 +25245,12 @@ let recursive transferRetainedFlags (temps: List(Int)) (state: CoreLoweringState
         | [] -> []
         | temp :: rest -> isTransferRetainIn(temp)(state.reversedInstructions) :: transferRetainedFlags(rest)(state)
 
-let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+let recursive transferredRootTemps (drops: List((Int, SemanticType))) =
+    match drops with
+        | [] -> []
+        | (rootTemp, _rootType) :: rest -> rootTemp :: transferredRootTemps(rest)
+
+let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (rootDrops: List((Int, SemanticType))) (state: CoreLoweringState) =
     (let loopSlots =
         slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
     in
@@ -25258,7 +25279,8 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     oldTemps = oldTemps,
                     argumentRuntime = runtimeTempFlags(temps)(state),
                     argumentExpressions = arguments,
-                    argumentTransferRetained = transferRetainedFlags(temps)(state)
+                    argumentTransferRetained = transferRetainedFlags(temps)(state),
+                    transferredRootDrops = rootDrops
                 ))
             |> (given (reset: CoreTcoReset) ->
                 state
@@ -25266,7 +25288,9 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                 |> append(ownedDropSlots(reset.ownedDrops))
                 |> append(frame.parameterSlots)
                 |> append(listActiveSlotsOf(frame.listActiveSlots))
-                |> TcoResetPending(reset.resetId)(append(temps)(oldTemps)))
+                |> TcoResetPending(reset.resetId)(temps
+                |> append(oldTemps)
+                |> append(transferredRootTemps(rootDrops))))
                 |> (given (scheduled: CoreLoweringState) -> withStatePendingTcoResets(reset :: statePendingTcoResets(scheduled))(scheduled))))
 
 // The back edge cannot reach its expression join; its synthetic zero is the value the join
@@ -25380,24 +25404,34 @@ let clearListActiveFlag (rootSlot: Int) (frame: CoreTcoLoopFrame) (state: CoreLo
 
 // Stage 0's `LowerCallTcoTransferPatternBindings`, second half: a root whose successor took its
 // reference, and which does not itself move to the next iteration, is released unconditionally
-// and its active flag cleared, so the reset's guarded release stands down.
-let recursive releaseTransferredRoots (roots: List(Int)) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+// and its active flag cleared, so the reset's guarded release stands down. A loop with an arena
+// window releases it at the back edge instead, after the other successors (stage 0's
+// `ReleaseTransferredPatternBindingRoot`): released here, a head it frees may still be named by
+// another successor, a generic call's result not yet normalized. Returns the deferred releases.
+let recursive releaseTransferredRoots (roots: List(Int)) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) (deferred: List((Int, SemanticType))) =
     match roots with
-        | [] -> state
+        | [] -> (state, reverse(deferred))
         | rootSlot :: rest ->
             if rootMovesToNextIteration(rootSlot)(arguments)(frame)(state)
-            then releaseTransferredRoots(rest)(arguments)(frame)(state)
+            then releaseTransferredRoots(rest)(arguments)(frame)(state)(deferred)
             else
                 match slotResolvedType(rootSlot)(state.bindings)(state) with
-                    | None -> releaseTransferredRoots(rest)(arguments)(frame)(state)
+                    | None -> releaseTransferredRoots(rest)(arguments)(frame)(state)(deferred)
                     | Some(rootType) ->
                         match freshTemp(state) with
                             | FreshTemp { state = allocated, temp = rootTemp } ->
-                                allocated
-                                |> emit(LoadLocal(rootTemp)(rootSlot))
-                                |> emitOwnedValueRelease(emit)(rootTemp)(rootType)
-                                |> clearListActiveFlag(rootSlot)(frame)
-                                |> releaseTransferredRoots(rest)(arguments)(frame)
+                                if frame.arenaCursorSlot >= 0
+                                then
+                                    match allocated
+                                    |> emit(LoadLocal(rootTemp)(rootSlot))
+                                    |> clearListActiveFlag(rootSlot)(frame) with
+                                        | loaded -> releaseTransferredRoots(rest)(arguments)(frame)(loaded)((rootTemp, rootType) :: deferred)
+                                else
+                                    match allocated
+                                    |> emit(LoadLocal(rootTemp)(rootSlot))
+                                    |> emitOwnedValueRelease(emit)(rootTemp)(rootType)
+                                    |> clearListActiveFlag(rootSlot)(frame) with
+                                        | released -> releaseTransferredRoots(rest)(arguments)(frame)(released)(deferred)
 
 // Stage 0's `LowerCallTcoSelfCall` after the arguments: the transferred pattern bindings take
 // their references and release their roots, the parameters' old values are loaded, the new
@@ -25408,14 +25442,16 @@ let emitTailSelfCallBackEdge (enteredFrame: CoreTcoLoopFrame) (loop: CoreTcoLoop
         | (resolvedState, frame) ->
             match transferPatternBindingArguments(arguments)(temps)(frame)(loop)(resolvedState)([])([]) with
                 | (transferred, transferredTemps, roots) ->
-                    match loadOldParameters(frame.parameterSlots)(releaseTransferredRoots(roots)(arguments)(frame)(transferred))([]) with
-                        | (loadedState, oldTemps) ->
-                            loadedState
-                            |> storeNewParameters(frame.parameterSlots)(transferredTemps)
-                            |> scheduleTcoReset(frame)(arguments)(transferredTemps)(oldTemps)(argumentTypes)
-                            |> emit(RestoreStackPointer(frame.stackPointerSlot))
-                            |> emit(Jump(frame.bodyLabel))
-                            |> emitBackEdgeDummy
+                    match releaseTransferredRoots(roots)(arguments)(frame)(transferred)([]) with
+                        | (released, rootDrops) ->
+                            match loadOldParameters(frame.parameterSlots)(released)([]) with
+                                | (loadedState, oldTemps) ->
+                                    loadedState
+                                    |> storeNewParameters(frame.parameterSlots)(transferredTemps)
+                                    |> scheduleTcoReset(frame)(arguments)(transferredTemps)(oldTemps)(argumentTypes)(rootDrops)
+                                    |> emit(RestoreStackPointer(frame.stackPointerSlot))
+                                    |> emit(Jump(frame.bodyLabel))
+                                    |> emitBackEdgeDummy
 
 // A tail self-call inside an emitted loop body is the loop's back edge rather than a call: the
 // loop function's own type gives each argument its expected parameter type.

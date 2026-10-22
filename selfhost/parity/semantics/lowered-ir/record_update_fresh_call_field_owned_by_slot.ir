@@ -54,20 +54,20 @@ function lambda_3  [ClosureHelper from count]
   locals=27 temps=53
     LoadEnv               Target=0 Index=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
     StoreLocal            Slot=2 Source=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    LoadLocal             Target=30 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    IsReferenceCounted    Target=31 SourceTemp=30
-    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_10   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    RcDup                 Target=32 SourceTemp=30 RuntimeManaged=true
-    StoreLocal            Slot=23 Source=32   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    Jump                  Target=rc_representation_done_11   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-  rc_representation_copy_10:
-    CopyOutList           DestTemp=33 SrcTemp=30 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    StoreLocal            Slot=23 Source=33   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-  rc_representation_done_11:
-    LoadLocal             Target=34 Slot=23   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    StoreLocal            Slot=2 Source=34   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    LoadConstInt          Target=35 Value=1   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    StoreLocal            Slot=8 Source=35   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    LoadLocal             Target=24 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    IsReferenceCounted    Target=25 SourceTemp=24
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_7   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=26   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    Jump                  Target=rc_representation_done_8   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+  rc_representation_copy_7:
+    CopyOutList           DestTemp=27 SrcTemp=24 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    StoreLocal            Slot=22 Source=27   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+  rc_representation_done_8:
+    LoadLocal             Target=28 Slot=22   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    StoreLocal            Slot=2 Source=28   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    LoadConstInt          Target=29 Value=1   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    StoreLocal            Slot=8 Source=29   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
     StoreLocal            Slot=5 Source=1   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
@@ -106,33 +106,34 @@ function lambda_3  [ClosureHelper from count]
     RcDup                 Target=15 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=16 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    StoreLocal            Slot=20 Source=16   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-  rcdrop_list_7:
-    LoadLocal             Target=17 Slot=20   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    LoadConstInt          Target=18 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    CmpIntNe              Target=19 Left=17 Right=18   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_9   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    RcIsUnique            Target=20 SourceTemp=17
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_8   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    RcDrop                SourceTemp=21 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=22 BasePtr=17 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=20 Source=22   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    Jump                  Target=rcdrop_list_7   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-  rcdrop_list_shared_8:
-    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_9   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-  rcdrop_list_end_9:
-    LoadConstInt          Target=23 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    StoreLocal            Slot=8 Source=23   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    LoadLocal             Target=24 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    LoadLocal             Target=25 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
+    LoadConstInt          Target=17 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
+    StoreLocal            Slot=8 Source=17   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
+    LoadLocal             Target=18 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
+    LoadLocal             Target=19 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
     StoreLocal            Slot=2 Source=15   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
     StoreLocal            Slot=1 Source=14   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    LoadLocal             Target=44 Slot=8
-    JumpIfFalse           CondTemp=44 Target=rc_tco_drop_inactive_52
-    StoreLocal            Slot=26 Source=24
+    LoadLocal             Target=38 Slot=8
+    JumpIfFalse           CondTemp=38 Target=rc_tco_drop_inactive_49
+    StoreLocal            Slot=25 Source=18
+  rcdrop_list_50:
+    LoadLocal             Target=39 Slot=25
+    LoadConstInt          Target=40 Value=0
+    CmpIntNe              Target=41 Left=39 Right=40
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_52
+    RcIsUnique            Target=42 SourceTemp=39
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_51
+    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=0
+    RcDrop                SourceTemp=43 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=44 BasePtr=39 OffsetBytes=8
+    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=44
+    Jump                  Target=rcdrop_list_50
+  rcdrop_list_shared_51:
+    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_52
+  rcdrop_list_end_52:
+  rc_tco_drop_inactive_49:
+    StoreLocal            Slot=26 Source=16
   rcdrop_list_53:
     LoadLocal             Target=45 Slot=26
     LoadConstInt          Target=46 Value=0
@@ -150,54 +151,53 @@ function lambda_3  [ClosureHelper from count]
     RcDrop                SourceTemp=45 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_55
   rcdrop_list_end_55:
-  rc_tco_drop_inactive_52:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=25
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=24
     LoadConstInt          Target=51 Value=0
     StoreLocal            Slot=6 Source=51
     StoreLocal            Slot=7 Source=51
     StoreLocal            Slot=2 Source=15
     LoadConstInt          Target=52 Value=1
     StoreLocal            Slot=8 Source=52
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=24
     RestoreStackPointer   Slot=11   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
     Jump                  Target=lambda_3_body   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    LoadConstInt          Target=26 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
-    StoreLocal            Slot=12 Source=26   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    LoadConstInt          Target=20 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:19:24)
+    StoreLocal            Slot=12 Source=20   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
     Jump                  Target=match_end_2   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
   match_arm_cleanup_6:
-    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
     Jump                  Target=match_none_3   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
   match_none_3:
-    LoadConstInt          Target=28 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
-    StoreLocal            Slot=12 Source=28   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
+    LoadConstInt          Target=22 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
+    StoreLocal            Slot=12 Source=22   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
   match_end_2:
-    LoadLocal             Target=29 Slot=12   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
-    LoadLocal             Target=36 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    LoadLocal             Target=37 Slot=8   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    JumpIfFalse           CondTemp=37 Target=rc_tco_exit_drop_inactive_12   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    StoreLocal            Slot=24 Source=36   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-  rcdrop_list_13:
-    LoadLocal             Target=38 Slot=24   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    LoadConstInt          Target=39 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    CmpIntNe              Target=40 Left=38 Right=39   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    JumpIfFalse           CondTemp=40 Target=rcdrop_list_end_15   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    RcIsUnique            Target=41 SourceTemp=38
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_shared_14   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    LoadMemOffset         Target=42 BasePtr=38 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    RcDrop                SourceTemp=42 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=43 BasePtr=38 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=24 Source=43   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-    Jump                  Target=rcdrop_list_13   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-  rcdrop_list_shared_14:
-    RcDrop                SourceTemp=38 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_15   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
-  rcdrop_list_end_15:
-  rc_tco_exit_drop_inactive_12:
-    Return                Source=29   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    LoadLocal             Target=23 Slot=12   (record_update_fresh_call_field_owned_by_slot.ash:17:5)
+    LoadLocal             Target=30 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    LoadLocal             Target=31 Slot=8   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    JumpIfFalse           CondTemp=31 Target=rc_tco_exit_drop_inactive_9   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    StoreLocal            Slot=23 Source=30   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+  rcdrop_list_10:
+    LoadLocal             Target=32 Slot=23   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    LoadConstInt          Target=33 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    CmpIntNe              Target=34 Left=32 Right=33   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_12   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    RcIsUnique            Target=35 SourceTemp=32
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_11   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    RcDrop                SourceTemp=36 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=37 BasePtr=32 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=37   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+    Jump                  Target=rcdrop_list_10   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+  rcdrop_list_shared_11:
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_12   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
+  rcdrop_list_end_12:
+  rc_tco_exit_drop_inactive_9:
+    Return                Source=23   (record_update_fresh_call_field_owned_by_slot.ash:16:1)
 
 function lambda_2  [SourceFunction from count]
   locals=2 temps=5
@@ -211,38 +211,38 @@ function __rcnorm_6  [RuntimeManagedAdtNormalizer]
   locals=5 temps=15
     LoadLocal             Target=0 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_31   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_28   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rc_representation_done_32   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_copy_31:
+    Jump                  Target=rc_representation_done_29   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rc_representation_copy_28:
     CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     IsReferenceCounted    Target=5 SourceTemp=4
-    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_33   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_30   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
     StoreLocal            Slot=3 Source=6   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rc_representation_done_34   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_copy_33:
+    Jump                  Target=rc_representation_done_31   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rc_representation_copy_30:
     CopyOutList           DestTemp=7 SrcTemp=4 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=3 Source=7   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_done_34:
+  rc_representation_done_31:
     LoadLocal             Target=8 Slot=3   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     IsReferenceCounted    Target=10 SourceTemp=9
-    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_35   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=10 Target=rc_representation_copy_32   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDup                 Target=11 SourceTemp=9 RuntimeManaged=true
     StoreLocal            Slot=4 Source=11   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rc_representation_done_36   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_copy_35:
+    Jump                  Target=rc_representation_done_33   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rc_representation_copy_32:
     CopyOutArena          DestTemp=12 SrcTemp=9 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=4 Source=12   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_done_36:
+  rc_representation_done_33:
     LoadLocal             Target=13 Slot=4   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     SetAdtField           Ptr=3 FieldIndex=1 Source=13 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=2 Source=3   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_done_32:
+  rc_representation_done_29:
     LoadLocal             Target=14 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     Return                Source=14   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
 
@@ -250,29 +250,29 @@ function __rcdrop_record_7  [RuntimeManagedAdtDropper]
   locals=3 temps=11
     LoadLocal             Target=0 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_46   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_43   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=2 Source=2   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_47:
+  rcdrop_list_44:
     LoadLocal             Target=3 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=4 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CmpIntNe              Target=5 Left=3 Right=4   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_49   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_46   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcIsUnique            Target=6 SourceTemp=3
-    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_48   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_45   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=8 BasePtr=3 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=8   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rcdrop_list_47   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_shared_48:
+    Jump                  Target=rcdrop_list_44   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rcdrop_list_shared_45:
     RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_49   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_end_49:
+    Jump                  Target=rcdrop_list_end_46   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rcdrop_list_end_46:
     GetAdtField           Target=9 Ptr=0 FieldIndex=1 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
-  rc_drop_shared_46:
+  rc_drop_shared_43:
     RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
     LoadConstInt          Target=10 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     Return                Source=10   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
@@ -285,23 +285,23 @@ function lambda_5  [ClosureHelper from lowerItems]
     LoadArgumentOwnership Target=92   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=93 Value=1   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     AndInt                Target=94 Left=92 Right=93   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=94 Target=rc_arg_normalize_copy_27   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=94 Target=rc_arg_normalize_copy_24   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=37 Source=91   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rc_arg_normalize_done_28   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_arg_normalize_copy_27:
+    Jump                  Target=rc_arg_normalize_done_25   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rc_arg_normalize_copy_24:
     IsReferenceCounted    Target=95 SourceTemp=91
-    JumpIfFalse           CondTemp=95 Target=rc_representation_copy_29   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=95 Target=rc_representation_copy_26   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDup                 Target=96 SourceTemp=91 RuntimeManaged=true
     StoreLocal            Slot=38 Source=96   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rc_representation_done_30   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_copy_29:
+    Jump                  Target=rc_representation_done_27   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rc_representation_copy_26:
     LoadConstInt          Target=99 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CallKnown             Target=100 FuncLabel=__rcnorm_6 EnvTemp=99 ArgTemp=91   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=38 Source=100   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_representation_done_30:
+  rc_representation_done_27:
     LoadLocal             Target=101 Slot=38   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=37 Source=101   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_arg_normalize_done_28:
+  rc_arg_normalize_done_25:
     LoadLocal             Target=102 Slot=37   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=1 Source=102   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=103 Value=1   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
@@ -316,7 +316,7 @@ function lambda_5  [ClosureHelper from lowerItems]
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadConstInt          Target=3 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     CmpIntEq              Target=4 Left=2 Right=3   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_19   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_16   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     LoadLocal             Target=5 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:23:17)
     GetAdtField           Target=6 Ptr=5 FieldIndex=2 Tagless=true   (record_update_fresh_call_field_owned_by_slot.ash:23:17)
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
@@ -332,16 +332,16 @@ function lambda_5  [ClosureHelper from lowerItems]
     StoreLocal            Slot=10 Source=13   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=16
-    Jump                  Target=match_end_16   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-  match_arm_cleanup_19:
+    Jump                  Target=match_end_13   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
+  match_arm_cleanup_16:
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=17
-    Jump                  Target=match_next_18   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-  match_next_18:
+    Jump                  Target=match_next_15   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
+  match_next_15:
     SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
     LoadConstInt          Target=14 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     CmpIntNe              Target=15 Left=2 Right=14   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_20   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_17   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     LoadMemOffset         Target=16 BasePtr=2 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     LoadMemOffset         Target=17 BasePtr=2 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     StoreLocal            Slot=20 Source=16   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
@@ -353,7 +353,7 @@ function lambda_5  [ClosureHelper from lowerItems]
     SubInt                Target=22 Left=18 Right=21   (record_update_fresh_call_field_owned_by_slot.ash:25:16)
     LoadConstInt          Target=23 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:25:29)
     CmpIntEq              Target=24 Left=22 Right=23   (record_update_fresh_call_field_owned_by_slot.ash:25:16)
-    JumpIfFalse           CondTemp=24 Target=else_21   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
+    JumpIfFalse           CondTemp=24 Target=else_18   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
     LoadLocal             Target=25 Slot=21   (record_update_fresh_call_field_owned_by_slot.ash:26:29)
     Borrow                Target=26 SourceTemp=25
     LoadLocal             Target=27 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:26:36)
@@ -375,12 +375,12 @@ function lambda_5  [ClosureHelper from lowerItems]
     CallClosure           Target=42 ClosureTemp=36 ArgTemp=38   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
     StoreLocal            Slot=26 Source=42   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
     RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=25
-    JumpIfFalse           CondTemp=41 Target=call_copy_arena_result_23   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
-    Jump                  Target=call_reclaim_owned_result_24   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
-  call_copy_arena_result_23:
+    JumpIfFalse           CondTemp=41 Target=call_copy_arena_result_20   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
+    Jump                  Target=call_reclaim_owned_result_21   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
+  call_copy_arena_result_20:
     CopyOutList           DestTemp=43 SrcTemp=42 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
     StoreLocal            Slot=26 Source=43   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
-  call_reclaim_owned_result_24:
+  call_reclaim_owned_result_21:
     ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=25
     LoadLocal             Target=44 Slot=26   (record_update_fresh_call_field_owned_by_slot.ash:26:58)
     StoreLocal            Slot=27 Source=44   (record_update_fresh_call_field_owned_by_slot.ash:26:36)
@@ -461,8 +461,8 @@ function lambda_5  [ClosureHelper from lowerItems]
     Jump                  Target=lambda_5_body   (record_update_fresh_call_field_owned_by_slot.ash:26:18)
     LoadConstInt          Target=55 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:26:18)
     StoreLocal            Slot=22 Source=55   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
-    Jump                  Target=endif_22   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
-  else_21:
+    Jump                  Target=endif_19   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
+  else_18:
     LoadLocal             Target=56 Slot=21   (record_update_fresh_call_field_owned_by_slot.ash:27:29)
     Borrow                Target=57 SourceTemp=56
     SaveArenaState        CursorLocalSlot=29 EndLocalSlot=30
@@ -483,12 +483,12 @@ function lambda_5  [ClosureHelper from lowerItems]
     CallClosure           Target=72 ClosureTemp=66 ArgTemp=68   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
     StoreLocal            Slot=32 Source=72   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
     RestoreArenaState     CursorLocalSlot=29 EndLocalSlot=30 PreRestoreEndSlot=31
-    JumpIfFalse           CondTemp=71 Target=call_copy_arena_result_25   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
-    Jump                  Target=call_reclaim_owned_result_26   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
-  call_copy_arena_result_25:
+    JumpIfFalse           CondTemp=71 Target=call_copy_arena_result_22   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
+    Jump                  Target=call_reclaim_owned_result_23   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
+  call_copy_arena_result_22:
     CopyOutList           DestTemp=73 SrcTemp=72 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
     StoreLocal            Slot=32 Source=73   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
-  call_reclaim_owned_result_26:
+  call_reclaim_owned_result_23:
     ReclaimArenaChunks    SavedEndSlot=30 PreRestoreEndSlot=31
     LoadLocal             Target=74 Slot=32   (record_update_fresh_call_field_owned_by_slot.ash:27:52)
     LoadLocal             Target=75 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:27:89)
@@ -588,79 +588,79 @@ function lambda_5  [ClosureHelper from lowerItems]
     Jump                  Target=lambda_5_body   (record_update_fresh_call_field_owned_by_slot.ash:27:18)
     LoadConstInt          Target=86 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:27:18)
     StoreLocal            Slot=22 Source=86   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
-  endif_22:
+  endif_19:
     LoadLocal             Target=87 Slot=22   (record_update_fresh_call_field_owned_by_slot.ash:25:13)
     StoreLocal            Slot=10 Source=87   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=35
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=35
-    Jump                  Target=match_end_16   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-  match_arm_cleanup_20:
+    Jump                  Target=match_end_13   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
+  match_arm_cleanup_17:
     RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=36
     ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=36
-    Jump                  Target=match_none_17   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-  match_none_17:
+    Jump                  Target=match_none_14   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
+  match_none_14:
     LoadConstInt          Target=89 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     StoreLocal            Slot=10 Source=89   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
-  match_end_16:
+  match_end_13:
     LoadLocal             Target=90 Slot=10   (record_update_fresh_call_field_owned_by_slot.ash:22:5)
     LoadLocal             Target=104 Slot=27   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=105 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CmpIntNe              Target=106 Left=104 Right=105   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=106 Target=general_rc_owned_absent_37   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=106 Target=general_rc_owned_absent_34   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     IsReferenceCounted    Target=107 SourceTemp=104
-    JumpIfFalse           CondTemp=107 Target=general_rc_owned_absent_37   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=107 Target=general_rc_owned_absent_34   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=39 Source=104   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_38:
+  rcdrop_list_35:
     LoadLocal             Target=108 Slot=39   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=109 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CmpIntNe              Target=110 Left=108 Right=109   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=110 Target=rcdrop_list_end_40   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=110 Target=rcdrop_list_end_37   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcIsUnique            Target=111 SourceTemp=108
-    JumpIfFalse           CondTemp=111 Target=rcdrop_list_shared_39   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=111 Target=rcdrop_list_shared_36   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadMemOffset         Target=112 BasePtr=108 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=112 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=113 BasePtr=108 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=108 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=39 Source=113   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rcdrop_list_38   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_shared_39:
+    Jump                  Target=rcdrop_list_35   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rcdrop_list_shared_36:
     RcDrop                SourceTemp=108 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_40   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_end_40:
+    Jump                  Target=rcdrop_list_end_37   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rcdrop_list_end_37:
     StoreLocal            Slot=27 Source=105   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  general_rc_owned_absent_37:
+  general_rc_owned_absent_34:
     LoadLocal             Target=114 Slot=33   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=115 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CmpIntNe              Target=116 Left=114 Right=115   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=116 Target=general_rc_owned_absent_41   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=116 Target=general_rc_owned_absent_38   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     IsReferenceCounted    Target=117 SourceTemp=114
-    JumpIfFalse           CondTemp=117 Target=general_rc_owned_absent_41   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=117 Target=general_rc_owned_absent_38   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     StoreLocal            Slot=40 Source=114   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_42:
+  rcdrop_list_39:
     LoadLocal             Target=118 Slot=40   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=119 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CmpIntNe              Target=120 Left=118 Right=119   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=120 Target=rcdrop_list_end_44   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=120 Target=rcdrop_list_end_41   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcIsUnique            Target=121 SourceTemp=118
-    JumpIfFalse           CondTemp=121 Target=rcdrop_list_shared_43   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=121 Target=rcdrop_list_shared_40   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadMemOffset         Target=122 BasePtr=118 OffsetBytes=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=122 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=123 BasePtr=118 OffsetBytes=8   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     RcDrop                SourceTemp=118 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=40 Source=123   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    Jump                  Target=rcdrop_list_42   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_shared_43:
+    Jump                  Target=rcdrop_list_39   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rcdrop_list_shared_40:
     RcDrop                SourceTemp=118 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_44   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rcdrop_list_end_44:
+    Jump                  Target=rcdrop_list_end_41   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+  rcdrop_list_end_41:
     StoreLocal            Slot=33 Source=115   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  general_rc_owned_absent_41:
+  general_rc_owned_absent_38:
     LoadLocal             Target=124 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadLocal             Target=125 Slot=6   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-    JumpIfFalse           CondTemp=125 Target=rc_tco_exit_drop_inactive_45   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
+    JumpIfFalse           CondTemp=125 Target=rc_tco_exit_drop_inactive_42   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     LoadConstInt          Target=126 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
     CallKnown             Target=127 FuncLabel=__rcdrop_record_7 EnvTemp=126 ArgTemp=124   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
-  rc_tco_exit_drop_inactive_45:
+  rc_tco_exit_drop_inactive_42:
     Return                Source=90   (record_update_fresh_call_field_owned_by_slot.ash:21:1)
 
 function lambda_4  [SourceFunction from lowerItems]
@@ -691,11 +691,11 @@ function lambda_9  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:30:8)
     LoadConstInt          Target=3 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:30:13)
     CmpIntEq              Target=4 Left=2 Right=3   (record_update_fresh_call_field_owned_by_slot.ash:30:8)
-    JumpIfFalse           CondTemp=4 Target=else_50   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
+    JumpIfFalse           CondTemp=4 Target=else_47   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
     LoadLocal             Target=5 Slot=1   (record_update_fresh_call_field_owned_by_slot.ash:31:10)
     StoreLocal            Slot=11 Source=5   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
-    Jump                  Target=endif_51   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
-  else_50:
+    Jump                  Target=endif_48   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
+  else_47:
     LoadLocal             Target=6 Slot=2   (record_update_fresh_call_field_owned_by_slot.ash:32:17)
     LoadConstInt          Target=7 Value=1   (record_update_fresh_call_field_owned_by_slot.ash:32:21)
     SubInt                Target=8 Left=6 Right=7   (record_update_fresh_call_field_owned_by_slot.ash:32:17)
@@ -757,7 +757,7 @@ function lambda_9  [ClosureHelper from rounds]
     Jump                  Target=lambda_9_body   (record_update_fresh_call_field_owned_by_slot.ash:32:10)
     LoadConstInt          Target=37 Value=0   (record_update_fresh_call_field_owned_by_slot.ash:32:10)
     StoreLocal            Slot=11 Source=37   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
-  endif_51:
+  endif_48:
     LoadLocal             Target=38 Slot=11   (record_update_fresh_call_field_owned_by_slot.ash:30:5)
     Return                Source=38   (record_update_fresh_call_field_owned_by_slot.ash:29:1)
 

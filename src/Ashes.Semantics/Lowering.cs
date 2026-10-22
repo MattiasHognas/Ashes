@@ -1289,6 +1289,10 @@ public sealed partial class Lowering
         // a reference-counted one took the predecessor over as its last cell's tail.
         public bool[] ConsChainOverParameter { get; init; } = [];
 
+        // The roots of pattern bindings handed on as their own parameter's successor, released once
+        // the other successors hold their own references.
+        public (int Slot, int Temp)[] TransferredRootDrops { get; init; } = [];
+
         public bool MovesPredecessorIntoTail(int index)
             => SingleFreshCons[index] || (index < ConsChainOverParameter.Length && ConsChainOverParameter[index]);
     }
@@ -1388,6 +1392,7 @@ public sealed partial class Lowering
         // The RC-normalizing paths above must establish successor ownership before releasing these
         // locals. Every other reset path preserves the historical ordering and releases them before
         // deciding whether an arena reset can run.
+        EmitDeferredTransferredRootDrops(info);
         EmitDeferredTcoBackEdgeOwnedDrops(info);
         EmitGeneralRcBackEdgeDrops(info, successorsNormalized: false);
 
@@ -1553,6 +1558,7 @@ public sealed partial class Lowering
         // Arena successor aggregates borrow their RC children. Keep iteration-local owners alive
         // until every successor has normalized its own RC graph, then release them before the arena
         // reset invalidates the borrowed shells.
+        EmitDeferredTransferredRootDrops(info);
         EmitDeferredTcoBackEdgeOwnedDrops(info);
         EmitGeneralRcBackEdgeDrops(info, successorsNormalized: true);
 
@@ -11343,9 +11349,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            int rootTemp = NewTemp();
-            Emit(new IrInst.LoadLocal(rootTemp, rootSlot));
-            EmitTransferredPatternBindingRootDrop(tco, rootSlot, rootTemp);
+            ReleaseTransferredPatternBindingRoot(tco, rootSlot);
 
             if (tco.TryGetRuntimeManagedActiveSlot(rootSlot, out int activeSlot))
             {
@@ -11353,6 +11357,35 @@ public sealed partial class Lowering
                 Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
                 Emit(new IrInst.StoreLocal(activeSlot, inactiveTemp));
             }
+        }
+    }
+
+    // A root released at the self call itself frees the parts its other children hold, which another
+    // successor, a call's result not yet normalized, may still name: an argument consed into it or
+    // stored in its arena cells. The release waits for the back edge, after the successors.
+    private static bool DeferTransferredRootDrops =>
+        Environment.GetEnvironmentVariable("GRC_NO_DEFERREDROOTDROP") is null;
+
+    private readonly List<(int Slot, int Temp)> _transferredRootDrops = [];
+
+    private void ReleaseTransferredPatternBindingRoot(TcoContext tco, int rootSlot)
+    {
+        int rootTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(rootTemp, rootSlot));
+        if (DeferTransferredRootDrops && tco.ArenaCursorSlot >= 0)
+        {
+            _transferredRootDrops.Add((rootSlot, rootTemp));
+            return;
+        }
+
+        EmitTransferredPatternBindingRootDrop(tco, rootSlot, rootTemp);
+    }
+
+    private void EmitDeferredTransferredRootDrops(PendingTcoReset info)
+    {
+        foreach ((int slot, int temp) in info.TransferredRootDrops)
+        {
+            EmitTransferredPatternBindingRootDrop(info.Tco, slot, temp);
         }
     }
 
@@ -12006,11 +12039,13 @@ public sealed partial class Lowering
                     && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
                     && IsConsChainOverParameter(tco, argument, index))
                 .ToArray(),
+            TransferredRootDrops = [.. _transferredRootDrops],
         };
 
         // Every reset is resolved after the complete lambda body has been lowered. A later sibling
         // branch can promote additional parameters to runtime RC; emitting an earlier branch here
         // would freeze an incomplete ownership set and let arena pointers escape across its reset.
+        _transferredRootDrops.Clear();
         int pendingId = _nextTcoResetId++;
         _pendingTcoResets[pendingId] = resetInfo;
         RecordGeneralRcBackEdgeSlots(pendingId, tco, collectedArgs, newArgTemps);
@@ -12021,7 +12056,7 @@ public sealed partial class Lowering
     }
 
     private static int[] PendingTcoResetUsedTemps(PendingTcoReset info)
-        => [.. info.ArgTemps, .. info.OldRuntimeParamTemps];
+        => [.. info.ArgTemps, .. info.OldRuntimeParamTemps, .. info.TransferredRootDrops.Select(drop => drop.Temp)];
 
     private static int[] PendingTcoResetReadLocalSlots(PendingTcoReset info)
     {

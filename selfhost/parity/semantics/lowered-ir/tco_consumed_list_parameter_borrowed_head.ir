@@ -168,20 +168,20 @@ function lambda_3  [ClosureHelper from sumTextLengths]
   locals=28 temps=54
     LoadEnv               Target=0 Index=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
     StoreLocal            Slot=2 Source=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    LoadLocal             Target=31 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    IsReferenceCounted    Target=32 SourceTemp=31
-    JumpIfFalse           CondTemp=32 Target=rc_representation_copy_27   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    RcDup                 Target=33 SourceTemp=31 RuntimeManaged=true
-    StoreLocal            Slot=24 Source=33   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    Jump                  Target=rc_representation_done_28   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-  rc_representation_copy_27:
-    CopyOutList           DestTemp=34 SrcTemp=31 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    StoreLocal            Slot=24 Source=34   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-  rc_representation_done_28:
-    LoadLocal             Target=35 Slot=24   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    StoreLocal            Slot=2 Source=35   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    LoadConstInt          Target=36 Value=1   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    StoreLocal            Slot=20 Source=36   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    LoadLocal             Target=25 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    IsReferenceCounted    Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_24   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    RcDup                 Target=27 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=27   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    Jump                  Target=rc_representation_done_25   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+  rc_representation_copy_24:
+    CopyOutList           DestTemp=28 SrcTemp=25 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    StoreLocal            Slot=23 Source=28   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+  rc_representation_done_25:
+    LoadLocal             Target=29 Slot=23   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    StoreLocal            Slot=2 Source=29   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    LoadConstInt          Target=30 Value=1   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    StoreLocal            Slot=20 Source=30   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
     StoreLocal            Slot=5 Source=1   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
@@ -220,33 +220,34 @@ function lambda_3  [ClosureHelper from sumTextLengths]
     RcDup                 Target=16 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
     LoadLocal             Target=17 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    StoreLocal            Slot=21 Source=17   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-  rcdrop_list_24:
-    LoadLocal             Target=18 Slot=21   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    LoadConstInt          Target=19 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    CmpIntNe              Target=20 Left=18 Right=19   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    JumpIfFalse           CondTemp=20 Target=rcdrop_list_end_26   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    RcIsUnique            Target=21 SourceTemp=18
-    JumpIfFalse           CondTemp=21 Target=rcdrop_list_shared_25   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    LoadMemOffset         Target=22 BasePtr=18 OffsetBytes=0   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    RcDrop                SourceTemp=22 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=23 BasePtr=18 OffsetBytes=8   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=21 Source=23   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    Jump                  Target=rcdrop_list_24   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-  rcdrop_list_shared_25:
-    RcDrop                SourceTemp=18 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_26   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-  rcdrop_list_end_26:
-    LoadConstInt          Target=24 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    StoreLocal            Slot=20 Source=24   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    LoadLocal             Target=25 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    LoadLocal             Target=26 Slot=1   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
+    LoadConstInt          Target=18 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
+    StoreLocal            Slot=20 Source=18   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
+    LoadLocal             Target=19 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
+    LoadLocal             Target=20 Slot=1   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
     StoreLocal            Slot=2 Source=16   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
     StoreLocal            Slot=1 Source=15   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    LoadLocal             Target=45 Slot=20
-    JumpIfFalse           CondTemp=45 Target=rc_tco_drop_inactive_47
-    StoreLocal            Slot=27 Source=25
+    LoadLocal             Target=39 Slot=20
+    JumpIfFalse           CondTemp=39 Target=rc_tco_drop_inactive_44
+    StoreLocal            Slot=26 Source=19
+  rcdrop_list_45:
+    LoadLocal             Target=40 Slot=26
+    LoadConstInt          Target=41 Value=0
+    CmpIntNe              Target=42 Left=40 Right=41
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_end_47
+    RcIsUnique            Target=43 SourceTemp=40
+    JumpIfFalse           CondTemp=43 Target=rcdrop_list_shared_46
+    LoadMemOffset         Target=44 BasePtr=40 OffsetBytes=0
+    RcDrop                SourceTemp=44 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=45 BasePtr=40 OffsetBytes=8
+    RcDrop                SourceTemp=40 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=26 Source=45
+    Jump                  Target=rcdrop_list_45
+  rcdrop_list_shared_46:
+    RcDrop                SourceTemp=40 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_47
+  rcdrop_list_end_47:
+  rc_tco_drop_inactive_44:
+    StoreLocal            Slot=27 Source=17
   rcdrop_list_48:
     LoadLocal             Target=46 Slot=27
     LoadConstInt          Target=47 Value=0
@@ -264,54 +265,53 @@ function lambda_3  [ClosureHelper from sumTextLengths]
     RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_50
   rcdrop_list_end_50:
-  rc_tco_drop_inactive_47:
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=25
     LoadConstInt          Target=52 Value=0
     StoreLocal            Slot=6 Source=52
     StoreLocal            Slot=7 Source=52
     StoreLocal            Slot=2 Source=16
     LoadConstInt          Target=53 Value=1
     StoreLocal            Slot=20 Source=53
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=25
     RestoreStackPointer   Slot=10   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
     Jump                  Target=lambda_3_body   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    LoadConstInt          Target=27 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
-    StoreLocal            Slot=11 Source=27   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
-    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
+    LoadConstInt          Target=21 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:15:24)
+    StoreLocal            Slot=11 Source=21   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
     Jump                  Target=match_end_19   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
   match_arm_cleanup_23:
-    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=23
-    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=23
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
     Jump                  Target=match_none_20   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
   match_none_20:
-    LoadConstInt          Target=29 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
-    StoreLocal            Slot=11 Source=29   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
+    LoadConstInt          Target=23 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
+    StoreLocal            Slot=11 Source=23   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
   match_end_19:
-    LoadLocal             Target=30 Slot=11   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
-    LoadLocal             Target=37 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    LoadLocal             Target=38 Slot=20   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    JumpIfFalse           CondTemp=38 Target=rc_tco_exit_drop_inactive_29   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    StoreLocal            Slot=25 Source=37   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-  rcdrop_list_30:
-    LoadLocal             Target=39 Slot=25   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    LoadConstInt          Target=40 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    CmpIntNe              Target=41 Left=39 Right=40   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_32   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    RcIsUnique            Target=42 SourceTemp=39
-    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_31   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    RcDrop                SourceTemp=43 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=44 BasePtr=39 OffsetBytes=8   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=25 Source=44   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-    Jump                  Target=rcdrop_list_30   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-  rcdrop_list_shared_31:
-    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_32   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
-  rcdrop_list_end_32:
-  rc_tco_exit_drop_inactive_29:
-    Return                Source=30   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    LoadLocal             Target=24 Slot=11   (tco_consumed_list_parameter_borrowed_head.ash:13:5)
+    LoadLocal             Target=31 Slot=2   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    LoadLocal             Target=32 Slot=20   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    JumpIfFalse           CondTemp=32 Target=rc_tco_exit_drop_inactive_26   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    StoreLocal            Slot=24 Source=31   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+  rcdrop_list_27:
+    LoadLocal             Target=33 Slot=24   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    LoadConstInt          Target=34 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    CmpIntNe              Target=35 Left=33 Right=34   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_end_29   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    RcIsUnique            Target=36 SourceTemp=33
+    JumpIfFalse           CondTemp=36 Target=rcdrop_list_shared_28   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    LoadMemOffset         Target=37 BasePtr=33 OffsetBytes=0   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    RcDrop                SourceTemp=37 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=38 BasePtr=33 OffsetBytes=8   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=38   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+    Jump                  Target=rcdrop_list_27   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+  rcdrop_list_shared_28:
+    RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_29   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
+  rcdrop_list_end_29:
+  rc_tco_exit_drop_inactive_26:
+    Return                Source=24   (tco_consumed_list_parameter_borrowed_head.ash:12:1)
 
 function lambda_2  [SourceFunction from sumTextLengths]
   locals=2 temps=5
@@ -337,19 +337,19 @@ function lambda_5  [ClosureHelper from countTexts]
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadConstInt          Target=3 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_36   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_33   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     LoadLocal             Target=5 Slot=1   (tco_consumed_list_parameter_borrowed_head.ash:19:17)
     StoreLocal            Slot=11 Source=5   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-    Jump                  Target=match_end_33   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-  match_arm_cleanup_36:
+    Jump                  Target=match_end_30   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
+  match_arm_cleanup_33:
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_next_35   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-  match_next_35:
+    Jump                  Target=match_next_32   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
+  match_next_32:
     SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
     LoadConstInt          Target=6 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     CmpIntNe              Target=7 Left=2 Right=6   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_37   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_34   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     StoreLocal            Slot=18 Source=9   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
@@ -369,15 +369,15 @@ function lambda_5  [ClosureHelper from countTexts]
     StoreLocal            Slot=11 Source=17   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
-    Jump                  Target=match_end_33   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-  match_arm_cleanup_37:
+    Jump                  Target=match_end_30   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
+  match_arm_cleanup_34:
     RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
     ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
-    Jump                  Target=match_none_34   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-  match_none_34:
+    Jump                  Target=match_none_31   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
+  match_none_31:
     LoadConstInt          Target=19 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     StoreLocal            Slot=11 Source=19   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
-  match_end_33:
+  match_end_30:
     LoadLocal             Target=20 Slot=11   (tco_consumed_list_parameter_borrowed_head.ash:18:5)
     Return                Source=20   (tco_consumed_list_parameter_borrowed_head.ash:17:1)
 
@@ -423,10 +423,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=20 Value=1   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
     AndInt                Target=21 Left=19 Right=20   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
     StoreLocal            Slot=11 Source=16   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
-    JumpIfFalse           CondTemp=21 Target=rc_call_argument_not_retained_38   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
+    JumpIfFalse           CondTemp=21 Target=rc_call_argument_not_retained_35   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
     RcDup                 Target=22 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=11 Source=22   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
-  rc_call_argument_not_retained_38:
+  rc_call_argument_not_retained_35:
     LoadLocal             Target=23 Slot=11   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
     CallClosure           Target=24 ClosureTemp=14 ArgTemp=23 RuntimeManagedArgumentFlagTemp=21   (tco_consumed_list_parameter_borrowed_head.ash:25:24)
     LoadConstInt          Target=25 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:25:42)
@@ -446,10 +446,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=36 Value=1   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
     AndInt                Target=37 Left=35 Right=36   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
     StoreLocal            Slot=15 Source=32   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
-    JumpIfFalse           CondTemp=37 Target=rc_call_argument_not_retained_39   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
+    JumpIfFalse           CondTemp=37 Target=rc_call_argument_not_retained_36   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
     RcDup                 Target=38 SourceTemp=32 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=15 Source=38   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
-  rc_call_argument_not_retained_39:
+  rc_call_argument_not_retained_36:
     LoadLocal             Target=39 Slot=15   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
     CallClosure           Target=40 ClosureTemp=30 ArgTemp=39 RuntimeManagedArgumentFlagTemp=37   (tco_consumed_list_parameter_borrowed_head.ash:25:73)
     LoadConstInt          Target=41 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:25:95)
@@ -479,10 +479,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=59 Value=1   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     AndInt                Target=60 Left=58 Right=59   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     StoreLocal            Slot=22 Source=55   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-    JumpIfFalse           CondTemp=60 Target=rc_call_argument_not_retained_40   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
+    JumpIfFalse           CondTemp=60 Target=rc_call_argument_not_retained_37   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     RcDup                 Target=61 SourceTemp=55 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=22 Source=61   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-  rc_call_argument_not_retained_40:
+  rc_call_argument_not_retained_37:
     LoadLocal             Target=62 Slot=22   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     CallClosure           Target=63 ClosureTemp=47 ArgTemp=62 RuntimeManagedArgumentFlagTemp=60   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     LoadConstInt          Target=64 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:25:161)
@@ -490,23 +490,23 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
     StoreLocal            Slot=24 Source=55   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-  rcdrop_list_41:
+  rcdrop_list_38:
     LoadLocal             Target=66 Slot=24   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     LoadConstInt          Target=67 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     CmpIntNe              Target=68 Left=66 Right=67   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_43   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_40   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     RcIsUnique            Target=69 SourceTemp=66
-    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_42   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_39   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     RcDrop                SourceTemp=70 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=71 BasePtr=66 OffsetBytes=8   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
     RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=24 Source=71   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-    Jump                  Target=rcdrop_list_41   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-  rcdrop_list_shared_42:
+    Jump                  Target=rcdrop_list_38   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
+  rcdrop_list_shared_39:
     RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_43   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
-  rcdrop_list_end_43:
+    Jump                  Target=rcdrop_list_end_40   (tco_consumed_list_parameter_borrowed_head.ash:25:126)
+  rcdrop_list_end_40:
     TextFromInt           Target=72 ValueTemp=65   (tco_consumed_list_parameter_borrowed_head.ash:25:107)
     ConcatStr             Target=73 Left=46 Right=72   (tco_consumed_list_parameter_borrowed_head.ash:25:5)
     PrintStr              Source=73   (tco_consumed_list_parameter_borrowed_head.ash:24:1)
@@ -514,23 +514,23 @@ function _start_main  [ProgramEntry]
     StoreLocal            Slot=25 Source=74   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     LoadLocal             Target=75 Slot=8   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     StoreLocal            Slot=26 Source=75   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
-  rcdrop_list_44:
+  rcdrop_list_41:
     LoadLocal             Target=76 Slot=26   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     LoadConstInt          Target=77 Value=0   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     CmpIntNe              Target=78 Left=76 Right=77   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
-    JumpIfFalse           CondTemp=78 Target=rcdrop_list_end_46   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_end_43   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     RcIsUnique            Target=79 SourceTemp=76
-    JumpIfFalse           CondTemp=79 Target=rcdrop_list_shared_45   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
+    JumpIfFalse           CondTemp=79 Target=rcdrop_list_shared_42   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     LoadMemOffset         Target=80 BasePtr=76 OffsetBytes=0   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     RcDrop                SourceTemp=80 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=81 BasePtr=76 OffsetBytes=8   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
     RcDrop                SourceTemp=76 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=26 Source=81   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
-    Jump                  Target=rcdrop_list_44   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
-  rcdrop_list_shared_45:
+    Jump                  Target=rcdrop_list_41   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
+  rcdrop_list_shared_42:
     RcDrop                SourceTemp=76 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_46   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
-  rcdrop_list_end_46:
+    Jump                  Target=rcdrop_list_end_43   (tco_consumed_list_parameter_borrowed_head.ash:22:1)
+  rcdrop_list_end_43:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=27
     CopyOutArena          DestTemp=82 SrcTemp=74 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=27

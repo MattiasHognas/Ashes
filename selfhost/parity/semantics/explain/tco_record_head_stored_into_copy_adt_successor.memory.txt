@@ -45,7 +45,7 @@ Function: heaviest
     drop:                 12
     uniqueness checks:    5
   representation [lambda_7]
-    conservative unknown: 9
+    conservative unknown: 7
     region:               6
     runtime rc:           42
     copy value:           2

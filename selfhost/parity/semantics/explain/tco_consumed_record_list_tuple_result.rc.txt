@@ -1,17 +1,7 @@
 RC report
 =========
 
-Function: __rcdrop_record_3
-  Operations
-    dup:                  0
-    drop:                 2
-    uniqueness checks:    1
-    allocations:          0
-    reused allocations:   0
-    reuse tokens:         0
-    copies:               0
-
-Function: __rcnorm_4
+Function: __rcnorm_3
   Operations
     dup:                  2
     drop:                 0
@@ -20,6 +10,16 @@ Function: __rcnorm_4
     reused allocations:   0
     reuse tokens:         0
     copies:               2
+
+Function: __rcdrop_record_4
+  Operations
+    dup:                  0
+    drop:                 2
+    uniqueness checks:    1
+    allocations:          0
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
 
 Function: total [lambda_2]
   Operations
