@@ -65,9 +65,11 @@ public sealed class FfiForeignBufferNativeTests
             return;
         }
 
-        string systemLlvm = Path.Combine(Path.DirectorySeparatorChar.ToString(), "usr", "lib", "libLLVM.so");
-        string llvmLibrary = File.Exists(systemLlvm)
-            ? systemLlvm
+        // The adapter loads the libLLVM copied beside the test assembly, so the facade loads that same copy:
+        // two LLVM versions may lay out the same object differently, for example the alignment of .text.
+        string bundledLlvm = Path.Combine(AppContext.BaseDirectory, "libLLVM.so");
+        string llvmLibrary = File.Exists(bundledLlvm)
+            ? bundledLlvm
             : Path.Combine(GetRepositoryRoot(), "runtimes", "linux-x64", "libLLVM.so");
         File.Exists(llvmLibrary).ShouldBeTrue($"Missing test LLVM runtime: {llvmLibrary}");
         byte[] expected = EmitTinyObjectWithCurrentAdapter(targetId);
