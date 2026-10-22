@@ -3153,6 +3153,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_owned_value_behind_contract_call_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function with a generic error type passes an owned value to a call of the contract's
+        // types and returns that call's result, which holds references of its own: the owned value
+        // is released at the return.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildOwnedValueBehindContractCallResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("owned value behind a contract call result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_tuple_result_holds_owned_record_field_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13254,6 +13278,52 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countOf(pinned(wrap(n))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildOwnedValueBehindContractCallResultProgram(int rounds)
+        => $$"""
+            type Collection =
+                | items: List(Str)
+                | count: Int
+
+            type Loaded =
+                | names: List(Str)
+                | total: Int
+
+            let wide = "{{new string('w', 480)}}"
+
+            let make (n: Int) = Collection(items = [wide + Ashes.Text.fromInt(n), wide], count = n)
+
+            let prepend (extra: Str) (collection: Collection) =
+                match collection with
+                    | Collection { items = items, count = count } -> Collection(items = extra :: items, count = count + 1)
+
+            let complete (collection: Collection) =
+                match collection with
+                    | Collection { items = items, count = count } ->
+                        Loaded(names = items, total = count)
+                        |> Ashes.Internal.deepCopy
+                        |> Ok
+
+            let finish (collection: Collection) (result: Result(e, Str)) =
+                match result with
+                    | Error(error) -> Error(error)
+                    | Ok(outer) ->
+                        collection
+                        |> prepend(outer)
+                        |> complete
+
+            let totalOf (result: Result(Str, Loaded)) =
+                match result with
+                    | Error(_) -> 0
+                    | Ok(Loaded { total = total }) -> total
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

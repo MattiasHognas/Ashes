@@ -132,3 +132,60 @@ internal sealed class ContractParameterReturnedAsItIsTemplate() : LeakCombinatio
             """;
     }
 }
+
+/// <summary>
+/// A function with a generic error type passes an owned value to a call of the contract's types and
+/// returns that call's result: the result holds references of its own, so the owned value is
+/// released at the return.
+/// </summary>
+internal sealed class OwnedValueBehindContractCallResultTemplate() : LeakCombinationTemplate(
+    "leak.owned-value-behind-contract-call-result", "ownedValueBehindContractCallResult", GeneratedFeature.Record, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string collection = names.Of("LeakCollection");
+        string loaded = names.Of("LeakLoaded");
+        string make = names.Of("make");
+        string prepend = names.Of("prepend");
+        string complete = names.Of("complete");
+        string finish = names.Of("finish");
+        string totalOf = names.Of("totalOf");
+        return $$"""
+            type {{collection}} =
+                | items: List(Str)
+                | count: Int
+
+            type {{loaded}} =
+                | names: List(Str)
+                | total: Int
+
+            let {{make}} (n: Int) = {{collection}}(items = [{{names.Word()}} + Ashes.Text.fromInt(n), {{names.Word()}}], count = n)
+
+            let {{prepend}} (extra: Str) (collection: {{collection}}) =
+                match collection with
+                    | {{collection}} { items = items, count = count } -> {{collection}}(items = extra :: items, count = count + 1)
+
+            let {{complete}} (collection: {{collection}}) =
+                match collection with
+                    | {{collection}} { items = items, count = count } ->
+                        {{loaded}}(names = items, total = count)
+                        |> Ashes.Internal.deepCopy
+                        |> Ok
+
+            let {{finish}} (collection: {{collection}}) (result: Result(e, Str)) =
+                match result with
+                    | Error(error) -> Error(error)
+                    | Ok(outer) ->
+                        collection
+                        |> {{prepend}}(outer)
+                        |> {{complete}}
+
+            let {{totalOf}} (result: Result(Str, {{loaded}})) =
+                match result with
+                    | Error(_) -> 0
+                    | Ok({{loaded}} { total = total }) -> total
+
+            let {{names.Entry}} (seed: Int) = {{totalOf}}({{finish}}({{make}}(seed))(Ok({{names.Word()}})))
+            """;
+    }
+}

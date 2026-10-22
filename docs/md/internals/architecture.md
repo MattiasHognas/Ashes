@@ -1424,6 +1424,11 @@ the copy, and the copy is handed over the same way. The caller then takes the re
 value of its own type, without copying it. A function returning another call's result of unresolved
 type as it is forwards the request to that call, as for a tuple.
 
+Which owned values a result can point into is found by following its value back through the
+instructions that built it. A call result of the contract's types kept in an owned slot holds
+references of its own, so the walk ends at that slot: the owned values the call only borrowed as
+arguments are released at the return, even when the function returns the call's result.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:
 exactly those, read back from the instructions that built the cell, so a child the construction only

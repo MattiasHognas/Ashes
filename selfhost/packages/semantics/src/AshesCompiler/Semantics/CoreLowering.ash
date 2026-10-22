@@ -62,6 +62,7 @@ import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemps
+import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsThrough
 import AshesCompiler.Semantics.FunctionOrigins.createAdtNormalizerOrigin
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.MatchArmOwnership
@@ -8291,17 +8292,6 @@ let recursive ownedSlotsOutsideResult (resultType: SemanticType) (reached: List(
             then ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
             else owned :: ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
 
-// Whether the result reaches any owned slot of the function being finished.
-let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    (let slots = stateGeneralRcOwnedSlots(state)
-    in
-        let outside =
-            state
-            |> ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(slots)
-            |> ownedSlotsOf(stateActiveFunctionOrigin(state))
-        in
-            length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
-
 let recursive typeAtIndex (index: Int) (types: List(SemanticType)) =
     match types with
         | [] -> None
@@ -9798,6 +9788,41 @@ let recursive allRuntimeOwnedCopyElements (elements: List(SemanticType)) (state:
         | element :: rest ->
             heapRuntimeOwnedTupleElementLayout(element)(coverageEnvironment(state))([]) && allRuntimeOwnedCopyElements(rest)(state)
 
+let recursive anyOwnedSlotIs (origin: Maybe(IrFunctionOrigin)) (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (owner, candidate, _semanticType) :: rest -> owner == origin && candidate == slot || anyOwnedSlotIs(origin)(slot)(rest)
+
+let recursive independentOwnedSlotsOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (predecessors: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | (owner, slot, semanticType) :: rest ->
+            if owner == origin && !anyOwnedSlotIs(origin)(slot)(predecessors) && isGeneralRcValueType(semanticType)(state)
+            then slot :: independentOwnedSlotsOf(origin)(rest)(predecessors)(state)
+            else independentOwnedSlotsOf(origin)(rest)(predecessors)(state)
+
+// Stage 0's `IndependentOwnedSlots`: the owned slots of the function being lowered that hold a
+// value of the contract's types other than a predecessor, a value with references of its own, so
+// what reaches a result through one of them ends there and the arguments its call borrowed are not
+// reached through it.
+let independentOwnedSlots (state: CoreLoweringState) =
+    independentOwnedSlotsOf(stateActiveFunctionOrigin(state))(stateGeneralRcOwnedSlots(state))(stateGeneralRcPredecessorSlots(state))(state)
+
+// The local slots a function's result can have been read from, through no independent owned slot.
+let resultReachedSlots (resultTemp: Int) (state: CoreLoweringState) =
+    localSlotsReachingTempsThrough([resultTemp])(independentOwnedSlots(state))(state.reversedInstructions)
+
+// Whether the result reaches any owned slot of the function being finished.
+let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let slots = stateGeneralRcOwnedSlots(state)
+    in
+        let outside =
+            state
+            |> ownedSlotsOutsideResult(resultType)(resultReachedSlots(resultTemp)(state))(slots)
+            |> ownedSlotsOf(stateActiveFunctionOrigin(state))
+        in
+            length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
+
 // Stage 0's `MovesOwnedPartsIntoTupleResult`: a tuple result that holds a part of an owned value
 // is placed on the reference-counted heap at the return, each element the owned values hold
 // retained into it and the others copied, so the owned slots are released behind it and their
@@ -10421,7 +10446,7 @@ let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (resul
             |> reverse
         in
             let kept =
-                ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)(state)
+                ownedSlotsOutsideResult(resultType)(resultReachedSlots(resultTemp)(state))(registered)(state)
             in
                 match forwardTupleResultPartsRequest(resultTemp)(parts)(state) with
                     | Some(forwarded) ->
@@ -10627,7 +10652,7 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
             |> reverse
         in
             let releasable =
-                ownedSlotsOutsideResult(resultType)(localSlotsReachingTemp(resultTemp)(state.reversedInstructions))(registered)(state)
+                ownedSlotsOutsideResult(resultType)(resultReachedSlots(resultTemp)(state))(registered)(state)
             in
                 match (stateTcoLoopFrame(state), wholeResultCandidates(origin)(releasable)(registered)) with
                     | (None, first :: others) ->
