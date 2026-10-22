@@ -245,6 +245,9 @@ let recursive printEach (lines: List(Str)) =
 // successor names nothing bound from the pair, so the earlier pair is released at the back edge.
 // choice_accumulator_cell_borrows_pattern_head grows a choice accumulator the back edge copies by a
 // cons of a pattern-bound head: the cell borrows its head and takes no pattern-owner duplicate.
+// choice_accumulator_call_head_reads_parameter grows one by a call's result that reads a sibling
+// parameter: a call is a value of its own, so the head reads no loop parameter and the accumulator
+// is placed on the reference-counted heap.
 // tco_list_refilled_only_from_helper hands its back queue, placed at the loop entry, to the helper
 // that refills it before any back edge: the read is a reference-counted owner, retained for the
 // callee outright rather than kept pending until the loop is finalized.
@@ -332,6 +335,7 @@ let fixtures =
         "loop_record_cell_keeps_one_reference_to_parameter_field",
         "phantom_result_variable_owned_tuple_result",
         "choice_accumulator_cell_borrows_pattern_head",
+        "choice_accumulator_call_head_reads_parameter",
         "inline_annotation_type_variable_generic_loop",
         "phantom_result_variable_recursive_loop_exit",
         "tco_list_refilled_only_from_helper"

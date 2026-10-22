@@ -48,6 +48,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("accumulate_and_reverse_producer")]
     [Arguments("tco_list_refilled_only_from_helper")]
     [Arguments("choice_accumulator_cell_borrows_pattern_head")]
+    [Arguments("choice_accumulator_call_head_reads_parameter")]
     [Arguments("record_head_list_producer")]
     [Arguments("fresh_argument_released_when_result_cannot_hold_it")]
     [Arguments("tco_conditional_accumulator_beside_sibling")]

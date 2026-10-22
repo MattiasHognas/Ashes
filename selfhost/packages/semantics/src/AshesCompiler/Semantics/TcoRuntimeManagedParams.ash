@@ -330,13 +330,66 @@ let recursive shapeConsChainTail (expression: Expr) =
         | ExprCons(_head, tail) -> shapeConsChainTail(tail)
         | other -> other
 
+// Whether an expression reads one of these names where stage 0's `EnumerateChildren` looks: through
+// operators, conses, awaits and literal aggregates, a name read directly or a record of it read
+// by field. A call, a conditional, a match or a binding is not looked into.
+let recursive shapeReadsNameAmong (names: List(Str)) (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> shapeReadsNameAmong(names)(inner)
+        | ExprVar(name) -> shapeContainsName(name)(names)
+        | ExprQualifiedVar(owner, _member) -> shapeContainsName(owner)(names)
+        | ExprAdd(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprSubtract(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprMultiply(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprDivide(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprModulo(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprBitwiseAnd(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprBitwiseOr(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprBitwiseXor(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprShiftLeft(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprShiftRight(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprBitwiseNot(operand) -> shapeReadsNameAmong(names)(operand)
+        | ExprLogicalNot(operand) -> shapeReadsNameAmong(names)(operand)
+        | ExprLogicalAnd(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprLogicalOr(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprGreaterThan(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprLessThan(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprGreaterOrEqual(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprLessOrEqual(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprEqual(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprNotEqual(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprResultPipe(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprResultMapErrorPipe(left, right) -> shapeReadsNameAmong(names)(left) || shapeReadsNameAmong(names)(right)
+        | ExprCons(head, tail) -> shapeReadsNameAmong(names)(head) || shapeReadsNameAmong(names)(tail)
+        | ExprAwait(task) -> shapeReadsNameAmong(names)(task)
+        | ExprTuple(elements) -> shapeAnyReadsNameAmong(names)(elements)
+        | ExprList(elements, _isMultiline) -> shapeAnyReadsNameAmong(names)(elements)
+        | ExprRecord(_name, fields, _isMultiline) -> shapeAnyFieldReadsNameAmong(names)(fields)
+        | ExprRecordUpdate(target, updates) -> shapeReadsNameAmong(names)(target) || shapeAnyFieldReadsNameAmong(names)(updates)
+        | _ -> false
+and shapeAnyReadsNameAmong (names: List(Str)) (expressions: List(Expr)) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> shapeReadsNameAmong(names)(expression) || shapeAnyReadsNameAmong(names)(rest)
+and shapeAnyFieldReadsNameAmong (names: List(Str)) (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> false
+        | (_field, value) :: rest -> shapeReadsNameAmong(names)(value) || shapeAnyFieldReadsNameAmong(names)(rest)
+
+let recursive shapeUnshadowed (shadowed: List(Str)) (parameters: List(Str)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest ->
+            if shapeContainsName(parameter)(shadowed)
+            then shapeUnshadowed(shadowed)(rest)
+            else parameter :: shapeUnshadowed(shadowed)(rest)
+
 // Stage 0's `ReadsLoopParameter`: a head that is a sibling parameter, or is built from one, is
 // released with that parameter's predecessor at the back edge; the accumulator would be left
-// holding it.
-let recursive shapeReadsLoopParameter (expression: Expr) (shadowed: List(Str)) (remaining: List(Str)) =
-    match remaining with
-        | [] -> false
-        | parameter :: rest -> !shapeContainsName(parameter)(shadowed) && exprReadsName(parameter)(expression) || shapeReadsLoopParameter(expression)(shadowed)(rest)
+// holding it. Like stage 0's, it does not look into a call: a call's result is a value of its
+// own.
+let shapeReadsLoopParameter (expression: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
+    shapeReadsNameAmong(shapeUnshadowed(shadowed)(parameters))(expression)
 
 let shapeOfArgument (argument: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
     match shapeUnspan(argument) with

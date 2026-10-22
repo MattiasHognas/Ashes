@@ -1,0 +1,718 @@
+IR (lowered)
+============
+
+function lambda_2  [ClosureHelper from enqueue]
+  locals=40 temps=152
+    LoadEnv               Target=0 Index=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=2 Source=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadEnv               Target=1 Index=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=3 Source=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=48 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    IsReferenceCounted    Target=49 SourceTemp=48
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_7   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDup                 Target=50 SourceTemp=48 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=50   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rc_representation_done_8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_representation_copy_7:
+    CopyOutList           DestTemp=51 SrcTemp=48 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=24 Source=51   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_representation_done_8:
+    LoadLocal             Target=52 Slot=24   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=2 Source=52   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=53 Value=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=7 Source=53   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=54 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    IsReferenceCounted    Target=55 SourceTemp=54
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_9   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDup                 Target=56 SourceTemp=54 RuntimeManaged=true
+    StoreLocal            Slot=25 Source=56   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rc_representation_done_10   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_representation_copy_9:
+    CopyOutList           DestTemp=57 SrcTemp=54 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=25 Source=57   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_representation_done_10:
+    LoadLocal             Target=58 Slot=25   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=3 Source=58   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=59 Value=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=8 Source=59   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=6 Source=2   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=3 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:6:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=4 Value=0   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    LoadLocal             Target=6 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:7:17)
+    StoreLocal            Slot=12 Source=6   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_0   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_2   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=7 Value=0   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    CmpIntNe              Target=8 Left=3 Right=7   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_4   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    LoadMemOffset         Target=9 BasePtr=3 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    LoadMemOffset         Target=10 BasePtr=3 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    StoreLocal            Slot=19 Source=9   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    RcDrop                SourceTemp=9 TypeName=String OwnerSlot=19
+    StoreLocal            Slot=20 Source=10   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    LoadLocal             Target=11 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:9:16)
+    LoadConstInt          Target=12 Value=1   (choice_accumulator_call_head_reads_parameter.ash:9:25)
+    CmpIntEq              Target=13 Left=11 Right=12   (choice_accumulator_call_head_reads_parameter.ash:9:16)
+    JumpIfFalse           CondTemp=13 Target=else_5   (choice_accumulator_call_head_reads_parameter.ash:9:13)
+    LoadLocal             Target=14 Slot=20   (choice_accumulator_call_head_reads_parameter.ash:10:26)
+    Borrow                Target=15 SourceTemp=14
+    LoadLocal             Target=16 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:10:32)
+    LoadLocal             Target=17 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:10:38)
+    LoadConstInt          Target=18 Value=1   (choice_accumulator_call_head_reads_parameter.ash:10:46)
+    AddInt                Target=19 Left=17 Right=18   (choice_accumulator_call_head_reads_parameter.ash:10:38)
+    RcDup                 Target=20 SourceTemp=15 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=10 TypeName=List OwnerSlot=20
+    LoadLocal             Target=21 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    LoadConstInt          Target=22 Value=0   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    StoreLocal            Slot=7 Source=22   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    LoadLocal             Target=23 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    LoadLocal             Target=24 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    LoadLocal             Target=25 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    StoreLocal            Slot=2 Source=20   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    StoreLocal            Slot=3 Source=16   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    StoreLocal            Slot=1 Source=19   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    RcDup                 Target=103 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
+    LoadLocal             Target=104 Slot=7
+    JumpIfFalse           CondTemp=104 Target=rc_tco_drop_inactive_45
+    StoreLocal            Slot=32 Source=23
+  rcdrop_list_46:
+    LoadLocal             Target=105 Slot=32
+    LoadConstInt          Target=106 Value=0
+    CmpIntNe              Target=107 Left=105 Right=106
+    JumpIfFalse           CondTemp=107 Target=rcdrop_list_end_48
+    RcIsUnique            Target=108 SourceTemp=105
+    JumpIfFalse           CondTemp=108 Target=rcdrop_list_shared_47
+    LoadMemOffset         Target=109 BasePtr=105 OffsetBytes=0
+    RcDrop                SourceTemp=109 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=110 BasePtr=105 OffsetBytes=8
+    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=110
+    Jump                  Target=rcdrop_list_46
+  rcdrop_list_shared_47:
+    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_48
+  rcdrop_list_end_48:
+  rc_tco_drop_inactive_45:
+    LoadLocal             Target=111 Slot=8
+    JumpIfFalse           CondTemp=111 Target=rc_tco_drop_inactive_49
+    StoreLocal            Slot=33 Source=24
+  rcdrop_list_50:
+    LoadLocal             Target=112 Slot=33
+    LoadConstInt          Target=113 Value=0
+    CmpIntNe              Target=114 Left=112 Right=113
+    JumpIfFalse           CondTemp=114 Target=rcdrop_list_end_52
+    RcIsUnique            Target=115 SourceTemp=112
+    JumpIfFalse           CondTemp=115 Target=rcdrop_list_shared_51
+    LoadMemOffset         Target=116 BasePtr=112 OffsetBytes=0
+    RcDrop                SourceTemp=116 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=117 BasePtr=112 OffsetBytes=8
+    RcDrop                SourceTemp=112 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=33 Source=117
+    Jump                  Target=rcdrop_list_50
+  rcdrop_list_shared_51:
+    RcDrop                SourceTemp=112 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_52
+  rcdrop_list_end_52:
+  rc_tco_drop_inactive_49:
+    StoreLocal            Slot=34 Source=21
+  rcdrop_list_53:
+    LoadLocal             Target=118 Slot=34
+    LoadConstInt          Target=119 Value=0
+    CmpIntNe              Target=120 Left=118 Right=119
+    JumpIfFalse           CondTemp=120 Target=rcdrop_list_end_55
+    RcIsUnique            Target=121 SourceTemp=118
+    JumpIfFalse           CondTemp=121 Target=rcdrop_list_shared_54
+    LoadMemOffset         Target=122 BasePtr=118 OffsetBytes=0
+    RcDrop                SourceTemp=122 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=123 BasePtr=118 OffsetBytes=8
+    RcDrop                SourceTemp=118 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=34 Source=123
+    Jump                  Target=rcdrop_list_53
+  rcdrop_list_shared_54:
+    RcDrop                SourceTemp=118 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_55
+  rcdrop_list_end_55:
+    StoreLocal            Slot=2 Source=20
+    LoadConstInt          Target=124 Value=1
+    StoreLocal            Slot=7 Source=124
+    StoreLocal            Slot=3 Source=103
+    LoadConstInt          Target=125 Value=1
+    StoreLocal            Slot=8 Source=125
+    RestoreStackPointer   Slot=11   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    Jump                  Target=lambda_2_body   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    LoadConstInt          Target=26 Value=0   (choice_accumulator_call_head_reads_parameter.ash:10:18)
+    StoreLocal            Slot=21 Source=26   (choice_accumulator_call_head_reads_parameter.ash:9:13)
+    Jump                  Target=endif_6   (choice_accumulator_call_head_reads_parameter.ash:9:13)
+  else_5:
+    LoadLocal             Target=27 Slot=20   (choice_accumulator_call_head_reads_parameter.ash:11:26)
+    Borrow                Target=28 SourceTemp=27
+    LoadLocal             Target=29 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:11:51)
+    TextFromInt           Target=30 ValueTemp=29   (choice_accumulator_call_head_reads_parameter.ash:11:32)
+    LoadLocal             Target=31 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:11:61)
+    Alloc                 Target=32 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:11:32)
+    StoreMemOffset        BasePtr=32 OffsetBytes=0 Source=30   (choice_accumulator_call_head_reads_parameter.ash:11:32)
+    StoreMemOffset        BasePtr=32 OffsetBytes=8 Source=31   (choice_accumulator_call_head_reads_parameter.ash:11:32)
+    LoadLocal             Target=33 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:11:67)
+    LoadConstInt          Target=34 Value=1   (choice_accumulator_call_head_reads_parameter.ash:11:75)
+    AddInt                Target=35 Left=33 Right=34   (choice_accumulator_call_head_reads_parameter.ash:11:67)
+    RcDup                 Target=36 SourceTemp=28 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=10 TypeName=List OwnerSlot=20
+    LoadLocal             Target=37 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    LoadConstInt          Target=38 Value=0   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    StoreLocal            Slot=7 Source=38   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    LoadLocal             Target=39 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    LoadLocal             Target=40 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    LoadLocal             Target=41 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    StoreLocal            Slot=2 Source=36   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    StoreLocal            Slot=3 Source=32   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    StoreLocal            Slot=1 Source=35   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    IsReferenceCounted    Target=126 SourceTemp=32
+    JumpIfFalse           CondTemp=126 Target=rc_representation_copy_56
+    RcDup                 Target=127 SourceTemp=32 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=127
+    Jump                  Target=rc_representation_done_57
+  rc_representation_copy_56:
+    CopyOutList           DestTemp=128 SrcTemp=32 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=36 Source=128
+  rc_representation_done_57:
+    LoadLocal             Target=129 Slot=36
+    LoadLocal             Target=130 Slot=7
+    JumpIfFalse           CondTemp=130 Target=rc_tco_drop_inactive_58
+    StoreLocal            Slot=37 Source=39
+  rcdrop_list_59:
+    LoadLocal             Target=131 Slot=37
+    LoadConstInt          Target=132 Value=0
+    CmpIntNe              Target=133 Left=131 Right=132
+    JumpIfFalse           CondTemp=133 Target=rcdrop_list_end_61
+    RcIsUnique            Target=134 SourceTemp=131
+    JumpIfFalse           CondTemp=134 Target=rcdrop_list_shared_60
+    LoadMemOffset         Target=135 BasePtr=131 OffsetBytes=0
+    RcDrop                SourceTemp=135 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=136 BasePtr=131 OffsetBytes=8
+    RcDrop                SourceTemp=131 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=37 Source=136
+    Jump                  Target=rcdrop_list_59
+  rcdrop_list_shared_60:
+    RcDrop                SourceTemp=131 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_61
+  rcdrop_list_end_61:
+  rc_tco_drop_inactive_58:
+    LoadLocal             Target=137 Slot=8
+    JumpIfFalse           CondTemp=137 Target=rc_tco_drop_inactive_62
+    StoreLocal            Slot=38 Source=40
+  rcdrop_list_63:
+    LoadLocal             Target=138 Slot=38
+    LoadConstInt          Target=139 Value=0
+    CmpIntNe              Target=140 Left=138 Right=139
+    JumpIfFalse           CondTemp=140 Target=rcdrop_list_end_65
+    RcIsUnique            Target=141 SourceTemp=138
+    JumpIfFalse           CondTemp=141 Target=rcdrop_list_shared_64
+    LoadMemOffset         Target=142 BasePtr=138 OffsetBytes=0
+    RcDrop                SourceTemp=142 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=143 BasePtr=138 OffsetBytes=8
+    RcDrop                SourceTemp=138 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=38 Source=143
+    Jump                  Target=rcdrop_list_63
+  rcdrop_list_shared_64:
+    RcDrop                SourceTemp=138 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_65
+  rcdrop_list_end_65:
+  rc_tco_drop_inactive_62:
+    StoreLocal            Slot=39 Source=37
+  rcdrop_list_66:
+    LoadLocal             Target=144 Slot=39
+    LoadConstInt          Target=145 Value=0
+    CmpIntNe              Target=146 Left=144 Right=145
+    JumpIfFalse           CondTemp=146 Target=rcdrop_list_end_68
+    RcIsUnique            Target=147 SourceTemp=144
+    JumpIfFalse           CondTemp=147 Target=rcdrop_list_shared_67
+    LoadMemOffset         Target=148 BasePtr=144 OffsetBytes=0
+    RcDrop                SourceTemp=148 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=149 BasePtr=144 OffsetBytes=8
+    RcDrop                SourceTemp=144 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=39 Source=149
+    Jump                  Target=rcdrop_list_66
+  rcdrop_list_shared_67:
+    RcDrop                SourceTemp=144 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_68
+  rcdrop_list_end_68:
+    StoreLocal            Slot=2 Source=36
+    LoadConstInt          Target=150 Value=1
+    StoreLocal            Slot=7 Source=150
+    StoreLocal            Slot=3 Source=129
+    LoadConstInt          Target=151 Value=1
+    StoreLocal            Slot=8 Source=151
+    RestoreStackPointer   Slot=11   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    Jump                  Target=lambda_2_body   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    LoadConstInt          Target=42 Value=0   (choice_accumulator_call_head_reads_parameter.ash:11:18)
+    StoreLocal            Slot=21 Source=42   (choice_accumulator_call_head_reads_parameter.ash:9:13)
+  endif_6:
+    LoadLocal             Target=43 Slot=21   (choice_accumulator_call_head_reads_parameter.ash:9:13)
+    StoreLocal            Slot=12 Source=43   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    Jump                  Target=match_end_0   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=23
+    Jump                  Target=match_none_1   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+  match_none_1:
+    LoadConstInt          Target=46 Value=0   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    StoreLocal            Slot=12 Source=46   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+  match_end_0:
+    LoadLocal             Target=47 Slot=12   (choice_accumulator_call_head_reads_parameter.ash:6:5)
+    LoadConstInt          Target=60 Value=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=26 Source=60   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=61 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=62 Slot=7   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntEq              Target=63 Left=61 Right=47   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=64 Slot=26   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntEq              Target=65 Left=64 Right=60   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    AndInt                Target=66 Left=62 Right=63   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    AndInt                Target=67 Left=66 Right=65   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=67 Target=rc_tco_exit_transfer_not_selected_11   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=68 Value=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=26 Source=68   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rc_tco_exit_transfer_done_12   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_tco_exit_transfer_not_selected_11:
+    LoadLocal             Target=69 Slot=7   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=69 Target=rc_tco_exit_drop_inactive_13   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=27 Source=61   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_14:
+    LoadLocal             Target=70 Slot=27   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=71 Value=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntNe              Target=72 Left=70 Right=71   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=72 Target=rcdrop_list_end_16   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcIsUnique            Target=73 SourceTemp=70
+    JumpIfFalse           CondTemp=73 Target=rcdrop_list_shared_15   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadMemOffset         Target=74 BasePtr=70 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDrop                SourceTemp=74 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=75 BasePtr=70 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDrop                SourceTemp=70 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=75   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rcdrop_list_14   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_shared_15:
+    RcDrop                SourceTemp=70 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_16   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_end_16:
+  rc_tco_exit_drop_inactive_13:
+  rc_tco_exit_transfer_done_12:
+    LoadLocal             Target=76 Slot=3   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=77 Slot=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntEq              Target=78 Left=76 Right=47   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=79 Slot=26   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntEq              Target=80 Left=79 Right=60   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    AndInt                Target=81 Left=77 Right=78   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    AndInt                Target=82 Left=81 Right=80   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=82 Target=rc_tco_exit_transfer_not_selected_17   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=83 Value=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=26 Source=83   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rc_tco_exit_transfer_done_18   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_tco_exit_transfer_not_selected_17:
+    LoadLocal             Target=84 Slot=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=84 Target=rc_tco_exit_drop_inactive_19   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=28 Source=76   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_20:
+    LoadLocal             Target=85 Slot=28   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=86 Value=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntNe              Target=87 Left=85 Right=86   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=87 Target=rcdrop_list_end_22   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcIsUnique            Target=88 SourceTemp=85
+    JumpIfFalse           CondTemp=88 Target=rcdrop_list_shared_21   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadMemOffset         Target=89 BasePtr=85 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDrop                SourceTemp=89 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=90 BasePtr=85 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDrop                SourceTemp=85 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=90   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rcdrop_list_20   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_shared_21:
+    RcDrop                SourceTemp=85 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_22   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_end_22:
+  rc_tco_exit_drop_inactive_19:
+  rc_tco_exit_transfer_done_18:
+    LoadArgumentOwnership Target=91   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=92 Value=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    ShrInt                Target=93 Left=91 Right=92   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    AndInt                Target=94 Left=93 Right=92   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=94 Target=rc_result_owned_23   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CopyOutList           DestTemp=95 SrcTemp=47 HeadCopy=String Purpose=ArenaResultBoundary   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=30 Source=47   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_25:
+    LoadLocal             Target=96 Slot=30   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=97 Value=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    CmpIntNe              Target=98 Left=96 Right=97   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    JumpIfFalse           CondTemp=98 Target=rcdrop_list_end_27   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcIsUnique            Target=99 SourceTemp=96
+    JumpIfFalse           CondTemp=99 Target=rcdrop_list_shared_26   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadMemOffset         Target=100 BasePtr=96 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDrop                SourceTemp=100 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=101 BasePtr=96 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    RcDrop                SourceTemp=96 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=101   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rcdrop_list_25   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_shared_26:
+    RcDrop                SourceTemp=96 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_27   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rcdrop_list_end_27:
+    StoreLocal            Slot=29 Source=95   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Jump                  Target=rc_result_done_24   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_result_owned_23:
+    StoreLocal            Slot=29 Source=47   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+  rc_result_done_24:
+    LoadLocal             Target=102 Slot=29   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Return                Source=102   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+
+function lambda_1  [ClosureHelper from enqueue]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadEnv               Target=1 Index=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=2 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Return                Source=4   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+
+function lambda_0  [SourceFunction from enqueue]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadLocal             Target=1 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    Return                Source=4   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+
+function lambda_4  [ClosureHelper from countAll]
+  locals=28 temps=54
+    LoadEnv               Target=0 Index=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=2 Source=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadLocal             Target=25 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    IsReferenceCounted    Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=rc_representation_copy_33   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    RcDup                 Target=27 SourceTemp=25 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=27   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    Jump                  Target=rc_representation_done_34   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+  rc_representation_copy_33:
+    CopyOutList           DestTemp=28 SrcTemp=25 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=23 Source=28   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+  rc_representation_done_34:
+    LoadLocal             Target=29 Slot=23   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=2 Source=29   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadConstInt          Target=30 Value=1   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=8 Source=30   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=5 Source=1   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=6 Source=1   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=7 Source=1   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+  lambda_4_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadLocal             Target=2 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:14:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=3 Value=0   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_31   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    LoadLocal             Target=5 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:15:17)
+    StoreLocal            Slot=12 Source=5   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_28   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+  match_arm_cleanup_31:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_30   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+  match_next_30:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=6 Value=0   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_32   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    StoreLocal            Slot=19 Source=8   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    RcDrop                SourceTemp=8 TypeName=String OwnerSlot=19
+    StoreLocal            Slot=20 Source=9   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    LoadLocal             Target=10 Slot=20   (choice_accumulator_call_head_reads_parameter.ash:16:38)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:16:44)
+    LoadConstInt          Target=13 Value=1   (choice_accumulator_call_head_reads_parameter.ash:16:52)
+    AddInt                Target=14 Left=12 Right=13   (choice_accumulator_call_head_reads_parameter.ash:16:44)
+    RcDup                 Target=15 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=16 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    LoadConstInt          Target=17 Value=0   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    StoreLocal            Slot=8 Source=17   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    LoadLocal             Target=18 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    LoadLocal             Target=19 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    StoreLocal            Slot=2 Source=15   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    StoreLocal            Slot=1 Source=14   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    LoadLocal             Target=39 Slot=8
+    JumpIfFalse           CondTemp=39 Target=rc_tco_drop_inactive_69
+    StoreLocal            Slot=26 Source=18
+  rcdrop_list_70:
+    LoadLocal             Target=40 Slot=26
+    LoadConstInt          Target=41 Value=0
+    CmpIntNe              Target=42 Left=40 Right=41
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_end_72
+    RcIsUnique            Target=43 SourceTemp=40
+    JumpIfFalse           CondTemp=43 Target=rcdrop_list_shared_71
+    LoadMemOffset         Target=44 BasePtr=40 OffsetBytes=0
+    RcDrop                SourceTemp=44 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=45 BasePtr=40 OffsetBytes=8
+    RcDrop                SourceTemp=40 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=26 Source=45
+    Jump                  Target=rcdrop_list_70
+  rcdrop_list_shared_71:
+    RcDrop                SourceTemp=40 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_72
+  rcdrop_list_end_72:
+  rc_tco_drop_inactive_69:
+    StoreLocal            Slot=27 Source=16
+  rcdrop_list_73:
+    LoadLocal             Target=46 Slot=27
+    LoadConstInt          Target=47 Value=0
+    CmpIntNe              Target=48 Left=46 Right=47
+    JumpIfFalse           CondTemp=48 Target=rcdrop_list_end_75
+    RcIsUnique            Target=49 SourceTemp=46
+    JumpIfFalse           CondTemp=49 Target=rcdrop_list_shared_74
+    LoadMemOffset         Target=50 BasePtr=46 OffsetBytes=0
+    RcDrop                SourceTemp=50 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=51 BasePtr=46 OffsetBytes=8
+    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=51
+    Jump                  Target=rcdrop_list_73
+  rcdrop_list_shared_74:
+    RcDrop                SourceTemp=46 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_75
+  rcdrop_list_end_75:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=25
+    LoadConstInt          Target=52 Value=0
+    StoreLocal            Slot=6 Source=52
+    StoreLocal            Slot=7 Source=52
+    StoreLocal            Slot=2 Source=15
+    LoadConstInt          Target=53 Value=1
+    StoreLocal            Slot=8 Source=53
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=25
+    RestoreStackPointer   Slot=11   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    Jump                  Target=lambda_4_body   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    LoadConstInt          Target=20 Value=0   (choice_accumulator_call_head_reads_parameter.ash:16:29)
+    StoreLocal            Slot=12 Source=20   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    Jump                  Target=match_end_28   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+  match_arm_cleanup_32:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    Jump                  Target=match_none_29   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+  match_none_29:
+    LoadConstInt          Target=23 Value=0   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    StoreLocal            Slot=12 Source=23   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+  match_end_28:
+    LoadLocal             Target=24 Slot=12   (choice_accumulator_call_head_reads_parameter.ash:14:5)
+    LoadLocal             Target=31 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadLocal             Target=32 Slot=8   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    JumpIfFalse           CondTemp=32 Target=rc_tco_exit_drop_inactive_35   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=24 Source=31   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+  rcdrop_list_36:
+    LoadLocal             Target=33 Slot=24   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadConstInt          Target=34 Value=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    CmpIntNe              Target=35 Left=33 Right=34   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_end_38   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    RcIsUnique            Target=36 SourceTemp=33
+    JumpIfFalse           CondTemp=36 Target=rcdrop_list_shared_37   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadMemOffset         Target=37 BasePtr=33 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    RcDrop                SourceTemp=37 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=38 BasePtr=33 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=38   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    Jump                  Target=rcdrop_list_36   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+  rcdrop_list_shared_37:
+    RcDrop                SourceTemp=33 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_38   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+  rcdrop_list_end_38:
+  rc_tco_exit_drop_inactive_35:
+    Return                Source=24   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+
+function lambda_3  [SourceFunction from countAll]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    LoadLocal             Target=1 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    MakeClosure           Target=4 FuncLabel=lambda_4 EnvPtrTemp=0 EnvSizeBytes=8   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    Return                Source=4   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+
+function lambda_6  [ClosureHelper from rounds]
+  locals=26 temps=63
+    LoadEnv               Target=0 Index=0   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreLocal            Slot=2 Source=0   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreLocal            Slot=5 Source=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreLocal            Slot=6 Source=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreLocal            Slot=7 Source=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    LoadLocal             Target=2 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:19:8)
+    LoadConstInt          Target=3 Value=0   (choice_accumulator_call_head_reads_parameter.ash:19:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (choice_accumulator_call_head_reads_parameter.ash:19:8)
+    JumpIfFalse           CondTemp=4 Target=else_39   (choice_accumulator_call_head_reads_parameter.ash:19:5)
+    LoadLocal             Target=5 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:20:10)
+    StoreLocal            Slot=11 Source=5   (choice_accumulator_call_head_reads_parameter.ash:19:5)
+    Jump                  Target=endif_40   (choice_accumulator_call_head_reads_parameter.ash:19:5)
+  else_39:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=6 Value=0   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    LoadConstStr          Target=7 StrLabel=str_0   (choice_accumulator_call_head_reads_parameter.ash:22:54)
+    LoadConstStr          Target=8 StrLabel=str_1   (choice_accumulator_call_head_reads_parameter.ash:22:60)
+    ConcatStr             Target=9 Left=7 Right=8   (choice_accumulator_call_head_reads_parameter.ash:22:54)
+    Alloc                 Target=10 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=6   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    LoadConstStr          Target=11 StrLabel=str_2   (choice_accumulator_call_head_reads_parameter.ash:22:43)
+    LoadConstStr          Target=12 StrLabel=str_3   (choice_accumulator_call_head_reads_parameter.ash:22:49)
+    ConcatStr             Target=13 Left=11 Right=12   (choice_accumulator_call_head_reads_parameter.ash:22:43)
+    Alloc                 Target=14 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=10   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    LoadConstStr          Target=15 StrLabel=str_4   (choice_accumulator_call_head_reads_parameter.ash:22:32)
+    LoadConstStr          Target=16 StrLabel=str_5   (choice_accumulator_call_head_reads_parameter.ash:22:38)
+    ConcatStr             Target=17 Left=15 Right=16   (choice_accumulator_call_head_reads_parameter.ash:22:32)
+    Alloc                 Target=18 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=17   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=18 OffsetBytes=8 Source=14   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    LoadConstStr          Target=19 StrLabel=str_6   (choice_accumulator_call_head_reads_parameter.ash:22:21)
+    LoadConstStr          Target=20 StrLabel=str_7   (choice_accumulator_call_head_reads_parameter.ash:22:27)
+    ConcatStr             Target=21 Left=19 Right=20   (choice_accumulator_call_head_reads_parameter.ash:22:21)
+    Alloc                 Target=22 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=21   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=18   (choice_accumulator_call_head_reads_parameter.ash:22:20)
+    StoreLocal            Slot=14 Source=22   (choice_accumulator_call_head_reads_parameter.ash:22:9)
+    LoadLocal             Target=23 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:23:19)
+    LoadConstInt          Target=24 Value=1   (choice_accumulator_call_head_reads_parameter.ash:23:23)
+    SubInt                Target=25 Left=23 Right=24   (choice_accumulator_call_head_reads_parameter.ash:23:19)
+    LoadLocal             Target=26 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:23:26)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadEnv               Target=27 Index=1   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadEnv               Target=28 Index=2   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    LoadLocal             Target=29 Slot=14   (choice_accumulator_call_head_reads_parameter.ash:23:51)
+    Borrow                Target=30 SourceTemp=29
+    RcDup                 Target=62 SourceTemp=30   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    CallClosure           Target=31 ClosureTemp=28 ArgTemp=30   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    LoadConstInt          Target=32 Value=0   (choice_accumulator_call_head_reads_parameter.ash:23:57)
+    CallClosure           Target=33 ClosureTemp=31 ArgTemp=32   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    LoadConstInt          Target=34 Value=0   (choice_accumulator_call_head_reads_parameter.ash:23:61)
+    LoadMemOffset         Target=35 BasePtr=33 OffsetBytes=16   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    LoadConstInt          Target=36 Value=63   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    ShrInt                Target=37 Left=35 Right=36   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    CallClosure           Target=38 ClosureTemp=33 ArgTemp=34   (choice_accumulator_call_head_reads_parameter.ash:23:43)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=19
+    LoadMemOffset         Target=39 BasePtr=27 OffsetBytes=16   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    LoadConstInt          Target=40 Value=62   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    ShrInt                Target=41 Left=39 Right=40   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    LoadConstInt          Target=42 Value=1   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    AndInt                Target=43 Left=41 Right=42   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    StoreLocal            Slot=20 Source=38   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    JumpIfFalse           CondTemp=43 Target=rc_call_argument_not_retained_41   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    RcDup                 Target=44 SourceTemp=38 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=20 Source=44   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+  rc_call_argument_not_retained_41:
+    LoadLocal             Target=45 Slot=20   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    CallClosure           Target=46 ClosureTemp=27 ArgTemp=45 RuntimeManagedArgumentFlagTemp=43   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    LoadConstInt          Target=47 Value=0   (choice_accumulator_call_head_reads_parameter.ash:23:65)
+    CallClosure           Target=48 ClosureTemp=46 ArgTemp=47   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    StoreLocal            Slot=22 Source=38   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+  rcdrop_list_42:
+    LoadLocal             Target=49 Slot=22   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    LoadConstInt          Target=50 Value=0   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    CmpIntNe              Target=51 Left=49 Right=50   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_44   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    RcIsUnique            Target=52 SourceTemp=49
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_43   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    RcDrop                SourceTemp=53 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=54 BasePtr=49 OffsetBytes=8   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=22 Source=54   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+    Jump                  Target=rcdrop_list_42   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+  rcdrop_list_shared_43:
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_44   (choice_accumulator_call_head_reads_parameter.ash:23:34)
+  rcdrop_list_end_44:
+    AddInt                Target=55 Left=26 Right=48   (choice_accumulator_call_head_reads_parameter.ash:23:26)
+    RcDrop                SourceTemp=22 TypeName=List OwnerSlot=14
+    LoadLocal             Target=56 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    LoadLocal             Target=57 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    StoreLocal            Slot=2 Source=25   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    StoreLocal            Slot=1 Source=55   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=25
+    RestoreStackPointer   Slot=10   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    Jump                  Target=lambda_6_body   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    LoadConstInt          Target=58 Value=0   (choice_accumulator_call_head_reads_parameter.ash:23:12)
+    StoreLocal            Slot=23 Source=58   (choice_accumulator_call_head_reads_parameter.ash:22:9)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=24
+    LoadLocal             Target=60 Slot=23   (choice_accumulator_call_head_reads_parameter.ash:22:9)
+    StoreLocal            Slot=11 Source=60   (choice_accumulator_call_head_reads_parameter.ash:19:5)
+  endif_40:
+    LoadLocal             Target=61 Slot=11   (choice_accumulator_call_head_reads_parameter.ash:19:5)
+    Return                Source=61   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+
+function lambda_5  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    LoadLocal             Target=1 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    LoadEnv               Target=4 Index=0   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    LoadEnv               Target=5 Index=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    MakeClosure           Target=6 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=24   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    Return                Source=6   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+
+function _start_main  [ProgramEntry]
+  locals=6 temps=14
+    LoadConstInt          Target=0 Value=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    StoreLocal            Slot=0 Source=1   (choice_accumulator_call_head_reads_parameter.ash:5:1)
+    LoadConstInt          Target=2 Value=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    MakeClosure           Target=3 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=0   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    StoreLocal            Slot=1 Source=3   (choice_accumulator_call_head_reads_parameter.ash:13:1)
+    Alloc                 Target=4 SizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    LoadLocal             Target=5 Slot=1   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    LoadLocal             Target=6 Slot=0   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    MakeClosure           Target=7 FuncLabel=lambda_5 EnvPtrTemp=4 EnvSizeBytes=16   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    StoreLocal            Slot=2 Source=7   (choice_accumulator_call_head_reads_parameter.ash:18:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=8 Slot=2   (choice_accumulator_call_head_reads_parameter.ash:26:4)
+    LoadConstInt          Target=9 Value=3   (choice_accumulator_call_head_reads_parameter.ash:26:11)
+    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (choice_accumulator_call_head_reads_parameter.ash:25:1)
+    LoadConstInt          Target=11 Value=0   (choice_accumulator_call_head_reads_parameter.ash:25:1)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (choice_accumulator_call_head_reads_parameter.ash:25:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    PrintInt              Source=12   (choice_accumulator_call_head_reads_parameter.ash:25:1)
+    AllocAdt              Target=13 Tag=0 FieldCount=0   (choice_accumulator_call_head_reads_parameter.ash:25:1)
+    Return                Source=13
+
