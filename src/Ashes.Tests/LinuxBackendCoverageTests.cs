@@ -2237,6 +2237,54 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_task_all_waiting_on_a_slow_https_peer_does_not_spin_or_grow_the_stack()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Task A's TLS step yields once between its TCP connect and the handshake, parked with no
+        // wait descriptor while task B is still in the composite. The aggregate wait must treat that
+        // leaf as runnable, not register its zero WaitHandle: fd 0 (here a closed stdin pipe, always
+        // ready) would stay in the persistent epoll set and turn the 1.5 s wait for the response into
+        // a busy loop, and the loop's per-iteration stack slots then overflowed the native stack.
+        var result = await CompileRunWithLinuxLlvmTlsLoopbackAsync(
+            """
+            let taskA =
+                async(let _ = Ashes.IO.write("Astart")
+                in
+                    match await Ashes.Net.Http.get("https://__HOST__:__PORT__/x") with
+                        | Ok(t) -> Ashes.IO.write(t)
+                        | Error(m) -> Ashes.IO.write(m))
+            in
+            let taskB =
+                async(match await Ashes.Task.task(0) with
+                    | Ok(_) -> Ashes.IO.write("B")
+                    | Error(_) -> Ashes.IO.write("Berr"))
+            in
+                match [taskA, taskB]
+                |> Ashes.Task.all
+                |> Ashes.Task.run with
+                    | Ok(_) -> Ashes.IO.print("")
+                    | Error(_) -> Ashes.IO.print("end-err")
+            """,
+            async stream =>
+            {
+                var request = await ReadTextAsync(stream, 4096).ConfigureAwait(false);
+                request.ShouldContain("GET /x HTTP/1.1");
+                await Task.Delay(TimeSpan.FromMilliseconds(1500)).ConfigureAwait(false);
+                var response = Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nslow");
+                await stream.WriteAsync(response).ConfigureAwait(false);
+                await stream.FlushAsync().ConfigureAwait(false);
+            },
+            host: "localhost",
+            stdin: string.Empty).ConfigureAwait(false);
+        result.ExitCode.ShouldBe(0);
+        result.Stdout.ShouldBe("AstartBslow\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_https_against_loopback_tls_fixture()
     {
         if (!OperatingSystem.IsLinux())
@@ -16172,7 +16220,8 @@ public sealed class LinuxBackendCoverageTests
         bool trustServerCertificate = true,
         int expectedClientCount = 1,
         bool allowServerHandshakeFailure = false,
-        bool tolerateClientDisconnect = false)
+        bool tolerateClientDisconnect = false,
+        string? stdin = null)
     {
         using TcpListener listener = LoopbackPortLease.StartListener();
         using var tlsHost = await TlsLoopbackTestHost.CreateAsync(certificateHost ?? host).ConfigureAwait(false);
@@ -16185,7 +16234,7 @@ public sealed class LinuxBackendCoverageTests
                 ["SSL_CERT_FILE"] = tlsHost.TrustCertificatePath
             }
             : null;
-        var result = await CompileRunWithLinuxLlvmAsync(source, environmentVariables: environmentVariables).ConfigureAwait(false);
+        var result = await CompileRunWithLinuxLlvmAsync(source, stdin: stdin, environmentVariables: environmentVariables).ConfigureAwait(false);
         var serverException = await serverTask.ConfigureAwait(false);
         if (allowServerHandshakeFailure && serverException is not null)
         {

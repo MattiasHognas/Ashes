@@ -170,19 +170,19 @@ internal static partial class LlvmCodegen
     private static EmitHttpRequestSlots EmitHttpRequestBuildSlots(LlvmCodegenState state)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_result");
-        LlvmValueHandle hostSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_host");
-        LlvmValueHandle pathSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_path");
-        LlvmValueHandle portSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_port");
-        LlvmValueHandle responseSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_response");
-        LlvmValueHandle socketSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_socket");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_index");
-        LlvmValueHandle hostStartSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_host_start");
-        LlvmValueHandle hostEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_host_end");
-        LlvmValueHandle pathStartSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_path_start");
-        LlvmValueHandle pathLenSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_path_len");
-        LlvmValueHandle portValueSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_port_value");
-        LlvmValueHandle portDigitsSlot = LlvmApi.BuildAlloca(builder, state.I64, "http_port_digits");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "http_result");
+        LlvmValueHandle hostSlot = EmitEntryScratchSlot(state, state.I64, "http_host");
+        LlvmValueHandle pathSlot = EmitEntryScratchSlot(state, state.I64, "http_path");
+        LlvmValueHandle portSlot = EmitEntryScratchSlot(state, state.I64, "http_port");
+        LlvmValueHandle responseSlot = EmitEntryScratchSlot(state, state.I64, "http_response");
+        LlvmValueHandle socketSlot = EmitEntryScratchSlot(state, state.I64, "http_socket");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, "http_index");
+        LlvmValueHandle hostStartSlot = EmitEntryScratchSlot(state, state.I64, "http_host_start");
+        LlvmValueHandle hostEndSlot = EmitEntryScratchSlot(state, state.I64, "http_host_end");
+        LlvmValueHandle pathStartSlot = EmitEntryScratchSlot(state, state.I64, "http_path_start");
+        LlvmValueHandle pathLenSlot = EmitEntryScratchSlot(state, state.I64, "http_path_len");
+        LlvmValueHandle portValueSlot = EmitEntryScratchSlot(state, state.I64, "http_port_value");
+        LlvmValueHandle portDigitsSlot = EmitEntryScratchSlot(state, state.I64, "http_port_digits");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), hostSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), pathSlot);

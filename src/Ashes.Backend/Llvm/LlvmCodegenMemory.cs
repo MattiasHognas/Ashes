@@ -55,12 +55,14 @@ internal static partial class LlvmCodegen
     /// Allocates a fixed-size scratch stack slot in the function's entry block, then restores the
     /// builder to its previous position. Every <c>alloca</c> belongs in the entry block: a
     /// fixed-size alloca emitted in a non-entry block (for example inside a TCO loop body) is
-    /// lowered by LLVM at -O0 as a runtime stack-pointer adjustment that is only reclaimed by the
-    /// function returning or an <c>llvm.stackrestore</c>, so one emitted per loop iteration leaks
-    /// the whole native stack. An entry-block alloca is a single fixed frame slot, reused every
-    /// iteration. (-O2's mem2reg/SROA promotes these away regardless, which is why the leak was
-    /// only observable at -O0.) These slots are always written before they are read at their use
-    /// site, so reusing the one slot across iterations is safe.
+    /// lowered by LLVM as a runtime stack-pointer adjustment that is only reclaimed by the function
+    /// returning or an <c>llvm.stackrestore</c>, so one emitted per loop iteration leaks the whole
+    /// native stack. An entry-block alloca is a single fixed frame slot, reused every iteration.
+    /// -O2 promotes a slot whose address never escapes into a register, but a slot handed to a
+    /// syscall or a foreign call (a timespec, an epoll event, a socket address) stays a dynamic
+    /// alloca at every optimization level, so the async scheduler loop needs these too. These
+    /// slots are always written before they are read at their use site, so reusing the one slot
+    /// across iterations is safe.
     /// </summary>
     private static LlvmValueHandle EmitEntryScratchSlot(LlvmCodegenState state, LlvmTypeHandle type, string name)
     {
