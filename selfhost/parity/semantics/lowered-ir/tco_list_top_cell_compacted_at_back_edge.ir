@@ -72,10 +72,10 @@ function __rcdrop_record_5  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_18   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_19   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-  rc_drop_shared_18:
+  rc_drop_shared_19:
     RcDrop                SourceTemp=0 TypeName=E RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     Return                Source=3   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
@@ -84,23 +84,23 @@ function __rcdrop_4  [RuntimeManagedAdtDropper]
   locals=2 temps=7
     LoadLocal             Target=0 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_15   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_16   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     GetAdtTag             Target=2 Ptr=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_15   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-  rcdrop_ctor_16:
-    Jump                  Target=rcdrop_shared_15   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_16   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
   rcdrop_ctor_17:
+    Jump                  Target=rcdrop_shared_16   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+  rcdrop_ctor_18:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     LoadConstInt          Target=4 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     CallKnown             Target=5 FuncLabel=__rcdrop_record_5 EnvTemp=4 ArgTemp=3   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    Jump                  Target=rcdrop_shared_15   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-  rcdrop_shared_15:
+    Jump                  Target=rcdrop_shared_16   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+  rcdrop_shared_16:
     RcDrop                SourceTemp=0 TypeName=Result RuntimeManaged=true
     LoadConstInt          Target=6 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     Return                Source=6   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
 
 function lambda_0  [SourceFunction from check]
-  locals=7 temps=35
+  locals=7 temps=44
     LoadLocal             Target=0 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:5:8)
     LoadConstInt          Target=1 Value=5   (tco_list_top_cell_compacted_at_back_edge.ash:5:12)
     CmpIntGt              Target=2 Left=0 Right=1   (tco_list_top_cell_compacted_at_back_edge.ash:5:8)
@@ -156,23 +156,35 @@ function lambda_0  [SourceFunction from check]
   rc_representation_done_3:
     LoadLocal             Target=24 Slot=3   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     LoadArgumentOwnership Target=25   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    LoadConstInt          Target=26 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    LoadConstInt          Target=26 Value=2   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
     ShrInt                Target=27 Left=25 Right=26   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    AndInt                Target=28 Left=27 Right=26   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    JumpIfFalse           CondTemp=28 Target=rc_result_owned_13   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    Alloc                 Target=29 SizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    MakeClosure           Target=30 FuncLabel=__deepcopy_2 EnvPtrTemp=29 EnvSizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=30   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    CallClosure           Target=31 ClosureTemp=30 ArgTemp=24   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    LoadConstInt          Target=32 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    CallKnown             Target=33 FuncLabel=__rcdrop_4 EnvTemp=32 ArgTemp=24   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    StoreLocal            Slot=6 Source=31   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    Jump                  Target=rc_result_done_14   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-  rc_result_owned_13:
+    LoadConstInt          Target=28 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    AndInt                Target=29 Left=27 Right=28   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    JumpIfFalse           CondTemp=29 Target=independent_result_not_requested_13   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    LoadArgumentOwnership Target=30   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    LoadConstInt          Target=31 Value=-8   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    AndInt                Target=32 Left=30 Right=31   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    LoadConstInt          Target=33 Value=2305843009213693952   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    StoreMemOffset        BasePtr=32 OffsetBytes=0 Source=33   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+  independent_result_not_requested_13:
+    LoadArgumentOwnership Target=34   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    LoadConstInt          Target=35 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    ShrInt                Target=36 Left=34 Right=35   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    AndInt                Target=37 Left=36 Right=35   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    JumpIfFalse           CondTemp=37 Target=rc_result_owned_14   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    Alloc                 Target=38 SizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    MakeClosure           Target=39 FuncLabel=__deepcopy_2 EnvPtrTemp=38 EnvSizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    StoreMemOffset        BasePtr=38 OffsetBytes=0 Source=39   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    CallClosure           Target=40 ClosureTemp=39 ArgTemp=24   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    LoadConstInt          Target=41 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    CallKnown             Target=42 FuncLabel=__rcdrop_4 EnvTemp=41 ArgTemp=24   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    StoreLocal            Slot=6 Source=40   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    Jump                  Target=rc_result_done_15   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+  rc_result_owned_14:
     StoreLocal            Slot=6 Source=24   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-  rc_result_done_14:
-    LoadLocal             Target=34 Slot=6   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
-    Return                Source=34   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+  rc_result_done_15:
+    LoadLocal             Target=43 Slot=6   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
+    Return                Source=43   (tco_list_top_cell_compacted_at_back_edge.ash:4:1)
 
 function __deepcopy_8  [AdtDeepCopier]
   locals=2 temps=11
@@ -202,40 +214,40 @@ function __rcdrop_9  [RuntimeManagedAdtDropper]
   locals=3 temps=13
     LoadLocal             Target=0 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_42   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_44   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     GetAdtTag             Target=2 Ptr=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_42   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rcdrop_ctor_43:
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_44   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rcdrop_ctor_45:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=2 Source=3   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rcdrop_list_45:
+  rcdrop_list_47:
     LoadLocal             Target=4 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     LoadConstInt          Target=5 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     CmpIntNe              Target=6 Left=4 Right=5   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_47   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_49   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     RcIsUnique            Target=7 SourceTemp=4
-    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_46   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_48   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rcdrop_list_45   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rcdrop_list_shared_46:
+    Jump                  Target=rcdrop_list_47   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rcdrop_list_shared_48:
     RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_47   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rcdrop_list_end_47:
-    Jump                  Target=rcdrop_shared_42   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rcdrop_ctor_44:
+    Jump                  Target=rcdrop_list_end_49   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rcdrop_list_end_49:
+    Jump                  Target=rcdrop_shared_44   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rcdrop_ctor_46:
     GetAdtField           Target=9 Ptr=0 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     LoadConstInt          Target=10 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     CallKnown             Target=11 FuncLabel=__rcdrop_record_5 EnvTemp=10 ArgTemp=9   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rcdrop_shared_42   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rcdrop_shared_42:
+    Jump                  Target=rcdrop_shared_44   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rcdrop_shared_44:
     RcDrop                SourceTemp=0 TypeName=Result RuntimeManaged=true
     LoadConstInt          Target=12 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     Return                Source=12   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
 
 function lambda_7  [ClosureHelper from go]
-  locals=36 temps=117
+  locals=36 temps=126
     LoadEnv               Target=0 Index=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=2 Source=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
@@ -247,24 +259,24 @@ function lambda_7  [ClosureHelper from go]
     LoadLocal             Target=2 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:13:8)
     LoadConstInt          Target=3 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:13:13)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_list_top_cell_compacted_at_back_edge.ash:13:8)
-    JumpIfFalse           CondTemp=4 Target=else_19   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
+    JumpIfFalse           CondTemp=4 Target=else_20   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
     LoadLocal             Target=5 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:14:13)
     LoadConstInt          Target=6 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
     StoreLocal            Slot=10 Source=5   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
-    JumpIfFalse           CondTemp=6 Target=rc_constructor_field_not_retained_21   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
+    JumpIfFalse           CondTemp=6 Target=rc_constructor_field_not_retained_22   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
     RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=10 Source=7   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
-  rc_constructor_field_not_retained_21:
+  rc_constructor_field_not_retained_22:
     LoadLocal             Target=8 Slot=10   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
     AllocAdt              Target=9 Tag=0 FieldCount=1   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
     SetAdtField           Ptr=9 FieldIndex=0 Source=8   (tco_list_top_cell_compacted_at_back_edge.ash:14:10)
     StoreLocal            Slot=9 Source=9   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
-    Jump                  Target=endif_20   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
-  else_19:
+    Jump                  Target=endif_21   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
+  else_20:
     LoadLocal             Target=10 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:16:12)
     LoadConstInt          Target=11 Value=100   (tco_list_top_cell_compacted_at_back_edge.ash:16:17)
     CmpIntEq              Target=12 Left=10 Right=11   (tco_list_top_cell_compacted_at_back_edge.ash:16:12)
-    JumpIfFalse           CondTemp=12 Target=else_22   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
+    JumpIfFalse           CondTemp=12 Target=else_23   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
     LoadLocal             Target=13 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:17:17)
     LoadConstInt          Target=14 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:17:21)
     SubInt                Target=15 Left=13 Right=14   (tco_list_top_cell_compacted_at_back_edge.ash:17:17)
@@ -277,8 +289,8 @@ function lambda_7  [ClosureHelper from go]
     Jump                  Target=lambda_7_body   (tco_list_top_cell_compacted_at_back_edge.ash:17:14)
     LoadConstInt          Target=19 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:17:14)
     StoreLocal            Slot=11 Source=19   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
-    Jump                  Target=endif_23   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
-  else_22:
+    Jump                  Target=endif_24   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
+  else_23:
     SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
     LoadEnv               Target=20 Index=1   (tco_list_top_cell_compacted_at_back_edge.ash:19:19)
     Borrow                Target=21 SourceTemp=20
@@ -300,11 +312,11 @@ function lambda_7  [ClosureHelper from go]
     SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
     LoadConstInt          Target=32 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     CmpIntNe              Target=33 Left=31 Right=32   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_27   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_28   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     GetAdtTag             Target=34 Ptr=31   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     LoadConstInt          Target=36 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     CmpIntEq              Target=35 Left=34 Right=36   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-    JumpIfFalse           CondTemp=35 Target=match_arm_cleanup_27   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+    JumpIfFalse           CondTemp=35 Target=match_arm_cleanup_28   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     GetAdtField           Target=37 Ptr=31 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     StoreLocal            Slot=21 Source=37   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     LoadLocal             Target=38 Slot=21   (tco_list_top_cell_compacted_at_back_edge.ash:20:41)
@@ -313,20 +325,20 @@ function lambda_7  [ClosureHelper from go]
     SetAdtField           Ptr=40 FieldIndex=0 Source=39   (tco_list_top_cell_compacted_at_back_edge.ash:20:35)
     StoreLocal            Slot=18 Source=40   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     RcDrop                SourceTemp=37 TypeName=E OwnerSlot=21
-    Jump                  Target=match_end_24   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-  match_arm_cleanup_27:
+    Jump                  Target=match_end_25   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+  match_arm_cleanup_28:
     RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
     ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
-    Jump                  Target=match_next_26   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-  match_next_26:
+    Jump                  Target=match_next_27   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+  match_next_27:
     SaveArenaState        CursorLocalSlot=24 EndLocalSlot=25
     LoadConstInt          Target=42 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     CmpIntNe              Target=43 Left=31 Right=42   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-    JumpIfFalse           CondTemp=43 Target=match_arm_cleanup_28   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+    JumpIfFalse           CondTemp=43 Target=match_arm_cleanup_29   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     GetAdtTag             Target=44 Ptr=31   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     LoadConstInt          Target=46 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     CmpIntEq              Target=45 Left=44 Right=46   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-    JumpIfFalse           CondTemp=45 Target=match_arm_cleanup_28   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+    JumpIfFalse           CondTemp=45 Target=match_arm_cleanup_29   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     GetAdtField           Target=47 Ptr=31 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     StoreLocal            Slot=26 Source=47   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     LoadLocal             Target=48 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:21:31)
@@ -341,30 +353,30 @@ function lambda_7  [ClosureHelper from go]
     LoadLocal             Target=55 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:21:28)
     StoreLocal            Slot=2 Source=50   (tco_list_top_cell_compacted_at_back_edge.ash:21:28)
     StoreLocal            Slot=1 Source=53   (tco_list_top_cell_compacted_at_back_edge.ash:21:28)
-    LoadLocal             Target=103 Slot=16
-    LoadConstInt          Target=104 Value=0
-    CmpIntNe              Target=105 Left=103 Right=104
-    JumpIfFalse           CondTemp=105 Target=general_rc_owned_absent_62
-    IsReferenceCounted    Target=106 SourceTemp=103
-    JumpIfFalse           CondTemp=106 Target=general_rc_owned_absent_62
-    LoadConstInt          Target=107 Value=0
-    CallKnown             Target=108 FuncLabel=__rcdrop_4 EnvTemp=107 ArgTemp=103
-    StoreLocal            Slot=16 Source=104
-  general_rc_owned_absent_62:
-    LoadLocal             Target=109 Slot=15
-    LoadConstInt          Target=110 Value=0
-    CmpIntNe              Target=111 Left=109 Right=110
-    JumpIfFalse           CondTemp=111 Target=general_rc_owned_absent_63
-    IsReferenceCounted    Target=112 SourceTemp=109
-    JumpIfFalse           CondTemp=112 Target=general_rc_owned_absent_63
+    LoadLocal             Target=112 Slot=16
     LoadConstInt          Target=113 Value=0
-    CallKnown             Target=114 FuncLabel=__rcdrop_4 EnvTemp=113 ArgTemp=109
-    StoreLocal            Slot=15 Source=110
-  general_rc_owned_absent_63:
-    CopyOutArena          DestTemp=115 SrcTemp=53 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
+    CmpIntNe              Target=114 Left=112 Right=113
+    JumpIfFalse           CondTemp=114 Target=general_rc_owned_absent_64
+    IsReferenceCounted    Target=115 SourceTemp=112
+    JumpIfFalse           CondTemp=115 Target=general_rc_owned_absent_64
+    LoadConstInt          Target=116 Value=0
+    CallKnown             Target=117 FuncLabel=__rcdrop_4 EnvTemp=116 ArgTemp=112
+    StoreLocal            Slot=16 Source=113
+  general_rc_owned_absent_64:
+    LoadLocal             Target=118 Slot=15
+    LoadConstInt          Target=119 Value=0
+    CmpIntNe              Target=120 Left=118 Right=119
+    JumpIfFalse           CondTemp=120 Target=general_rc_owned_absent_65
+    IsReferenceCounted    Target=121 SourceTemp=118
+    JumpIfFalse           CondTemp=121 Target=general_rc_owned_absent_65
+    LoadConstInt          Target=122 Value=0
+    CallKnown             Target=123 FuncLabel=__rcdrop_4 EnvTemp=122 ArgTemp=118
+    StoreLocal            Slot=15 Source=119
+  general_rc_owned_absent_65:
+    CopyOutArena          DestTemp=124 SrcTemp=53 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=35
-    CopyOutArena          DestTemp=116 SrcTemp=115 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
-    StoreLocal            Slot=1 Source=116
+    CopyOutArena          DestTemp=125 SrcTemp=124 StaticSizeBytes=16 Purpose=ArenaTcoCompaction
+    StoreLocal            Slot=1 Source=125
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=35
     RestoreStackPointer   Slot=8   (tco_list_top_cell_compacted_at_back_edge.ash:21:28)
     Jump                  Target=lambda_7_body   (tco_list_top_cell_compacted_at_back_edge.ash:21:28)
@@ -372,106 +384,118 @@ function lambda_7  [ClosureHelper from go]
     StoreLocal            Slot=18 Source=56   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=27
     ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=27
-    Jump                  Target=match_end_24   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-  match_arm_cleanup_28:
+    Jump                  Target=match_end_25   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+  match_arm_cleanup_29:
     RestoreArenaState     CursorLocalSlot=24 EndLocalSlot=25 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=25 PreRestoreEndSlot=28
-    Jump                  Target=match_none_25   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-  match_none_25:
+    Jump                  Target=match_none_26   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
+  match_none_26:
     LoadConstInt          Target=57 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     StoreLocal            Slot=18 Source=57   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
-  match_end_24:
+  match_end_25:
     LoadLocal             Target=58 Slot=18   (tco_list_top_cell_compacted_at_back_edge.ash:19:13)
     StoreLocal            Slot=11 Source=58   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
-  endif_23:
+  endif_24:
     LoadLocal             Target=59 Slot=11   (tco_list_top_cell_compacted_at_back_edge.ash:16:9)
     StoreLocal            Slot=9 Source=59   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
-  endif_20:
+  endif_21:
     LoadLocal             Target=60 Slot=9   (tco_list_top_cell_compacted_at_back_edge.ash:13:5)
     IsReferenceCounted    Target=61 SourceTemp=60
-    JumpIfFalse           CondTemp=61 Target=rc_representation_copy_29   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=61 Target=rc_representation_copy_30   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     RcDup                 Target=62 SourceTemp=60 RuntimeManaged=true
     StoreLocal            Slot=29 Source=62   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rc_representation_done_30   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_representation_copy_29:
+    Jump                  Target=rc_representation_done_31   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_representation_copy_30:
     GetAdtTag             Target=64 Ptr=60   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    SwitchTag             TagTemp=64 Cases=[2] DefaultLabel=rc_normalize_adt_31   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_normalize_adt_31:
+    SwitchTag             TagTemp=64 Cases=[2] DefaultLabel=rc_normalize_adt_32   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_normalize_adt_32:
     CopyOutArena          DestTemp=65 SrcTemp=60 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=66 Ptr=60 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     IsReferenceCounted    Target=67 SourceTemp=66
-    JumpIfFalse           CondTemp=67 Target=rc_representation_copy_34   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=67 Target=rc_representation_copy_35   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     RcDup                 Target=68 SourceTemp=66 RuntimeManaged=true
     StoreLocal            Slot=31 Source=68   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rc_representation_done_35   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_representation_copy_34:
+    Jump                  Target=rc_representation_done_36   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_representation_copy_35:
     CopyOutList           DestTemp=69 SrcTemp=66 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=31 Source=69   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_representation_done_35:
+  rc_representation_done_36:
     LoadLocal             Target=70 Slot=31   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     SetAdtField           Ptr=65 FieldIndex=0 Source=70   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=30 Source=65   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rc_normalize_adt_end_33   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_normalize_adt_32:
+    Jump                  Target=rc_normalize_adt_end_34   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_normalize_adt_33:
     CopyOutArena          DestTemp=71 SrcTemp=60 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=72 Ptr=60 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     IsReferenceCounted    Target=73 SourceTemp=72
-    JumpIfFalse           CondTemp=73 Target=rc_representation_copy_36   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=73 Target=rc_representation_copy_37   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     RcDup                 Target=74 SourceTemp=72 RuntimeManaged=true
     StoreLocal            Slot=32 Source=74   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rc_representation_done_37   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_representation_copy_36:
+    Jump                  Target=rc_representation_done_38   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_representation_copy_37:
     LoadConstInt          Target=76 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     CallKnown             Target=77 FuncLabel=__rcnorm_1 EnvTemp=76 ArgTemp=72   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=32 Source=77   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_representation_done_37:
+  rc_representation_done_38:
     LoadLocal             Target=78 Slot=32   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     SetAdtField           Ptr=71 FieldIndex=0 Source=78   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=30 Source=71   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rc_normalize_adt_end_33   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_normalize_adt_end_33:
+    Jump                  Target=rc_normalize_adt_end_34   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_normalize_adt_end_34:
     LoadLocal             Target=79 Slot=30   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     StoreLocal            Slot=29 Source=79   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_representation_done_30:
+  rc_representation_done_31:
     LoadLocal             Target=80 Slot=29   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    LoadLocal             Target=81 Slot=15   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    LoadConstInt          Target=82 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    CmpIntNe              Target=83 Left=81 Right=82   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    JumpIfFalse           CondTemp=83 Target=general_rc_owned_absent_38   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    IsReferenceCounted    Target=84 SourceTemp=81
-    JumpIfFalse           CondTemp=84 Target=general_rc_owned_absent_38   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    LoadConstInt          Target=85 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    CallKnown             Target=86 FuncLabel=__rcdrop_4 EnvTemp=85 ArgTemp=81   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    StoreLocal            Slot=15 Source=82   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  general_rc_owned_absent_38:
-    LoadLocal             Target=87 Slot=16   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    LoadConstInt          Target=88 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    CmpIntNe              Target=89 Left=87 Right=88   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    JumpIfFalse           CondTemp=89 Target=general_rc_owned_absent_39   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    IsReferenceCounted    Target=90 SourceTemp=87
-    JumpIfFalse           CondTemp=90 Target=general_rc_owned_absent_39   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadArgumentOwnership Target=81   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=82 Value=2   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    ShrInt                Target=83 Left=81 Right=82   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=84 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    AndInt                Target=85 Left=83 Right=84   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=85 Target=independent_result_not_requested_39   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadArgumentOwnership Target=86   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=87 Value=-8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    AndInt                Target=88 Left=86 Right=87   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=89 Value=2305843009213693952   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    StoreMemOffset        BasePtr=88 OffsetBytes=0 Source=89   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  independent_result_not_requested_39:
+    LoadLocal             Target=90 Slot=15   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     LoadConstInt          Target=91 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    CallKnown             Target=92 FuncLabel=__rcdrop_4 EnvTemp=91 ArgTemp=87   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    StoreLocal            Slot=16 Source=88   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  general_rc_owned_absent_39:
-    LoadArgumentOwnership Target=93   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    LoadConstInt          Target=94 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    ShrInt                Target=95 Left=93 Right=94   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    AndInt                Target=96 Left=95 Right=94   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    JumpIfFalse           CondTemp=96 Target=rc_result_owned_40   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Alloc                 Target=97 SizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    MakeClosure           Target=98 FuncLabel=__deepcopy_8 EnvPtrTemp=97 EnvSizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    StoreMemOffset        BasePtr=97 OffsetBytes=0 Source=98   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    CallClosure           Target=99 ClosureTemp=98 ArgTemp=80   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    CmpIntNe              Target=92 Left=90 Right=91   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=92 Target=general_rc_owned_absent_40   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    IsReferenceCounted    Target=93 SourceTemp=90
+    JumpIfFalse           CondTemp=93 Target=general_rc_owned_absent_40   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=94 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    CallKnown             Target=95 FuncLabel=__rcdrop_4 EnvTemp=94 ArgTemp=90   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    StoreLocal            Slot=15 Source=91   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  general_rc_owned_absent_40:
+    LoadLocal             Target=96 Slot=16   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=97 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    CmpIntNe              Target=98 Left=96 Right=97   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=98 Target=general_rc_owned_absent_41   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    IsReferenceCounted    Target=99 SourceTemp=96
+    JumpIfFalse           CondTemp=99 Target=general_rc_owned_absent_41   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
     LoadConstInt          Target=100 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    CallKnown             Target=101 FuncLabel=__rcdrop_9 EnvTemp=100 ArgTemp=80   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    StoreLocal            Slot=33 Source=99   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Jump                  Target=rc_result_done_41   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_result_owned_40:
+    CallKnown             Target=101 FuncLabel=__rcdrop_4 EnvTemp=100 ArgTemp=96   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    StoreLocal            Slot=16 Source=97   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  general_rc_owned_absent_41:
+    LoadArgumentOwnership Target=102   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=103 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    ShrInt                Target=104 Left=102 Right=103   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    AndInt                Target=105 Left=104 Right=103   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    JumpIfFalse           CondTemp=105 Target=rc_result_owned_42   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    Alloc                 Target=106 SizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    MakeClosure           Target=107 FuncLabel=__deepcopy_8 EnvPtrTemp=106 EnvSizeBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    StoreMemOffset        BasePtr=106 OffsetBytes=0 Source=107   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    CallClosure           Target=108 ClosureTemp=107 ArgTemp=80   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    LoadConstInt          Target=109 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    CallKnown             Target=110 FuncLabel=__rcdrop_9 EnvTemp=109 ArgTemp=80   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    StoreLocal            Slot=33 Source=108   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    Jump                  Target=rc_result_done_43   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_result_owned_42:
     StoreLocal            Slot=33 Source=80   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-  rc_result_done_41:
-    LoadLocal             Target=102 Slot=33   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
-    Return                Source=102   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+  rc_result_done_43:
+    LoadLocal             Target=111 Slot=33   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
+    Return                Source=111   (tco_list_top_cell_compacted_at_back_edge.ash:12:1)
 
 function lambda_6  [SourceFunction from go]
   locals=2 temps=7
@@ -488,8 +512,8 @@ function lambda_10  [SourceFunction from describe]
   locals=23 temps=28
     LoadLocal             Target=0 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:24:11)
     GetAdtTag             Target=1 Ptr=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-    SwitchTag             TagTemp=1 Cases=[2] DefaultLabel=match_none_49   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-  match_group_50:
+    SwitchTag             TagTemp=1 Cases=[2] DefaultLabel=match_none_51   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+  match_group_52:
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     GetAdtField           Target=2 Ptr=0 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     StoreLocal            Slot=5 Source=2   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
@@ -497,21 +521,21 @@ function lambda_10  [SourceFunction from describe]
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=4 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     CmpIntEq              Target=5 Left=3 Right=4   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_55   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_57   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     LoadConstInt          Target=6 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:27:25)
     StoreLocal            Slot=6 Source=6   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
-    Jump                  Target=match_end_52   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-  match_arm_cleanup_55:
+    Jump                  Target=match_end_54   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
+  match_arm_cleanup_57:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
-    Jump                  Target=match_next_54   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-  match_next_54:
+    Jump                  Target=match_next_56   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
+  match_next_56:
     SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
     LoadConstInt          Target=7 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     CmpIntNe              Target=8 Left=3 Right=7   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_56   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_58   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     LoadMemOffset         Target=9 BasePtr=3 OffsetBytes=0   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     LoadMemOffset         Target=10 BasePtr=3 OffsetBytes=8   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     StoreLocal            Slot=13 Source=9   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
@@ -519,33 +543,33 @@ function lambda_10  [SourceFunction from describe]
     StoreLocal            Slot=6 Source=11   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
-    Jump                  Target=match_end_52   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-  match_arm_cleanup_56:
+    Jump                  Target=match_end_54   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
+  match_arm_cleanup_58:
     RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=15
-    Jump                  Target=match_none_53   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-  match_none_53:
+    Jump                  Target=match_none_55   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
+  match_none_55:
     LoadConstInt          Target=12 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     StoreLocal            Slot=6 Source=12   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
-  match_end_52:
+  match_end_54:
     LoadLocal             Target=13 Slot=6   (tco_list_top_cell_compacted_at_back_edge.ash:26:13)
     StoreLocal            Slot=2 Source=13   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=16
-    Jump                  Target=match_end_48   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-  match_group_51:
+    Jump                  Target=match_end_50   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+  match_group_53:
     SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
     LoadConstInt          Target=14 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     CmpIntNe              Target=15 Left=0 Right=14   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_57   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_59   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     GetAdtTag             Target=16 Ptr=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     LoadConstInt          Target=18 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     CmpIntEq              Target=17 Left=16 Right=18   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_57   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_59   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     GetAdtField           Target=19 Ptr=0 FieldIndex=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     LoadConstInt          Target=20 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     CmpIntNe              Target=21 Left=19 Right=20   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-    JumpIfFalse           CondTemp=21 Target=match_arm_cleanup_57   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+    JumpIfFalse           CondTemp=21 Target=match_arm_cleanup_59   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     GetAdtField           Target=22 Ptr=19 FieldIndex=0 Tagless=true   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     StoreLocal            Slot=19 Source=22   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     GetAdtField           Target=23 Ptr=19 FieldIndex=1 Tagless=true   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
@@ -555,15 +579,15 @@ function lambda_10  [SourceFunction from describe]
     StoreLocal            Slot=2 Source=24   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
-    Jump                  Target=match_end_48   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-  match_arm_cleanup_57:
+    Jump                  Target=match_end_50   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+  match_arm_cleanup_59:
     RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
     ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
-    Jump                  Target=match_none_49   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-  match_none_49:
+    Jump                  Target=match_none_51   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
+  match_none_51:
     LoadConstInt          Target=26 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     StoreLocal            Slot=2 Source=26   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
-  match_end_48:
+  match_end_50:
     LoadLocal             Target=27 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:24:5)
     Return                Source=27   (tco_list_top_cell_compacted_at_back_edge.ash:23:1)
 
@@ -582,11 +606,11 @@ function lambda_12  [ClosureHelper from rounds]
     LoadLocal             Target=2 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:32:8)
     LoadConstInt          Target=3 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:32:13)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_list_top_cell_compacted_at_back_edge.ash:32:8)
-    JumpIfFalse           CondTemp=4 Target=else_58   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
+    JumpIfFalse           CondTemp=4 Target=else_60   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
     LoadLocal             Target=5 Slot=1   (tco_list_top_cell_compacted_at_back_edge.ash:33:10)
     StoreLocal            Slot=11 Source=5   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
-    Jump                  Target=endif_59   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
-  else_58:
+    Jump                  Target=endif_61   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
+  else_60:
     LoadLocal             Target=6 Slot=2   (tco_list_top_cell_compacted_at_back_edge.ash:35:16)
     LoadConstInt          Target=7 Value=1   (tco_list_top_cell_compacted_at_back_edge.ash:35:20)
     SubInt                Target=8 Left=6 Right=7   (tco_list_top_cell_compacted_at_back_edge.ash:35:16)
@@ -623,51 +647,51 @@ function lambda_12  [ClosureHelper from rounds]
     LoadLocal             Target=42 Slot=18
     LoadConstInt          Target=43 Value=0
     CmpIntNe              Target=44 Left=42 Right=43
-    JumpIfFalse           CondTemp=44 Target=general_rc_owned_absent_64
+    JumpIfFalse           CondTemp=44 Target=general_rc_owned_absent_66
     IsReferenceCounted    Target=45 SourceTemp=42
-    JumpIfFalse           CondTemp=45 Target=general_rc_owned_absent_64
+    JumpIfFalse           CondTemp=45 Target=general_rc_owned_absent_66
     LoadConstInt          Target=46 Value=0
     CallKnown             Target=47 FuncLabel=__rcdrop_9 EnvTemp=46 ArgTemp=42
     StoreLocal            Slot=18 Source=43
-  general_rc_owned_absent_64:
+  general_rc_owned_absent_66:
     LoadLocal             Target=48 Slot=17
     LoadConstInt          Target=49 Value=0
     CmpIntNe              Target=50 Left=48 Right=49
-    JumpIfFalse           CondTemp=50 Target=general_rc_owned_absent_65
+    JumpIfFalse           CondTemp=50 Target=general_rc_owned_absent_67
     IsReferenceCounted    Target=51 SourceTemp=48
-    JumpIfFalse           CondTemp=51 Target=general_rc_owned_absent_65
+    JumpIfFalse           CondTemp=51 Target=general_rc_owned_absent_67
     LoadConstInt          Target=52 Value=0
     CallKnown             Target=53 FuncLabel=__rcdrop_9 EnvTemp=52 ArgTemp=48
     StoreLocal            Slot=17 Source=49
-  general_rc_owned_absent_65:
+  general_rc_owned_absent_67:
     RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=21
     ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=21
     RestoreStackPointer   Slot=10   (tco_list_top_cell_compacted_at_back_edge.ash:35:9)
     Jump                  Target=lambda_12_body   (tco_list_top_cell_compacted_at_back_edge.ash:35:9)
     LoadConstInt          Target=28 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:35:9)
     StoreLocal            Slot=11 Source=28   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
-  endif_59:
+  endif_61:
     LoadLocal             Target=29 Slot=11   (tco_list_top_cell_compacted_at_back_edge.ash:32:5)
     LoadLocal             Target=30 Slot=17   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     LoadConstInt          Target=31 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     CmpIntNe              Target=32 Left=30 Right=31   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
-    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_60   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
+    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_62   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     IsReferenceCounted    Target=33 SourceTemp=30
-    JumpIfFalse           CondTemp=33 Target=general_rc_owned_absent_60   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
+    JumpIfFalse           CondTemp=33 Target=general_rc_owned_absent_62   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     LoadConstInt          Target=34 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     CallKnown             Target=35 FuncLabel=__rcdrop_9 EnvTemp=34 ArgTemp=30   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     StoreLocal            Slot=17 Source=31   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
-  general_rc_owned_absent_60:
+  general_rc_owned_absent_62:
     LoadLocal             Target=36 Slot=18   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     LoadConstInt          Target=37 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     CmpIntNe              Target=38 Left=36 Right=37   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
-    JumpIfFalse           CondTemp=38 Target=general_rc_owned_absent_61   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
+    JumpIfFalse           CondTemp=38 Target=general_rc_owned_absent_63   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     IsReferenceCounted    Target=39 SourceTemp=36
-    JumpIfFalse           CondTemp=39 Target=general_rc_owned_absent_61   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
+    JumpIfFalse           CondTemp=39 Target=general_rc_owned_absent_63   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     LoadConstInt          Target=40 Value=0   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     CallKnown             Target=41 FuncLabel=__rcdrop_9 EnvTemp=40 ArgTemp=36   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
     StoreLocal            Slot=18 Source=37   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
-  general_rc_owned_absent_61:
+  general_rc_owned_absent_63:
     Return                Source=29   (tco_list_top_cell_compacted_at_back_edge.ash:31:1)
 
 function lambda_11  [SourceFunction from rounds]
