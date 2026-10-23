@@ -3225,6 +3225,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_consumed_list_head_kept_by_tuple_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A fresh list of fresh strings goes to a function whose arena tuple result keeps a head (or
+        // the rest of the list). The result is made owned before the list is released, so the list
+        // goes with every head instead of spine-only, which stranded each head the result did not keep.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildConsumedListHeadKeptByTupleResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("consumed list head kept by a tuple result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_owned_values_behind_forwarded_contract_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13420,6 +13444,42 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsumedListHeadKeptByTupleResultProgram(int rounds)
+        => $$"""
+            let splitQualified (parts: List(Str)) =
+                match parts with
+                    | [] -> ("", "")
+                    | name :: _ -> ("x", name)
+
+            let splitRest (parts: List(Str)) =
+                match parts with
+                    | [] -> ("", [])
+                    | name :: rest -> (name, rest)
+
+            let recursive build (n: Int) (acc: List(Str)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive count (xs: List(Str)) (total: Int) =
+                match xs with
+                    | [] -> total
+                    | x :: rest -> count(rest)(total + Ashes.Text.byteLength(x))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    let named =
+                        match splitQualified(build(3)([])) with
+                            | (a, b) -> Ashes.Text.byteLength(a) + Ashes.Text.byteLength(b)
+                    in
+                        match splitRest(build(4)([])) with
+                            | (a, rest) -> rounds(n - 1)(total + named + Ashes.Text.byteLength(a) + count(rest)(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

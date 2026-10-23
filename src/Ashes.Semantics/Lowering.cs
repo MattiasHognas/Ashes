@@ -13013,7 +13013,7 @@ public sealed partial class Lowering
     {
         if (resultAlreadySettled
             || _inCoroutineBody
-            || !CanNormalizeIntoOwnedRuntimeValue(resultType)
+            || !CanOwnResultBeforeArgumentRelease(resultType)
             || !consumedRuntimeArguments.Exists(argument =>
                 argument is { PreserveEscapedChildren: true, AdoptionFlagTemp: < 0 }
                 && !CanArenaReset(Prune(argument.Type))))
@@ -13033,6 +13033,15 @@ public sealed partial class Lowering
 
         return (ownedResultTemp, true);
     }
+
+    // A tuple result is copied into an owned tuple when every element is a scalar or a value that
+    // normalizes into an owned one: the copy retains each reference-counted element it keeps.
+    private bool CanOwnResultBeforeArgumentRelease(TypeRef resultType)
+        => Prune(resultType) is TypeRef.TTuple tuple
+            ? Environment.GetEnvironmentVariable("GRC_NO_TUPLEOWNRESULT") is null
+                && tuple.Elements.Any(element => !CanArenaReset(Prune(element)))
+                && tuple.Elements.All(element => CanArenaReset(Prune(element)) || CanNormalizeIntoOwnedRuntimeValue(element))
+            : CanNormalizeIntoOwnedRuntimeValue(resultType);
 
     /// <summary>
     /// Whether this call's result, once it reaches the caller, holds no reference to a consumed

@@ -16874,6 +16874,29 @@ let resultAlreadySettled (context: CoreCallContext) (stage: CoreCallStage) (temp
         | Some(_label) -> true
         | None -> false) || contextResultRuntimeManaged(context)(semanticType)(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || resultCopyCopiesElements(semanticType)(state)
 
+// The elements of a tuple result made owned before its arguments are released: each is a scalar
+// or a value that normalizes into an owned one, and at least one is not a scalar.
+let recursive tupleElementsOwnable (elements: List(SemanticType)) (anyHeap: Bool) (state: CoreLoweringState) =
+    match elements with
+        | [] -> anyHeap
+        | element :: rest ->
+            if resultSurvivesReset(element)(state)
+            then tupleElementsOwnable(rest)(anyHeap)(state)
+            else
+                match ownedResultPlanOf(element)(state) with
+                    | None -> false
+                    | Some(_plan) -> tupleElementsOwnable(rest)(true)(state)
+
+// Stage 0's `CanOwnResultBeforeArgumentRelease`: a tuple result is copied into an owned tuple, the
+// copy retaining each reference-counted element it keeps.
+let ownedResultBeforeReleasePlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemTuple(elements) ->
+            if tupleElementsOwnable(elements)(false)(state)
+            then argumentCopyPlanOf(semanticType)(state)
+            else None
+        | _ -> ownedResultPlanOf(semanticType)(state)
+
 // Stage 0's `OwnResultBeforeArgumentRelease`: a consumed argument whose parts the callee's arena
 // result may still name would be released spine-only, stranding every part the result did not
 // keep. The result is made an owned reference-counted value first, retained or copied with its
@@ -16884,7 +16907,7 @@ let ownResultBeforeArgumentRelease (context: CoreCallContext) (stage: CoreCallSt
             if resultAlreadySettled(context)(stage)(temp)(semanticType)(state) || hasPreservedHeapArgument(consumed)(state) == false
             then stage
             else
-                match ownedResultPlanOf(semanticType)(state) with
+                match ownedResultBeforeReleasePlanOf(semanticType)(state) with
                     | None -> stage
                     | Some(plan) ->
                         match emitArgumentCopy(temp)(entryCopyPlanOf(semanticType)(plan)(state))(state) with
