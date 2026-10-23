@@ -22374,11 +22374,16 @@ let normalizesIntoOwnedValue (semanticType: SemanticType) (state: CoreLoweringSt
 // runtime cannot normalize has no reference-counted placement either.
 let handsFreshChildrenToOwnedSlots (resultType: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(resultType)(state) == false && (isGeneralRcValueType(resultType)(state) || normalizesIntoOwnedValue(resultType)(state) == false)
 
+// Stage 0's `IsArenaCellRetainHandedToSlot`: a retain taken for the arena cell (a let-bound owned
+// value the cell keeps) is the arena's to hold with nothing to release it, as a fresh value is.
+let arenaCellOwnsArgumentReference (argument: Expr) (temp: Int) (state: CoreLoweringState) = isFreshOwnedConstructorArgument(argument)(temp)(state) || retainTakenForCell(temp)(state)
+
 // Stage 0's `HandFreshConstructorChildrenToOwnedSlots` for one argument: the arena cell never
 // releases what it holds, so a fresh reference-counted value stored into it goes to an owned slot
 // the function releases.
+// A retain taken for the cell goes there the same way.
 let handFreshChildToOwnedSlot (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if resultSurvivesReset(semanticType)(state) || containsUnresolvedLayout(semanticType)(state) || isFreshOwnedConstructorArgument(argument)(temp)(state) == false
+    if resultSurvivesReset(semanticType)(state) || containsUnresolvedLayout(semanticType)(state) || arenaCellOwnsArgumentReference(argument)(temp)(state) == false
     then state
     else
         match freshLocal(state) with
@@ -22395,9 +22400,9 @@ let recursive handFreshChildrenToOwnedSlots (arguments: List(Expr)) (temps: List
             |> handFreshChildrenToOwnedSlots(restArguments)(restTemps)(restTypes)
         | _ -> state
 
-let recursive anyFreshOwnedArgument (arguments: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+let recursive anyArenaCellOwnedArgument (arguments: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
     match (arguments, temps) with
-        | (argument :: restArguments, temp :: restTemps) -> isFreshOwnedConstructorArgument(argument)(temp)(state) || anyFreshOwnedArgument(restArguments)(restTemps)(state)
+        | (argument :: restArguments, temp :: restTemps) -> arenaCellOwnsArgumentReference(argument)(temp)(state) || anyArenaCellOwnedArgument(restArguments)(restTemps)(state)
         | _ -> false
 
 // An argument whose value the cell would own outright: a fresh value, or a reference taken for the
@@ -22414,7 +22419,7 @@ let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resu
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> lowered
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || anyFreshOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false
+            if runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false
             then lowered
             else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
         | _ -> lowered

@@ -392,7 +392,7 @@ public sealed partial class Lowering
             TypeRef fieldType = Prune(argumentTypes[i]);
             if (CanArenaReset(fieldType)
                 || ContainsUnresolvedLayoutType(fieldType, [])
-                || !IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]))
+                || !(IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]) || IsArenaCellRetainHandedToSlot(argumentTemps[i])))
             {
                 continue;
             }
@@ -403,6 +403,11 @@ public sealed partial class Lowering
             _ownedSlotConstructorArguments.Add(arguments[i]);
         }
     }
+
+    // A real retain taken for the arena cell (a let-bound owned value the cell keeps) is the arena's
+    // to hold with nothing to release it, as a fresh value is: it goes to an owned slot the same way.
+    private bool IsArenaCellRetainHandedToSlot(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORRETAINSLOT") is null && IsRetainTakenForCell(temp);
 
     // The constructor arguments whose fresh value went to an owned slot rather than to the arena cell
     // storing it: the slot releases the value, so a release of the cell's children skips that field.

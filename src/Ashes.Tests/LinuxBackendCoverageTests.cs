@@ -3225,6 +3225,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_let_bound_list_kept_by_arena_record_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A let-bound owned list is stored into a record of the contract's types that stays in the
+        // arena beside a record field, and the record is returned. The cell's retain goes to an
+        // owned slot released once the result is normalized; the arena cell kept it before.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildLetBoundListKeptByArenaRecordResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("let-bound list kept by an arena record result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_loop_field_consed_onto_copied_accumulator_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13493,6 +13517,41 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildLetBoundListKeptByArenaRecordResultProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            type Env =
+                | name: Str
+                | items: List(Str)
+
+            type Dropper =
+                | ids: List((Str, Int))
+                | environment: Env
+
+            let recursive namedIds (names: List(Str)) (reversed: List((Str, Int))) =
+                match names with
+                    | [] -> Ashes.Collection.List.reverse(reversed)
+                    | name :: rest -> namedIds(rest)((name, Ashes.Collection.List.length(reversed)) :: reversed)
+
+            let emptyEnv unit = Env(name = "standalone", items = [])
+
+            let prepare (names: List(Str)) =
+                (let ids = namedIds(names)([])
+                in Dropper(ids = ids, environment = emptyEnv(Unit)))
+
+            let measure (dropper: Dropper) =
+                match dropper with
+                    | Dropper { ids = ids, environment = Env { items = items } } -> Ashes.Collection.List.length(ids) + Ashes.Collection.List.length(items)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + measure(prepare(["T" + Ashes.Text.fromInt(n), "U"])))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
