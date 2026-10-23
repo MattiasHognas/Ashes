@@ -622,6 +622,7 @@ public sealed partial class Lowering
                 && (IsGeneralRcValueType(elements[i].Type) || (holdsReferenceCounted && IsNormalizableSiblingElement(elements[i]))))
             {
                 int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(elements[i].Temp, Prune(elements[i].Type));
+                ReleaseNormalizedPatternOwnerDuplicate(elements[i].Temp, elements[i].Type);
                 MarkRuntimeManagedTemp(normalizedTemp);
                 elements[i] = CreateLoweredValue(normalizedTemp, elements[i].Type);
             }

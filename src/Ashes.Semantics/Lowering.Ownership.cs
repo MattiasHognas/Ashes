@@ -204,7 +204,26 @@ public sealed partial class Lowering
         // root parameter's final placement is runtime-managed; otherwise it remains an identity.
         bool fieldMayBeEmpty = argument is Expr.QualifiedVar && TempMayBeEmptyList(argumentTemp);
         Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, MayBeEmpty: fieldMayBeEmpty));
+        _patternOwnerAggregateDuplicates.Add(duplicatedTemp);
         return duplicatedTemp;
+    }
+
+    // The pattern-owner duplicates taken for an aggregate's elements, and those of them an owning
+    // aggregate then normalized: the normalization takes the element's reference itself (a retain of
+    // the owner's value, or a copy of an arena one), so the duplicate is released right after it by a
+    // marker promoted together with the duplicate (FinalizePerceusPatternBindingOwners).
+    private readonly HashSet<int> _patternOwnerAggregateDuplicates = [];
+
+    private readonly HashSet<int> _releasedPatternOwnerDuplicates = [];
+
+    private void ReleaseNormalizedPatternOwnerDuplicate(int elementTemp, TypeRef elementType)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_SUPERSEDEDOWNERDUP") is null
+            && _patternOwnerAggregateDuplicates.Contains(elementTemp)
+            && _releasedPatternOwnerDuplicates.Add(elementTemp))
+        {
+            Emit(new IrInst.RcDrop(elementTemp, GetOwnedTypeName(Prune(elementType)) ?? "PatternBinding"));
+        }
     }
 
     private bool IsHeapTemp(int temp)

@@ -3225,6 +3225,55 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_variant_loop_field_consed_onto_copied_accumulator_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each parameter type a loop peels off a variant parameter, a pattern field, is consed onto
+        // the list accumulator. Once that accumulator is placed on the reference-counted heap the
+        // back edge copies the arena cell, its head retained by the copy; the pattern owner's
+        // duplicate the cell took was never released.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildVariantLoopFieldConsedOntoCopiedAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 11}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("variant loop field consed onto a copied accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_variant_loop_result_beside_split_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop over a variant parameter on the reference-counted heap peels a function type and
+        // returns the rest, a pattern owner, beside the list in a reference-counted tuple. The tuple's
+        // copy of the element takes its reference; the pattern owner's duplicate was never released.
+        int[] roundCounts = [5000, 50000, 250000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildVariantLoopResultBesideSplitListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("variant loop result beside a split list", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_consumed_list_head_kept_by_tuple_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13446,6 +13495,110 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildVariantLoopFieldConsedOntoCopiedAccumulatorProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            type Sem =
+                | SemInt
+                | SemVariable(Int)
+                | SemFunction(Sem, Sem, Maybe(Sem))
+                | SemNamed(Int, Str, List(Sem))
+
+            let recursive substitute (shift: Int) (semanticType: Sem) =
+                match semanticType with
+                    | SemVariable(id) -> SemVariable(id + shift)
+                    | SemFunction(argument, result, row) -> SemFunction(substitute(shift)(argument))(substitute(shift)(result))(row)
+                    | other -> other
+
+            let recursive splitConstructorType semanticType reversed =
+                match semanticType with
+                    | SemFunction(parameterType, resultType, _row) -> splitConstructorType(resultType)(parameterType :: reversed)
+                    | resultType -> (Ashes.Collection.List.reverse(reversed), resultType)
+
+            let nameLength (semanticType: Sem) =
+                match semanticType with
+                    | SemNamed(_id, name, _arguments) -> Ashes.Text.byteLength(name)
+                    | _ -> 0
+
+            let measure (body: Sem) (supply: Int) =
+                match splitConstructorType(substitute(supply)(body))([]) with
+                    | (fieldTypes, resultType) -> Ashes.Collection.List.length(fieldTypes) + nameLength(resultType)
+
+            let recursive arrows (count: Int) (result: Sem) =
+                if count == 0
+                then result
+                else arrows(count - 1)(SemFunction(SemVariable(count))(result)(None))
+
+            let recursive rounds (n: Int) (body: Sem) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(body)(total + measure(body)(n))
+
+            Ashes.IO.print(rounds({{rounds}})(arrows(6)(SemNamed(0)("Maybe" + "")([SemVariable(1)])))(0))
+            """;
+
+    private static string BuildVariantLoopResultBesideSplitListProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            type Sem =
+                | SemInt
+                | SemVariable(Int)
+                | SemFunction(Sem, Sem, Maybe(Sem))
+                | SemNamed(Int, Str, List(Sem))
+
+            type Scheme =
+                | quantified: List((Int, Str))
+                | body: Sem
+
+            type Instantiation =
+                | semanticType: Sem
+                | supply: Int
+
+            let recursive substitute (shift: Int) (semanticType: Sem) =
+                match semanticType with
+                    | SemVariable(id) -> SemVariable(id + shift)
+                    | SemFunction(argument, result, row) ->
+                        let a = substitute(shift)(argument)
+                        in
+                            let r = substitute(shift)(result)
+                            in SemFunction(a)(r)(row)
+                    | SemNamed(symbolId, name, arguments) -> SemNamed(symbolId)(name)(arguments)
+                    | other -> other
+
+            let instantiate (scheme: Scheme) (supply: Int) =
+                match scheme with
+                    | Scheme { body = body } -> Instantiation(semanticType = substitute(supply)(body), supply = supply + 1)
+
+            let recursive splitConstructorType semanticType reversed =
+                match semanticType with
+                    | SemFunction(parameterType, resultType, _row) -> splitConstructorType(resultType)(parameterType :: reversed)
+                    | resultType -> (Ashes.Collection.List.reverse(reversed), resultType)
+
+            let layoutFieldTypes (scheme: Scheme) (supply: Int) =
+                match instantiate(scheme)(supply) with
+                    | Instantiation { semanticType = semanticType } -> splitConstructorType(semanticType)([])
+
+            let nameLength (semanticType: Sem) =
+                match semanticType with
+                    | SemNamed(_id, name, _arguments) -> Ashes.Text.byteLength(name)
+                    | _ -> 0
+
+            let measure (scheme: Scheme) (supply: Int) =
+                match layoutFieldTypes(scheme)(supply) with
+                    | (fieldTypes, resultType) -> Ashes.Collection.List.length(fieldTypes) + nameLength(resultType)
+
+            let recursive rounds (n: Int) (scheme: Scheme) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(scheme)(total + measure(scheme)(n))
+
+            let scheme = Scheme(quantified = [(1, "a")], body = SemFunction(SemVariable(1))(SemNamed(0)("Maybe" + "")([SemVariable(1)]))(None))
+
+            Ashes.IO.print(rounds({{rounds}})(scheme)(0))
             """;
 
     private static string BuildConsumedListHeadKeptByTupleResultProgram(int rounds)
