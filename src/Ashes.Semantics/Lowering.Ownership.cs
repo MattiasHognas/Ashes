@@ -538,7 +538,7 @@ public sealed partial class Lowering
         }
 
         int retainedTemp = DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
-        _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType);
+        _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType, targetParameter.Slot);
         return retainedTemp;
     }
 

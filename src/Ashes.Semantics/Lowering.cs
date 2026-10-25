@@ -8421,6 +8421,7 @@ public sealed partial class Lowering
             {
                 IrInst.AndInt { Target: var target } => target == flagTemp,
                 IrInst.LoadConstInt { Target: var target } => target == flagTemp,
+                IrInst.CmpIntNe { Target: var target } => target == flagTemp,
                 _ => false,
             });
             if (definitionIndex >= 0)

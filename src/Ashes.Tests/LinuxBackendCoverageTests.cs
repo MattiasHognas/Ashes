@@ -3225,6 +3225,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_of_unplaced_loop_parameter_passed_to_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop whose record parameter's type is unresolved at loop entry passes a record update of
+        // it to a call: the update's unchanged fields take retain markers that become real retains
+        // once the parameter is placed on the reference-counted heap at the back edge, and they are
+        // released after the call like the retains of a parameter placed from the start.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildRecordUpdateOfUnplacedLoopParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update of an unplaced loop parameter passed to a call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_normalized_parameter_behind_ok_record_update_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13565,6 +13590,56 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordUpdateOfUnplacedLoopParameterProgram(int rounds)
+        => $$"""
+            type Tree =
+                | Leaf
+                | Node(Tree, Int, Tree)
+
+            type Fs =
+                | declSpan: Maybe(Int)
+                | names: List(Str)
+
+            type St =
+                | tree: Tree
+                | stringLiterals: List(Str)
+                | currentSpan: Maybe(Int)
+                | functionState: Fs
+
+            type Item =
+                | ItemAt(Int, Item)
+                | ItemType
+                | ItemLet(Str)
+
+            let withDeclSpan value (state: St) =
+                (let group = state.functionState
+                in state with functionState = (group with declSpan = value))
+
+            let lowerLet (name: Str) (state: St) = state with stringLiterals = Ashes.Collection.List.append(state.stringLiterals)([name])
+
+            let finish (trailing: Int) (state: St) = trailing + Ashes.Collection.List.length(state.stringLiterals)
+
+            let recursive go items trailing seen state =
+                match items with
+                    | [] -> state |> finish(trailing)
+                    | ItemAt(span, inner) :: rest ->
+                        (state with currentSpan = Some(span))
+                        |> withDeclSpan(Some(span))
+                        |> go(inner :: rest)(trailing)(seen)
+                    | ItemType :: rest -> go(rest)(trailing)(seen)(state)
+                    | ItemLet(name) :: rest ->
+                        state
+                        |> lowerLet(name)
+                        |> go(rest)(trailing)(name :: seen)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + go([ItemAt(1)(ItemLet("x" + Ashes.Text.fromInt(n))), ItemAt(2)(ItemType), ItemLet("y")])(0)([])(St(tree = Node(Leaf)(n)(Leaf), stringLiterals = ["a" + Ashes.Text.fromInt(n), "b"], currentSpan = None, functionState = Fs(declSpan = None, names = []))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
