@@ -839,6 +839,7 @@ internal static partial class LlvmCodegen
     private static bool EmitControlledExit(LlvmCodegenState state, LlvmValueHandle exitCode)
     {
         EmitFlushStdout(state);
+        EmitLeakCheckReport(state);
         if (IsLinuxFlavor(state.Flavor))
         {
             EmitExit(state, NormalizeToI64(state, exitCode));

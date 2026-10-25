@@ -4,12 +4,13 @@ namespace Ashes.Backend.Llvm;
 
 /// <summary>
 /// Leak checking (compiling with ASHES_RC_LEAKCHECK=1): the program counts the reference-counted
-/// cells it allocates and releases, and reports how many are still live when it ends normally, as
-/// the line <c>ashes-rc-live N</c> on standard error. A value a program keeps to its end (a
-/// top-level binding) counts as live, so a leak is told by running the same work twice: every cell
-/// one more round leaves behind is leaked. The count is one process-wide word updated without
-/// synchronization, so only single-threaded programs report an exact figure; a worker's own
-/// region, reclaimed whole when the worker ends, is never counted down.
+/// cells it allocates and releases, and reports how many are still live when it ends normally or
+/// through <c>Ashes.IO.exit</c>, as the line <c>ashes-rc-live N</c> on standard error. A value a
+/// program keeps to its end (a top-level binding) counts as live, so a leak is told by running the
+/// same work twice: every cell one more round leaves behind is leaked. The count is one
+/// process-wide word updated without synchronization, so only single-threaded programs report an
+/// exact figure; a worker's own region, reclaimed whole when the worker ends, is never counted
+/// down.
 /// </summary>
 internal static partial class LlvmCodegen
 {
