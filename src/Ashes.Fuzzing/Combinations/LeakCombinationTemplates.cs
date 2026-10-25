@@ -101,6 +101,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new VariantLoopParameterSplitTemplate());
         registry.Register(new LetBoundValueKeptByArenaRecordResultTemplate());
         registry.Register(new GenericMapPassedAsValueKeepsClosureResultsTemplate());
+        registry.Register(new NormalizedParameterBehindWrappedUpdateTemplate());
     }
 }
 

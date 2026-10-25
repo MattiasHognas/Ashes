@@ -7615,6 +7615,7 @@ public sealed partial class Lowering
 
         if (!CanOwnResultBehindNormalizedParameter(resultType))
         {
+            ReleaseNormalizedParameterAfterContractResult(argumentSlot, parameterType, ResolvePhantomResultLayout(label, resultType));
             return bodyTemp;
         }
 
@@ -7622,6 +7623,20 @@ public sealed partial class Lowering
         EmitNormalizedParameterRelease(argumentSlot, parameterType);
         MarkRuntimeManagedTemp(ownedTemp);
         return ownedTemp;
+    }
+
+    // A result of the contract's types the copy above does not express (a generic wrapper such as
+    // `Ok(state with ...)`) is still normalized into an owned value at the function's return, which
+    // retains whatever it keeps of the parameter: the parameter becomes an owned slot released
+    // there, after that normalization.
+    private void ReleaseNormalizedParameterAfterContractResult(int argumentSlot, TypeRef parameterType, TypeRef resultType)
+    {
+        if (GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_CONTRACTPARAMRESULT") is null
+            && IsGeneralRcValueType(resultType))
+        {
+            RegisterGeneralRcOwnedSlot(argumentSlot, Prune(parameterType));
+        }
     }
 
     private void EmitNormalizedParameterRelease(int argumentSlot, TypeRef parameterType)

@@ -11730,6 +11730,15 @@ let emitNormalizedParameterRelease (parameterType: SemanticType) (state: CoreLow
             |> emit(LoadLocal(parameterTemp)(1))
             |> emitArenaResultRelease(parameterTemp)(parameterType)
 
+// Stage 0's `ReleaseNormalizedParameterAfterContractResult`: a result of the contract's types the copy
+// does not express (a generic wrapper such as `Ok(state with ...)`) is still normalized into an
+// owned value at the function's return, which retains whatever it keeps of the parameter: the
+// parameter becomes an owned slot released there, after that normalization.
+let releaseNormalizedParameterAfterContractResult (label: Str) (parameterType: SemanticType) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if isGeneralRcValueType(resolvePhantomResultLayout(label)(bodyType)(state))(state)
+    then registerGeneralRcOwnedSlot(1)(parameterType)(state)
+    else state
+
 // Stage 0's `ReleaseNormalizedParameterBehindResult`: a function whose entry normalizes its
 // always-returned parameter owns that parameter, and a result other than the parameter itself only
 // borrows what it reaches of it: a record update shares the parameter's unchanged children, a cons
@@ -11765,7 +11774,7 @@ let releaseNormalizedParameterBehindResult (label: Str) (parameter: Str) (body: 
                                                 (copied
                                                 |> emitNormalizedParameterRelease(named)
                                                 |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced), ownedTemp)
-                            else kept
+                            else (releaseNormalizedParameterAfterContractResult(label)(named)(bodyType)(state), bodyTemp)
                 | _ -> kept
 
 // A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so

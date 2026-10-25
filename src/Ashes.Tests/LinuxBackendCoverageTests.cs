@@ -3225,6 +3225,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_normalized_parameter_behind_ok_record_update_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function normalizes its record parameter at entry and returns `Ok(state with ...)`: the
+        // generic wrapper is normalized into an owned value at the return, and the parameter, which
+        // nothing else releases, is released after that normalization.
+        int[] roundCounts = [2000, 40000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildNormalizedParameterBehindOkRecordUpdateProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("normalized parameter behind an Ok record update", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_let_bound_list_kept_by_arena_record_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13543,6 +13567,27 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildNormalizedParameterBehindOkRecordUpdateProgram(int rounds)
+        => $$"""
+            type St =
+                | layouts: List(Str)
+                | supply: Int
+
+            let register (name: Str) (state: St) =
+                match state with
+                    | St { supply = supply } -> Ok(state with layouts = [name], supply = supply + 1)
+
+            let recursive rounds (n: Int) (state: St) =
+                if n == 0
+                then state.supply
+                else
+                    match register("T" + Ashes.Text.fromInt(n))(state) with
+                        | Ok(next) -> rounds(n - 1)(next)
+                        | Error(_e) -> 0
+
+            Ashes.IO.print(rounds({{rounds}})(St(layouts = [], supply = 0)))
             """;
 
     private static string BuildLetBoundListKeptByArenaRecordResultProgram(int rounds)
