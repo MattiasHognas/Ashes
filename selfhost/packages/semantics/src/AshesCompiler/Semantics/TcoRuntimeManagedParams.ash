@@ -303,6 +303,27 @@ let shapeCaseTailOwners (pattern: Pattern) (scrutinee: Maybe(Int)) =
                 | _ -> []
         | _ -> []
 
+// A tuple scrutinee built from the parameters (`match (pending, state) with | (item :: rest, _)`)
+// takes each parameter apart as a match on it alone does: the tail bound out of a list
+// parameter's position is that parameter's consumed tail (stage 0's `AddTupleScrutineeTailOwners`).
+let recursive shapeTupleTailOwners (values: List(Expr)) (patterns: List(Pattern)) (shadowed: List(Str)) (parameters: List(Str)) =
+    match (values, patterns) with
+        | (value :: restValues, pattern :: restPatterns) ->
+            parameters
+            |> shapeTupleTailOwners(restValues)(restPatterns)(shadowed)
+            |> append(parameters
+            |> shapeScrutineeOrdinal(value)(shadowed)
+            |> shapeCaseTailOwners(pattern))
+        | _ -> []
+
+let shapeScrutineeTailOwners (value: Expr) (pattern: Pattern) (scrutinee: Maybe(Int)) (shadowed: List(Str)) (parameters: List(Str)) =
+    match (shapeUnspan(value), shapeUnspanPattern(pattern)) with
+        | (ExprTuple(values), PatternTuple(patterns)) ->
+            if length(values) == length(patterns)
+            then shapeTupleTailOwners(values)(patterns)(shadowed)(parameters)
+            else []
+        | _ -> shapeCaseTailOwners(pattern)(scrutinee)
+
 let shapeMerge (observed: Maybe(TcoArgumentShape)) (local: TcoArgumentShape) =
     match observed with
         | None -> Some(local)
@@ -670,7 +691,7 @@ and shapeWalkCases (self: Str) (parameters: List(Str)) (value: Expr) (scrutinee:
             walk
             |> shapeWalk(self)(parameters)(body)(append(shapePatternNames(pattern)([]))(shadowed))(tailOwners
             |> shapeRemoveTailOwners(shapePatternNames(pattern)([]))
-            |> append(shapeCaseTailOwners(pattern)(scrutinee)))(shapeRemoveLetValues(shapePatternNames(pattern)([]))(letValues))(shapeArmCallParts(value)(shapePatternNames(pattern)([]))(callParts))
+            |> append(shapeScrutineeTailOwners(value)(pattern)(scrutinee)(shadowed)(parameters)))(shapeRemoveLetValues(shapePatternNames(pattern)([]))(letValues))(shapeArmCallParts(value)(shapePatternNames(pattern)([]))(callParts))
             |> shapeWalkCases(self)(parameters)(value)(scrutinee)(rest)(shadowed)(tailOwners)(letValues)(callParts)
 and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match shapeCallSpine(expression)([]) with

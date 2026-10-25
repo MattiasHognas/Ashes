@@ -2401,6 +2401,7 @@ public sealed partial class Lowering
                 armTailOwners[tail.Name] = sourceParameterOrdinal;
             }
 
+            AddTupleScrutineeTailOwners(match.Value, matchCase.Pattern, parameterScope, armTailOwners);
             List<string> changedParts = MarkArmCallResultParts(state, binders, match.Value is Expr.Call);
             TcoParamFactsWalk(
                 matchCase.Body,
@@ -2415,6 +2416,37 @@ public sealed partial class Lowering
             RestoreArmCallResultParts(state, changedParts, match.Value is Expr.Call);
         }
     }
+
+    // A tuple scrutinee built from the parameters (`match (pending, state) with | (item :: rest, _)`)
+    // takes each parameter apart as a match on it alone does: the tail bound out of a list
+    // parameter's position is that parameter's consumed tail.
+    private static void AddTupleScrutineeTailOwners(
+        Expr scrutinee,
+        Pattern pattern,
+        IReadOnlyDictionary<string, int> parameterScope,
+        Dictionary<string, int> armTailOwners)
+    {
+        if (!TupleScrutineeTailsAreOwned
+            || scrutinee is not Expr.TupleLit tuple
+            || pattern is not Pattern.Tuple parts
+            || tuple.Elements.Count != parts.Elements.Count)
+        {
+            return;
+        }
+
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (tuple.Elements[i] is Expr.Var source
+                && parameterScope.TryGetValue(source.Name, out int parameterOrdinal)
+                && parts.Elements[i] is Pattern.Cons { Tail: Pattern.Var tail })
+            {
+                armTailOwners[tail.Name] = parameterOrdinal;
+            }
+        }
+    }
+
+    private static bool TupleScrutineeTailsAreOwned
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLETAILOWNER") is null;
 
     // An arm over a call's result binds parts of it; any other arm's binders shadow such a part.
     // Returns the names whose membership changed, for the restore after the arm.

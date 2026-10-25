@@ -1016,7 +1016,12 @@ are computed across exact `FuncKey` self-call identities.
 `TcoSelfCallArgumentShape.UnchangedPassthrough`, `ArenaSelfContainedListRebuild`,
 `FreshClosureRebuild`, `GrownCons`, and `ConsumedTail` are the live sources for
 `TcoParamStaticFacts.LoopInvariant`, `FreshRebuiltList`, `FreshClosureRebuild`, `AffineConsList`, and
-`ConsumedListTail`; lowering transports ordinals to their distinct parameter slots. Closure promotion
+`ConsumedListTail`; lowering transports ordinals to their distinct parameter slots. A tail is a
+parameter's consumed tail when a match binds it from that parameter, alone (`match pending with |
+item :: rest`) or at its own position of a tuple of parameters (`match (pending, lowered) with |
+(item :: rest, _)`): such a tuple is a reference-counted scrutinee beside a placed record, its tail
+is retained into the next iteration, and only the consumed-tail placement releases the list that
+iteration was given (`GRC_NO_TUPLETAILOWNER` switches the tuple form off). Closure promotion
 also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
 capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
 rechecked against resolved local slots. When body inference resolves an unannotated closure
