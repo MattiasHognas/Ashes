@@ -38,7 +38,7 @@ export (
     value shapeIsFreshList,
     value tcoSelfCallShapes,
     value tcoAccumulatorRebuildOrdinals,
-    value tcoBytesProvenanceSafeOrdinals,
+    value tcoBytesRebuildObligations,
     value isTcoListShape,
     value selfCallOrdinalPassing,
     value tcoSelfCallParameterFlow,
@@ -811,124 +811,147 @@ let tcoAccumulatorRebuildOrdinals (self: Str) (parameters: List(Str)) (body: Exp
         | ShapeWalk { observed = observed, accumulators = accumulators, sawSelfCall = true } -> accumulatorRebuildOrdinalsOf(observed)(accumulators)(0)
         | _ -> []
 
-// A value whose Bytes, if it holds any, come from a source a list placed on the reference-counted
-// heap may own: a builtin or function producing a fresh buffer or a borrowed view (`isSafeCall`), a
-// constructor, tuple or list of such values, or a literal (stage 0's
-// `IsBytesProvenanceSafeAggregateValue`).
-let recursive bytesSafeAggregate (constructors: List(Str)) (isSafeCall: Expr -> Bool) (expression: Expr) =
+// The calls a value's Bytes safety still depends on, or None when the value is not safe by its
+// shape alone. Stage 0's `IsBytesProvenanceSafeAggregateValue` accepts a constructor, tuple or list
+// of safe values, a literal, or a call producing a fresh buffer or a borrowed view; the calls are
+// left to the caller, which knows the builtins and the functions' result provenance.
+let bothBytesObligations (first: Maybe(List(Expr))) (second: Maybe(List(Expr))) =
+    match (first, second) with
+        | (Some(firstCalls), Some(secondCalls)) ->
+            secondCalls
+            |> append(firstCalls)
+            |> Some
+        | _ -> None
+
+let recursive bytesSafeAggregate (constructors: List(Str)) (expression: Expr) =
     match shapeUnspan(expression) with
-        | ExprTuple(elements) -> bytesSafeAggregates(constructors)(isSafeCall)(elements)
-        | ExprList(elements, _isMultiline) -> bytesSafeAggregates(constructors)(isSafeCall)(elements)
-        | ExprCons(head, tail) -> bytesSafeAggregate(constructors)(isSafeCall)(head) && bytesSafeAggregate(constructors)(isSafeCall)(tail)
+        | ExprTuple(elements) -> bytesSafeAggregates(constructors)(elements)
+        | ExprList(elements, _isMultiline) -> bytesSafeAggregates(constructors)(elements)
+        | ExprCons(head, tail) ->
+            tail
+            |> bytesSafeAggregate(constructors)
+            |> bothBytesObligations(bytesSafeAggregate(constructors)(head))
         | ExprCall(_function, _argument, _sugar, _layout) ->
             match shapeCallSpine(expression)([]) with
                 | (ExprVar(callee), arguments) ->
                     if shapeContainsName(callee)(constructors)
-                    then bytesSafeAggregates(constructors)(isSafeCall)(arguments)
-                    else isSafeCall(expression)
-                | _ -> isSafeCall(expression)
-        | ExprInt(_value) -> true
-        | ExprUInt(_value, _width, _text) -> true
-        | ExprFloat(_value, _text) -> true
-        | ExprBool(_value) -> true
-        | ExprBigInt(_text) -> true
-        | ExprString(_value) -> true
-        | ExprRune(_value) -> true
-        | ExprAdd(_left, _right) -> true
-        | _ -> false
-and bytesSafeAggregates (constructors: List(Str)) (isSafeCall: Expr -> Bool) (elements: List(Expr)) =
+                    then bytesSafeAggregates(constructors)(arguments)
+                    else Some([expression])
+                | _ -> Some([expression])
+        | ExprInt(_value) -> Some([])
+        | ExprUInt(_value, _width, _text) -> Some([])
+        | ExprFloat(_value, _text) -> Some([])
+        | ExprBool(_value) -> Some([])
+        | ExprBigInt(_text) -> Some([])
+        | ExprString(_value) -> Some([])
+        | ExprRune(_value) -> Some([])
+        | ExprAdd(_left, _right) -> Some([])
+        | _ -> None
+and bytesSafeAggregates (constructors: List(Str)) (elements: List(Expr)) =
     match elements with
-        | [] -> true
-        | element :: rest -> bytesSafeAggregate(constructors)(isSafeCall)(element) && bytesSafeAggregates(constructors)(isSafeCall)(rest)
+        | [] -> Some([])
+        | element :: rest ->
+            rest
+            |> bytesSafeAggregates(constructors)
+            |> bothBytesObligations(bytesSafeAggregate(constructors)(element))
 
 // Every head of a chain of cells pushed at once is safe when it is a name, which the chain rule
 // gives a reference of its own, or a safe value.
-let recursive bytesSafeChainHeads (constructors: List(Str)) (isSafeCall: Expr -> Bool) (expression: Expr) =
+let recursive bytesSafeChainHeads (constructors: List(Str)) (expression: Expr) =
     match shapeUnspan(expression) with
         | ExprCons(head, tail) ->
-            (match shapeUnspan(head) with
-                | ExprVar(_name) -> true
-                | _ -> bytesSafeAggregate(constructors)(isSafeCall)(head)) && bytesSafeChainHeads(constructors)(isSafeCall)(tail)
-        | _ -> true
+            tail
+            |> bytesSafeChainHeads(constructors)
+            |> bothBytesObligations(match shapeUnspan(head) with
+                | ExprVar(_name) -> Some([])
+                | _ -> bytesSafeAggregate(constructors)(head))
+        | _ -> Some([])
 
 // Whether a self-call rebuilds a list parameter from values whose Bytes the reference-counted
-// list may own (stage 0's `IsBytesProvenanceSafeListRebuildExpr`).
-let recursive bytesSafeListRebuild (constructors: List(Str)) (isSafeCall: Expr -> Bool) (expression: Expr) =
+// list may own (stage 0's `IsBytesProvenanceSafeListRebuildExpr`), as the calls that decide it.
+let recursive bytesSafeListRebuild (constructors: List(Str)) (expression: Expr) =
     match shapeUnspan(expression) with
         | ExprCons(head, tail) ->
             match shapeUnspan(tail) with
-                | ExprCons(_innerHead, _innerTail) -> bytesSafeChainHeads(constructors)(isSafeCall)(expression)
-                | _ -> bytesSafeAggregate(constructors)(isSafeCall)(head)
-        | ExprList(elements, _isMultiline) -> bytesSafeAggregates(constructors)(isSafeCall)(elements)
-        | ExprIf(_condition, thenBranch, elseBranch) -> bytesSafeListRebuild(constructors)(isSafeCall)(thenBranch) && bytesSafeListRebuild(constructors)(isSafeCall)(elseBranch)
-        | _ -> false
+                | ExprCons(_innerHead, _innerTail) -> bytesSafeChainHeads(constructors)(expression)
+                | _ -> bytesSafeAggregate(constructors)(head)
+        | ExprList(elements, _isMultiline) -> bytesSafeAggregates(constructors)(elements)
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            elseBranch
+            |> bytesSafeListRebuild(constructors)
+            |> bothBytesObligations(bytesSafeListRebuild(constructors)(thenBranch))
+        | _ -> None
 
-let recursive bytesSafeObserveArguments (constructors: List(Str)) (isSafeCall: Expr -> Bool) (arguments: List(Expr)) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (observed: List(Maybe(Bool))) =
+let recursive bytesSafeObserveArguments (constructors: List(Str)) (arguments: List(Expr)) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (observed: List(Maybe(Maybe(List(Expr))))) =
     match (arguments, observed) with
         | (argument :: restArguments, seen :: restObserved) ->
             (let safe =
                 parameters
                 |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
-                |> bytesSafeListRebuild(constructors)(isSafeCall)
+                |> bytesSafeListRebuild(constructors)
             in
                 match seen with
-                    | Some(earlier) -> Some(earlier && safe)
-                    | None -> Some(safe)) :: bytesSafeObserveArguments(constructors)(isSafeCall)(restArguments)(shadowed)(tailOwners)(letValues)(parameters)(restObserved)
+                    | Some(earlier) ->
+                        safe
+                        |> bothBytesObligations(earlier)
+                        |> Some
+                    | None -> Some(safe)) :: bytesSafeObserveArguments(constructors)(restArguments)(shadowed)(tailOwners)(letValues)(parameters)(restObserved)
         | _ -> observed
 
-// Per parameter position, whether every self-call so far rebuilt the parameter from values whose
-// Bytes provenance is safe, None before the first self-call (stage 0's
-// `BytesProvenanceSafeListRebuild` facts), walked the way `shapeWalk` walks the self-calls.
-let recursive bytesSafeWalk (constructors: List(Str)) (isSafeCall: Expr -> Bool) (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (observed: List(Maybe(Bool))) =
+// Per parameter position, the calls every self-call so far left its rebuild's Bytes safety to, or
+// None when one rebuild is unsafe by its shape (stage 0's `BytesProvenanceSafeListRebuild` facts),
+// walked the way `shapeWalk` walks the self-calls.
+let recursive bytesSafeWalk (constructors: List(Str)) (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (observed: List(Maybe(Maybe(List(Expr))))) =
     match expression with
-        | ExprAt(_span, inner) -> bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(observed)
+        | ExprAt(_span, inner) -> bytesSafeWalk(constructors)(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(observed)
         | ExprIf(_condition, thenBranch, elseBranch) ->
             observed
-            |> bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(thenBranch)(shadowed)(tailOwners)(letValues)
-            |> bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(elseBranch)(shadowed)(tailOwners)(letValues)
+            |> bytesSafeWalk(constructors)(self)(parameters)(thenBranch)(shadowed)(tailOwners)(letValues)
+            |> bytesSafeWalk(constructors)(self)(parameters)(elseBranch)(shadowed)(tailOwners)(letValues)
         | ExprMatch(value, cases, _position) ->
-            bytesSafeWalkCases(constructors)(isSafeCall)(self)(parameters)(shapeScrutineeOrdinal(value)(shadowed)(parameters))(cases)(shadowed)(tailOwners)(letValues)(observed)
+            bytesSafeWalkCases(constructors)(self)(parameters)(shapeScrutineeOrdinal(value)(shadowed)(parameters))(cases)(shadowed)(tailOwners)(letValues)(observed)
         | ExprLet(name, value, body, [], _annotation, _requirements) ->
-            bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))((name, value) :: letValues)(observed)
+            bytesSafeWalk(constructors)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))((name, value) :: letValues)(observed)
         | ExprLet(name, _value, body, _parameters, _annotation, _requirements) ->
-            bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(observed)
+            bytesSafeWalk(constructors)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(observed)
         | ExprLetResult(name, _value, body) ->
-            bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(observed)
+            bytesSafeWalk(constructors)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(observed)
         | ExprLetRecursive(name, _value, body, _parameters, _annotation, _requirements) ->
-            bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(observed)
+            bytesSafeWalk(constructors)(self)(parameters)(body)(name :: shadowed)(shapeRemoveTailOwners([name])(tailOwners))(shapeRemoveLetValues([name])(letValues))(observed)
         | ExprCall(_function, _argument, _sugar, _layout) ->
             match shapeCallSpine(expression)([]) with
                 | (ExprVar(callee), arguments) ->
                     if callee == self && !shapeContainsName(self)(shadowed) && length(arguments) == length(parameters)
-                    then bytesSafeObserveArguments(constructors)(isSafeCall)(arguments)(shadowed)(tailOwners)(letValues)(parameters)(observed)
+                    then bytesSafeObserveArguments(constructors)(arguments)(shadowed)(tailOwners)(letValues)(parameters)(observed)
                     else observed
                 | _ -> observed
         | _ -> observed
-and bytesSafeWalkCases (constructors: List(Str)) (isSafeCall: Expr -> Bool) (self: Str) (parameters: List(Str)) (scrutinee: Maybe(Int)) (cases: List((Pattern, Expr, Maybe(Expr)))) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (observed: List(Maybe(Bool))) =
+and bytesSafeWalkCases (constructors: List(Str)) (self: Str) (parameters: List(Str)) (scrutinee: Maybe(Int)) (cases: List((Pattern, Expr, Maybe(Expr)))) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (observed: List(Maybe(Maybe(List(Expr))))) =
     match cases with
         | [] -> observed
         | (pattern, body, _guard) :: rest ->
             observed
-            |> bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(body)(append(shapePatternNames(pattern)([]))(shadowed))(tailOwners
+            |> bytesSafeWalk(constructors)(self)(parameters)(body)(append(shapePatternNames(pattern)([]))(shadowed))(tailOwners
             |> shapeRemoveTailOwners(shapePatternNames(pattern)([]))
             |> append(shapeCaseTailOwners(pattern)(scrutinee)))(shapeRemoveLetValues(shapePatternNames(pattern)([]))(letValues))
-            |> bytesSafeWalkCases(constructors)(isSafeCall)(self)(parameters)(scrutinee)(rest)(shadowed)(tailOwners)(letValues)
+            |> bytesSafeWalkCases(constructors)(self)(parameters)(scrutinee)(rest)(shadowed)(tailOwners)(letValues)
 
-let recursive bytesSafeOrdinalsOf (ordinal: Int) (observed: List(Maybe(Bool))) =
+let recursive bytesObligationsOf (observed: List(Maybe(Maybe(List(Expr))))) =
     match observed with
         | [] -> []
-        | Some(true) :: rest -> ordinal :: bytesSafeOrdinalsOf(ordinal + 1)(rest)
-        | _seen :: rest -> bytesSafeOrdinalsOf(ordinal + 1)(rest)
+        | Some(obligations) :: rest -> obligations :: bytesObligationsOf(rest)
+        | None :: rest -> None :: bytesObligationsOf(rest)
 
-// The positions of the loop function `self` whose every self-call rebuilds the parameter from
-// values whose Bytes provenance is safe: a list holding Bytes is placed on the reference-counted
-// heap only at these.
-let tcoBytesProvenanceSafeOrdinals (constructors: List(Str)) (isSafeCall: Expr -> Bool) (self: Str) (parameters: List(Str)) (body: Expr) =
+// Per parameter position of the loop function `self`, the calls its Bytes safety depends on when
+// every self-call rebuilds the parameter from values safe by their shape, None otherwise: a list
+// holding Bytes is placed on the reference-counted heap only at a position whose calls all produce
+// fresh buffers or borrowed views.
+let tcoBytesRebuildObligations (constructors: List(Str)) (self: Str) (parameters: List(Str)) (body: Expr) =
     parameters
     |> length
     |> shapeInitial
-    |> bytesSafeWalk(constructors)(isSafeCall)(self)(parameters)(body)([])([])([])
-    |> bytesSafeOrdinalsOf(0)
+    |> bytesSafeWalk(constructors)(self)(parameters)(body)([])([])([])
+    |> bytesObligationsOf
 
 // The shapes under which a list-typed parameter may live on the reference-counted heap: grown by
 // a cons per iteration, consumed through its own pattern-bound tail, or grown by a cons in some

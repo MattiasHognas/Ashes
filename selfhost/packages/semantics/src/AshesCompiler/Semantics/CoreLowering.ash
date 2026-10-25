@@ -546,8 +546,7 @@ type CoreProgramState =
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
-    // Every registered function's result Bytes provenance by key, solved once when the first loop
-    // asks which of its list parameters may hold Bytes on the reference-counted heap.
+    // Every registered function's result Bytes provenance by key, solved with `resultRcEligibility`.
     | resultBytesProvenance: Maybe(MapTree(Str, BytesOwnershipProvenance))
     // Per argument-free named type of the program: whether it is admissible to the general contract and
     // whether it reaches a type the contract governs, each walked once when the program's lowering starts.
@@ -12392,27 +12391,41 @@ let isWalkedOrRefilledElement (element: SemanticType) (state: CoreLoweringState)
         | _ -> false
 
 // Stage 0's `ContainsBytesLayout`: whether a value of the type may hold Bytes, through its
-// elements or its constructors' fields at this instantiation.
-let recursive containsBytesLayout (semanticType: SemanticType) (path: List(Str)) (state: CoreLoweringState) =
+// elements or its constructors' fields at this instantiation. `path` holds the named types being
+// expanded, which stops a recursive type; `done` the argument-free ones already answered no, so a
+// type reached along several paths is expanded once. Answers the verdict with the grown `done`.
+let recursive bytesLayoutSearch (semanticType: SemanticType) (path: List(Str)) (state: CoreLoweringState) (done: List(Str)) =
     match resolveType(state)(semanticType) with
-        | SemBytes -> true
-        | SemList(element) -> containsBytesLayout(element)(path)(state)
-        | SemTuple(elements) -> anyContainsBytesLayout(elements)(path)(state)
+        | SemBytes -> (true, done)
+        | SemList(element) -> bytesLayoutSearch(element)(path)(state)(done)
+        | SemTuple(elements) -> anyBytesLayoutSearch(elements)(path)(state)(done)
         | SemNamed(_id, name, arguments) ->
-            if containsName(name)(path)
-            then false
+            if containsName(name)(path) || arguments == [] && containsName(name)(done)
+            then (false, done)
             else
-                anyContainsBytesLayout(namedTypeFieldTypesAs(true)(name)(arguments)(state))(name :: path)(state)
-        | _ -> false
-and anyContainsBytesLayout (types: List(SemanticType)) (path: List(Str)) (state: CoreLoweringState) =
+                match anyBytesLayoutSearch(namedTypeFieldTypesAs(true)(name)(arguments)(state))(name :: path)(state)(done) with
+                    | (true, searched) -> (true, searched)
+                    | (false, searched) ->
+                        if arguments == []
+                        then (false, name :: searched)
+                        else (false, searched)
+        | _ -> (false, done)
+and anyBytesLayoutSearch (types: List(SemanticType)) (path: List(Str)) (state: CoreLoweringState) (done: List(Str)) =
     match types with
-        | [] -> false
-        | candidate :: rest -> containsBytesLayout(candidate)(path)(state) || anyContainsBytesLayout(rest)(path)(state)
+        | [] -> (false, done)
+        | candidate :: rest ->
+            match bytesLayoutSearch(candidate)(path)(state)(done) with
+                | (true, searched) -> (true, searched)
+                | (false, searched) -> anyBytesLayoutSearch(rest)(path)(state)(searched)
+
+let containsBytesLayout (semanticType: SemanticType) (state: CoreLoweringState) =
+    match bytesLayoutSearch(semanticType)([])(state)([]) with
+        | (found, _done) -> found
 
 // Stage 0's `IsBytesProvenanceEligibleTcoListElement`: a list whose elements may hold Bytes is
 // placed on the reference-counted heap only where every self-call rebuilds it from values whose
 // Bytes such a list may own.
-let bytesProvenanceAdmitsListElement (element: SemanticType) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) = !containsBytesLayout(element)([])(state) || containsInt(ordinal)(loop.bytesProvenanceSafeOrdinals)
+let bytesProvenanceAdmitsListElement (element: SemanticType) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) = containsInt(ordinal)(loop.bytesProvenanceSafeOrdinals) || !containsBytesLayout(element)(state)
 
 let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
@@ -13675,7 +13688,7 @@ let bytesSafeLoopCall (expression: Expr) (state: CoreLoweringState) =
 // and the nested-worker ones (`loopRoutableSpecializationCandidates`): stage 0 excludes a
 // multi-parameter self-recursive candidate (`_freshCompositionOnlySpecializable`), since only the
 // fresh-composition call site can supply its earlier arguments.
-let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (bytesSafeCall: Expr -> Bool) (candidates: List((Str, List(Str), Expr))) =
+let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (candidates: List((Str, List(Str), Expr))) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
         let parameters = parameter :: collectLambdaParamNames([])(body)
@@ -13695,7 +13708,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) 
                             runtimeManagedOrdinals = runtimeManagedStrOrdinals(name)(parameters)(innermost),
                             argumentShapes = shapes,
                             accumulatorRebuildOrdinals = tcoAccumulatorRebuildOrdinals(name)(parameters)(innermost),
-                            bytesProvenanceSafeOrdinals = tcoBytesProvenanceSafeOrdinals(constructorNamesOf(layouts))(bytesSafeCall)(name)(parameters)(innermost),
+                            bytesProvenanceSafeOrdinals = [],
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(loopRoutableSpecializationCandidates(candidates))(innermost)([]),
@@ -13714,10 +13727,35 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) 
 // A single recursive binding's loop is emitted as stage 0's loop; a mutual-recursion group
 // member keeps the loop context for its tail self-call arguments but stays a call until the
 // group dispatch is ported.
+let recursive allBytesSafeLoopCalls (calls: List(Expr)) (state: CoreLoweringState) =
+    match calls with
+        | [] -> true
+        | call :: rest -> bytesSafeLoopCall(call)(state) && allBytesSafeLoopCalls(rest)(state)
+
+// The positions whose every self-call rebuilds the list from values safe by their shape, with
+// every call those values come from producing a fresh buffer or a borrowed view.
+let recursive bytesSafeOrdinalsOf (ordinal: Int) (obligations: List(Maybe(List(Expr)))) (state: CoreLoweringState) =
+    match obligations with
+        | [] -> []
+        | Some(calls) :: rest ->
+            if allBytesSafeLoopCalls(calls)(state)
+            then ordinal :: bytesSafeOrdinalsOf(ordinal + 1)(rest)(state)
+            else bytesSafeOrdinalsOf(ordinal + 1)(rest)(state)
+        | None :: rest -> bytesSafeOrdinalsOf(ordinal + 1)(rest)(state)
+
+let withBytesProvenanceSafeOrdinals (state: CoreLoweringState) (loop: Maybe(CoreTcoLoop)) =
+    match loop with
+        | Some(entered) ->
+            Some((entered with bytesProvenanceSafeOrdinals = bytesSafeOrdinalsOf(0)(tcoBytesRebuildObligations(state
+            |> stateConstructorLayouts
+            |> constructorNamesOf)(entered.selfName)(entered.parameterNames)(entered.body))(state)))
+        | None -> None
+
 let enterRecursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) =
     withStateTcoLoop(state
     |> stateSpecializationCandidates
-    |> recursiveTcoLoop(name)(parameter)(parameterType)(body)(emitsLoop)(stateConstructorLayouts(state))(given (expression: Expr) -> bytesSafeLoopCall(expression)(state)))(state)
+    |> recursiveTcoLoop(name)(parameter)(parameterType)(body)(emitsLoop)(stateConstructorLayouts(state))
+    |> withBytesProvenanceSafeOrdinals(state))(state)
 
 let recursive isChainParameterName (name: Str) (names: List(Str)) =
     match names with
@@ -14707,26 +14745,19 @@ let resultProvenanceOf (state: CoreLoweringState) =
     |> resultProvenanceNodes(provenanceFunctionsOf(stateReachSummaries(state))([]))(provenanceConstructorsOf(state))(given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
     |> resolvedResultProvenance
 
-// Stage 0's `ComputeFunctionResultProvenanceFixpoint`: the RC-eligibility verdict of every
-// registered function of the program, by key, solved once at the first call site that asks (by
-// then every type declaration is registered, so a constructor application classifies as the
-// direct construction it is) and read for the rest of the lowering.
+// Stage 0's `ComputeFunctionResultProvenanceFixpoint`: the RC-eligibility verdict and the result
+// Bytes provenance of every registered function of the program, by key, solved once at the first
+// call site or loop that asks (by then every type declaration is registered, so a constructor
+// application classifies as the direct construction it is) and read for the rest of the lowering.
 let ensureResultRcEligibility (state: CoreLoweringState) =
     match stateResultRcEligibility(state) with
         | Some(_eligibility) -> state
         | None ->
             match resultProvenanceOf(state) with
-                | (eligibility, _bytes) -> withStateResultRcEligibility(Some(eligibility))(state)
-
-// The result Bytes provenance of every registered function, solved once, when the first loop is
-// entered: a function's provenance follows from its arms' builtins and forwarding calls alone, so it
-// does not wait for every type declaration to be registered.
-let ensureResultBytesProvenance (state: CoreLoweringState) =
-    match stateResultBytesProvenance(state) with
-        | Some(_provenance) -> state
-        | None ->
-            match resultProvenanceOf(state) with
-                | (_eligibility, bytes) -> withStateResultBytesProvenance(Some(bytes))(state)
+                | (eligibility, bytes) ->
+                    state
+                    |> withStateResultRcEligibility(Some(eligibility))
+                    |> withStateResultBytesProvenance(Some(bytes))
 
 let resultRcEligibilityOf (state: CoreLoweringState) =
     match stateResultRcEligibility(state) with
@@ -20563,7 +20594,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> sugarChainBody(body))(given (entered: CoreLoweringState) ->
                             entered
                             |> refreshSelfResultDeferral(name)
-                            |> ensureResultBytesProvenance
+                            |> ensureResultRcEligibility
                             |> enterRecursiveTcoLoop(name)(parameter)(parameterType)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
                             |> withPassthroughParameter(parameter)(body)(parameterType)
@@ -21912,10 +21943,15 @@ let consTailReachesLoopParameter (request: ConsumerRequest) (tail: Expr) (state:
 // (`first :: []`) whose tail is a new list.
 let consHeadNormalizedForTailSlot (request: ConsumerRequest) (tail: Expr) (state: CoreLoweringState) = consTailReachesLoopParameter(request)(tail)(state) || request.runtimeTcoListTailSlot != None && startsListAfresh(tail)
 
+// Stage 0 leaves a head that may hold Bytes as it is, with no temp reserved, unless its Bytes are a
+// fresh buffer or a borrowed view: a cell cannot own Bytes of unknown origin.
+let consHeadBytesNormalizable (head: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
+    !containsBytesLayout(semanticType)(state) || isFreshOrBorrowedBytes(builtinBytesProvenanceOf(head)(state))
+
 let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            if requestsRuntimeList(request) && consHeadNormalizedForTailSlot(request)(tail)(state) && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state)
+            if requestsRuntimeList(request) && consHeadNormalizedForTailSlot(request)(tail)(state) && !isRuntimeTemp(temp)(state) && !headReadsLiveRuntimeOwner(head)(state) && !resultSurvivesReset(semanticType)(state) && !headReadsAdmittedLoopParameter(head)(state) && consHeadBytesNormalizable(head)(semanticType)(state)
             then
                 match resolveType(state)(semanticType) with
                     | SemString ->
