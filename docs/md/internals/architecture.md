@@ -1142,6 +1142,14 @@ is materialized or stays uncounted inside the cell), and a list left in the aren
 (a record literal, a let-bound value, a helper's result) retained its result at the loop's exit and
 never released the list it built (`GRC_NO_UNGATEDBYTESLIST` restores the provenance gate).
 
+A chain pushed at once onto a list parameter (`a :: b :: acc`) is reference-counted cell by cell.
+A cell whose head the arena would keep (a pattern-bound or borrowed value) gives that head a
+reference of its own, or a copy when it is not counted, so the cell can follow the counted cell under
+it. That holds for the innermost cell too, whose tail is the parameter itself: left in the arena it
+kept every cell before it there, and in `fresh :: item :: acc` the fresh head's cell, stored in the
+arena, lost its buffer at every step (`GRC_NO_CHAININNERHEAD`, and `GRC_NO_CHAINRCTAILHEAD` for the
+outer cells).
+
 Classifier B consumes that placement decision as its representation authority.
 Resolved argument layout and concrete per-edge facts still determine whether
 `GetTcoCopyOutKind` and the `TcoBackEdge*` machinery can copy, reset, or compact

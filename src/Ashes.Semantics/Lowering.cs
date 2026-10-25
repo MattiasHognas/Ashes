@@ -583,6 +583,9 @@ public sealed partial class Lowering
     // The cons cells at the arms of a choice argument whose successor the back edge copies.
     private readonly HashSet<Expr> _backEdgeCopiedArmCells = new(ReferenceEqualityComparer.Instance);
 
+    // The inner cells of a chain consed onto a loop's list parameter while the chain is being lowered.
+    private readonly HashSet<Expr> _loopChainTailCells = new(ReferenceEqualityComparer.Instance);
+
     // The tuples written as the heads of those cells: the back edge copies an arena head with the
     // cell, its parts taking references of their own, so the tuple borrows them as the cell does.
     private readonly HashSet<Expr> _backEdgeCopiedHeadTuples = new(ReferenceEqualityComparer.Instance);
@@ -16943,7 +16946,13 @@ public sealed partial class Lowering
         LoweredValueRequest tailRequest = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null
             ? request.WithExpectedType(listType)
             : LoweredValueRequest.None.WithExpectedType(listType);
+        bool chainTail = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null && _loopChainTailCells.Add(cons.Tail);
         var (tailTemp, tailType) = LowerConsTailValue(cons, tailRequest, ref head, ref request);
+        if (chainTail)
+        {
+            _loopChainTailCells.Remove(cons.Tail);
+        }
+
         head = OwnChainHeadOverReferenceCountedTail(cons, head, tailTemp, request);
         int lateHeadDuplicate = DuplicateConsCellPatternOwners(cons, ref head, ref tailTemp);
 
@@ -16994,7 +17003,9 @@ public sealed partial class Lowering
     // next iteration copies the arena cell's spine onto the heap as the parameter, and nothing
     // releases the reference-counted cells it copied, one whole spine per iteration. A head the arena
     // would keep (a pattern-bound or borrowed value) takes a reference of its own when it is
-    // reference-counted and a copy when it is not, which lets its cell follow.
+    // reference-counted and a copy when it is not, which lets its cell follow. The innermost cell, whose
+    // tail is the parameter itself, is one too: kept in the arena, it would keep every cell before it
+    // there, and the reference its named head took would go with the arena.
     private LoweredValue OwnChainHeadOverReferenceCountedTail(
         Expr.Cons cons,
         LoweredValue head,
@@ -17004,7 +17015,7 @@ public sealed partial class Lowering
         TypeRef headType = Prune(head.Type);
         if (Environment.GetEnvironmentVariable("GRC_NO_CHAINRCTAILHEAD") is not null
             || !CanTestRepresentation
-            || cons.Tail is not Expr.Cons
+            || !(cons.Tail is Expr.Cons || IsInnermostLoopChainCell(cons))
             || request.RuntimeTcoListTailSlot is null
             || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             || IsBackEdgeCopiedCell(cons)
@@ -17022,6 +17033,10 @@ public sealed partial class Lowering
         _patternOwnerNormalizedTemps.Add(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
     }
+
+    private bool IsInnermostLoopChainCell(Expr.Cons cons)
+        => _loopChainTailCells.Contains(cons)
+            && Environment.GetEnvironmentVariable("GRC_NO_CHAININNERHEAD") is null;
 
     // The tail of a reference-counted cell: a recursive producer's result is retained, and an
     // unplaced let-bound one takes a reference when it is reference-counted or a copy when it is not.

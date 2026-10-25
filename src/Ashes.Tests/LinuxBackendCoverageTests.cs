@@ -3419,6 +3419,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_head_over_named_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop pushes a fresh buffer over one matched out of the list it walks. The inner cell
+        // takes its own reference to the matched head and is reference-counted, so the fresh cell
+        // over it is too; both stayed in the arena before, and each step lost the fresh buffer.
+        int[] roundCounts = [200, 2000, 8000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildFreshHeadOverNamedHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{1295L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh head over a named head", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_loop_field_consed_onto_copied_accumulator_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13846,6 +13870,28 @@ public sealed class LinuxBackendCoverageTests
                 if left <= 0
                 then total
                 else repeat(left - 1)(total + totalOffsets(makePatches(0)(10)([]))(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
+            """;
+
+    private static string BuildFreshHeadOverNamedHeadProgram(int rounds)
+        => $$"""
+            let recursive build (items: List(Bytes)) (acc: List(Bytes)) =
+                match items with
+                    | [] -> acc
+                    | item :: rest -> build(rest)(Ashes.Byte.allocate(256) :: item :: acc)
+
+            let recursive count (xs: List(Bytes)) (total: Int) =
+                match xs with
+                    | [] -> total
+                    | x :: rest -> count(rest)(total + Ashes.Byte.length(x))
+
+            let source = [Ashes.Byte.allocate(1), Ashes.Byte.allocate(2), Ashes.Byte.allocate(3), Ashes.Byte.allocate(4), Ashes.Byte.allocate(5)]
+
+            let recursive repeat (left: Int) (total: Int) =
+                if left <= 0
+                then total
+                else repeat(left - 1)(total + count(build(source)([]))(0))
 
             Ashes.IO.print(repeat({{rounds}})(0))
             """;
