@@ -3298,6 +3298,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_pair_pushed_onto_loop_accumulator_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each step pushes a pattern-bound buffer and a fresh slice at once, the linker's shape. The
+        // outer cell kept in the arena made every step copy the counted spine under it and leave the
+        // old copy behind, one spine per step; both cells are counted now and the list is released.
+        int[] roundCounts = [200, 2000, 8000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildPairPushedOntoLoopAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{210L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("pair pushed onto a loop accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_generic_map_passed_as_value_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -3319,6 +3343,31 @@ public sealed class LinuxBackendCoverageTests
         }
 
         AssertMemoryPlateaus("generic map passed as a value", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_cons_chain_borrowed_bytes_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop conses three byte buffers onto its accumulator, the middle one matched out of the
+        // list it walks. The middle cell takes its own reference to the head and is
+        // reference-counted like the cells around it; left in the arena it made the next iteration
+        // copy the whole spine and leak the previous one.
+        int[] roundCounts = [200, 2000, 8000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildConsChainBorrowedBytesHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 60}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons chain with a borrowed bytes head", samples, maxRssKb: 16_000);
     }
 
     [Test]
@@ -13698,6 +13747,69 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + measure(prepare(["T" + Ashes.Text.fromInt(n), "U"])))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsChainBorrowedBytesHeadProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            let recursive sources (n: Int) (acc: List(Bytes)) =
+                if n <= 0
+                then acc
+                else sources(n - 1)(Ashes.Byte.allocate(n) :: acc)
+
+            let recursive pieces (items: List(Bytes)) (acc: List(Bytes)) =
+                match items with
+                    | [] -> Ashes.Collection.List.reverse(acc)
+                    | payload :: rest -> pieces(rest)(Ashes.Byte.allocate(2) :: payload :: Ashes.Byte.allocate(3) :: acc)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(pieces(sources(20)([]))([])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildPairPushedOntoLoopAccumulatorProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            type ResolvedPatch =
+                | resolvedOffset: Int
+                | resolvedBytes: Bytes
+
+            let sliceBytes (bytes: Bytes) (start: Int) (length: Int) =
+                length
+                |> Ashes.Byte.subText(bytes)(start)
+                |> Ashes.Byte.fromText
+
+            let recursive patchPieces (bytes: Bytes) (patches: List(ResolvedPatch)) (cursor: Int) (acc: List(Bytes)) =
+                match patches with
+                    | [] -> Ashes.Collection.List.reverse(sliceBytes(bytes)(cursor)(Ashes.Byte.length(bytes) - cursor) :: acc)
+                    | ResolvedPatch { resolvedOffset = offset, resolvedBytes = replacement } :: rest ->
+                        patchPieces(bytes)(rest)(offset + Ashes.Byte.length(replacement))(replacement :: sliceBytes(bytes)(cursor)(offset - cursor) :: acc)
+
+            let recursive makePatches (index: Int) (count: Int) (acc: List(ResolvedPatch)) =
+                if index >= count
+                then Ashes.Collection.List.reverse(acc)
+                else makePatches(index + 1)(count)(ResolvedPatch(resolvedOffset = index * 10 + 3, resolvedBytes = Ashes.Byte.allocate(4)) :: acc)
+
+            let recursive totalLength (pieces: List(Bytes)) (total: Int) =
+                match pieces with
+                    | [] -> total
+                    | piece :: rest -> totalLength(rest)(total + Ashes.Byte.length(piece))
+
+            let bytes = Ashes.Byte.allocate(210)
+
+            let patches = makePatches(0)(20)([])
+
+            let recursive repeat (left: Int) (total: Int) =
+                if left <= 0
+                then total
+                else repeat(left - 1)(total + totalLength(patchPieces(bytes)(patches)(0)([]))(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
             """;
 
     private static string BuildGenericMapPassedAsValueProgram(int rounds)

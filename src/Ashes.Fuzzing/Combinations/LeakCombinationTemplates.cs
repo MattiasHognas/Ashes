@@ -103,6 +103,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new GenericMapPassedAsValueKeepsClosureResultsTemplate());
         registry.Register(new NormalizedParameterBehindWrappedUpdateTemplate());
         registry.Register(new RecordUpdateOfUnplacedLoopParameterTemplate());
+        registry.Register(new PairPushedOntoLoopAccumulatorTemplate());
+        registry.Register(new ConsChainBorrowedBytesHeadTemplate());
     }
 }
 

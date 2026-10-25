@@ -2809,6 +2809,14 @@ public sealed partial class Lowering
     {
         return expression switch
         {
+            // Every cell of a chain pushed at once is counted (a named head takes a reference of its
+            // own), so each head has to be safe, and a named one is. Without that reference a named
+            // head would be released under the cell, so the two switch off together.
+            Expr.Cons { Tail: Expr.Cons } chain
+                when Environment.GetEnvironmentVariable("GRC_NO_CHAINBYTESPROVENANCE") is null
+                    && Environment.GetEnvironmentVariable("GRC_NO_CHAINRCTAILHEAD") is null
+                => ConsChainHeads(chain).All(head => head is Expr.Var
+                    || IsBytesProvenanceSafeAggregateValue(head, scope)),
             Expr.Cons cons => IsBytesProvenanceSafeAggregateValue(cons.Head, scope),
             Expr.ListLit list => list.Elements.All(element => IsBytesProvenanceSafeAggregateValue(element, scope)),
             Expr.If conditional => IsBytesProvenanceSafeListRebuildExpr(conditional.Then, scope)
