@@ -21982,6 +21982,30 @@ let consHeadNormalizedForTailSlot (request: ConsumerRequest) (tail: Expr) (state
 let consHeadBytesNormalizable (head: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
     !containsBytesLayout(semanticType)(state) || isFreshOrBorrowedBytes(builtinBytesProvenanceOf(head)(state))
 
+// Stage 0's `NormalizeRuntimeManagedBytesValue`: a Bytes head of a reference-counted list cell
+// whose buffer is a fresh one or a view borrowed from another is copied onto the reference-counted
+// heap, unless it is already a fresh reference-counted buffer, so the cell owns what it points at.
+// A head of unknown origin, or a view of a mapping that lives as long as the program, stays as it is.
+let bytesHeadNeedsOwnedCopy (head: Expr) (temp: Int) (state: CoreLoweringState) =
+    match builtinBytesProvenanceOf(head)(state) with
+        | BytesProvenanceFreshOwnedBuffer -> !isRuntimeTemp(temp)(state)
+        | BytesProvenanceBorrowedView -> true
+        | _ -> false
+
+let normalizeRuntimeManagedBytesHead (request: ConsumerRequest) (head: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if requestsRuntimeList(request) && resolveType(state)(semanticType) == SemBytes && bytesHeadNeedsOwnedCopy(head)(temp)(state)
+            then
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = copyTemp } ->
+                        allocated
+                        |> emit(CopyOutArena(copyTemp)(temp)(-1)(true)(RcNormalization)(None))
+                        |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                        |> success(copyTemp)(semanticType)
+            else lowered
+        | _ -> lowered
+
 let normalizeRuntimeManagedHeapConsHead (request: ConsumerRequest) (head: Expr) (tail: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
@@ -22110,6 +22134,7 @@ let lowerCons head tail lower state =
                 |> markResourceArgumentsMoved([head, tail])
                 |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
                 |> lower(head)
+                |> normalizeRuntimeManagedBytesHead(request)(head)
                 |> normalizeRuntimeManagedConsHead(request)(head)(tail)
                 |> normalizePatternOwnerHead(request)(head)
                 |> retainListElement(request)(listTransfers(request)(state))(head)
@@ -22185,6 +22210,7 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
             match state
             |> withConsumerRequest(listElementRequest(request)(Some(elementType))(transfers)(expression)(state))
             |> lower(expression)
+            |> normalizeRuntimeManagedBytesHead(request)(expression)
             |> normalizeRuntimeManagedConsHead(request)(expression)(literalElementTail)
             |> normalizePatternOwnerHead(request)(expression)
             |> retainListElement(request)(transfers)(expression) with

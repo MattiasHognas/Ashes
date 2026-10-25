@@ -261,6 +261,9 @@ let recursive printEach (lines: List(Str)) =
 // list of Bytes and walks another by its tail: neither self-call rebuilds its list from a fresh
 // buffer, so both stay in the arena, while a loop consing a fresh buffer places its list on the
 // reference-counted heap.
+// tco_bytes_view_head_copied_into_counted_cell pushes a fresh buffer over a view of a string
+// literal onto its accumulator: the view is copied onto the reference-counted heap, so both cells
+// and the list are counted.
 let fixtures =
     [
         "simple_arith",
@@ -352,7 +355,8 @@ let fixtures =
         "constructor_owning_fresh_list_child",
         "tco_list_top_cell_compacted_at_back_edge",
         "call_argument_cell_releases_loop_parameter_field_retain",
-        "tco_unchanged_bytes_parameter_consed_onto_accumulator"
+        "tco_unchanged_bytes_parameter_consed_onto_accumulator",
+        "tco_bytes_view_head_copied_into_counted_cell"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

@@ -1,0 +1,366 @@
+IR (lowered)
+============
+
+function __deepcopy_list_2  [ListDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadEnv               Target=1 Index=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=2 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_2_copy   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=4 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Return                Source=4   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  __deepcopy_list_2_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CopyOutArena          DestTemp=7 SrcTemp=5 Purpose=IndependentClone
+    CallClosure           Target=8 ClosureTemp=1 ArgTemp=6   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Alloc                 Target=9 SizeBytes=16   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=7   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Return                Source=9   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+
+function lambda_1  [ClosureHelper from textViews]
+  locals=27 temps=95
+    LoadEnv               Target=0 Index=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=40 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadArgumentOwnership Target=41   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=42 Value=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    AndInt                Target=43 Left=41 Right=42   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=43 Target=rc_arg_normalize_copy_10   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=16 Source=40   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_arg_normalize_done_11   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_arg_normalize_copy_10:
+    IsReferenceCounted    Target=44 SourceTemp=40
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_12   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcDup                 Target=45 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=45   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_representation_done_13   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_representation_copy_12:
+    LoadConstInt          Target=47 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=18 Source=40   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=19 Source=47   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=20 Source=47   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_normalize_list_14:
+    LoadLocal             Target=48 Slot=18   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntNe              Target=49 Left=48 Right=47   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_end_15   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadMemOffset         Target=50 BasePtr=48 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadMemOffset         Target=51 BasePtr=48 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    IsReferenceCounted    Target=52 SourceTemp=50
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_16   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcDup                 Target=53 SourceTemp=50 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=53   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_representation_done_17   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_representation_copy_16:
+    CopyOutArena          DestTemp=54 SrcTemp=50 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=21 Source=54   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_representation_done_17:
+    LoadLocal             Target=55 Slot=21   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Alloc                 Target=56 SizeBytes=16 RuntimeManaged=true   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=56 OffsetBytes=0 Source=55   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=56 OffsetBytes=8 Source=47   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=57 Slot=19   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntNe              Target=58 Left=57 Right=47   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=58 Target=rc_normalize_list_first_18   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=59 Slot=20   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=8 Source=56   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_normalize_list_linked_19   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_normalize_list_first_18:
+    StoreLocal            Slot=19 Source=56   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_normalize_list_linked_19:
+    StoreLocal            Slot=20 Source=56   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=18 Source=51   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_normalize_list_14   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_normalize_list_end_15:
+    LoadLocal             Target=60 Slot=19   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=17 Source=60   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_representation_done_13:
+    LoadLocal             Target=61 Slot=17   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=16 Source=61   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_arg_normalize_done_11:
+    LoadLocal             Target=62 Slot=16   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=1 Source=62   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=63 Value=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=6 Source=63   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=5 Source=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=2 Slot=2   (tco_bytes_view_head_copied_into_counted_cell.ash:2:8)
+    LoadConstInt          Target=3 Value=8   (tco_bytes_view_head_copied_into_counted_cell.ash:2:17)
+    CmpIntGe              Target=4 Left=2 Right=3   (tco_bytes_view_head_copied_into_counted_cell.ash:2:8)
+    JumpIfFalse           CondTemp=4 Target=else_0   (tco_bytes_view_head_copied_into_counted_cell.ash:2:5)
+    LoadLocal             Target=5 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:3:10)
+    StoreLocal            Slot=10 Source=5   (tco_bytes_view_head_copied_into_counted_cell.ash:2:5)
+    Jump                  Target=endif_1   (tco_bytes_view_head_copied_into_counted_cell.ash:2:5)
+  else_0:
+    LoadLocal             Target=6 Slot=2   (tco_bytes_view_head_copied_into_counted_cell.ash:4:20)
+    LoadConstInt          Target=7 Value=1   (tco_bytes_view_head_copied_into_counted_cell.ash:4:28)
+    AddInt                Target=8 Left=6 Right=7   (tco_bytes_view_head_copied_into_counted_cell.ash:4:20)
+    LoadConstInt          Target=9 Value=2   (tco_bytes_view_head_copied_into_counted_cell.ash:4:51)
+    BytesAllocate         Target=10 LengthTemp=9 RuntimeManaged=true   (tco_bytes_view_head_copied_into_counted_cell.ash:4:31)
+    LoadConstStr          Target=11 StrLabel=str_0   (tco_bytes_view_head_copied_into_counted_cell.ash:4:77)
+    CopyOutArena          DestTemp=12 SrcTemp=11 RuntimeManaged=true Purpose=RcNormalization
+    LoadLocal             Target=13 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:4:86)
+    IsReferenceCounted    Target=14 SourceTemp=13
+    StoreLocal            Slot=11 Source=13   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    LoadConstInt          Target=15 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    CmpIntEq              Target=16 Left=13 Right=15   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    OrInt                 Target=17 Left=14 Right=16   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    JumpIfFalse           CondTemp=17 Target=rc_tail_copy_3   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Jump                  Target=rc_tail_done_2   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_tail_copy_3:
+    LoadConstInt          Target=19 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreLocal            Slot=12 Source=13   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreLocal            Slot=13 Source=19   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreLocal            Slot=14 Source=19   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_normalize_list_4:
+    LoadLocal             Target=20 Slot=12   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    CmpIntNe              Target=21 Left=20 Right=19   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    JumpIfFalse           CondTemp=21 Target=rc_normalize_list_end_5   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    LoadMemOffset         Target=22 BasePtr=20 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    LoadMemOffset         Target=23 BasePtr=20 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    IsReferenceCounted    Target=24 SourceTemp=22
+    JumpIfFalse           CondTemp=24 Target=rc_representation_copy_6   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    RcDup                 Target=25 SourceTemp=22 RuntimeManaged=true
+    StoreLocal            Slot=15 Source=25   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Jump                  Target=rc_representation_done_7   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_representation_copy_6:
+    CopyOutArena          DestTemp=26 SrcTemp=22 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=15 Source=26   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_representation_done_7:
+    LoadLocal             Target=27 Slot=15   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Alloc                 Target=28 SizeBytes=16 RuntimeManaged=true   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreMemOffset        BasePtr=28 OffsetBytes=0 Source=27   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreMemOffset        BasePtr=28 OffsetBytes=8 Source=19   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    LoadLocal             Target=29 Slot=13   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    CmpIntNe              Target=30 Left=29 Right=19   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    JumpIfFalse           CondTemp=30 Target=rc_normalize_list_first_8   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    LoadLocal             Target=31 Slot=14   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreMemOffset        BasePtr=31 OffsetBytes=8 Source=28   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Jump                  Target=rc_normalize_list_linked_9   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_normalize_list_first_8:
+    StoreLocal            Slot=13 Source=28   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_normalize_list_linked_9:
+    StoreLocal            Slot=14 Source=28   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreLocal            Slot=12 Source=23   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Jump                  Target=rc_normalize_list_4   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_normalize_list_end_5:
+    LoadLocal             Target=32 Slot=13   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreLocal            Slot=11 Source=32   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+  rc_tail_done_2:
+    LoadLocal             Target=33 Slot=11   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Alloc                 Target=34 SizeBytes=16 RuntimeManaged=true   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreMemOffset        BasePtr=34 OffsetBytes=0 Source=12   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    StoreMemOffset        BasePtr=34 OffsetBytes=8 Source=33   (tco_bytes_view_head_copied_into_counted_cell.ash:4:57)
+    Alloc                 Target=35 SizeBytes=16 RuntimeManaged=true   (tco_bytes_view_head_copied_into_counted_cell.ash:4:31)
+    StoreMemOffset        BasePtr=35 OffsetBytes=0 Source=10   (tco_bytes_view_head_copied_into_counted_cell.ash:4:31)
+    StoreMemOffset        BasePtr=35 OffsetBytes=8 Source=34   (tco_bytes_view_head_copied_into_counted_cell.ash:4:31)
+    LoadLocal             Target=36 Slot=2   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    LoadLocal             Target=37 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    StoreLocal            Slot=2 Source=8   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    StoreLocal            Slot=1 Source=35   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
+    StoreLocal            Slot=1 Source=35
+    LoadConstInt          Target=94 Value=1
+    StoreLocal            Slot=6 Source=94
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
+    RestoreStackPointer   Slot=9   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    Jump                  Target=lambda_1_body   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    LoadConstInt          Target=38 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:4:10)
+    StoreLocal            Slot=10 Source=38   (tco_bytes_view_head_copied_into_counted_cell.ash:2:5)
+  endif_1:
+    LoadLocal             Target=39 Slot=10   (tco_bytes_view_head_copied_into_counted_cell.ash:2:5)
+    LoadConstInt          Target=64 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=22 Source=64   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=65 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=66 Slot=6   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntEq              Target=67 Left=65 Right=39   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=68 Slot=22   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntEq              Target=69 Left=68 Right=64   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    AndInt                Target=70 Left=66 Right=67   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    AndInt                Target=71 Left=70 Right=69   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=71 Target=rc_tco_exit_transfer_not_selected_20   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=72 Value=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=22 Source=72   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_tco_exit_transfer_done_21   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_tco_exit_transfer_not_selected_20:
+    LoadLocal             Target=73 Slot=6   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=73 Target=rc_tco_exit_drop_inactive_22   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=23 Source=65   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rcdrop_list_23:
+    LoadLocal             Target=74 Slot=23   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=75 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntNe              Target=76 Left=74 Right=75   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=76 Target=rcdrop_list_end_25   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcIsUnique            Target=77 SourceTemp=74
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_shared_24   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadMemOffset         Target=78 BasePtr=74 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcDrop                SourceTemp=78 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=79 BasePtr=74 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=79   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rcdrop_list_23   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rcdrop_list_shared_24:
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_25   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rcdrop_list_end_25:
+  rc_tco_exit_drop_inactive_22:
+  rc_tco_exit_transfer_done_21:
+    LoadArgumentOwnership Target=80   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=81 Value=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    ShrInt                Target=82 Left=80 Right=81   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    AndInt                Target=83 Left=82 Right=81   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=83 Target=rc_result_owned_26   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Alloc                 Target=84 SizeBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    MakeClosure           Target=85 FuncLabel=__deepcopy_list_2 EnvPtrTemp=84 EnvSizeBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=84 OffsetBytes=0 Source=85   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CallClosure           Target=86 ClosureTemp=85 ArgTemp=39   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=25 Source=39   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rcdrop_list_28:
+    LoadLocal             Target=87 Slot=25   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=88 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    CmpIntNe              Target=89 Left=87 Right=88   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    JumpIfFalse           CondTemp=89 Target=rcdrop_list_end_30   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcIsUnique            Target=90 SourceTemp=87
+    JumpIfFalse           CondTemp=90 Target=rcdrop_list_shared_29   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadMemOffset         Target=91 BasePtr=87 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcDrop                SourceTemp=91 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=92 BasePtr=87 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    RcDrop                SourceTemp=87 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=92   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rcdrop_list_28   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rcdrop_list_shared_29:
+    RcDrop                SourceTemp=87 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_30   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rcdrop_list_end_30:
+    StoreLocal            Slot=24 Source=86   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Jump                  Target=rc_result_done_27   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_result_owned_26:
+    StoreLocal            Slot=24 Source=39   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+  rc_result_done_27:
+    LoadLocal             Target=93 Slot=24   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Return                Source=93   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from textViews]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadConstInt          Target=3 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Return                Source=3   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+
+function lambda_0  [SourceFunction from textViews]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    Return                Source=4   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+
+function _start_main  [ProgramEntry]
+  locals=18 temps=38
+    LoadConstInt          Target=0 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (tco_bytes_view_head_copied_into_counted_cell.ash:1:1)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:7)
+    LoadConstInt          Target=3 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:17)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (tco_bytes_view_head_copied_into_counted_cell.ash:6:7)
+    LoadConstInt          Target=5 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:20)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (tco_bytes_view_head_copied_into_counted_cell.ash:6:7)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=7 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    CmpIntEq              Target=8 Left=6 Right=7   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_34   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    StoreLocal            Slot=7 Source=6   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadConstInt          Target=9 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:7:28)
+    PrintInt              Source=9   (tco_bytes_view_head_copied_into_counted_cell.ash:7:13)
+    AllocAdt              Target=10 Tag=0 FieldCount=0   (tco_bytes_view_head_copied_into_counted_cell.ash:7:13)
+    StoreLocal            Slot=4 Source=10   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadLocal             Target=11 Slot=7   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    StoreLocal            Slot=8 Source=11   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  rcdrop_list_35:
+    LoadLocal             Target=12 Slot=8   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadConstInt          Target=13 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    CmpIntNe              Target=14 Left=12 Right=13   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    JumpIfFalse           CondTemp=14 Target=rcdrop_list_end_37   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    RcIsUnique            Target=15 SourceTemp=12
+    JumpIfFalse           CondTemp=15 Target=rcdrop_list_shared_36   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadMemOffset         Target=16 BasePtr=12 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    RcDrop                SourceTemp=16 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=17 BasePtr=12 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    RcDrop                SourceTemp=12 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=8 Source=17   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    Jump                  Target=rcdrop_list_35   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  rcdrop_list_shared_36:
+    RcDrop                SourceTemp=12 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_37   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  rcdrop_list_end_37:
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=9
+    CopyOutArena          DestTemp=18 SrcTemp=10 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=9
+    StoreLocal            Slot=4 Source=18   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    Jump                  Target=match_end_31   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  match_arm_cleanup_34:
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=10
+    Jump                  Target=match_next_33   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  match_next_33:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=19 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    CmpIntNe              Target=20 Left=6 Right=19   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    JumpIfFalse           CondTemp=20 Target=match_arm_cleanup_38   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadMemOffset         Target=21 BasePtr=6 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadMemOffset         Target=22 BasePtr=6 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    StoreLocal            Slot=13 Source=21   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    StoreLocal            Slot=14 Source=6   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadLocal             Target=23 Slot=13   (tco_bytes_view_head_copied_into_counted_cell.ash:9:9)
+    Borrow                Target=24 SourceTemp=23
+    BytesLength           Target=25 BytesTemp=24   (tco_bytes_view_head_copied_into_counted_cell.ash:9:9)
+    RcDrop                SourceTemp=21 TypeName=Bytes OwnerSlot=13
+    PrintInt              Source=25   (tco_bytes_view_head_copied_into_counted_cell.ash:9:9)
+    AllocAdt              Target=26 Tag=0 FieldCount=0   (tco_bytes_view_head_copied_into_counted_cell.ash:9:9)
+    StoreLocal            Slot=4 Source=26   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadLocal             Target=28 Slot=14   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    StoreLocal            Slot=15 Source=28   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  rcdrop_list_39:
+    LoadLocal             Target=29 Slot=15   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadConstInt          Target=30 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    CmpIntNe              Target=31 Left=29 Right=30   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    JumpIfFalse           CondTemp=31 Target=rcdrop_list_end_41   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    RcIsUnique            Target=32 SourceTemp=29
+    JumpIfFalse           CondTemp=32 Target=rcdrop_list_shared_40   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    LoadMemOffset         Target=33 BasePtr=29 OffsetBytes=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    RcDrop                SourceTemp=33 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=34 BasePtr=29 OffsetBytes=8   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    RcDrop                SourceTemp=29 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=15 Source=34   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    Jump                  Target=rcdrop_list_39   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  rcdrop_list_shared_40:
+    RcDrop                SourceTemp=29 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_41   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  rcdrop_list_end_41:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=16
+    CopyOutArena          DestTemp=35 SrcTemp=26 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=16
+    StoreLocal            Slot=4 Source=35   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    Jump                  Target=match_end_31   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  match_arm_cleanup_38:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=17
+    Jump                  Target=match_none_32   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  match_none_32:
+    LoadConstInt          Target=36 Value=0   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    StoreLocal            Slot=4 Source=36   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+  match_end_31:
+    LoadLocal             Target=37 Slot=4   (tco_bytes_view_head_copied_into_counted_cell.ash:6:1)
+    Return                Source=37
+

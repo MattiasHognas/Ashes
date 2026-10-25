@@ -1,0 +1,11 @@
+let recursive textViews (index: Int) (acc: List(Bytes)) =
+    if index >= 8
+    then acc
+    else textViews(index + 1)(Ashes.Byte.allocate(2) :: Ashes.Byte.fromText("ab") :: acc)
+
+match textViews(0)([]) with
+    | [] -> Ashes.IO.print(0)
+    | first :: _ ->
+        first
+        |> Ashes.Byte.length
+        |> Ashes.IO.print
