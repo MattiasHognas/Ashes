@@ -11276,16 +11276,47 @@ let carryRuntimeTempState (fromTemp: Int) (toTemp: Int) (state: CoreLoweringStat
         | Some(runtimeState) -> markRuntimeTemp(toTemp)(runtimeState)(state)
         | None -> state
 
+// Stage 0's `ownsBorrowedListBase` in `LowerLambdaCoreCloseTmcChain`: a borrowed base-case list
+// joined with the spine would report the whole result as arena, and a caller copying it out would
+// strand the spine, so it holds its own reference on both branches.
+let ownsBorrowedListBase (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(bodyType) with
+        | SemList(_element) ->
+            if isRuntimeTemp(bodyTemp)(state)
+            then false
+            else
+                match generalCopyPlanOf(bodyType)(state) with
+                    | Some(_plan) -> true
+                    | None -> false
+        | _ -> false
+
 // The result of a chain that built no cell: the body's value, which under the contract holds a
 // reference of its own when the body did not produce it (a borrowed parameter), as the last cell's
 // tail does.
 let emitEmptyChainResult (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
-    if isRuntimeTemp(bodyTemp)(state) || !isGeneralRcValueType(bodyType)(state)
+    if isRuntimeTemp(bodyTemp)(state) || !isGeneralRcValueType(bodyType)(state) && !ownsBorrowedListBase(bodyTemp)(bodyType)(state)
     then (state, bodyTemp)
     else
         match generalCopyPlanOf(bodyType)(state) with
             | Some(plan) -> emitArgumentCopy(bodyTemp)(plan)(state)
             | None -> (state, bodyTemp)
+
+// The last cell's tail under stage 0's borrowed-list-base rule: a borrowed base-case list holds its
+// own reference in the spine as well, so the spine owns everything it reaches.
+let emitChainTail (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if ownsBorrowedListBase(bodyTemp)(bodyType)(state)
+    then
+        match generalCopyPlanOf(bodyType)(state) with
+            | Some(plan) -> emitArgumentCopy(bodyTemp)(plan)(state)
+            | None -> (state, bodyTemp)
+    else (state, bodyTemp)
+
+// The closed result's representation: an owned reference-counted list on both branches under the
+// borrowed-list-base rule, otherwise the body value's own.
+let markClosedChainResult (bodyTemp: Int) (bodyType: SemanticType) (outTemp: Int) (state: CoreLoweringState) =
+    if ownsBorrowedListBase(bodyTemp)(bodyType)(state)
+    then markRuntimeTemp(outTemp)(RuntimeNewlyProduced)(state)
+    else carryRuntimeTempState(bodyTemp)(outTemp)(state)
 
 // The branch stage 0 emits in `LowerLambdaCoreCloseTmcChain`: with a pending cell, the body's value
 // fills its still-nil tail and the spine head becomes the result; with none, the body's value is the
@@ -11306,19 +11337,22 @@ let emitTmcChainClose (destSlot: Int) (resultSlot: Int) (bodyTemp: Int) (bodyTyp
                                             |> emit(LoadConstInt(zeroTemp)(0))
                                             |> emit(CmpIntNe(condTemp)(destTemp)(zeroTemp))
                                             |> emit(JumpIfFalse(condTemp)(emptyLabel))
-                                            |> emit(StoreMemOffset(destTemp)(8)(bodyTemp))
-                                            |> emit(LoadLocal(spineTemp)(resultSlot))
-                                            |> emit(StoreLocal(joinSlot)(spineTemp))
-                                            |> emit(Jump(doneLabel))
-                                            |> emit(Label(emptyLabel))
-                                            |> emitEmptyChainResult(bodyTemp)(bodyType) with
-                                                | (emptied, emptyTemp) ->
-                                                    (emptied
-                                                    |> emit(StoreLocal(joinSlot)(emptyTemp))
-                                                    |> emit(Label(doneLabel))
-                                                    |> emit(LoadLocal(outTemp)(joinSlot))
-                                                    |> carryRuntimeTempState(bodyTemp)(outTemp)
-                                                    |> withClosedProducerChain(outTemp), outTemp)
+                                            |> emitChainTail(bodyTemp)(bodyType) with
+                                                | (tailed, tailTemp) ->
+                                                    match tailed
+                                                    |> emit(StoreMemOffset(destTemp)(8)(tailTemp))
+                                                    |> emit(LoadLocal(spineTemp)(resultSlot))
+                                                    |> emit(StoreLocal(joinSlot)(spineTemp))
+                                                    |> emit(Jump(doneLabel))
+                                                    |> emit(Label(emptyLabel))
+                                                    |> emitEmptyChainResult(bodyTemp)(bodyType) with
+                                                        | (emptied, emptyTemp) ->
+                                                            (emptied
+                                                            |> emit(StoreLocal(joinSlot)(emptyTemp))
+                                                            |> emit(Label(doneLabel))
+                                                            |> emit(LoadLocal(outTemp)(joinSlot))
+                                                            |> markClosedChainResult(bodyTemp)(bodyType)(outTemp)
+                                                            |> withClosedProducerChain(outTemp), outTemp)
 
 // Closes a tail-modulo-constructor spine at the function's single return, before any ownership
 // finalization: from here on the function's result IS the spine and the body value is only the last

@@ -17275,6 +17275,16 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
     }
 
+    // A borrowed base-case list joined with the spine would report the whole result as arena, and a
+    // caller copying it out would strand the spine, so it holds its own reference too and both
+    // branches of the close-out leave an owned reference-counted list.
+    private bool OwnsBorrowedTmcListBase(TcoContext tco, bool bodyRuntimeManaged)
+        => !bodyRuntimeManaged
+            && tco.ResultType is { } closedType
+            && Prune(closedType) is TypeRef.TList closedList
+            && CanEmitRuntimeManagedListElementDeepCopy(closedList.Element)
+            && Environment.GetEnvironmentVariable("GRC_NO_TMCLISTBASE") is null;
+
     /// <summary>
     /// Closes a tail-modulo-constructor spine at the function's single return: the value the body
     /// produced is what the innermost recursive call would have returned, so it fills the last cell's
@@ -17317,13 +17327,19 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(emptyLabel));
         // The contract takes a reference-counted result as owned, so a base-case value it did not
         // produce (a borrowed parameter) holds its own reference here, as the last cell's tail does.
-        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !IsGeneralRcValueType(Prune(tco.ResultType))
+        bool ownsBorrowedListBase = OwnsBorrowedTmcListBase(tco, bodyRuntimeManaged);
+        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !(IsGeneralRcValueType(Prune(tco.ResultType)) || ownsBorrowedListBase)
             ? bodyTemp
             : EmitRuntimeManagedTcoParamCopy(bodyTemp, Prune(tco.ResultType));
         Emit(new IrInst.StoreLocal(resultSlot, emptyResultTemp));
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        if (ownsBorrowedListBase)
+        {
+            MarkRuntimeManagedTemp(resultTemp);
+            return resultTemp;
+        }
         // The closed result joins two branches — the spine, whose cells are reference-counted by the
         // transform's own eligibility gate and whose last tail is the body value, and the body value
         // alone — so it carries the body value's own representation. Leaving the slot read without a

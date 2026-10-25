@@ -1001,6 +1001,10 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
 - A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
   owned reference-counted copy when the cell's tail is a recursive result or the cell is a
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).
+- A tail-modulo-cons function whose base case is a borrowed list (`else rest`) gives that list a
+  reference of its own on both close-out branches, so the joined result is an owned
+  reference-counted list rather than one the caller copies out of an arena it assumes, stranding the
+  spine (`GRC_NO_TMCLISTBASE`).
 
 Self-recursive functions also retain positional `TcoParamStructuralFacts`. Each fact carries the
 parameter ordinal used as its binding identity plus its diagnostic source name; duplicate curried

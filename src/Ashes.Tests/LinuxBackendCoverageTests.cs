@@ -3298,6 +3298,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_producer_returning_parameter_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A producer's base case hands back its parameter's own tail: that tail takes a reference of
+        // its own on both close-out branches, so the result is an owned list the caller releases
+        // instead of copying it out and stranding the spine.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildProducerReturningParameterTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{9L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("producer returning its parameter's tail", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13823,6 +13847,29 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(keep("x")(pairs(8)([]))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildProducerReturningParameterTailProgram(int rounds)
+        => $$"""
+            let recursive keepUntil (stop: Str) (items: List(Str)) =
+                match items with
+                    | entry :: rest ->
+                        if entry == stop
+                        then rest
+                        else entry :: keepUntil(stop)(rest)
+                    | [] -> []
+
+            let recursive words (n: Int) (acc: List(Str)) =
+                if n <= 0
+                then acc
+                else words(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(keepUntil("5")(words(10)([]))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

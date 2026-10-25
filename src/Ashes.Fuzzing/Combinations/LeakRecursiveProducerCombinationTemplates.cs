@@ -63,3 +63,36 @@ internal sealed class CurriedProducerOverTupleHeadsTemplate() : LeakCombinationT
             """;
     }
 }
+
+/// <summary>
+/// A recursive list producer whose base case hands back its parameter's own tail
+/// (<c>if ... then entry :: keep(rest) else rest</c>): the borrowed tail takes a reference of its
+/// own on both close-out branches, so the result is an owned reference-counted list the caller
+/// releases instead of copying it out and stranding the spine.
+/// </summary>
+internal sealed class ProducerReturningParameterTailTemplate() : LeakCombinationTemplate(
+    "leak.producer-returning-parameter-tail", "producerReturningParameterTail", GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string collect = names.Of("collectWords");
+        string keep = names.Of("keepWhileSmall");
+        int limit = names.Between(2, 4);
+        return $$"""
+            let recursive {{collect}} (n: Int) (acc: List(Str)) =
+                if n <= 0
+                then acc
+                else {{collect}}(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive {{keep}} (items: List(Str)) =
+                match items with
+                    | entry :: rest ->
+                        if Ashes.Text.byteLength(entry) == 1 && entry != "{{limit}}"
+                        then entry :: {{keep}}(rest)
+                        else rest
+                    | [] -> []
+
+            let {{names.Entry}} (seed: Int) = Ashes.Collection.List.length({{keep}}({{collect}}({{names.Between(4, 7)}})([]))) + seed
+            """;
+    }
+}
