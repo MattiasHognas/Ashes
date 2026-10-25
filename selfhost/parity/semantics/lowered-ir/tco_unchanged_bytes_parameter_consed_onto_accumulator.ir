@@ -1,0 +1,565 @@
+IR (lowered)
+============
+
+function lambda_2  [ClosureHelper from pieces]
+  locals=22 temps=26
+    LoadEnv               Target=0 Index=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadEnv               Target=1 Index=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreLocal            Slot=3 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreLocal            Slot=6 Source=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadLocal             Target=3 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=4 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    LoadLocal             Target=6 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:3:17)
+    StoreLocal            Slot=10 Source=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    Jump                  Target=match_end_0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=7 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    CmpIntNe              Target=8 Left=3 Right=7   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    LoadMemOffset         Target=9 BasePtr=3 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    LoadMemOffset         Target=10 BasePtr=3 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    StoreLocal            Slot=17 Source=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    RcDrop                SourceTemp=9 TypeName=Bytes OwnerSlot=17
+    StoreLocal            Slot=18 Source=10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    LoadLocal             Target=11 Slot=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:37)
+    LoadLocal             Target=12 Slot=18   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:45)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:51)
+    RcDup                 Target=15 SourceTemp=14
+    LoadLocal             Target=16 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:61)
+    Alloc                 Target=17 SizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:51)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=15   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:51)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:51)
+    LoadLocal             Target=18 Slot=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    LoadLocal             Target=19 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    LoadLocal             Target=20 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    StoreLocal            Slot=3 Source=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    StoreLocal            Slot=2 Source=13   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    RcDrop                SourceTemp=10 TypeName=List OwnerSlot=18
+    StoreLocal            Slot=1 Source=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    RestoreStackPointer   Slot=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    Jump                  Target=lambda_2_body   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    LoadConstInt          Target=21 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:4:30)
+    StoreLocal            Slot=10 Source=21   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=19
+    Jump                  Target=match_end_0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_none_1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+  match_none_1:
+    LoadConstInt          Target=24 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    StoreLocal            Slot=10 Source=24   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+  match_end_0:
+    LoadLocal             Target=25 Slot=10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:2:5)
+    Return                Source=25   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+
+function lambda_1  [ClosureHelper from pieces]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadEnv               Target=3 Index=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    Return                Source=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+
+function __rc_cdrop_3  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    RcDrop                SourceTemp=1 TypeName=Bytes RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    Return                Source=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from pieces]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_5   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    Jump                  Target=rc_representation_done_6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+  rc_representation_copy_5:
+    CopyOutArena          DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=5   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+  rc_representation_done_6:
+    LoadLocal             Target=6 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    Return                Source=7   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+
+function lambda_0  [SourceFunction from pieces]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadLocal             Target=3 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    Return                Source=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+
+function __deepcopy_list_6  [ListDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadEnv               Target=1 Index=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=2 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_6_copy   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=4 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Return                Source=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  __deepcopy_list_6_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CopyOutArena          DestTemp=7 SrcTemp=5 Purpose=IndependentClone
+    CallClosure           Target=8 ClosureTemp=1 ArgTemp=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Alloc                 Target=9 SizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=7   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Return                Source=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+
+function lambda_5  [ClosureHelper from fresh]
+  locals=27 temps=92
+    LoadEnv               Target=0 Index=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=2 Source=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=37 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadArgumentOwnership Target=38   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=39 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    AndInt                Target=40 Left=38 Right=39   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=40 Target=rc_arg_normalize_copy_17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=16 Source=37   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_arg_normalize_done_18   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_arg_normalize_copy_17:
+    IsReferenceCounted    Target=41 SourceTemp=37
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcDup                 Target=42 SourceTemp=37 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=42   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_representation_done_20   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_representation_copy_19:
+    LoadConstInt          Target=44 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=18 Source=37   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=19 Source=44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=20 Source=44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_normalize_list_21:
+    LoadLocal             Target=45 Slot=18   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntNe              Target=46 Left=45 Right=44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_end_22   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadMemOffset         Target=47 BasePtr=45 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadMemOffset         Target=48 BasePtr=45 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    IsReferenceCounted    Target=49 SourceTemp=47
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_23   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcDup                 Target=50 SourceTemp=47 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=50   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_representation_done_24   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_representation_copy_23:
+    CopyOutArena          DestTemp=51 SrcTemp=47 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=21 Source=51   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_representation_done_24:
+    LoadLocal             Target=52 Slot=21   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Alloc                 Target=53 SizeBytes=16 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=52   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=8 Source=44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=54 Slot=19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntNe              Target=55 Left=54 Right=44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=55 Target=rc_normalize_list_first_25   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=56 Slot=20   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=56 OffsetBytes=8 Source=53   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_normalize_list_linked_26   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_normalize_list_first_25:
+    StoreLocal            Slot=19 Source=53   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_normalize_list_linked_26:
+    StoreLocal            Slot=20 Source=53   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=18 Source=48   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_normalize_list_21   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_normalize_list_end_22:
+    LoadLocal             Target=57 Slot=19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=17 Source=57   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_representation_done_20:
+    LoadLocal             Target=58 Slot=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=16 Source=58   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_arg_normalize_done_18:
+    LoadLocal             Target=59 Slot=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=1 Source=59   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=60 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=6 Source=60   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=5 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=2 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:8)
+    LoadConstInt          Target=3 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:8)
+    JumpIfFalse           CondTemp=4 Target=else_7   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:5)
+    LoadLocal             Target=5 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:8:10)
+    StoreLocal            Slot=10 Source=5   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:5)
+    Jump                  Target=endif_8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:5)
+  else_7:
+    LoadLocal             Target=6 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:16)
+    LoadConstInt          Target=7 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:20)
+    SubInt                Target=8 Left=6 Right=7   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:16)
+    LoadLocal             Target=9 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:43)
+    BytesAllocate         Target=10 LengthTemp=9 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadLocal             Target=11 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:49)
+    IsReferenceCounted    Target=12 SourceTemp=11
+    StoreLocal            Slot=11 Source=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadConstInt          Target=13 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    CmpIntEq              Target=14 Left=11 Right=13   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    OrInt                 Target=15 Left=12 Right=14   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    JumpIfFalse           CondTemp=15 Target=rc_tail_copy_10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    Jump                  Target=rc_tail_done_9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_tail_copy_10:
+    LoadConstInt          Target=17 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreLocal            Slot=12 Source=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreLocal            Slot=13 Source=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreLocal            Slot=14 Source=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_normalize_list_11:
+    LoadLocal             Target=18 Slot=12   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    CmpIntNe              Target=19 Left=18 Right=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    JumpIfFalse           CondTemp=19 Target=rc_normalize_list_end_12   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadMemOffset         Target=20 BasePtr=18 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadMemOffset         Target=21 BasePtr=18 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    IsReferenceCounted    Target=22 SourceTemp=20
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_13   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    RcDup                 Target=23 SourceTemp=20 RuntimeManaged=true
+    StoreLocal            Slot=15 Source=23   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    Jump                  Target=rc_representation_done_14   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_representation_copy_13:
+    CopyOutArena          DestTemp=24 SrcTemp=20 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=15 Source=24   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_representation_done_14:
+    LoadLocal             Target=25 Slot=15   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    Alloc                 Target=26 SizeBytes=16 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreMemOffset        BasePtr=26 OffsetBytes=0 Source=25   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreMemOffset        BasePtr=26 OffsetBytes=8 Source=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadLocal             Target=27 Slot=13   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    CmpIntNe              Target=28 Left=27 Right=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    JumpIfFalse           CondTemp=28 Target=rc_normalize_list_first_15   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadLocal             Target=29 Slot=14   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=26   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    Jump                  Target=rc_normalize_list_linked_16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_normalize_list_first_15:
+    StoreLocal            Slot=13 Source=26   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_normalize_list_linked_16:
+    StoreLocal            Slot=14 Source=26   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreLocal            Slot=12 Source=21   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    Jump                  Target=rc_normalize_list_11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_normalize_list_end_12:
+    LoadLocal             Target=30 Slot=13   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreLocal            Slot=11 Source=30   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+  rc_tail_done_9:
+    LoadLocal             Target=31 Slot=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    Alloc                 Target=32 SizeBytes=16 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreMemOffset        BasePtr=32 OffsetBytes=0 Source=10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    StoreMemOffset        BasePtr=32 OffsetBytes=8 Source=31   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:23)
+    LoadLocal             Target=33 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    LoadLocal             Target=34 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    StoreLocal            Slot=2 Source=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    StoreLocal            Slot=1 Source=32   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=26
+    StoreLocal            Slot=1 Source=32
+    LoadConstInt          Target=91 Value=1
+    StoreLocal            Slot=6 Source=91
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=26
+    RestoreStackPointer   Slot=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    Jump                  Target=lambda_5_body   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    LoadConstInt          Target=35 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:9:10)
+    StoreLocal            Slot=10 Source=35   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:5)
+  endif_8:
+    LoadLocal             Target=36 Slot=10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:7:5)
+    LoadConstInt          Target=61 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=22 Source=61   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=62 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=63 Slot=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntEq              Target=64 Left=62 Right=36   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=65 Slot=22   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntEq              Target=66 Left=65 Right=61   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    AndInt                Target=67 Left=63 Right=64   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    AndInt                Target=68 Left=67 Right=66   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=68 Target=rc_tco_exit_transfer_not_selected_27   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=69 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=22 Source=69   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_tco_exit_transfer_done_28   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_tco_exit_transfer_not_selected_27:
+    LoadLocal             Target=70 Slot=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=70 Target=rc_tco_exit_drop_inactive_29   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=23 Source=62   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rcdrop_list_30:
+    LoadLocal             Target=71 Slot=23   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=72 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntNe              Target=73 Left=71 Right=72   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=73 Target=rcdrop_list_end_32   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcIsUnique            Target=74 SourceTemp=71
+    JumpIfFalse           CondTemp=74 Target=rcdrop_list_shared_31   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadMemOffset         Target=75 BasePtr=71 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcDrop                SourceTemp=75 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=76 BasePtr=71 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcDrop                SourceTemp=71 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=23 Source=76   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rcdrop_list_30   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rcdrop_list_shared_31:
+    RcDrop                SourceTemp=71 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_32   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rcdrop_list_end_32:
+  rc_tco_exit_drop_inactive_29:
+  rc_tco_exit_transfer_done_28:
+    LoadArgumentOwnership Target=77   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=78 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    ShrInt                Target=79 Left=77 Right=78   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    AndInt                Target=80 Left=79 Right=78   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=80 Target=rc_result_owned_33   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Alloc                 Target=81 SizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    MakeClosure           Target=82 FuncLabel=__deepcopy_list_6 EnvPtrTemp=81 EnvSizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=81 OffsetBytes=0 Source=82   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CallClosure           Target=83 ClosureTemp=82 ArgTemp=36   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=25 Source=36   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rcdrop_list_35:
+    LoadLocal             Target=84 Slot=25   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=85 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    CmpIntNe              Target=86 Left=84 Right=85   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_end_37   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcIsUnique            Target=87 SourceTemp=84
+    JumpIfFalse           CondTemp=87 Target=rcdrop_list_shared_36   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadMemOffset         Target=88 BasePtr=84 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcDrop                SourceTemp=88 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=89 BasePtr=84 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=89   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rcdrop_list_35   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rcdrop_list_shared_36:
+    RcDrop                SourceTemp=84 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_37   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rcdrop_list_end_37:
+    StoreLocal            Slot=24 Source=83   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Jump                  Target=rc_result_done_34   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_result_owned_33:
+    StoreLocal            Slot=24 Source=36   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+  rc_result_done_34:
+    LoadLocal             Target=90 Slot=24   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Return                Source=90   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+
+function lambda_5$env_normalize  [ClosureEnvironmentNormalizer from fresh]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=1 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=3 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Return                Source=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+
+function lambda_4  [SourceFunction from fresh]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadLocal             Target=1 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    Return                Source=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+
+function lambda_8  [ClosureHelper from count]
+  locals=23 temps=24
+    LoadEnv               Target=0 Index=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    StoreLocal            Slot=2 Source=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    StoreLocal            Slot=5 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    StoreLocal            Slot=6 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    StoreLocal            Slot=7 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+  lambda_8_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    LoadLocal             Target=2 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_41   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    LoadLocal             Target=5 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:13:17)
+    StoreLocal            Slot=11 Source=5   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_38   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+  match_arm_cleanup_41:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_40   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+  match_next_40:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_42   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    StoreLocal            Slot=18 Source=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    StoreLocal            Slot=19 Source=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    LoadLocal             Target=10 Slot=19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:30)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:36)
+    LoadLocal             Target=13 Slot=18   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:62)
+    Borrow                Target=14 SourceTemp=13
+    BytesLength           Target=15 BytesTemp=14   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:44)
+    RcDrop                SourceTemp=8 TypeName=Bytes OwnerSlot=18
+    AddInt                Target=16 Left=12 Right=15   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:36)
+    LoadLocal             Target=17 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    LoadLocal             Target=18 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    StoreLocal            Slot=2 Source=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    StoreLocal            Slot=1 Source=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    RestoreStackPointer   Slot=10   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    Jump                  Target=lambda_8_body   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    LoadConstInt          Target=19 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:14:24)
+    StoreLocal            Slot=11 Source=19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_end_38   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+  match_arm_cleanup_42:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_none_39   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+  match_none_39:
+    LoadConstInt          Target=22 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    StoreLocal            Slot=11 Source=22   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+  match_end_38:
+    LoadLocal             Target=23 Slot=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:12:5)
+    Return                Source=23   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+
+function lambda_7  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    MakeClosure           Target=4 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    Return                Source=4   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+
+function _start_main  [ProgramEntry]
+  locals=23 temps=64
+    LoadConstInt          Target=0 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:1:1)
+    LoadConstInt          Target=2 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    MakeClosure           Target=3 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    StoreLocal            Slot=1 Source=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:6:1)
+    LoadConstInt          Target=4 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    MakeClosure           Target=5 FuncLabel=lambda_7 EnvPtrTemp=4 EnvSizeBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    StoreLocal            Slot=2 Source=5   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:11:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=6 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    LoadConstInt          Target=7 Value=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:83)
+    BytesAllocate         Target=8 LengthTemp=7 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:63)
+    Alloc                 Target=9 SizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=6   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    LoadConstInt          Target=10 Value=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:59)
+    BytesAllocate         Target=11 LengthTemp=10 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:39)
+    Alloc                 Target=12 SizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=11   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=9   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    LoadConstInt          Target=13 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:35)
+    BytesAllocate         Target=14 LengthTemp=13 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:15)
+    Alloc                 Target=15 SizeBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=14   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=12   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:14)
+    StoreLocal            Slot=5 Source=15   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:1)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadLocal             Target=16 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:1)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=17 Slot=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    LoadConstInt          Target=18 Value=7   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:34)
+    BytesAllocate         Target=19 LengthTemp=18 RuntimeManaged=true   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:14)
+    LoadMemOffset         Target=20 BasePtr=17 OffsetBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    LoadConstInt          Target=21 Value=62   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    ShrInt                Target=22 Left=20 Right=21   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    LoadConstInt          Target=23 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    AndInt                Target=24 Left=22 Right=23   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    CallClosure           Target=25 ClosureTemp=17 ArgTemp=19 RuntimeManagedArgumentFlagTemp=24   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    LoadLocal             Target=26 Slot=5   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:38)
+    Borrow                Target=27 SourceTemp=26
+    RcDup                 Target=63 SourceTemp=27   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    CallClosure           Target=28 ClosureTemp=25 ArgTemp=27   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    LoadConstInt          Target=29 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:46)
+    CallClosure           Target=30 ClosureTemp=28 ArgTemp=29   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    StoreLocal            Slot=11 Source=19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    JumpIfFalse           CondTemp=24 Target=rc_handed_over_kept_43   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    LoadConstInt          Target=31 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+    StoreLocal            Slot=11 Source=31   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:7)
+  rc_handed_over_kept_43:
+    CallClosure           Target=32 ClosureTemp=16 ArgTemp=30   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:1)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=33 Slot=2   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadLocal             Target=34 Slot=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:57)
+    LoadConstInt          Target=35 Value=3   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:63)
+    CallClosure           Target=36 ClosureTemp=34 ArgTemp=35   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:57)
+    LoadConstInt          Target=37 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:66)
+    CallClosure           Target=38 ClosureTemp=36 ArgTemp=37   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:57)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
+    LoadMemOffset         Target=39 BasePtr=33 OffsetBytes=16   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    LoadConstInt          Target=40 Value=62   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    ShrInt                Target=41 Left=39 Right=40   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    LoadConstInt          Target=42 Value=1   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    AndInt                Target=43 Left=41 Right=42   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    StoreLocal            Slot=17 Source=38   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    JumpIfFalse           CondTemp=43 Target=rc_call_argument_not_retained_44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    RcDup                 Target=44 SourceTemp=38 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=17 Source=44   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+  rc_call_argument_not_retained_44:
+    LoadLocal             Target=45 Slot=17   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    CallClosure           Target=46 ClosureTemp=33 ArgTemp=45 RuntimeManagedArgumentFlagTemp=43   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    LoadConstInt          Target=47 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:71)
+    CallClosure           Target=48 ClosureTemp=46 ArgTemp=47   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=18
+    StoreLocal            Slot=19 Source=38   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+  rcdrop_list_45:
+    LoadLocal             Target=49 Slot=19   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    LoadConstInt          Target=50 Value=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    CmpIntNe              Target=51 Left=49 Right=50   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_47   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    RcIsUnique            Target=52 SourceTemp=49
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_46   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    RcDrop                SourceTemp=53 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=54 BasePtr=49 OffsetBytes=8   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=19 Source=54   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+    Jump                  Target=rcdrop_list_45   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+  rcdrop_list_shared_46:
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_47   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:51)
+  rcdrop_list_end_47:
+    CallClosure           Target=55 ClosureTemp=32 ArgTemp=48   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:1)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=20
+    PrintInt              Source=55   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:1)
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=5
+    AllocAdt              Target=56 Tag=0 FieldCount=0   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:18:1)
+    StoreLocal            Slot=21 Source=56   (tco_unchanged_bytes_parameter_consed_onto_accumulator.ash:16:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=22
+    CopyOutArena          DestTemp=58 SrcTemp=56 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=22
+    LoadLocal             Target=59 Slot=11
+    LoadConstInt          Target=60 Value=0
+    CmpIntNe              Target=61 Left=59 Right=60
+    JumpIfFalse           CondTemp=61 Target=general_rc_owned_absent_48
+    IsReferenceCounted    Target=62 SourceTemp=59
+    JumpIfFalse           CondTemp=62 Target=general_rc_owned_absent_48
+    RcDrop                SourceTemp=59 TypeName=Bytes RuntimeManaged=true
+    StoreLocal            Slot=11 Source=60
+  general_rc_owned_absent_48:
+    Return                Source=58
+

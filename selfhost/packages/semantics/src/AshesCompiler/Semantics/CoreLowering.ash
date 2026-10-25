@@ -335,6 +335,9 @@ type CoreTcoLoop =
     | argumentShapes: List(TcoArgumentShape)
     // The positions stage 0's `AccumulatorRebuild` holds at, no single shape describing them.
     | accumulatorRebuildOrdinals: List(Int)
+    // The positions stage 0's `BytesProvenanceSafeListRebuild` holds at: a list holding Bytes is
+    // placed on the reference-counted heap only at these.
+    | bytesProvenanceSafeOrdinals: List(Int)
     | patternFacts: List(PatternBindingFact)
     // Every parameter the loop body matches directly by a constructor pattern, with the first such
     // constructor, in the order the body first matches them (stage 0's
@@ -543,6 +546,9 @@ type CoreProgramState =
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
+    // Every registered function's result Bytes provenance by key, solved once when the first loop
+    // asks which of its list parameters may hold Bytes on the reference-counted heap.
+    | resultBytesProvenance: Maybe(MapTree(Str, BytesOwnershipProvenance))
     // Per argument-free named type of the program: whether it is admissible to the general contract and
     // whether it reaches a type the contract governs, each walked once when the program's lowering starts.
     | generalRcTypeFacts: MapTree(Str, (Bool, Bool))
@@ -1153,6 +1159,14 @@ let stateResultRcEligibility (state: CoreLoweringState) =
 let withStateResultRcEligibility value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with resultRcEligibility = value))
+
+let stateResultBytesProvenance (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.resultBytesProvenance)
+
+let withStateResultBytesProvenance value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with resultBytesProvenance = value))
 
 let stateGeneralRcTypeFacts (state: CoreLoweringState) =
     (let group = state.programState
@@ -2300,6 +2314,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             programParameterOwnership = [],
             dropperLabels = emptyDropperLabelCache,
             resultRcEligibility = None,
+            resultBytesProvenance = None,
             generalRcTypeFacts = Ashes.Collection.Map.empty,
             contractRecordFacts = Ashes.Collection.Map.empty,
             inlinableHelpers = [],
@@ -12376,13 +12391,36 @@ let isWalkedOrRefilledElement (element: SemanticType) (state: CoreLoweringState)
         | SemList(inner) -> resolveType(state)(inner) == SemString
         | _ -> false
 
-let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (state: CoreLoweringState) =
+// Stage 0's `ContainsBytesLayout`: whether a value of the type may hold Bytes, through its
+// elements or its constructors' fields at this instantiation.
+let recursive containsBytesLayout (semanticType: SemanticType) (path: List(Str)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemBytes -> true
+        | SemList(element) -> containsBytesLayout(element)(path)(state)
+        | SemTuple(elements) -> anyContainsBytesLayout(elements)(path)(state)
+        | SemNamed(_id, name, arguments) ->
+            if containsName(name)(path)
+            then false
+            else
+                anyContainsBytesLayout(namedTypeFieldTypesAs(true)(name)(arguments)(state))(name :: path)(state)
+        | _ -> false
+and anyContainsBytesLayout (types: List(SemanticType)) (path: List(Str)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | candidate :: rest -> containsBytesLayout(candidate)(path)(state) || anyContainsBytesLayout(rest)(path)(state)
+
+// Stage 0's `IsBytesProvenanceEligibleTcoListElement`: a list whose elements may hold Bytes is
+// placed on the reference-counted heap only where every self-call rebuilds it from values whose
+// Bytes such a list may own.
+let bytesProvenanceAdmitsListElement (element: SemanticType) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) = !containsBytesLayout(element)([])(state) || containsInt(ordinal)(loop.bytesProvenanceSafeOrdinals)
+
+let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if bytesProvenanceAdmitsListElement(element)(ordinal)(loop)(state) && (isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state)))
                     then Some(element)
                     else None
         | _ -> None
@@ -12392,15 +12430,15 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (sta
 // matched out of one, in a loop with no tail-modulo-cons spine.
 let accumulatorRebuildListElement (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if containsInt(ordinal)(loop.accumulatorRebuildOrdinals) && !loop.tmcShapePresent
-    then tcoListSlotElement(slot)(TcoAccumulatorRebuildShape)(ordinal)(state)
+    then tcoListSlotElement(slot)(TcoAccumulatorRebuildShape)(ordinal)(loop)(state)
     else None
 
 let isAccumulatorRebuildListSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) = accumulatorRebuildListElement(ordinal)(slot)(loop)(state) != None
 
 // The element a list slot is placed by through its own shape's route.
-let shapeListElement (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (state: CoreLoweringState) =
+let shapeListElement (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if isTcoListShape(shape)
-    then tcoListSlotElement(slot)(shape)(ordinal)(state)
+    then tcoListSlotElement(slot)(shape)(ordinal)(loop)(state)
     else None
 
 // A single-constructor ADT loop parameter admitted to runtime-managed placement, stage 0's
@@ -12491,7 +12529,7 @@ let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: C
             | Some(SemString) -> Some((SemString, "String"))
             | Some(SemBytes) -> Some((SemBytes, "Bytes"))
             | Some(SemList(element) as list) ->
-                if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state)
+                if (shape == TcoFreshListShape || (shape == TcoRefilledFreshListShape || shape == TcoHandedOnFreshListShape) && resultSurvivesReset(element)(state) && !loop.tmcShapePresent) && tcoListElementSupported(element)(state) && bytesProvenanceAdmitsListElement(element)(ordinal)(loop)(state)
                 then
                     match argumentCopyPlanOf(list)(state) with
                         | Some(_plan) -> Some((list, "List"))
@@ -12561,14 +12599,14 @@ let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: Li
                     TcoManagedCandidate(
                         ordinal = ordinal,
                         slot = slot,
-                        shape = if !linearReuse && accumulatorRouteShape(shape) && shapeListElement(ordinal)(slot)(shape)(state) == None && isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state)
+                        shape = if !linearReuse && accumulatorRouteShape(shape) && shapeListElement(ordinal)(slot)(shape)(loop)(state) == None && isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state)
                         then TcoAccumulatorRebuildShape
                         else shape,
                         strManaged = strManaged,
                         listElement = if linearReuse
                         then None
                         else
-                            match shapeListElement(ordinal)(slot)(shape)(state) with
+                            match shapeListElement(ordinal)(slot)(shape)(loop)(state) with
                                 | Some(element) -> Some(element)
                                 | None ->
                                     if accumulatorRouteShape(shape)
@@ -13300,7 +13338,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
 // (`EvaluateTcoListRcEligibility`, `facts.FreshRebuiltList`), so such a parameter gets its active
 // flag at the loop entry like a grown or consumed one, and its placement follows from its type
 // rather than waiting for the body.
-let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
 
 // Stage 0 places a loop parameter on the reference-counted heap only once its type has a
 // resolved layout (`ResolvedLayoutEligible`), so a parameter whose type is still a variable at
@@ -13565,11 +13603,79 @@ and collectCtorMatchedScrutineesInCases (parameters: List(Str)) (cases: List((Pa
             |> collectCtorMatchedScrutinees(parameters)(body)
             |> collectCtorMatchedScrutineesInCases(parameters)(rest)
 
+// The Bytes provenance a builtin's result is declared with (stage 0's `BytesProvenance` of a
+// builtin member): a new buffer, a view borrowed from an argument, or a view of a mapping that
+// lives as long as the program.
+let builtinKindBytesProvenance (kind: CoreBuiltinKind) =
+    match kind with
+        | CoreBytesSubView -> BytesProvenanceBorrowedView
+        | CoreBytesFromText -> BytesProvenanceBorrowedView
+        | CoreFileMmap -> BytesProvenanceProgramLifetimeView
+        | CoreBytesEmpty -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesSingleton -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesAppend -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesAppendByte -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesAllocate -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesCopyRange -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesSet -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesSetU16Le -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesSetU32Le -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesSetU64Le -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesFromList -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesFromReversedList -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesU16Le -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesU32Le -> BytesProvenanceFreshOwnedBuffer
+        | CoreBytesU64Le -> BytesProvenanceFreshOwnedBuffer
+        | _ -> BytesProvenanceUnknown
+
+// Stage 0's `TryGetBuiltinBytesProvenance`: the declared Bytes provenance of a saturated builtin
+// call, unknown for any other expression.
+let builtinBytesProvenanceOf (expression: Expr) (state: CoreLoweringState) =
+    match qualifiedCallRoot(expression)(0) with
+        | Some((moduleName, memberName, argumentCount)) ->
+            match builtinLayout(moduleName)(memberName)(state) with
+                | Some(CoreBuiltinLayout { kind = kind } as layout) ->
+                    if argumentCount == builtinArity(layout)
+                    then builtinKindBytesProvenance(kind)
+                    else BytesProvenanceUnknown
+                | None -> BytesProvenanceUnknown
+        | None -> BytesProvenanceUnknown
+
+let isFreshOrBorrowedBytes (provenance: BytesOwnershipProvenance) =
+    match provenance with
+        | BytesProvenanceFreshOwnedBuffer -> true
+        | BytesProvenanceBorrowedView -> true
+        | _ -> false
+
+let recursive bytesCallHead (expression: Expr) (argumentCount: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> bytesCallHead(inner)(argumentCount)
+        | ExprCall(function, _argument, _isSugar, _layout) -> bytesCallHead(function)(argumentCount + 1)
+        | ExprVar(name) -> Some((name, argumentCount))
+        | _ -> None
+
+// The call cases of stage 0's `IsBytesProvenanceSafeAggregateValue`: a saturated call to a builtin,
+// or to a registered function, whose result is a fresh buffer or a borrowed view.
+let bytesSafeLoopCall (expression: Expr) (state: CoreLoweringState) =
+    match qualifiedCallRoot(expression)(0) with
+        | Some(_qualified) ->
+            state
+            |> builtinBytesProvenanceOf(expression)
+            |> isFreshOrBorrowedBytes
+        | None ->
+            match (bytesCallHead(expression)(0), stateResultBytesProvenance(state)) with
+                | (Some((callee, argumentCount)), Some(provenance)) ->
+                    match calleeSummaryOf(callee)(state) with
+                        | Some(ReachSummary { function = ReachFunction { key = key, parameters = parameters } }) ->
+                            length(parameters) == argumentCount && isFreshOrBorrowedBytes(lookupBytesProvenance(key)(provenance))
+                        | None -> false
+                | _ -> false
+
 // The candidates a loop parameter is routed to are the self-recursive ones with a single parameter
 // and the nested-worker ones (`loopRoutableSpecializationCandidates`): stage 0 excludes a
 // multi-parameter self-recursive candidate (`_freshCompositionOnlySpecializable`), since only the
 // fresh-composition call site can supply its earlier arguments.
-let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (candidates: List((Str, List(Str), Expr))) =
+let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (layouts: List(CoreConstructorLayout)) (bytesSafeCall: Expr -> Bool) (candidates: List((Str, List(Str), Expr))) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
         let parameters = parameter :: collectLambdaParamNames([])(body)
@@ -13589,6 +13695,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) 
                             runtimeManagedOrdinals = runtimeManagedStrOrdinals(name)(parameters)(innermost),
                             argumentShapes = shapes,
                             accumulatorRebuildOrdinals = tcoAccumulatorRebuildOrdinals(name)(parameters)(innermost),
+                            bytesProvenanceSafeOrdinals = tcoBytesProvenanceSafeOrdinals(constructorNamesOf(layouts))(bytesSafeCall)(name)(parameters)(innermost),
                             patternFacts = patternBindingFacts(name)(parameters)(constructorNamesOf(layouts))(nullaryConstructorNamesOf(layouts))(innermost),
                             matchedAccumulators = collectCtorMatchedScrutinees(parameters)(innermost)([]),
                             specializationAccumulators = collectSpecializableCallArgs(parameters)(loopRoutableSpecializationCandidates(candidates))(innermost)([]),
@@ -13610,7 +13717,7 @@ let recursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) 
 let enterRecursiveTcoLoop (name: Str) (parameter: Str) (parameterType: SemanticType) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) =
     withStateTcoLoop(state
     |> stateSpecializationCandidates
-    |> recursiveTcoLoop(name)(parameter)(parameterType)(body)(emitsLoop)(stateConstructorLayouts(state)))(state)
+    |> recursiveTcoLoop(name)(parameter)(parameterType)(body)(emitsLoop)(stateConstructorLayouts(state))(given (expression: Expr) -> bytesSafeLoopCall(expression)(state)))(state)
 
 let recursive isChainParameterName (name: Str) (names: List(Str)) =
     match names with
@@ -13777,7 +13884,7 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
 let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
-        | Some(shape) -> isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+        | Some(shape) -> isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
         | None -> false
 
 // A non-resource ADT whose whole cell has no shallow copy and that the contract does not govern:
@@ -14595,6 +14702,11 @@ let isFreshBuiltinProducer (expression: Expr) (state: CoreLoweringState) =
                 | None -> false
         | None -> false
 
+let resultProvenanceOf (state: CoreLoweringState) =
+    (given (expression: Expr) -> builtinBytesProvenanceOf(expression)(state))
+    |> resultProvenanceNodes(provenanceFunctionsOf(stateReachSummaries(state))([]))(provenanceConstructorsOf(state))(given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
+    |> resolvedResultProvenance
+
 // Stage 0's `ComputeFunctionResultProvenanceFixpoint`: the RC-eligibility verdict of every
 // registered function of the program, by key, solved once at the first call site that asks (by
 // then every type declaration is registered, so a constructor application classifies as the
@@ -14603,10 +14715,18 @@ let ensureResultRcEligibility (state: CoreLoweringState) =
     match stateResultRcEligibility(state) with
         | Some(_eligibility) -> state
         | None ->
-            withStateResultRcEligibility((given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
-            |> resultProvenanceNodes(provenanceFunctionsOf(stateReachSummaries(state))([]))(provenanceConstructorsOf(state))
-            |> resolvedRcEligibility
-            |> Some)(state)
+            match resultProvenanceOf(state) with
+                | (eligibility, _bytes) -> withStateResultRcEligibility(Some(eligibility))(state)
+
+// The result Bytes provenance of every registered function, solved once, when the first loop is
+// entered: a function's provenance follows from its arms' builtins and forwarding calls alone, so it
+// does not wait for every type declaration to be registered.
+let ensureResultBytesProvenance (state: CoreLoweringState) =
+    match stateResultBytesProvenance(state) with
+        | Some(_provenance) -> state
+        | None ->
+            match resultProvenanceOf(state) with
+                | (_eligibility, bytes) -> withStateResultBytesProvenance(Some(bytes))(state)
 
 let resultRcEligibilityOf (state: CoreLoweringState) =
     match stateResultRcEligibility(state) with
@@ -14922,7 +15042,7 @@ let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTc
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
             let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
-            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(state) != None || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
         | None -> false
 
 // The loop parameter an aggregate child reads: the parameter itself, or a record field read out
@@ -20443,6 +20563,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> sugarChainBody(body))(given (entered: CoreLoweringState) ->
                             entered
                             |> refreshSelfResultDeferral(name)
+                            |> ensureResultBytesProvenance
                             |> enterRecursiveTcoLoop(name)(parameter)(parameterType)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
                             |> withPassthroughParameter(parameter)(body)(parameterType)
@@ -21633,6 +21754,48 @@ let noteListHeadCell (tailExpression: Expr) (head: LoweredCoreValue) (tail: Lowe
                                 | _ -> cell
         | _ -> cell
 
+let isChainOwnableHeadType (semanticType: SemanticType) =
+    match semanticType with
+        | SemTuple(_elements) -> true
+        | SemString -> true
+        | SemBytes -> true
+        | SemBigInt -> true
+        | SemList(_element) -> true
+        | SemNamed(_id, _name, _arguments) -> true
+        | _ -> false
+
+let isChainTail (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, _tail) -> true
+        | _ -> false
+
+// Stage 0's `OwnChainHeadOverReferenceCountedTail`: a cell of a chain consed onto a loop's list
+// parameter over a reference-counted cell is reference-counted too. An arena cell there would be
+// the only holder of the cells after it: the next iteration copies the arena cell's spine onto the
+// heap as the parameter, and nothing releases the reference-counted cells it copied. A head the
+// arena would keep (a pattern-bound or borrowed value) takes a reference of its own when it is
+// reference-counted and a copy when it is not, recorded so no pattern-owner duplicate follows, and
+// its cell follows.
+let ownChainHeadOverReferenceCountedTail (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
+    match (head, tail) with
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, error = None }) ->
+            if canTestRepresentation && isChainTail(tailExpression) && request.runtimeTcoListTailSlot != None && requestsRuntimeList(request) && !request.borrowsCellParts && isRuntimeTemp(tailTemp)(tailState) && !isRuntimeManageableListElement(headExpression)(headTemp)(headType)(tailState) && isChainOwnableHeadType(resolveType(tailState)(headType))
+            then
+                match argumentCopyPlanOf(headType)(tailState) with
+                    | Some(plan) ->
+                        match emitReferenceOrCopy(headTemp)(tailState
+                        |> entryCopyPlanOf(headType)(plan)
+                        |> emitArgumentCopyByCopy(headTemp))(tailState) with
+                            | (owned, ownedTemp) ->
+                                let marked =
+                                    owned
+                                    |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                                    |> withStatePatternOwnerCopyTemps(ownedTemp :: statePatternOwnerCopyTemps(owned))
+                                in ((head with state = marked, temp = ownedTemp), (tail with state = marked))
+                    | None -> (head, tail)
+            else (head, tail)
+        | _ -> (head, tail)
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -21641,14 +21804,16 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
             |> consTailRequest(request)(tailExpression)(headType)
             |> lower(tailExpression)
             |> ownHeadOfCellOverFreshTail(request)(tailExpression)(head) with
-                | (cellRequest, ownedHead, loweredTail) ->
-                    match consPartsFor(cellRequest)(headExpression)(tailExpression)(ownedHead)(loweredTail) with
-                        | (duplicatedHead, duplicatedTail) ->
-                            duplicatedTail
-                            |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
-                            |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
-                            |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
-                            |> keepArgumentExitCellOwned(request)(tailExpression)
+                | (cellRequest, freshOwnedHead, loweredTail) ->
+                    match ownChainHeadOverReferenceCountedTail(cellRequest)(headExpression)(tailExpression)(freshOwnedHead)(loweredTail) with
+                        | (ownedHead, ownedTail) ->
+                            match consPartsFor(cellRequest)(headExpression)(tailExpression)(ownedHead)(ownedTail) with
+                                | (duplicatedHead, duplicatedTail) ->
+                                    duplicatedTail
+                                    |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
+                                    |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
+                                    |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
+                                    |> keepArgumentExitCellOwned(request)(tailExpression)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.
 let expectedListElementType state =

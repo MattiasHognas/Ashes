@@ -257,6 +257,10 @@ let recursive printEach (lines: List(Str)) =
 // call_argument_cell_releases_loop_parameter_field_retain hands a helper a cons over a field of its record parameter inside the
 // record update it threads: the cell's retain of the field is collected for the call and released
 // once the helper's result holds its own references.
+// tco_unchanged_bytes_parameter_consed_onto_accumulator conses an unchanged Bytes parameter onto a
+// list of Bytes and walks another by its tail: neither self-call rebuilds its list from a fresh
+// buffer, so both stay in the arena, while a loop consing a fresh buffer places its list on the
+// reference-counted heap.
 let fixtures =
     [
         "simple_arith",
@@ -347,7 +351,8 @@ let fixtures =
         "tco_list_refilled_only_from_helper",
         "constructor_owning_fresh_list_child",
         "tco_list_top_cell_compacted_at_back_edge",
-        "call_argument_cell_releases_loop_parameter_field_retain"
+        "call_argument_cell_releases_loop_parameter_field_retain",
+        "tco_unchanged_bytes_parameter_consed_onto_accumulator"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

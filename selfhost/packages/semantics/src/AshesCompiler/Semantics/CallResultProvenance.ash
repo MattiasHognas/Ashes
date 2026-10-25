@@ -25,8 +25,9 @@ export (
     type ProvenanceFunction(..),
     type ProvenanceConstructors(..),
     value resultProvenanceNodes,
-    value resolvedRcEligibility,
+    value resolvedResultProvenance,
     value lookupRcEligible,
+    value lookupBytesProvenance,
 )
 
 // A let-bound function the classification knows, identified by its key (stage 0's FuncKey: the
@@ -64,6 +65,11 @@ let recursive containsName (name: Str) (names: List(Str)) =
     match names with
         | [] -> false
         | candidate :: rest -> candidate == name || containsName(name)(rest)
+
+let recursive containsBytesProvenance (provenance: BytesOwnershipProvenance) (provenances: List(BytesOwnershipProvenance)) =
+    match provenances with
+        | [] -> false
+        | candidate :: rest -> candidate == provenance || containsBytesProvenance(provenance)(rest)
 
 let recursive stripSpans (expression: Expr) =
     match expression with
@@ -312,6 +318,20 @@ and isDirectArm (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> 
         | ExprAdd(_left, _right) -> true
         | stripped -> isDirectRcConstruction(constructors)(isFreshBuiltin)(stripped) || isFreshBuiltin(stripped)
 
+// Stage 0's per-arm Bytes provenance in `BuildProvenanceFunctionNode`: an arm that is a builtin of known
+// Bytes provenance contributes it, a forwarding call contributes its callee's through the fixpoint,
+// and any other arm leaves the result's provenance unknown.
+let recursive bytesArmFacts (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (builtinBytes: Expr -> BytesOwnershipProvenance) (arms: List(ProvenanceArm)) (provenances: List(BytesOwnershipProvenance)) (unknown: Bool) =
+    match arms with
+        | [] -> (provenances, unknown)
+        | arm :: rest ->
+            match builtinBytes(arm.expression) with
+                | BytesProvenanceUnknown -> bytesArmFacts(functions)(constructors)(builtinBytes)(rest)(provenances)(unknown || forwardTarget(functions)(constructors)(arm) == None)
+                | provenance ->
+                    if containsBytesProvenance(provenance)(provenances)
+                    then bytesArmFacts(functions)(constructors)(builtinBytes)(rest)(provenances)(unknown)
+                    else bytesArmFacts(functions)(constructors)(builtinBytes)(rest)(provenance :: provenances)(unknown)
+
 let functionBodyArms (function: ProvenanceFunction) =
     match stripSpans(function.body) with
         | ExprString(_value) -> None
@@ -323,28 +343,28 @@ let functionBodyArms (function: ProvenanceFunction) =
 
 // The provenance node of one function, keyed by the function's key: a directly returned string
 // literal is a fresh string by itself; any other body is classified arm by arm.
-let provenanceNodeOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (function: ProvenanceFunction) =
+let provenanceNodeOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (builtinBytes: Expr -> BytesOwnershipProvenance) (function: ProvenanceFunction) =
     match functionBodyArms(function) with
         | None -> buildProvenanceNode(function.key)(true)(false)(1)([])(None)([])(true)
         | Some(arms) ->
-            match classifyArms(function)(functions)(constructors)(isFreshBuiltin)(arms)(ArmFacts(direct = false, rejected = false, considered = 0, targets = [])) with
-                | ArmFacts { direct = direct, rejected = rejected, considered = considered, targets = targets } ->
+            match (classifyArms(function)(functions)(constructors)(isFreshBuiltin)(arms)(ArmFacts(direct = false, rejected = false, considered = 0, targets = [])), bytesArmFacts(functions)(constructors)(builtinBytes)(arms)([])(false)) with
+                | (ArmFacts { direct = direct, rejected = rejected, considered = considered, targets = targets }, (bytes, unknownBytes)) ->
                     match targets with
-                        | target :: [] -> buildProvenanceNode(function.key)(direct)(rejected)(considered)(targets)(Some(target))([])(true)
-                        | _ -> buildProvenanceNode(function.key)(direct)(rejected)(considered)(targets)(None)([])(true)
+                        | target :: [] -> buildProvenanceNode(function.key)(direct)(rejected)(considered)(targets)(Some(target))(bytes)(unknownBytes)
+                        | _ -> buildProvenanceNode(function.key)(direct)(rejected)(considered)(targets)(None)(bytes)(unknownBytes)
 
 // The nodes accumulate and are reversed once: a node holds names borrowed from its function, and
 // stage 0 copies such a list out at every return of a builder that conses around its recursive
 // call.
-let recursive nodesOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (remaining: List(ProvenanceFunction)) (nodes: List(ProvenanceFunctionNode)) =
+let recursive nodesOf (functions: MapTree(Str, ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (builtinBytes: Expr -> BytesOwnershipProvenance) (remaining: List(ProvenanceFunction)) (nodes: List(ProvenanceFunctionNode)) =
     match remaining with
         | [] -> reverse(nodes)
-        | function :: rest -> nodesOf(functions)(constructors)(isFreshBuiltin)(rest)(provenanceNodeOf(functions)(constructors)(isFreshBuiltin)(function) :: nodes)
+        | function :: rest -> nodesOf(functions)(constructors)(isFreshBuiltin)(builtinBytes)(rest)(provenanceNodeOf(functions)(constructors)(isFreshBuiltin)(builtinBytes)(function) :: nodes)
 
 // The provenance nodes of every function of the program, once, the way stage 0's
 // `ComputeFunctionResultProvenanceFixpoint` classifies every registered function.
-let resultProvenanceNodes (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) =
-    nodesOf(functionsByKey(functions)(Ashes.Collection.Map.empty))(constructors)(isFreshBuiltin)(functions)([])
+let resultProvenanceNodes (functions: List(ProvenanceFunction)) (constructors: ProvenanceConstructors) (isFreshBuiltin: Expr -> Bool) (builtinBytes: Expr -> BytesOwnershipProvenance) =
+    nodesOf(functionsByKey(functions)(Ashes.Collection.Map.empty))(constructors)(isFreshBuiltin)(builtinBytes)(functions)([])
 
 let recursive eligibilityOf (eligibility: MapTree(Str, Bool)) (provenances: List((Str, FunctionResultProvenance))) =
     match provenances with
@@ -352,13 +372,24 @@ let recursive eligibilityOf (eligibility: MapTree(Str, Bool)) (provenances: List
         | (name, FunctionResultProvenance { rcEligible = eligible }) :: rest ->
             eligibilityOf(Ashes.Collection.Map.setStr(name)(eligible)(eligibility))(rest)
 
-// Every function's RC-eligibility verdict after the forwarding fixpoint, by name.
-let resolvedRcEligibility (nodes: List(ProvenanceFunctionNode)) =
-    nodes
-    |> resolveResultProvenances
-    |> eligibilityOf(Ashes.Collection.Map.empty)
+let recursive bytesProvenancesOf (byName: MapTree(Str, BytesOwnershipProvenance)) (provenances: List((Str, FunctionResultProvenance))) =
+    match provenances with
+        | [] -> byName
+        | (name, FunctionResultProvenance { bytesProvenance = provenance }) :: rest ->
+            bytesProvenancesOf(Ashes.Collection.Map.setStr(name)(provenance)(byName))(rest)
+
+// Every function's RC-eligibility verdict and result Bytes provenance after the forwarding
+// fixpoint, by name.
+let resolvedResultProvenance (nodes: List(ProvenanceFunctionNode)) =
+    (let provenances = resolveResultProvenances(nodes)
+    in (eligibilityOf(Ashes.Collection.Map.empty)(provenances), bytesProvenancesOf(Ashes.Collection.Map.empty)(provenances)))
 
 let lookupRcEligible (name: Str) (eligibility: MapTree(Str, Bool)) =
     match Ashes.Collection.Map.getStr(name)(eligibility) with
         | Some(eligible) -> eligible
         | None -> false
+
+let lookupBytesProvenance (name: Str) (byName: MapTree(Str, BytesOwnershipProvenance)) =
+    match Ashes.Collection.Map.getStr(name)(byName) with
+        | Some(provenance) -> provenance
+        | None -> BytesProvenanceUnknown
