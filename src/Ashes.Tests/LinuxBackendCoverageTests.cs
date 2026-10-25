@@ -3395,6 +3395,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_bytes_record_accumulator_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop builds a list of records holding a byte buffer. Its cells are reference-counted, and
+        // the accumulator kept in the arena (the record literal had no proven Bytes provenance) made
+        // the loop retain its result at the exit and never release the list it had built.
+        int[] roundCounts = [200, 2000, 8000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildBytesRecordAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3040L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("bytes record accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_loop_field_consed_onto_copied_accumulator_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13798,6 +13822,32 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + measure(prepare(["T" + Ashes.Text.fromInt(n), "U"])))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildBytesRecordAccumulatorProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            type ResolvedPatch =
+                | resolvedOffset: Int
+                | resolvedBytes: Bytes
+
+            let recursive makePatches (index: Int) (count: Int) (acc: List(ResolvedPatch)) =
+                if index >= count
+                then Ashes.Collection.List.reverse(acc)
+                else makePatches(index + 1)(count)(ResolvedPatch(resolvedOffset = index * 10 + 3, resolvedBytes = Ashes.Byte.allocate(256)) :: acc)
+
+            let recursive totalOffsets (patches: List(ResolvedPatch)) (total: Int) =
+                match patches with
+                    | [] -> total
+                    | ResolvedPatch { resolvedOffset = offset, resolvedBytes = replacement } :: rest -> totalOffsets(rest)(total + offset + Ashes.Byte.length(replacement))
+
+            let recursive repeat (left: Int) (total: Int) =
+                if left <= 0
+                then total
+                else repeat(left - 1)(total + totalOffsets(makePatches(0)(10)([]))(0))
+
+            Ashes.IO.print(repeat({{rounds}})(0))
             """;
 
     private static string BuildConsChainBorrowedBytesHeadProgram(int rounds)

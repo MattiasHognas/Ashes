@@ -506,11 +506,16 @@ public sealed partial class Lowering
             && (IsGeneralRcValueType(element)
                 || (!CanArenaReset(Prune(element)) && CanRuntimeManageTcoListElement(element)));
 
+    // Under the general contract the cells of a list holding Bytes are reference-counted whatever its
+    // placement (a view is materialized or stays uncounted inside the cell), so a list kept in the
+    // arena because one of its heads has no proven provenance would hold counted cells that nothing
+    // releases: the loop's exit retains its result and leaves the parameter's list to the arena.
     private bool IsBytesProvenanceEligibleTcoListElement(
         TcoParamStaticFacts facts,
         TypeRef elementType)
     {
-        return !ContainsBytesLayout(elementType, new HashSet<TypeSymbol>())
+        return (GeneralRcEnabled && Environment.GetEnvironmentVariable("GRC_NO_UNGATEDBYTESLIST") is null)
+            || !ContainsBytesLayout(elementType, new HashSet<TypeSymbol>())
             || facts.BytesProvenanceSafeListRebuild;
     }
 

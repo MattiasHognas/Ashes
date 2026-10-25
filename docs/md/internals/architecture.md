@@ -1136,7 +1136,11 @@ exception: when a consed head reads a loop parameter, the accumulator stays in t
 that sibling's predecessor is released at the same back edge. A tuple that holds a
 reference-counted element is placed on the reference-counted heap with its arena siblings copied
 there, so that whoever matches on it releases all of it; an arena tuple releases nothing, and a
-reference-counted value stored in one is stranded.
+reference-counted value stored in one is stranded. A list whose elements hold `Bytes` is placed the
+same way whatever its heads' provenance: its cells are reference-counted regardless (a borrowed view
+is materialized or stays uncounted inside the cell), and a list left in the arena for an unproven head
+(a record literal, a let-bound value, a helper's result) retained its result at the loop's exit and
+never released the list it built (`GRC_NO_UNGATEDBYTESLIST` restores the provenance gate).
 
 Classifier B consumes that placement decision as its representation authority.
 Resolved argument layout and concrete per-edge facts still determine whether
