@@ -33,3 +33,33 @@ internal sealed class ProducerOverTupleScrutineeTemplate() : LeakCombinationTemp
             """;
     }
 }
+
+/// <summary>
+/// A curried recursive list producer whose elements are tuples taken out of its parameter
+/// (<c>entry :: keep(other)(rest)</c> over a <c>List((Str, Int))</c>): the head gets an owned
+/// reference-counted copy, so the cell holding the reference-counted rest of the result is
+/// reference-counted too.
+/// </summary>
+internal sealed class CurriedProducerOverTupleHeadsTemplate() : LeakCombinationTemplate(
+    "leak.curried-producer-over-tuple-heads", "curriedProducerOverTupleHeads", GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string collect = names.Of("collectPairs");
+        string keep = names.Of("keepPairs");
+        string word = names.Word();
+        return $$"""
+            let recursive {{collect}} (n: Int) (acc: List((Str, Int))) =
+                if n <= 0
+                then acc
+                else {{collect}}(n - 1)((Ashes.Text.fromInt(n), n) :: acc)
+
+            let recursive {{keep}} (marker: Str) (items: List((Str, Int))) =
+                match items with
+                    | entry :: rest -> entry :: {{keep}}(marker)(rest)
+                    | [] -> []
+
+            let {{names.Entry}} (seed: Int) = Ashes.Collection.List.length({{keep}}({{word}})({{collect}}({{names.Between(2, 6)}})([]))) + seed
+            """;
+    }
+}

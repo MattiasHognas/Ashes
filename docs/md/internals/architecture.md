@@ -998,6 +998,9 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
 - A pattern binder under a tuple literal built only to be matched (`match (items, 0) with |
   (entry :: rest, _)`) descends from the element at its position, as in a match on that element
   alone, so it gets the same protective owner (`GRC_NO_TUPLESCRUTINEELINEAGE` switches it off).
+- A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
+  owned reference-counted copy when the cell's tail is a recursive result or the cell is a
+  tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).
 
 Self-recursive functions also retain positional `TcoParamStructuralFacts`. Each fact carries the
 parameter ordinal used as its binding identity plus its diagnostic source name; duplicate curried

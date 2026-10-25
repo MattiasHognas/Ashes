@@ -3274,6 +3274,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_curried_producer_over_tuple_heads_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A curried producer conses tuple heads taken out of its parameter: each head gets an owned
+        // reference-counted copy, so the cell holding the reference-counted rest of the result is
+        // reference-counted too and nothing is left in an arena cell no one releases.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildCurriedProducerOverTupleHeadsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{8L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("curried producer over tuple heads", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13779,6 +13803,26 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(keep(words(8)([]))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildCurriedProducerOverTupleHeadsProgram(int rounds)
+        => $$"""
+            let recursive keep (marker: Str) (items: List((Str, Int))) =
+                match items with
+                    | entry :: rest -> entry :: keep(marker)(rest)
+                    | [] -> []
+
+            let recursive pairs (n: Int) (acc: List((Str, Int))) =
+                if n <= 0
+                then acc
+                else pairs(n - 1)((Ashes.Text.fromInt(n), n) :: acc)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(keep("x")(pairs(8)([]))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

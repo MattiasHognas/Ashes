@@ -16826,6 +16826,7 @@ public sealed partial class Lowering
             expectedElementType);
         TypeRef listType = new TypeRef.TList(head.Type);
         head = OwnContractHeadForTmcCell(tmcCandidate && cons.Head is Expr.Call, request, head);
+        head = OwnBorrowedHeadForProducerCell(tmcCandidate || IsRecursiveProducerTail(cons.Tail), request, head);
         if (tmcCandidate && CanBuildRuntimeManagedCell(request, head))
         {
             return LowerConsTmc(cons, head, listType, savedTailPos, request);
@@ -17106,6 +17107,30 @@ public sealed partial class Lowering
         }
 
         int ownedTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, Prune(head.Type));
+        MarkRuntimeManagedTemp(ownedTemp);
+        return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    // The tail of a recursive producer's cell, a recursive call's result or a tail-modulo-cons link,
+    // is reference-counted. A tuple head the cell cannot count (a borrowed read out of an
+    // arena-placed parameter) would put that cell in the arena, where nothing releases the
+    // reference-counted tail stored in it. An owned reference-counted copy of the head lets the cell
+    // be reference-counted too, so it owns both its children.
+    private LoweredValue OwnBorrowedHeadForProducerCell(bool producerCell, LoweredValueRequest request, LoweredValue head)
+    {
+        TypeRef headType = Prune(head.Type);
+        if (!producerCell
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_PRODUCERHEADCOPY") is not null
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || headType is not TypeRef.TTuple
+            || IsRuntimeManageableListElement(headType, head.Temp)
+            || !CanEmitRuntimeManagedListElementDeepCopy(headType))
+        {
+            return head;
+        }
+
+        int ownedTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, headType);
         MarkRuntimeManagedTemp(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
     }

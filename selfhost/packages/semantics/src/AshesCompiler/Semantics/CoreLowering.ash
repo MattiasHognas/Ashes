@@ -22040,6 +22040,30 @@ let producerConsRequest (tail: Expr) (state: CoreLoweringState) (request: Consum
     then request with runtimeList = true
     else request
 
+// Stage 0's `OwnBorrowedHeadForProducerCell`: the tail of a recursive producer's cell is
+// reference-counted on both sides of the call site's copy-out branch, so a tuple head the cell
+// cannot count (a borrowed read out of an arena-placed parameter) takes an owned
+// reference-counted copy, and the cell is reference-counted too instead of an arena cell nothing
+// releases that tail from.
+let ownBorrowedHeadForProducerCell (producerCell: Bool) (request: ConsumerRequest) (headExpression: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match resolveType(state)(semanticType) with
+                | SemTuple(_elements) as tuple ->
+                    if producerCell && requestsRuntimeList(request) && !isRuntimeManageableListElement(headExpression)(temp)(tuple)(state)
+                    then
+                        match generalCopyPlanOf(tuple)(state) with
+                            | Some(plan) ->
+                                match emitGuardedDeepCopy(temp)(plan)(state) with
+                                    | (copied, ownedTemp) ->
+                                        copied
+                                        |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                                        |> success(ownedTemp)(semanticType)
+                            | None -> lowered
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
 let lowerCons head tail lower state =
     match consumerRequestOf(state) with
         | outerRequest ->
@@ -22055,6 +22079,7 @@ let lowerCons head tail lower state =
                 |> normalizeRuntimeManagedConsHead(request)(head)(tail)
                 |> normalizePatternOwnerHead(request)(head)
                 |> retainListElement(request)(listTransfers(request)(state))(head)
+                |> ownBorrowedHeadForProducerCell(isRecursiveProducerTail(tail)(state))(request)(head)
                 |> finishConsTail(request)(listTransfers(request)(state))(lower)(head)(tail)
 
 let emptyList state =
@@ -27697,6 +27722,7 @@ let lowerConsTmc head tail lower state =
                         |> normalizePatternOwnerHead(request)(head)
                         |> retainListElement(request)(listTransfers(request)(state))(head)
                         |> ownContractHeadForTmcCell(request)(head)
+                        |> ownBorrowedHeadForProducerCell(true)(request)(head)
                         |> finishConsTmc(request)(listTransfers(request)(state))(frame)(loop)(head)(tail)(lower)
                     | _ -> lowerCons(head)(tail)(lower)(state)
 

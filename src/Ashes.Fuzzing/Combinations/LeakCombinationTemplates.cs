@@ -110,6 +110,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FreshHeadOverNamedHeadTemplate());
         registry.Register(new BytesRecordAccumulatorTemplate());
         registry.Register(new ProducerOverTupleScrutineeTemplate());
+        registry.Register(new CurriedProducerOverTupleHeadsTemplate());
     }
 }
 
