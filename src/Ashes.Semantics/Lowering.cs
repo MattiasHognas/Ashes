@@ -16944,6 +16944,7 @@ public sealed partial class Lowering
             ? request.WithExpectedType(listType)
             : LoweredValueRequest.None.WithExpectedType(listType);
         var (tailTemp, tailType) = LowerConsTailValue(cons, tailRequest, ref head, ref request);
+        head = OwnChainHeadOverReferenceCountedTail(cons, head, tailTemp, request);
         int lateHeadDuplicate = DuplicateConsCellPatternOwners(cons, ref head, ref tailTemp);
 
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
@@ -16986,6 +16987,40 @@ public sealed partial class Lowering
         RecordLateCopiedCellHeadDuplicate(cons, cellTemp, lateHeadDuplicate, head.Type);
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
+    }
+
+    // A cell of a chain consed onto a loop's list parameter over a reference-counted cell is
+    // reference-counted too. An arena cell there would be the only holder of the cells after it: the
+    // next iteration copies the arena cell's spine onto the heap as the parameter, and nothing
+    // releases the reference-counted cells it copied, one whole spine per iteration. A head the arena
+    // would keep (a pattern-bound or borrowed value) takes a reference of its own when it is
+    // reference-counted and a copy when it is not, which lets its cell follow.
+    private LoweredValue OwnChainHeadOverReferenceCountedTail(
+        Expr.Cons cons,
+        LoweredValue head,
+        int tailTemp,
+        LoweredValueRequest request)
+    {
+        TypeRef headType = Prune(head.Type);
+        if (Environment.GetEnvironmentVariable("GRC_NO_CHAINRCTAILHEAD") is not null
+            || !CanTestRepresentation
+            || cons.Tail is not Expr.Cons
+            || request.RuntimeTcoListTailSlot is null
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || IsBackEdgeCopiedCell(cons)
+            || !IsRuntimeManagedResultTemp(tailTemp)
+            || IsRuntimeManageableListElement(headType, head.Temp)
+            || headType is not (TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                or TypeRef.TList or TypeRef.TNamedType))
+        {
+            return head;
+        }
+
+        int headTemp = head.Temp;
+        int ownedTemp = EmitReferenceOrCopy(headTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(headTemp, headType));
+        MarkRuntimeManagedTemp(ownedTemp, type: headType);
+        _patternOwnerNormalizedTemps.Add(ownedTemp);
+        return CreateLoweredValue(ownedTemp, head.Type);
     }
 
     // The tail of a reference-counted cell: a recursive producer's result is retained, and an
