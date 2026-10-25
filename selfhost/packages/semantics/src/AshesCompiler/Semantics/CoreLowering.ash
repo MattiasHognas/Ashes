@@ -746,6 +746,10 @@ type CoreTcoState =
     // The tuple-parts requests withdrawn from this function's calls, by result temp: the request
     // constant and the parts asked for (stage 0's `_withdrawnTupleResultPartsRequests`).
     | withdrawnTuplePartsRequests: List((Int, Int, List(Int)))
+    // The arena cells of a generic list builder this function built (stage 0's `_listHeadCells`),
+    // most recent first: the cell, its head, the closure the head was called through, and the
+    // recursive call its tail is (-1 for the empty list).
+    | listHeadCells: List((Int, Int, Int, Int))
     // The recursive bindings whose result type was still unresolved when the body being lowered
     // began: a call to one of them sees a fresh result type, stage 0's lowering-local self arrow.
     | selfResultDeferredNames: List(Str)
@@ -1694,6 +1698,14 @@ let withStateWithdrawnTuplePartsRequests value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with withdrawnTuplePartsRequests = value))
 
+let stateListHeadCells (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.listHeadCells)
+
+let withStateListHeadCells value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with listHeadCells = value))
+
 let stateSelfResultDeferredNames (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.selfResultDeferredNames)
@@ -2366,6 +2378,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             pendingTcoResets = [],
             pendingCallCopyOuts = [],
             withdrawnTuplePartsRequests = [],
+            listHeadCells = [],
             selfResultDeferredNames = [],
             selfCallResultUnifications = [],
             callArgumentRecordRetains = [],
@@ -6002,6 +6015,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStatePendingTcoResets([])
             |> withStatePendingCallCopyOuts([])
             |> withStateWithdrawnTuplePartsRequests([])
+            |> withStateListHeadCells([])
             |> withStateSelfCallResultUnifications([])
             |> withStateRetiredLocals([]))
         |> (given (current: CoreLoweringState) ->
@@ -10446,6 +10460,27 @@ let recursive callWordOf (callTemp: Int) (instructions: List(IrInstruction)) =
             else callWordOf(callTemp)(rest)
         | _ :: rest -> callWordOf(callTemp)(rest)
 
+// Stage 0's `ForwardCallerRequestIntoCall`: this function's own caller's request and mask address
+// joined to whatever the call's word already passes, so the callee answers that caller.
+let forwardCallerRequestIntoCall (callTemp: Int) (state: CoreLoweringState) =
+    match callWordOf(callTemp)(state.reversedInstructions) with
+        | None -> state
+        | Some(callWord) ->
+            match freshTempRun(if callWord < 0
+            then 3
+            else 4)(state) with
+                | FreshTemp { state = allocated, temp = requestTemp } ->
+                    let forwarded =
+                        [
+                            IrInstruction(instruction = AndInt(requestTemp)(requestTemp + 1)(requestTemp + 2), location = None),
+                            IrInstruction(instruction = LoadConstInt(requestTemp + 2)(-4), location = None),
+                            IrInstruction(instruction = LoadArgumentOwnership(requestTemp + 1), location = None)
+                        ]
+                    in
+                        if callWord < 0
+                        then allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp)(forwarded)(allocated.reversedInstructions)
+                        else allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp + 3)(IrInstruction(instruction = OrInt(requestTemp + 3)(requestTemp)(callWord), location = None) :: forwarded)(allocated.reversedInstructions)
+
 // Stage 0's `WholeResultHandedOverBit`: the mask bit a function writes when it handed its whole
 // result over.
 let wholeResultHandedOverBit = 4611686018427387904
@@ -10513,26 +10548,13 @@ let forwardTupleResultPartsRequestThroughGenericResult (label: Str) (resultTemp:
                     | None ->
                         match callWordOf(callTemp)(state.reversedInstructions) with
                             | None -> state
-                            | Some(callWord) ->
+                            | Some(_callWord) ->
                                 match callTuplePartsRequest(callTemp)(64)(state.reversedInstructions) with
                                     | Some(_request) -> state
                                     | None ->
-                                        match freshTempRun(if callWord < 0
-                                        then 3
-                                        else 4)(state) with
-                                            | FreshTemp { state = allocated, temp = requestTemp } ->
-                                                let forwarded =
-                                                    [
-                                                        IrInstruction(instruction = AndInt(requestTemp)(requestTemp + 1)(requestTemp + 2), location = None),
-                                                        IrInstruction(instruction = LoadConstInt(requestTemp + 2)(-4), location = None),
-                                                        IrInstruction(instruction = LoadArgumentOwnership(requestTemp + 1), location = None)
-                                                    ]
-                                                in
-                                                    let rewritten =
-                                                        if callWord < 0
-                                                        then allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp)(forwarded)(allocated.reversedInstructions)
-                                                        else allocated with reversedInstructions = forwardRequestIntoCall(callTemp)(requestTemp + 3)(IrInstruction(instruction = OrInt(requestTemp + 3)(requestTemp)(callWord), location = None) :: forwarded)(allocated.reversedInstructions)
-                                                    in withWholeResultHandOverLabel(label)(rewritten)
+                                        state
+                                        |> forwardCallerRequestIntoCall(callTemp)
+                                        |> withWholeResultHandOverLabel(label)
     else state
 
 let recursive powerOfTwo (exponent: Int) =
@@ -10573,6 +10595,154 @@ let emitIndependentResultSignal (state: CoreLoweringState) =
             |> emitJumpUnlessTuplePartsRequested(skipLabel)
             |> emitResultHandOverMask(independentResultBit)
             |> emit(Label(skipLabel))
+
+// Stage 0's `EmitClosureReturnsGeneralRcOwnedFlag`: bit 60 of the closure's header word says that
+// its function returns a result of the contract's types owned.
+let emitClosureReturnsGeneralRcOwnedFlag (closureTemp: Int) (state: CoreLoweringState) =
+    match freshTempRun(5)(state) with
+        | FreshTemp { state = allocated, temp = packedTemp } ->
+            (allocated
+            |> emit(LoadMemOffset(packedTemp)(closureTemp)(16))
+            |> emit(LoadConstInt(packedTemp + 1)(60))
+            |> emit(ShrInt(packedTemp + 2)(packedTemp)(packedTemp + 1))
+            |> emit(LoadConstInt(packedTemp + 3)(1))
+            |> emit(AndInt(packedTemp + 4)(packedTemp + 2)(packedTemp + 3)), packedTemp + 4)
+
+// Stage 0's `ListHeadsHandedOverBit`: the mask bit a generic list builder writes when every
+// reference-counted head of its result's arena cells holds a reference of its own.
+let listHeadsHandedOverBit = 1152921504606846976
+
+// The part a builder's entry in the tuple-result part labels carries when callers may ask it for
+// its list's heads (stage 0's `_listHeadHandOverLabels`).
+let listHeadHandOverMarker = -2
+
+let withListHeadHandOverLabel (label: Str) (state: CoreLoweringState) =
+    (let existing =
+        match state
+        |> stateTupleResultPartLabels
+        |> Ashes.Collection.Map.getStr(label) with
+            | Some(parts) -> parts
+            | None -> []
+    in
+        if containsInt(listHeadHandOverMarker)(existing)
+        then state
+        else
+            withStateTupleResultPartLabels(state
+            |> stateTupleResultPartLabels
+            |> Ashes.Collection.Map.setStr(label)(listHeadHandOverMarker :: existing))(state))
+
+// The position of the last store of `headTemp` into the head of `cellTemp`, -1 when there is none.
+let recursive listHeadStorePosition (cellTemp: Int) (headTemp: Int) (instructions: List(IrInstruction)) (position: Int) (found: Int) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = StoreMemOffset(basePtr, offset, source) } :: rest ->
+            if basePtr == cellTemp && offset == 0 && source == headTemp
+            then listHeadStorePosition(cellTemp)(headTemp)(rest)(position + 1)(position)
+            else listHeadStorePosition(cellTemp)(headTemp)(rest)(position + 1)(found)
+        | _ :: rest -> listHeadStorePosition(cellTemp)(headTemp)(rest)(position + 1)(found)
+
+// Stage 0's `OwnListHeadWhenRequested`, emitted on its own: under the request, a
+// reference-counted head the closure did not return owned is retained, so the cell holds a
+// reference of its own either way.
+let emitListHeadOwnership (headTemp: Int) (closureTemp: Int) (state: CoreLoweringState) =
+    match freshLabel("list_head_not_requested")(state) with
+        | FreshLabel { state = skipState, label = skipLabel } ->
+            match freshLabel("list_head_borrowed")(skipState) with
+                | FreshLabel { state = labelled, label = retainLabel } ->
+                    match labelled
+                    |> emitJumpUnlessTuplePartsRequested(skipLabel)
+                    |> emitSkipUnlessReferenceCounted(headTemp)(skipLabel)
+                    |> emitClosureReturnsGeneralRcOwnedFlag(closureTemp) with
+                        | (flagged, ownedTemp) ->
+                            match flagged
+                            |> emit(JumpIfFalse(ownedTemp)(retainLabel))
+                            |> emit(Jump(skipLabel))
+                            |> emit(Label(retainLabel))
+                            |> freshTemp with
+                                | FreshTemp { state = allocated, temp = retainTemp } ->
+                                    allocated
+                                    |> emit(RcDup(retainTemp)(headTemp)(true)(false))
+                                    |> emit(Label(skipLabel))
+
+let recursive emitListHeadOwnerships (cells: List((Int, Int, Int, Int))) (forward: List(IrInstruction)) (state: CoreLoweringState) (spliced: List((Int, List(IrInstruction)))) =
+    match cells with
+        | [] -> (state, spliced)
+        | (cellTemp, headTemp, closureTemp, _tailCall) :: rest ->
+            let position = listHeadStorePosition(cellTemp)(headTemp)(forward)(0)(-1)
+            in
+                let emitted = emitListHeadOwnership(headTemp)(closureTemp)((state with reversedInstructions = []))
+                in emitListHeadOwnerships(rest)(forward)((emitted with reversedInstructions = state.reversedInstructions))((position, emitted.reversedInstructions) :: spliced)
+
+let recursive forwardListBuilderTails (cells: List((Int, Int, Int, Int))) (state: CoreLoweringState) =
+    match cells with
+        | [] -> state
+        | (_cellTemp, _headTemp, _closureTemp, tailCall) :: rest ->
+            if tailCall < 0
+            then forwardListBuilderTails(rest)(state)
+            else
+                state
+                |> forwardCallerRequestIntoCall(tailCall)
+                |> forwardListBuilderTails(rest)
+
+let recursive listBuilderTailsPresent (cells: List((Int, Int, Int, Int))) (state: CoreLoweringState) =
+    match cells with
+        | [] -> true
+        | (_cellTemp, _headTemp, _closureTemp, tailCall) :: rest ->
+            if tailCall < 0
+            then listBuilderTailsPresent(rest)(state)
+            else
+                match callWordOf(tailCall)(state.reversedInstructions) with
+                    | Some(_word) -> listBuilderTailsPresent(rest)(state)
+                    | None -> false
+
+let recursive listBuildersIn (cells: List(Int)) (noted: List((Int, Int, Int, Int))) =
+    match noted with
+        | [] -> []
+        | ((cellTemp, _headTemp, _closureTemp, _tailCall) as cell) :: rest ->
+            if containsInt(cellTemp)(cells)
+            then cell :: listBuildersIn(cells)(rest)
+            else listBuildersIn(cells)(rest)
+
+let handOverListBuilderCells (label: Str) (builders: List((Int, Int, Int, Int))) (state: CoreLoweringState) =
+    (let forwarded = forwardListBuilderTails(builders)(state)
+    in
+        match emitListHeadOwnerships(builders)(reverse(forwarded.reversedInstructions))(forwarded)([]) with
+            | (emitted, spliced) ->
+                match freshLabel("list_heads_not_requested")((emitted with reversedInstructions = spliceBehindStores(emitted.reversedInstructions)(length(emitted.reversedInstructions) - 1)(spliced))) with
+                    | FreshLabel { state = labelled, label = skipLabel } ->
+                        labelled
+                        |> emitJumpUnlessTuplePartsRequested(skipLabel)
+                        |> emitResultHandOverMask(listHeadsHandedOverBit)
+                        |> emit(Label(skipLabel))
+                        |> withListHeadHandOverLabel(label))
+
+// Stage 0's `TryHandOverListBuilderHeads`: the return of a generic list builder every cell of
+// whose result is one of its builder cells. When the caller asks, the recursive calls are asked
+// on its behalf, each head holds a reference of its own, and the mask says so.
+let handOverListBuilderHeads (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    (let generic =
+        match resolveType(state)(resultType) with
+            | SemList(element) ->
+                match resolveType(state)(element) with
+                    | SemVariable(_id) -> true
+                    | _ -> false
+            | _ -> false
+    in
+        if generic
+        then
+            match arenaCellsReaching([resultTemp])([])([])(reverse(state.reversedInstructions))(state) with
+                | Some(first :: others) ->
+                    let builders =
+                        state
+                        |> stateListHeadCells
+                        |> reverse
+                        |> listBuildersIn(first :: others)
+                    in
+                        if length(builders) == length(first :: others) && listBuilderTailsPresent(builders)(state)
+                        then handOverListBuilderCells(label)(builders)(state)
+                        else state
+                | _ -> state
+        else state)
 
 let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
     match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
@@ -10978,9 +11148,10 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
             else
                 match tupleResultParts(bodyType)(state) with
                     | [] ->
-                        state
+                        match state
                         |> forwardTupleResultPartsRequestThroughGenericResult(label)(bodyTemp)(bodyType)
-                        |> finishGeneralRcFunctionResultOutsideContract(label)(bodyTemp)(bodyType)
+                        |> finishGeneralRcFunctionResultOutsideContract(label)(bodyTemp)(bodyType) with
+                            | (finished, resultTemp) -> (handOverListBuilderHeads(label)(resultTemp)(bodyType)(finished), resultTemp)
                     | parts ->
                         (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(bodyType)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
 
@@ -15395,26 +15566,39 @@ let contractElementParts (resultType: SemanticType) (state: CoreLoweringState) =
         | SemTuple(elements) -> contractElementIndices(elements)(0)(state)
         | _ -> []
 
-let unknownCalleeTupleResultParts (candidates: List(Int)) =
+// Stage 0's `IsListHeadHandOverType`: a list of the contract's types whose heads a caller can
+// release behind its copy, a concrete element type the copy retains when it is reference-counted.
+let isListHeadHandOverType (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemList(element) ->
+            match listHeadCopyKindOf(element)(state) with
+                | Some(_headCopy) -> false
+                | None -> canTestRepresentation && !resultSurvivesReset(element)(state) && !containsUnresolvedLayout(SemList(element))(state) && isGeneralRcValueType(SemList(element))(state)
+        | _ -> false
+
+let unknownCalleeTupleResultParts (candidates: List(Int)) (listHeads: Bool) =
     match candidates with
-        | [] -> None
+        | [] ->
+            if listHeads
+            then Some([])
+            else None
         | _ -> Some(candidates)
 
 let recursive partsWithoutMarker (parts: List(Int)) =
     match parts with
         | [] -> []
         | part :: rest ->
-            if part == wholeResultHandOverMarker
+            if part == wholeResultHandOverMarker || part == listHeadHandOverMarker
             then partsWithoutMarker(rest)
             else part :: partsWithoutMarker(rest)
 
 // The parts a call asks a known callee for when its own result type names none: the callee's
 // parts, or none at all from a callee that may hand its whole result over when the call's result
-// is of the contract's types.
-let askedCalleeParts (calleeParts: List(Int)) (contractResult: Bool) =
+// is of the contract's types, or its list's heads over when the call's result is such a list.
+let askedCalleeParts (calleeParts: List(Int)) (contractResult: Bool) (listHeads: Bool) =
     match partsWithoutMarker(calleeParts) with
         | [] ->
-            if contractResult && containsInt(wholeResultHandOverMarker)(calleeParts)
+            if contractResult && containsInt(wholeResultHandOverMarker)(calleeParts) || listHeads && containsInt(listHeadHandOverMarker)(calleeParts)
             then Some([])
             else None
         | parts -> Some(parts)
@@ -15427,25 +15611,25 @@ let askedCalleeParts (calleeParts: List(Int)) (contractResult: Bool) =
 let calleeTupleResultParts (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     (let candidates = contractElementParts(resultType)(state)
     in
-        match context.facts with
-            | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
-                match state
-                |> stateFunctionReturnedClosureLabels
-                |> innermostStageLabel(count - 1)(label) with
-                    | Some(stageLabel) ->
-                        match state
-                        |> stateTupleResultPartLabels
-                        |> Ashes.Collection.Map.getStr(stageLabel) with
-                            | Some(calleeParts) ->
-                                match candidates with
-                                    | [] ->
-                                        state
-                                        |> isGeneralRcValueType(resultType)
-                                        |> askedCalleeParts(calleeParts)
-                                    | _ -> Some(candidates)
-                            | None -> None
-                    | None -> unknownCalleeTupleResultParts(candidates)
-            | _ -> unknownCalleeTupleResultParts(candidates))
+        let listHeads = isListHeadHandOverType(resultType)(state)
+        in
+            match context.facts with
+                | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
+                    match state
+                    |> stateFunctionReturnedClosureLabels
+                    |> innermostStageLabel(count - 1)(label) with
+                        | Some(stageLabel) ->
+                            match state
+                            |> stateTupleResultPartLabels
+                            |> Ashes.Collection.Map.getStr(stageLabel) with
+                                | Some(calleeParts) ->
+                                    match candidates with
+                                        | [] ->
+                                            askedCalleeParts(calleeParts)(isGeneralRcValueType(resultType)(state))(listHeads)
+                                        | _ -> Some(candidates)
+                                | None -> None
+                        | None -> unknownCalleeTupleResultParts(candidates)(listHeads)
+                | _ -> unknownCalleeTupleResultParts(candidates)(listHeads))
 
 // Stage 0's `EmitTupleResultPartsRequestWord`: bit 2 of the hidden ownership word asks the callee
 // for its tuple result's contract parts, and the bits above it address a cleared arena word the
@@ -16496,18 +16680,6 @@ let recursive closureOfCallResult (temp: Int) (budget: Int) (instructions: List(
                 else closureOfCallResult(temp)(budget - 1)(rest)
             | _instruction :: rest -> closureOfCallResult(temp)(budget - 1)(rest)
 
-// Stage 0's `EmitClosureReturnsGeneralRcOwnedFlag`: bit 60 of the closure's header word says that
-// its function returns a result of the contract's types owned.
-let emitClosureReturnsGeneralRcOwnedFlag (closureTemp: Int) (state: CoreLoweringState) =
-    match freshTempRun(5)(state) with
-        | FreshTemp { state = allocated, temp = packedTemp } ->
-            (allocated
-            |> emit(LoadMemOffset(packedTemp)(closureTemp)(16))
-            |> emit(LoadConstInt(packedTemp + 1)(60))
-            |> emit(ShrInt(packedTemp + 2)(packedTemp)(packedTemp + 1))
-            |> emit(LoadConstInt(packedTemp + 3)(1))
-            |> emit(AndInt(packedTemp + 4)(packedTemp + 2)(packedTemp + 3)), packedTemp + 4)
-
 let recursive zeroRequestConstant (request: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> []
@@ -16599,6 +16771,65 @@ let emitJumpIfWholeResultHandedOver (maskTemp: Int) (ownedLabel: Str) (state: Co
                     |> emit(Jump(ownedLabel))
                     |> emit(Label(copyLabel))
 
+// Stage 0's `ReleaseHandedOverListHeads`: after a call's list result is copied out of the arena,
+// when the callee's mask says it handed the heads over, the reference each arena cell's
+// reference-counted head holds is released, up to the first reference-counted cell, from which on
+// the copy shares the list.
+let releaseHandedOverListHeads (semanticType: SemanticType) (maskTemp: Int) (resultTemp: Int) (state: CoreLoweringState) =
+    match (isListHeadHandOverType(semanticType)(state), resolveType(state)(semanticType)) with
+        | (true, SemList(element)) ->
+            match freshLabel("list_heads_kept")(state) with
+                | FreshLabel { state = doneState, label = doneLabel } ->
+                    match freshTempRun(4)(doneState) with
+                        | FreshTemp { state = allocated, temp = bitTemp } ->
+                            match allocated
+                            |> emit(LoadConstInt(bitTemp)(listHeadsHandedOverBit))
+                            |> emit(AndInt(bitTemp + 1)(maskTemp)(bitTemp))
+                            |> emit(LoadConstInt(bitTemp + 2)(0))
+                            |> emit(CmpIntNe(bitTemp + 3)(bitTemp + 1)(bitTemp + 2))
+                            |> emit(JumpIfFalse(bitTemp + 3)(doneLabel))
+                            |> freshLocal with
+                                | FreshLocal { state = slotted, local = cursorSlot } ->
+                                    match slotted
+                                    |> emit(StoreLocal(cursorSlot)(resultTemp))
+                                    |> freshLabel("list_heads_release") with
+                                        | FreshLabel { state = loopState, label = loopLabel } ->
+                                            match loopState
+                                            |> emit(Label(loopLabel))
+                                            |> freshTemp with
+                                                | FreshTemp { state = cellState, temp = cellTemp } ->
+                                                    match cellState
+                                                    |> emit(LoadLocal(cellTemp)(cursorSlot))
+                                                    |> emitSkipUnlessPresent(cellTemp)(doneLabel)
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = countedState, temp = countedTemp } ->
+                                                            match countedState
+                                                            |> emit(IsReferenceCounted(countedTemp)(cellTemp))
+                                                            |> freshLabel("list_heads_arena_cell") with
+                                                                | FreshLabel { state = arenaState, label = arenaLabel } ->
+                                                                    match arenaState
+                                                                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                                                                    |> emit(Jump(doneLabel))
+                                                                    |> emit(Label(arenaLabel))
+                                                                    |> freshTemp with
+                                                                        | FreshTemp { state = headState, temp = headTemp } ->
+                                                                            match headState
+                                                                            |> emit(LoadMemOffset(headTemp)(cellTemp)(0))
+                                                                            |> freshLabel("list_heads_next") with
+                                                                                | FreshLabel { state = nextState, label = nextLabel } ->
+                                                                                    match nextState
+                                                                                    |> emitSkipUnlessReferenceCounted(headTemp)(nextLabel)
+                                                                                    |> emitOwnedValueChildDrop(headTemp)(element)
+                                                                                    |> emit(Label(nextLabel))
+                                                                                    |> freshTemp with
+                                                                                        | FreshTemp { state = tailState, temp = tailTemp } ->
+                                                                                            tailState
+                                                                                            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
+                                                                                            |> emit(StoreLocal(cursorSlot)(tailTemp))
+                                                                                            |> emit(Jump(loopLabel))
+                                                                                            |> emit(Label(doneLabel))
+        | _ -> state
+
 // The normalizing copy of a call's contract result, with the mask and the parts the callee handed
 // over read before it and the parts the mask names released after it.
 let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe((List(Int), Int))) (ownedLabel: Str) (state: CoreLoweringState) =
@@ -16617,6 +16848,7 @@ let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan
                             copied
                             |> emit(StoreLocal(ownedSlot)(copyTemp))
                             |> releaseHandedOverTupleParts(semanticType)(parts)(maskTemp)(partTemps)
+                            |> releaseHandedOverListHeads(semanticType)(maskTemp)(temp)
 
 // Stage 0's withdrawal in `LowerCallRestoreArenaFor`: a call result that is not copied out under
 // the contract takes no parts over.
@@ -20108,6 +20340,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStatePendingTcoResets([])
             |> withStatePendingCallCopyOuts([])
             |> withStateWithdrawnTuplePartsRequests([])
+            |> withStateListHeadCells([])
             |> withStateSelfCallResultUnifications([])
             |> withStateRetiredLocals([]))
         |> (given (current: CoreLoweringState) ->
@@ -21353,6 +21586,44 @@ let keepArgumentExitCellOwned (request: ConsumerRequest) (tailExpression: Expr) 
                 | _ -> lowered
         | _ -> lowered
 
+// Stage 0's `NoteListHeadCell`: an arena cell consing a closure call's result of unresolved type
+// onto the empty list or onto the enclosing function's own recursive call is recorded.
+let noteListHeadCell (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) (cell: LoweredCoreValue) =
+    match (head, tail, cell) with
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType }, LoweredCoreValue { temp = tailTemp }, LoweredCoreValue { state = state, temp = cellTemp, error = None }) ->
+            let forward = reverse(state.reversedInstructions)
+            in
+                let headCall = soleCallSourceThroughLocals(headTemp)(16)(forward)(state)
+                in
+                    let tailCall =
+                        match definitionOfTemp(tailTemp)(state.reversedInstructions) with
+                            | Some(LoadConstInt(_target, 0)) -> -1
+                            | _ ->
+                                match unspanArgument(tailExpression) with
+                                    | ExprCall(_function, _argument, _sugar, _layout) ->
+                                        if recursiveProducerResult(tailExpression)(state)
+                                        then
+                                            let call = soleCallSourceThroughLocals(tailTemp)(16)(forward)(state)
+                                            in
+                                                if call < 0
+                                                then -2
+                                                else call
+                                        else -2
+                                    | _ -> -2
+                    in
+                        let generic =
+                            match resolveType(state)(headType) with
+                                | SemVariable(_id) -> true
+                                | _ -> false
+                        in
+                            match (definitionOfTemp(cellTemp)(state.reversedInstructions), closureOfCallResult(headCall)(1000000)(state.reversedInstructions)) with
+                                | (Some(Alloc(_target, _size, false)), Some(closureTemp)) ->
+                                    if generic && headCall >= 0 && tailCall != -2
+                                    then cell with state = withStateListHeadCells((cellTemp, headTemp, closureTemp, tailCall) :: stateListHeadCells(state))(state)
+                                    else cell
+                                | _ -> cell
+        | _ -> cell
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -21367,6 +21638,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                             duplicatedTail
                             |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                             |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
+                            |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
                             |> keepArgumentExitCellOwned(request)(tailExpression)
 
 // The element type an expected list type asks of a list literal's elements or a cons head.

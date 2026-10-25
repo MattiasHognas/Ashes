@@ -293,7 +293,10 @@ own owned value without copying it. Bit 61 says the result holds nothing of the 
 borrowed: a function of a contract result type that is asked writes it, and a function that
 forwarded its caller's request to the call whose result it returns reads the mask after that call
 and, when bit 61 or bit 62 is set, releases the owned values the result reached only through that
-call. A caller taking the result reads only bit 62.
+call. A caller taking the result reads only bit 62. Bit 60 says a generic list builder handed its
+list's heads over: each reference-counted head of an arena cell of the result holds a reference of
+its own, which the caller releases after copying the list out (a builder forwards the request to its
+own recursive call, so every arena cell of the spine follows the same rule).
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

@@ -851,6 +851,7 @@ public sealed partial class Lowering
             EmitJumpIfWholeResultHandedOver(partTemps.MaskTemp, ownedLabel);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
             ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
+            ReleaseHandedOverListHeads(callResultType, partTemps.MaskTemp, currentTemp);
 
             Emit(new IrInst.Label(ownedLabel));
         }
@@ -930,7 +931,7 @@ public sealed partial class Lowering
             resultTemp = ReleaseOwnedSlotsBehindResult(label, resultTemp, pruned, resultIndependent, loopTco is not null);
         }
 
-        return resultTemp;
+        return HandOverListBuilderHeads(label, resultTemp, pruned);
     }
 
     // A result that holds its own references releases every owned slot behind it. Any other result

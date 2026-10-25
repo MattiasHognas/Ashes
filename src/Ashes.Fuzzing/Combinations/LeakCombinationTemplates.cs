@@ -100,6 +100,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConsumedArgumentHeadInTupleResultTemplate());
         registry.Register(new VariantLoopParameterSplitTemplate());
         registry.Register(new LetBoundValueKeptByArenaRecordResultTemplate());
+        registry.Register(new GenericMapPassedAsValueKeepsClosureResultsTemplate());
     }
 }
 

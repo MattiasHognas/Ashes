@@ -1424,6 +1424,17 @@ the copy, and the copy is handed over the same way. The caller then takes the re
 value of its own type, without copying it. A function returning another call's result of unresolved
 type as it is forwards the request to that call, as for a tuple.
 
+A generic list builder stores results it cannot release. A function whose result is a list of
+unresolved element type built from arena cells, each consing a closure call's result onto the empty
+list or onto the function's own recursive call (`f(head) :: mapGo(tail)`), leaves the reference a
+closure's owned result carries in its cell, and the caller's copy of the list retains the heads
+again. A caller that knows the list's concrete element type asks with the same request (no parts
+named). A builder that is asked forwards the request to its recursive call, makes every
+reference-counted head hold a reference of its own (an owned result's reference moves into the cell,
+any other head is retained), and writes bit 60 into the mask; the caller copies the list out and then
+releases the reference each arena cell's reference-counted head holds, up to the first
+reference-counted cell. A builder with any other cell in its result hands nothing over.
+
 Which owned values a result can point into is found by following its value back through the
 instructions that built it. A call result of the contract's types kept in an owned slot holds
 references of its own, so the walk ends at that slot: the owned values the call only borrowed as

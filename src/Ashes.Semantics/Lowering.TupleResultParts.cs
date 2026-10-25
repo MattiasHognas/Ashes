@@ -64,16 +64,17 @@ public sealed partial class Lowering
         }
 
         int[] candidates = ContractElementParts(resultType);
+        bool listHeads = IsListHeadHandOverType(resultType);
         if (!TryResolveKnownFunctionLabel(rootExpr, out string label))
         {
-            return UnknownCalleeTupleResultParts(candidates);
+            return UnknownCalleeTupleResultParts(candidates, listHeads);
         }
 
         for (int i = 1; i < argumentCount; i++)
         {
             if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
             {
-                return UnknownCalleeTupleResultParts(candidates);
+                return UnknownCalleeTupleResultParts(candidates, listHeads);
             }
 
             label = nextLabel;
@@ -85,11 +86,15 @@ public sealed partial class Lowering
         }
 
         int[] parts = candidates.Length > 0 ? candidates : calleeParts;
-        return parts.Length > 0 || (_wholeResultHandOverLabels.Contains(label) && IsGeneralRcValueType(resultType)) ? parts : null;
+        return parts.Length > 0
+            || (_wholeResultHandOverLabels.Contains(label) && IsGeneralRcValueType(resultType))
+            || (listHeads && _listHeadHandOverLabels.Contains(label))
+            ? parts
+            : null;
     }
 
-    private static int[]? UnknownCalleeTupleResultParts(int[] candidates)
-        => TupleResultPartsSignalEnabled && candidates.Length > 0 ? candidates : null;
+    private static int[]? UnknownCalleeTupleResultParts(int[] candidates, bool listHeads)
+        => TupleResultPartsSignalEnabled && (candidates.Length > 0 || listHeads) ? candidates : null;
 
     // The contract elements of a tuple type, by index.
     private int[] ContractElementParts(TypeRef type)
@@ -378,10 +383,21 @@ public sealed partial class Lowering
             return;
         }
 
+        if (ForwardCallerRequestIntoCall(call))
+        {
+            NoteResultRequestForwarder(label);
+            _forwardedResultCallTemp = call.Target;
+        }
+    }
+
+    // This function's own caller's request and mask address joined to whatever the call's word
+    // already passes, so the callee answers that caller. False when the call is no longer emitted.
+    private bool ForwardCallerRequestIntoCall(IrInst.CallClosure call)
+    {
         int callIndex = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, call));
         if (callIndex < 0)
         {
-            return;
+            return false;
         }
 
         int requestTemp = NewTemp();
@@ -407,8 +423,7 @@ public sealed partial class Lowering
 
         _inst.InsertRange(callIndex, forwarded);
         ShiftRecordedInstructionIndices(callIndex - 1, forwarded.Count);
-        NoteResultRequestForwarder(label);
-        _forwardedResultCallTemp = call.Target;
+        return true;
     }
 
     // A result of unresolved type, or of a generic named type outside the contract's types (a

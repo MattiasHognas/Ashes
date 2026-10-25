@@ -16968,6 +16968,7 @@ public sealed partial class Lowering
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
         RecordLateCopiedCellHeadDuplicate(cons, cellTemp, lateHeadDuplicate, head.Type);
+        NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
 

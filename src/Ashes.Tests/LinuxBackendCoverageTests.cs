@@ -3249,6 +3249,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_generic_map_passed_as_value_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `map` passed as a value reaches the generic list builder, whose arena cells store the
+        // closure's owned results. The caller asks for the heads, the builder hands them over, and
+        // the caller's copy of the list releases them; the cells kept them before.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildGenericMapPassedAsValueProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * rounds) + (2L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic map passed as a value", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_variant_loop_field_consed_onto_copied_accumulator_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13552,6 +13576,35 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + measure(prepare(["T" + Ashes.Text.fromInt(n), "U"])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildGenericMapPassedAsValueProgram(int rounds)
+        => $$"""
+            import Ashes.Collection.List
+
+            type Sem =
+                | SemLeaf(Int)
+                | SemNamed(Int, List(Sem))
+
+            let renumber (shift: Int) (value: Sem) =
+                match value with
+                    | SemNamed(id, arguments) -> SemNamed(id + shift)(arguments)
+                    | other -> other
+
+            let viaMapper mapper xs = mapper(renumber(1))(xs)
+
+            let recursive measure (values: List(Sem)) (total: Int) =
+                match values with
+                    | [] -> total
+                    | SemLeaf(v) :: rest -> measure(rest)(total + v)
+                    | SemNamed(id, _arguments) :: rest -> measure(rest)(total + id)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + measure(viaMapper(Ashes.Collection.List.map)([SemLeaf(n), SemNamed(n)([SemLeaf(1)])]))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
