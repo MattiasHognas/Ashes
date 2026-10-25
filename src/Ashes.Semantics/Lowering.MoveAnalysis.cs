@@ -2565,7 +2565,7 @@ public sealed partial class Lowering
                     : argument;
             bool freshClosureRebuild = IsFreshClosureRebuildExpr(structural);
             bool bytesProvenanceSafeListRebuild =
-                IsBytesProvenanceSafeListRebuildExpr(structural);
+                IsBytesProvenanceSafeListRebuildExpr(structural, scope);
             TcoSelfCallArgumentShape local = ClassifyTcoSelfCallArgument(
                 argument, structural, i, parameterScope, tailOwners, expressionFreshness);
 
@@ -2805,19 +2805,19 @@ public sealed partial class Lowering
             ? TcoSelfCallArgumentShape.FreshRebuilt
         : TcoSelfCallArgumentShape.Mixed;
 
-    private bool IsBytesProvenanceSafeListRebuildExpr(Expr expression)
+    private bool IsBytesProvenanceSafeListRebuildExpr(Expr expression, IReadOnlyDictionary<string, FuncKey> scope)
     {
         return expression switch
         {
-            Expr.Cons cons => IsBytesProvenanceSafeAggregateValue(cons.Head),
-            Expr.ListLit list => list.Elements.All(IsBytesProvenanceSafeAggregateValue),
-            Expr.If conditional => IsBytesProvenanceSafeListRebuildExpr(conditional.Then)
-                && IsBytesProvenanceSafeListRebuildExpr(conditional.Else),
+            Expr.Cons cons => IsBytesProvenanceSafeAggregateValue(cons.Head, scope),
+            Expr.ListLit list => list.Elements.All(element => IsBytesProvenanceSafeAggregateValue(element, scope)),
+            Expr.If conditional => IsBytesProvenanceSafeListRebuildExpr(conditional.Then, scope)
+                && IsBytesProvenanceSafeListRebuildExpr(conditional.Else, scope),
             _ => false,
         };
     }
 
-    private bool IsBytesProvenanceSafeAggregateValue(Expr expression)
+    private bool IsBytesProvenanceSafeAggregateValue(Expr expression, IReadOnlyDictionary<string, FuncKey> scope)
     {
         if (TryGetBuiltinBytesProvenance(expression, out var provenance))
         {
@@ -2827,27 +2827,39 @@ public sealed partial class Lowering
 
         if (expression is Expr.TupleLit tuple)
         {
-            return tuple.Elements.All(IsBytesProvenanceSafeAggregateValue);
+            return tuple.Elements.All(element => IsBytesProvenanceSafeAggregateValue(element, scope));
         }
 
         if (expression is Expr.ListLit list)
         {
-            return list.Elements.All(IsBytesProvenanceSafeAggregateValue);
+            return list.Elements.All(element => IsBytesProvenanceSafeAggregateValue(element, scope));
         }
 
         if (expression is Expr.Cons cons)
         {
-            return IsBytesProvenanceSafeAggregateValue(cons.Head)
-                && IsBytesProvenanceSafeAggregateValue(cons.Tail);
+            return IsBytesProvenanceSafeAggregateValue(cons.Head, scope)
+                && IsBytesProvenanceSafeAggregateValue(cons.Tail, scope);
         }
 
         if (expression is Expr.Call)
         {
             var arguments = new List<Expr>();
             Expr head = CollectCallArgs(expression, arguments);
-            return head is Expr.Var constructor
-                && _constructorSymbols.ContainsKey(constructor.Name)
-                && arguments.All(IsBytesProvenanceSafeAggregateValue);
+            if (head is Expr.Var constructor && _constructorSymbols.ContainsKey(constructor.Name))
+            {
+                return arguments.All(element => IsBytesProvenanceSafeAggregateValue(element, scope));
+            }
+
+            // A saturated call to a function whose results are all fresh buffers or borrowed views
+            // is as safe as the builtin that produces them.
+            return Environment.GetEnvironmentVariable("GRC_NO_CALLBYTESPROVENANCE") is null
+                && head is Expr.Var callee
+                && scope.TryGetValue(callee.Name, out FuncKey calleeKey)
+                && _maFuncs.TryGetValue(calleeKey, out var calleeInfo)
+                && calleeInfo.Params.Count == arguments.Count
+                && ResolveFunctionResultProvenance(calleeKey).BytesProvenance
+                    is BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer
+                    or BuiltinRegistry.BytesOwnershipProvenance.BorrowedView;
         }
 
         return expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit
