@@ -22856,6 +22856,31 @@ let normalizesIntoOwnedValue (semanticType: SemanticType) (state: CoreLoweringSt
 // runtime cannot normalize has no reference-counted placement either.
 let handsFreshChildrenToOwnedSlots (resultType: SemanticType) (state: CoreLoweringState) = containsUnresolvedLayout(resultType)(state) == false && (isGeneralRcValueType(resultType)(state) || normalizesIntoOwnedValue(resultType)(state) == false)
 
+// Whether a field's type mentions the variable, or is itself unresolved.
+let recursive anyFieldMentions (variableId: Int) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match fieldTypes with
+        | [] -> false
+        | fieldType :: rest ->
+            occursInType(variableId)(resolveType(state)(fieldType)) || containsUnresolvedLayout(fieldType)(state) || anyFieldMentions(variableId)(rest)(state)
+
+// Stage 0's `OnlyFieldlessTypeArgumentsUnresolved` for the type arguments: each is resolved, or
+// a variable no field of the cell mentions (the error type of an `Ok`).
+let recursive allFieldlessOrResolved (typeArguments: List(SemanticType)) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match typeArguments with
+        | [] -> true
+        | argument :: rest ->
+            (match resolveType(state)(argument) with
+                | SemVariable(variableId) -> anyFieldMentions(variableId)(fieldTypes)(state) == false
+                | resolved -> containsUnresolvedLayout(resolved)(state) == false) && allFieldlessOrResolved(rest)(fieldTypes)(state)
+
+// Stage 0's `OnlyFieldlessTypeArgumentsUnresolved`: a cell whose type is unresolved only in type
+// arguments no field mentions hands its fresh children to owned slots, as the contract's types
+// do, and the return decides whether the result is normalized and the slots released.
+let onlyFieldlessTypeArgumentsUnresolved (resultType: SemanticType) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemNamed(_symbolId, _name, typeArguments) -> containsUnresolvedLayout(resultType)(state) && allFieldlessOrResolved(typeArguments)(fieldTypes)(state)
+        | _ -> false
+
 // Stage 0's `IsArenaCellRetainHandedToSlot`: a retain taken for the arena cell (a let-bound owned
 // value the cell keeps) is the arena's to hold with nothing to release it, as a fresh value is.
 let arenaCellOwnsArgumentReference (argument: Expr) (temp: Int) (state: CoreLoweringState) = isFreshOwnedConstructorArgument(argument)(temp)(state) || retainTakenForCell(temp)(state)
@@ -22901,7 +22926,7 @@ let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resu
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> lowered
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false
+            if runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
             then lowered
             else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
         | _ -> lowered

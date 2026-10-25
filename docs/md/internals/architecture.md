@@ -1404,6 +1404,15 @@ requests an arena result, for a caller that could not own one. Once the result t
 contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its
 reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
 
+An arena cell never releases a fresh reference-counted child stored into it (an owned call result,
+or a tuple holding fresh lists). A constructor of the contract's types hands such a child to an
+owned slot, released once the result holds a reference of its own; any other constructor is placed
+on the reference-counted heap and owns the child. A constructor whose type is unresolved only in a
+type argument none of its fields mention, an `Ok` in a function's first branch before any branch has
+given the result its error type, still has a known layout: it hands its fresh children to owned
+slots too, and the return, with the type resolved by then, decides whether the result is normalized
+and the slots released (`GRC_NO_CTORFIELDLESS` switches this off).
+
 A tuple beside a value of unresolved layout (a generic function's parameter, say) cannot go onto the
 reference-counted heap, and nothing releases what an arena tuple holds. Such a tuple never holds the
 only reference to a reference-counted value: an element that may be reference-counted (other than

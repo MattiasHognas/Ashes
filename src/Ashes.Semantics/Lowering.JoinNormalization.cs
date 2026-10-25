@@ -313,8 +313,22 @@ public sealed partial class Lowering
         IReadOnlyList<TypeRef> argumentTypes,
         TypeRef.TNamedType resultType)
     {
-        if (!GeneralRcEnabled || Environment.GetEnvironmentVariable("GRC_NO_CTORFRESH") is not null || ContainsUnresolvedLayoutType(resultType, []))
+        if (!GeneralRcEnabled || Environment.GetEnvironmentVariable("GRC_NO_CTORFRESH") is not null)
         {
+            return false;
+        }
+
+        // A type argument no field of this cell mentions (the error type of an `Ok`) may be
+        // unresolved while the cell is built, though the cell's own layout is not: its fresh
+        // children go to owned slots, as the contract's types do, and the return decides whether
+        // the result is normalized and the slots released.
+        if (ContainsUnresolvedLayoutType(resultType, []))
+        {
+            if (OnlyFieldlessTypeArgumentsUnresolved(resultType, argumentTypes))
+            {
+                HandFreshConstructorChildrenToOwnedSlots(arguments, argumentTemps, argumentTypes);
+            }
+
             return false;
         }
 
@@ -381,6 +395,15 @@ public sealed partial class Lowering
             argumentTemps[i] = normalizedTemp;
         }
     }
+
+    // Whether every unresolved type argument of a cell's type is a variable none of its fields'
+    // types mention.
+    private bool OnlyFieldlessTypeArgumentsUnresolved(TypeRef.TNamedType resultType, IReadOnlyList<TypeRef> argumentTypes)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORFIELDLESS") is null
+            && resultType.TypeArgs.All(argument =>
+                !ContainsUnresolvedLayoutType(argument, [])
+                || (Prune(argument) is TypeRef.TVar variable
+                    && !argumentTypes.Any(fieldType => Occurs(variable.Id, fieldType) || ContainsUnresolvedLayoutType(fieldType, []))));
 
     private void HandFreshConstructorChildrenToOwnedSlots(
         IReadOnlyList<Ashes.Frontend.Expr> arguments,

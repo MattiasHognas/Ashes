@@ -3274,6 +3274,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_ok_tuple_built_before_error_type_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `Ok` of a fresh tuple in a function's first branch, before any branch has given the result
+        // its error type: the tuple goes to an owned slot the function releases once its result has
+        // a reference of its own, instead of staying behind the arena `Ok` with nothing to release it.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildOkTupleBuiltBeforeErrorTypeProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{6L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("Ok tuple built before its error type is known", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_normalized_parameter_behind_ok_record_update_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13738,6 +13762,29 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match close(closes(n))(Lowered(state = [], temp = n)) with
                         | Lowered { state = st, temp = t } -> rounds(n - 1)(total + t + Ashes.Collection.List.length(st))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildOkTupleBuiltBeforeErrorTypeProgram(int rounds)
+        => $$"""
+            let produce (k: Int) =
+                if k >= 0
+                then Ok(([k, k + 1, k + 2], [k * 2, k * 3, k * 4]))
+                else Error("negative")
+
+            let forward (k: Int) =
+                match produce(k) with
+                    | Ok((first, second)) -> Ok((k, first, second))
+                    | Error(message) -> Error(message)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match forward(n) with
+                        | Ok((_k, first, second)) -> rounds(n - 1)(total + Ashes.Collection.List.length(first) + Ashes.Collection.List.length(second))
+                        | Error(_) -> rounds(n - 1)(total)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
