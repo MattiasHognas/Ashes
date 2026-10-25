@@ -310,9 +310,16 @@ public sealed partial class Lowering
             && lineages.TryGetValue(source.Name, out PatternBindingLineage found)
                 ? found
                 : null;
+        PatternBindingLineage?[]? elementLineages = sourceLineage is null
+            ? TupleScrutineeElementLineages(match.Value, lineages)
+            : null;
         if (sourceLineage is { } sourceValue)
         {
             sourceValue.Binding?.Uses |= PatternBindingOwnershipUse.StructuralInspection;
+        }
+        else if (elementLineages is not null)
+        {
+            WalkTupleScrutineeElements((Expr.TupleLit)match.Value, elementLineages, lineages, functionScope, state);
         }
         else
         {
@@ -322,7 +329,10 @@ public sealed partial class Lowering
         foreach (MatchCase matchCase in match.Cases)
         {
             IReadOnlyDictionary<string, PatternBindingLineage> armLineages =
-                BindPatternOwnershipLineages(matchCase.Pattern, sourceLineage, lineages, state);
+                elementLineages is not null && matchCase.Pattern is Pattern.Tuple parts
+                    && parts.Elements.Count == elementLineages.Length
+                    ? BindTupleScrutineeLineages(parts, elementLineages, lineages, state)
+                    : BindPatternOwnershipLineages(matchCase.Pattern, sourceLineage, lineages, state);
             HashSet<string> binders = CollectPatternOwnershipBinderNames(matchCase.Pattern);
             IReadOnlyDictionary<string, FuncKey> armFunctionScope = RemoveFuncNames(functionScope, binders);
             if (matchCase.Guard is not null)
@@ -337,6 +347,82 @@ public sealed partial class Lowering
 
             WalkPatternBindingOwnership(matchCase.Body, armLineages, armFunctionScope, state, context);
         }
+    }
+
+    // A tuple literal built only to be matched (`match (items, state) with | (item :: rest, _)`)
+    // takes each of its elements apart as a match on that element alone does: a binder under a
+    // tuple position whose element is a parameter, or a binding taken out of one, descends from that
+    // element's root parameter. The tuple itself is a transient wrapper the arm never sees.
+    private static PatternBindingLineage?[]? TupleScrutineeElementLineages(
+        Expr scrutinee,
+        IReadOnlyDictionary<string, PatternBindingLineage> lineages)
+    {
+        if (!TupleScrutineeElementsAreTracked || scrutinee is not Expr.TupleLit tuple)
+        {
+            return null;
+        }
+
+        PatternBindingLineage?[] elementLineages = new PatternBindingLineage?[tuple.Elements.Count];
+        bool any = false;
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (tuple.Elements[i] is Expr.Var element
+                && lineages.TryGetValue(element.Name, out PatternBindingLineage found))
+            {
+                elementLineages[i] = found;
+                any = true;
+            }
+        }
+
+        return any ? elementLineages : null;
+    }
+
+    private static bool TupleScrutineeElementsAreTracked
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLESCRUTINEELINEAGE") is null;
+
+    private void WalkTupleScrutineeElements(
+        Expr.TupleLit tuple,
+        PatternBindingLineage?[] elementLineages,
+        IReadOnlyDictionary<string, PatternBindingLineage> lineages,
+        IReadOnlyDictionary<string, FuncKey> functionScope,
+        PatternBindingOwnershipState state)
+    {
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (elementLineages[i] is { } elementLineage)
+            {
+                elementLineage.Binding?.Uses |= PatternBindingOwnershipUse.StructuralInspection;
+            }
+            else
+            {
+                WalkPatternBindingOwnership(tuple.Elements[i], lineages, functionScope, state, PatternBindingUseContext.EmbeddedInOwner);
+            }
+        }
+    }
+
+    private IReadOnlyDictionary<string, PatternBindingLineage> BindTupleScrutineeLineages(
+        Pattern.Tuple parts,
+        PatternBindingLineage?[] elementLineages,
+        IReadOnlyDictionary<string, PatternBindingLineage> lineages,
+        PatternBindingOwnershipState state)
+    {
+        Dictionary<string, PatternBindingLineage> result = new(
+            RemovePatternBindingLineages(lineages, CollectPatternOwnershipBinderNames(parts)),
+            StringComparer.Ordinal);
+        for (int i = 0; i < parts.Elements.Count; i++)
+        {
+            if (elementLineages[i] is null)
+            {
+                continue;
+            }
+
+            foreach ((string name, PatternBindingLineage lineage) in BindPatternOwnershipLineages(parts.Elements[i], elementLineages[i], result, state))
+            {
+                result[name] = lineage;
+            }
+        }
+
+        return result;
     }
 
     private IReadOnlyDictionary<string, PatternBindingLineage> BindPatternOwnershipLineages(

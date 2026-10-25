@@ -992,6 +992,13 @@ names and mixed joins do not inherit them. This provenance requests RC placement
 not uniqueness: a cons still acquires a reference when a local already owns its
 tail. Self-closure return metadata is backfilled once the body's placement is known.
 
+A producer's cell is reference-counted only when its head is, and these rules keep the head and the
+close-out from forcing an arena cell over a reference-counted tail, which nothing would release:
+
+- A pattern binder under a tuple literal built only to be matched (`match (items, 0) with |
+  (entry :: rest, _)`) descends from the element at its position, as in a match on that element
+  alone, so it gets the same protective owner (`GRC_NO_TUPLESCRUTINEELINEAGE` switches it off).
+
 Self-recursive functions also retain positional `TcoParamStructuralFacts`. Each fact carries the
 parameter ordinal used as its binding identity plus its diagnostic source name; duplicate curried
 parameter names therefore remain distinct in the immutable summary. The analysis threads a lexical

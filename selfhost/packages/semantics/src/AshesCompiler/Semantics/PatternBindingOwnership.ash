@@ -502,6 +502,44 @@ let scrutineeLineage (value: Expr) (lineages: List((Str, PatternLineage))) =
         | ExprVar(name) -> lookupLineage(name)(lineages)
         | _ -> None
 
+// Stage 0's `TupleScrutineeElementLineages`: a tuple literal built only to be matched
+// (`match (items, state) with | (item :: rest, _)`) takes each element apart as a match on that
+// element alone does, so each position carries the lineage of its element.
+let recursive elementLineages (elements: List(Expr)) (lineages: List((Str, PatternLineage))) =
+    match elements with
+        | [] -> []
+        | element :: rest -> scrutineeLineage(element)(lineages) :: elementLineages(rest)(lineages)
+
+let recursive anyLineage (sources: List(Maybe(PatternLineage))) =
+    match sources with
+        | [] -> false
+        | Some(_source) :: _rest -> true
+        | None :: rest -> anyLineage(rest)
+
+let tupleScrutineeElements (value: Expr) =
+    match unspan(value) with
+        | ExprTuple(elements) -> elements
+        | _ -> []
+
+// Stage 0's `BindTupleScrutineeLineages`: each tuple position's sub-pattern binds as a match on
+// that position's element would.
+let recursive bindTupleArm (parts: List(Pattern)) (sources: List(Maybe(PatternLineage))) (lineages: List((Str, PatternLineage))) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    match (parts, sources) with
+        | (part :: restParts, Some(source) :: restSources) ->
+            match bindBinders(enumerateBinders(part)(1)(None))(source)(lineages)(scope)(found) with
+                | (bound, boundFound) -> bindTupleArm(restParts)(restSources)(bound)(scope)(boundFound)
+        | (_part :: restParts, None :: restSources) -> bindTupleArm(restParts)(restSources)(lineages)(scope)(found)
+        | _ -> (lineages, found)
+
+let tupleArmLineages (pattern: Pattern) (sources: List(Maybe(PatternLineage))) (lineages: List((Str, PatternLineage))) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    match unspanPattern(pattern) with
+        | PatternTuple(parts) ->
+            if length(parts) == length(sources)
+            then
+                bindTupleArm(parts)(sources)(removeLineages(patternBinderNames(pattern)(scope))(lineages))(scope)(found)
+            else bindArmLineages(pattern)(None)(lineages)(scope)(found)
+        | _ -> bindArmLineages(pattern)(None)(lineages)(scope)(found)
+
 // Stage 0's `WalkPatternBindingOwnership`: `shadowedSelf` says whether a binder between the loop
 // function and this expression reuses its name, so a call of that name is no self-call.
 let recursive walkExpression (expression: Expr) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
@@ -600,10 +638,7 @@ and walkMatch (value: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (lineage
             walkCases(cases)(Some(source))(lineages)(shadowedSelf)(context)(scope)(match source with
                 | PatternLineage { lineageBinder = Some(key) } -> addBinderUse(key)(UseStructuralInspection)(found)
                 | _ -> found)
-        | None ->
-            found
-            |> walkExpression(value)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)
-            |> walkCases(cases)(None)(lineages)(shadowedSelf)(context)(scope)
+        | None -> walkTupleMatch(value)(cases)(lineages)(shadowedSelf)(context)(scope)(found)
 and walkCases (cases: List((Pattern, Expr, Maybe(Expr)))) (source: Maybe(PatternLineage)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match cases with
         | [] -> found
@@ -614,6 +649,40 @@ and walkCases (cases: List((Pattern, Expr, Maybe(Expr)))) (source: Maybe(Pattern
                     |> walkGuard(guard)(armLineages)(shadowedSelf || containsText(scope.selfName)(patternBinderNames(pattern)(scope)))(scope)
                     |> walkExpression(body)(armLineages)(shadowedSelf || containsText(scope.selfName)(patternBinderNames(pattern)(scope)))(context)(scope)
                     |> walkCases(rest)(source)(lineages)(shadowedSelf)(context)(scope)
+and walkTupleMatch (value: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    match elementLineages(tupleScrutineeElements(value))(lineages) with
+        | sources ->
+            if anyLineage(sources)
+            then
+                found
+                |> walkTupleScrutinee(tupleScrutineeElements(value))(sources)(lineages)(shadowedSelf)(scope)
+                |> walkTupleCases(cases)(sources)(lineages)(shadowedSelf)(context)(scope)
+            else
+                found
+                |> walkExpression(value)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)
+                |> walkCases(cases)(None)(lineages)(shadowedSelf)(context)(scope)
+and walkTupleScrutinee (elements: List(Expr)) (sources: List(Maybe(PatternLineage))) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    match (elements, sources) with
+        | (_element :: restElements, Some(PatternLineage { lineageBinder = Some(key) }) :: restSources) ->
+            found
+            |> addBinderUse(key)(UseStructuralInspection)
+            |> walkTupleScrutinee(restElements)(restSources)(lineages)(shadowedSelf)(scope)
+        | (_element :: restElements, Some(_parameter) :: restSources) -> walkTupleScrutinee(restElements)(restSources)(lineages)(shadowedSelf)(scope)(found)
+        | (element :: restElements, None :: restSources) ->
+            found
+            |> walkExpression(element)(lineages)(shadowedSelf)(ContextEmbeddedInOwner)(scope)
+            |> walkTupleScrutinee(restElements)(restSources)(lineages)(shadowedSelf)(scope)
+        | _ -> found
+and walkTupleCases (cases: List((Pattern, Expr, Maybe(Expr)))) (sources: List(Maybe(PatternLineage))) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (context: PatternUseContext) (scope: PatternWalkScope) (found: List(PatternBinder)) =
+    match cases with
+        | [] -> found
+        | (pattern, body, guard) :: rest ->
+            match tupleArmLineages(pattern)(sources)(lineages)(scope)(found) with
+                | (armLineages, bound) ->
+                    bound
+                    |> walkGuard(guard)(armLineages)(shadowedSelf || containsText(scope.selfName)(patternBinderNames(pattern)(scope)))(scope)
+                    |> walkExpression(body)(armLineages)(shadowedSelf || containsText(scope.selfName)(patternBinderNames(pattern)(scope)))(context)(scope)
+                    |> walkTupleCases(rest)(sources)(lineages)(shadowedSelf)(context)(scope)
 and walkGuard (guard: Maybe(Expr)) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match guard with
         | Some(expression) -> walkExpression(expression)(lineages)(shadowedSelf)(ContextStructuralInspection)(scope)(found)

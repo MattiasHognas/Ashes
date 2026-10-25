@@ -109,6 +109,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new OkTupleBeforeErrorTypeTemplate());
         registry.Register(new FreshHeadOverNamedHeadTemplate());
         registry.Register(new BytesRecordAccumulatorTemplate());
+        registry.Register(new ProducerOverTupleScrutineeTemplate());
     }
 }
 

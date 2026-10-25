@@ -3250,6 +3250,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_recursive_producer_over_tuple_scrutinee_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A producer matches `(ownership, 0)` and conses the head it binds from the list's position:
+        // that head descends from the list parameter as in a match on the list alone, so the cell is
+        // reference-counted and the caller releases the whole result.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildRecursiveProducerOverTupleScrutineeProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{8L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("recursive producer over a tuple scrutinee", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13735,6 +13759,26 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + totalOf(finish(make(n))(Ok(wide))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecursiveProducerOverTupleScrutineeProgram(int rounds)
+        => $$"""
+            let recursive keep (ownership: List(Str)) =
+                match (ownership, 0) with
+                    | (entry :: rest, _) -> entry :: keep(rest)
+                    | _ -> []
+
+            let recursive words (n: Int) (acc: List(Str)) =
+                if n <= 0
+                then acc
+                else words(n - 1)(Ashes.Text.fromInt(n) :: acc)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(keep(words(8)([]))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
