@@ -1943,7 +1943,10 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                         in
                                             let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                             in
-                                                let arena = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
+                                                let arena =
+                                                    externals.rcRegion
+                                                    |> emitIsReferenceCountedIn(builder)(types.i64)
+                                                    |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
                                                 in
                                                     let mc =
                                                         ModuleCodegen(
