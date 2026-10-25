@@ -16,6 +16,8 @@ internal sealed class PairPushedOntoLoopAccumulatorTemplate() : LeakCombinationT
         string slice = names.Of("leakSlice");
         string pieces = names.Of("leakPieces");
         string measure = names.Of("leakMeasure");
+        int first = 2 + names.Variant("first offset", 4);
+        int second = 10 + names.Variant("second offset", 4);
         return $$"""
             type {{patch}} =
                 | leakOffset: Int
@@ -36,7 +38,7 @@ internal sealed class PairPushedOntoLoopAccumulatorTemplate() : LeakCombinationT
                     | [] -> total
                     | piece :: rest -> {{measure}}(rest)(total + Ashes.Byte.length(piece))
 
-            let {{names.Entry}} (seed: Int) = {{measure}}({{pieces}}(Ashes.Byte.allocate(40))([{{patch}}(leakOffset = 3, leakBytes = Ashes.Byte.allocate(4)), {{patch}}(leakOffset = 12, leakBytes = Ashes.Byte.allocate(4)), {{patch}}(leakOffset = 25, leakBytes = Ashes.Byte.allocate(seed % 4 + 1))])(0)([]))(0)
+            let {{names.Entry}} (seed: Int) = {{measure}}({{pieces}}(Ashes.Byte.allocate(40))([{{patch}}(leakOffset = {{first}}, leakBytes = Ashes.Byte.allocate(4)), {{patch}}(leakOffset = {{second}}, leakBytes = Ashes.Byte.allocate(4)), {{patch}}(leakOffset = 25, leakBytes = Ashes.Byte.allocate(seed % 4 + 1))])(0)([]))(0)
             """;
     }
 }
