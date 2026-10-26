@@ -3512,6 +3512,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_cons_onto_consumed_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop over a list of lists matched beside a record (`((x :: xs) :: rest, same)`) conses
+        // what is left of the first inner list back onto the consumed tail: the list is placed on
+        // the reference-counted heap like a choice accumulator, so the successor is copied at the
+        // back edge and the parts the rebuilt cell retained are released with it.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildConsOntoConsumedTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(3L * rounds * (rounds + 1) / 2) + (15L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons onto a consumed tail", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_ok_of_matched_record_fields_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14410,6 +14435,26 @@ public sealed class LinuxBackendCoverageTests
             0
             |> rounds([Token(kind = 1, text = "In" + "t")])({{rounds}})
             |> Ashes.IO.print
+            """;
+
+    private static string BuildConsOntoConsumedTailProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive walk (items: List(List(Int))) (kept: Kept) (acc: Int) =
+                match (items, kept) with
+                    | ([], Kept { state = st, temp = k }) -> acc + k + Ashes.Collection.List.length(st)
+                    | ([] :: rest, same) -> walk(rest)(same)(acc)
+                    | ((x :: xs) :: rest, same) -> walk(xs :: rest)(same)(acc + x)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([[1, 2, n], [n, 4], [5]])(Kept(state = [n, 7, 8], temp = n))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildWholeTupleElementHandedBackProgram(int rounds)

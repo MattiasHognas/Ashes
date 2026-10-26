@@ -1197,6 +1197,8 @@ public sealed partial class Lowering
         public required bool[] AnyWalkEdge { get; init; }
         public required bool[] AnyRefillEdge { get; init; }
         public required bool?[] HandedOnOrGrownEdges { get; init; }
+        public required bool?[] ConsedTailEdges { get; init; }
+        public required bool[] AnyConsedTailEdge { get; init; }
         public required TcoSelfCallArgumentShape?[] ObservedBesideResets { get; init; }
         public required bool[] AnyResetSite { get; init; }
         public required string SelfName { get; init; }
@@ -1205,6 +1207,10 @@ public sealed partial class Lowering
         // The names a `match` arm in scope bound out of a call's result, the scrutinee: parts of a
         // value this iteration received, as a call's result itself is.
         public HashSet<string> CallResultParts { get; } = new(StringComparer.Ordinal);
+
+        // The consumed tails a `match` arm in scope bound out of a tuple scrutinee built from the
+        // parameters, which matches on a counted copy of an arena-placed list.
+        public HashSet<string> TupleScrutineeTails { get; } = new(StringComparer.Ordinal);
 
         public static TcoParamFactsState ForParameters(int count, string selfName)
             => new()
@@ -1222,6 +1228,8 @@ public sealed partial class Lowering
                 AnyWalkEdge = new bool[count],
                 AnyRefillEdge = new bool[count],
                 HandedOnOrGrownEdges = new bool?[count],
+                ConsedTailEdges = new bool?[count],
+                AnyConsedTailEdge = new bool[count],
                 ObservedBesideResets = new TcoSelfCallArgumentShape?[count],
                 AnyResetSite = new bool[count],
                 SelfName = selfName,
@@ -1293,9 +1301,7 @@ public sealed partial class Lowering
                         ? TcoParamReuseAffinity.SelfAppendOnly
                         : TcoParamReuseAffinity.GeneralOrUnknown,
                     state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
-                    state.ChoiceAccumulatorEdges[i] == true
-                        && (state.AnyChoiceEdge[i]
-                            || (shape == TcoSelfCallArgumentShape.Mixed && state.HandedOnOrGrownEdges[i] == true)),
+                    IsChoiceAccumulatorRebuild(state, i, shape),
                     state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i],
                     state.FreshOrHandedOnListRebuild[i] == true && state.AnyRebuildEdge[i]));
             }
@@ -1303,6 +1309,15 @@ public sealed partial class Lowering
 
         return result;
     }
+
+    // Every self-call at this position hands on the parameter, conses onto it or starts it afresh, and
+    // one makes the choice; or every self-call hands on the parameter's consumed tail or a cons onto
+    // it, and one conses.
+    private static bool IsChoiceAccumulatorRebuild(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape shape)
+        => (state.ChoiceAccumulatorEdges[ordinal] == true
+                && (state.AnyChoiceEdge[ordinal]
+                    || (shape == TcoSelfCallArgumentShape.Mixed && state.HandedOnOrGrownEdges[ordinal] == true)))
+            || (state.ConsedTailEdges[ordinal] == true && state.AnyConsedTailEdge[ordinal]);
 
     private sealed class AffineSelfAppendState
     {
@@ -2401,8 +2416,9 @@ public sealed partial class Lowering
                 armTailOwners[tail.Name] = sourceParameterOrdinal;
             }
 
-            AddTupleScrutineeTailOwners(match.Value, matchCase.Pattern, parameterScope, armTailOwners);
+            List<string> tupleTails = AddTupleScrutineeTailOwners(match.Value, matchCase.Pattern, parameterScope, armTailOwners);
             List<string> changedParts = MarkArmCallResultParts(state, binders, match.Value is Expr.Call);
+            List<(string Name, bool Added)> changedTupleTails = MarkArmTupleScrutineeTails(state, binders, tupleTails);
             TcoParamFactsWalk(
                 matchCase.Body,
                 armTailOwners,
@@ -2414,24 +2430,26 @@ public sealed partial class Lowering
                 RemoveLetValueNames(letValues, binders),
                 state);
             RestoreArmCallResultParts(state, changedParts, match.Value is Expr.Call);
+            RestoreArmTupleScrutineeTails(state, changedTupleTails);
         }
     }
 
     // A tuple scrutinee built from the parameters (`match (pending, state) with | (item :: rest, _)`)
     // takes each parameter apart as a match on it alone does: the tail bound out of a list
     // parameter's position is that parameter's consumed tail.
-    private static void AddTupleScrutineeTailOwners(
+    private static List<string> AddTupleScrutineeTailOwners(
         Expr scrutinee,
         Pattern pattern,
         IReadOnlyDictionary<string, int> parameterScope,
         Dictionary<string, int> armTailOwners)
     {
+        var added = new List<string>();
         if (!TupleScrutineeTailsAreOwned
             || scrutinee is not Expr.TupleLit tuple
             || pattern is not Pattern.Tuple parts
             || tuple.Elements.Count != parts.Elements.Count)
         {
-            return;
+            return added;
         }
 
         for (int i = 0; i < tuple.Elements.Count; i++)
@@ -2441,8 +2459,11 @@ public sealed partial class Lowering
                 && TupleScrutineeTailBinder(parts.Elements[i]) is { } tail)
             {
                 armTailOwners[tail.Name] = parameterOrdinal;
+                added.Add(tail.Name);
             }
         }
+
+        return added;
     }
 
     private static bool TupleScrutineeTailsAreOwned
@@ -2495,6 +2516,41 @@ public sealed partial class Lowering
             else
             {
                 state.CallResultParts.Add(binder);
+            }
+        }
+    }
+
+    // An arm's binders shadow the tuple-scrutinee tails in scope, and the tails it binds out of a
+    // tuple scrutinee join them, for the arm's body.
+    private static List<(string Name, bool Added)> MarkArmTupleScrutineeTails(
+        TcoParamFactsState state,
+        HashSet<string> binders,
+        List<string> tupleTails)
+    {
+        var changed = new List<(string Name, bool Added)>();
+        foreach (string binder in binders)
+        {
+            bool tail = tupleTails.Contains(binder, StringComparer.Ordinal);
+            if (tail ? state.TupleScrutineeTails.Add(binder) : state.TupleScrutineeTails.Remove(binder))
+            {
+                changed.Add((binder, tail));
+            }
+        }
+
+        return changed;
+    }
+
+    private static void RestoreArmTupleScrutineeTails(TcoParamFactsState state, List<(string Name, bool Added)> changed)
+    {
+        foreach ((string name, bool added) in changed)
+        {
+            if (added)
+            {
+                state.TupleScrutineeTails.Remove(name);
+            }
+            else
+            {
+                state.TupleScrutineeTails.Add(name);
             }
         }
     }
@@ -2645,6 +2701,7 @@ public sealed partial class Lowering
             state.HandedOnOrGrownEdges[i] = (state.HandedOnOrGrownEdges[i] ?? true)
                 && IsHandedOnOrGrownEdge(local, structural, parameterScope);
             RecordWalkOrRefillEdge(state, i, local, structural);
+            RecordConsedTailEdge(state, i, local, structural, tailOwners, parameterScope);
         }
     }
 
@@ -2672,6 +2729,33 @@ public sealed partial class Lowering
             && Environment.GetEnvironmentVariable("GRC_NO_CALLPARTREBUILD") is null
             && structural is Expr.Var part
             && state.CallResultParts.Contains(part.Name);
+
+    // A self-call that hands on a cons onto the parameter's consumed tail bound out of a tuple scrutinee
+    // (`| ((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), no head reading a loop parameter. The
+    // tuple matches on a counted copy of the list, so the parts the cell stores are retained for it;
+    // left in the arena, the cell kept those references and no later iteration released them. Placed
+    // on the reference-counted heap like a choice accumulator, the successor is copied at the back
+    // edge and the predecessor released. A consumed tail handed on alone counts as an edge of the
+    // same list.
+    private static void RecordConsedTailEdge(
+        TcoParamFactsState state,
+        int ordinal,
+        TcoSelfCallArgumentShape local,
+        Expr structural,
+        IReadOnlyDictionary<string, int> tailOwners,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        bool consedTail = Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILREBUILD") is null
+            && structural is Expr.Cons
+            && GrownConsChainTail(structural) is Expr.Var tail
+            && state.TupleScrutineeTails.Contains(tail.Name)
+            && tailOwners.TryGetValue(tail.Name, out int ownerOrdinal)
+            && ownerOrdinal == ordinal
+            && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope));
+        state.ConsedTailEdges[ordinal] = (state.ConsedTailEdges[ordinal] ?? true)
+            && (consedTail || local == TcoSelfCallArgumentShape.ConsumedTail);
+        state.AnyConsedTailEdge[ordinal] |= consedTail;
+    }
 
     // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a call's
     // result or a part matched out of one; a consumed tail or any other expression is not one.

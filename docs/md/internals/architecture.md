@@ -1170,7 +1170,12 @@ that sibling's predecessor is released at the same back edge. A self-call that s
 afresh (`[first]`, or `first :: []`) with elements reading no loop parameter holds nothing of the
 predecessor, so beside self-calls that hand the parameter on it keeps the list a choice accumulator
 (`GRC_NO_RESETACCUMULATOR`): left in the arena, each fresh start stored a reference-counted element
-built from a call's parts in an arena cell that nothing released. The literal's cells are copied at
+built from a call's parts in an arena cell that nothing released. A list whose every self-call
+hands on its consumed tail bound out of a tuple scrutinee, or a cons chain onto it
+(`((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), at least one the chain and no head reading
+a loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): left in the arena, the
+rebuilt cell kept the references its parts were retained with for it, and no later iteration
+released them. The literal's cells are copied at
 the back edge like a cons cell's, so a head produced right there keeps an owner of its own,
 released once the copy holds its reference (`GRC_NO_COPIEDLITERALCELL`). A tuple that holds a
 reference-counted element is placed on the reference-counted heap with its arena siblings copied

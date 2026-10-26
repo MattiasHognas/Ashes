@@ -125,6 +125,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FreshStartBesideHandedOnListTemplate());
         registry.Register(new ListLiteralSuccessorReadingHeapSiblingTemplate());
         registry.Register(new ScalarListHandedACallResultPartTemplate());
+        registry.Register(new ConsOntoConsumedTailTemplate());
     }
 }
 
