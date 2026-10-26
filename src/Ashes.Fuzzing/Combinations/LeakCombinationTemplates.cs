@@ -119,6 +119,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ProducerReturningParameterTailTemplate());
         registry.Register(new OkOfMatchedRecordFieldsTemplate());
         registry.Register(new FreshStartBesideHandedOnListTemplate());
+        registry.Register(new ListLiteralSuccessorReadingHeapSiblingTemplate());
     }
 }
 

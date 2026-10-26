@@ -1534,6 +1534,14 @@ of it. A retain is withdrawn only when the cell holds its sole reference and the
 is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
 child's root there).
 
+A list literal of heap elements written as the successor of a list parameter on the
+reference-counted heap (`go([(other, [k])])`) has its arena cells copied at the back edge like a
+cons's, the copy taking a reference of its own to each element. Its cells are copied cells: an
+element produced right there keeps an owner of its own, released after the copy, and the retains an
+arena element (a contract record, say) was built with for loop-parameter reads are withdrawn as a
+copied record's are. Otherwise the element and the sibling parameter it read stayed behind the arena
+cell with nothing to release them (`GRC_NO_COPIEDLITERALSUCCESSOR` switches this off).
+
 A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
 of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs
 both arms; a value an earlier iteration left there is released at that arm's own back edge or at the

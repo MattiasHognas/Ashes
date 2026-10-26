@@ -1913,6 +1913,10 @@ public sealed partial class Lowering
             WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
             heldPastCopy = RetainsHeldPastTheCopy(info.ArgTemps[index], (TypeRef.TNamedType)argType, BackEdgeLoopParameters(info));
         }
+        else if (BackEdgeCopyBorrowsLiteralElements(info, index, argType))
+        {
+            WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
+        }
 
         int normalizedTemp = TcoBackEdgeNormalizeRuntimeManagedArg(
             info.ArgTemps[index], argType, info.RuntimeManagedArgResults[index],
@@ -1938,6 +1942,16 @@ public sealed partial class Lowering
             && !CanArenaReset(named)
             && !CanCopyOutAdt(named, out _)
             && !SuccessorOwnsItsChildren(named, info.ArgExpressions[index]);
+
+    // A list literal successor whose arena cells the back edge copies (see
+    // BackEdgeCopiesLiteralSuccessor): the copy takes its own reference to every element, and a
+    // normalizer copies an arena element's children the same way, so the retains an arena element
+    // was built with for loop-parameter reads are withdrawn as a copied record's are.
+    private static bool BackEdgeCopyBorrowsLiteralElements(PendingTcoReset info, int index, TypeRef argType)
+        => !info.RuntimeManagedArgResults[index]
+            && argType is TypeRef.TList
+            && info.ArgExpressions[index] is Expr.ListLit { Elements.Count: > 0 }
+            && Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALSUCCESSOR") is null;
 
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,
@@ -11776,7 +11790,7 @@ public sealed partial class Lowering
             // of this iteration exactly like a function result escapes its callee: a runtime-managed
             // owned binding stored inside it (a `let` call result placed in a constructor field) must
             // be retained, because the binding's own release still fires at the back edge.
-            bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index);
+            bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index) || BackEdgeCopiesLiteralSuccessor(tco, index, argument);
             request = request with { TransfersRuntimeManagedChildren = !copiedSuccessor };
             NoteBackEdgeCopiedCells(tco, index, argument, copiedSuccessor);
             request = request
@@ -12093,6 +12107,19 @@ public sealed partial class Lowering
             && Prune(type) is TypeRef.TList list
             && !tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
             && IsGeneralRcAccumulatorList(tco, tco.ParamFacts[tco.ParamSlots[index]], list);
+
+    // A list literal of heap elements written as the successor of a list parameter on the
+    // reference-counted heap (`go([(other, [k])])`): the back edge copies its arena cells, and the
+    // copy takes a reference of its own to each element, so the cells are copied cells too.
+    private bool BackEdgeCopiesLiteralSuccessor(TcoContext tco, int index, Expr argument)
+        => Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALSUCCESSOR") is null
+            && argument is Expr.ListLit { Elements.Count: > 0 }
+            && index < tco.ParamSlots.Count
+            && BackEdgeNormalizesListParameter(tco, index)
+            && !tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
+            && tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TList { Element: var element }
+            && !CanArenaReset(Prune(element));
 
     private Dictionary<string, bool> LowerCallTcoAdtChildBindings(IReadOnlyList<Expr> arguments)
     {

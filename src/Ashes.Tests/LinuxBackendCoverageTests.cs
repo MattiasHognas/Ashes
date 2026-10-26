@@ -3466,6 +3466,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_list_literal_successor_reading_heap_sibling_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop replaces its list with a literal whose element (a tuple, a record) holds a sibling
+        // parameter on the reference-counted heap: the back edge copies the literal's cells, so the
+        // element is released behind the copy and the retain its construction took of the sibling is
+        // withdrawn, instead of both staying behind the arena cell.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildListLiteralSuccessorReadingHeapSiblingProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(4L * rounds) + 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list literal successor reading a heap sibling", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_int_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14149,6 +14174,27 @@ public sealed class LinuxBackendCoverageTests
                         | None -> restart(remaining - 1)(acc)(total)
 
             Ashes.IO.print(restart({{rounds}})([])(0))
+            """;
+
+    private static string BuildListLiteralSuccessorReadingHeapSiblingProgram(int rounds)
+        => $$"""
+            type Parts =
+                | front: List(Int)
+                | back: List(Int)
+
+            let produce (k: Int) = [k, k + 1]
+
+            let recursive pairs (remaining: Int) (acc: List((List(Int), List(Int)))) (other: List(Int)) (total: Int) =
+                if remaining == 0
+                then total + Ashes.Collection.List.length(acc) + Ashes.Collection.List.length(other)
+                else pairs(remaining - 1)([(other, [remaining])])(produce(remaining))(total + Ashes.Collection.List.length(other))
+
+            let recursive records (remaining: Int) (acc: List(Parts)) (other: List(Int)) (total: Int) =
+                if remaining == 0
+                then total + Ashes.Collection.List.length(acc) + Ashes.Collection.List.length(other)
+                else records(remaining - 1)([Parts(front = other, back = [remaining])])(produce(remaining))(total + Ashes.Collection.List.length(other))
+
+            Ashes.IO.print(pairs({{rounds}})([])([7])(0) + records({{rounds}})([])([7])(0))
             """;
 
     private static string BuildIntListParameterTailMatchedInTupleBesideRecordProgram(int rounds)

@@ -8317,6 +8317,14 @@ let backEdgeCopyBorrows (semanticType: SemanticType) (expression: Expr) (state: 
         | NormalizerArgumentCopy(_named) -> true
         | _plan -> false
 
+// Stage 0's `BackEdgeCopyBorrowsLiteralElements`: a list literal successor whose arena cells the back
+// edge copies borrows its elements' children like a copied record, so the retains an arena element
+// was built with for loop-parameter reads are withdrawn.
+let withdrawCopiedLiteralRetains (expression: Expr) (temp: Int) (parameters: List((Int, Int))) (state: CoreLoweringState) =
+    match unspanArgument(expression) with
+        | ExprList(_first :: _rest, _isMultiline) -> state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(temp)(parameters)(state.reversedInstructions)
+        | _ -> state
+
 // Stage 0's `BackEdgeCopyBorrowsSuccessorChildren`: an arena successor of a runtime-managed ADT
 // slot whose back-edge copy borrows its children (its normalization helper makes it) rather than
 // releasing them from the dying cell. The retains its construction made of loop-parameter reads
@@ -8327,7 +8335,14 @@ let recursive withdrawBorrowedSuccessorRetains (arguments: List(TcoResetArgument
         | TcoResetArgument { managedAdt = Some((_activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = false, argumentExpression = expression } :: rest ->
             if shape != TcoPassThroughShape && !isTcoBackEdgeArgPassThrough(expression)(slot)(state) && backEdgeCopyBorrows(semanticType)(expression)(state)
             then withdrawBorrowedSuccessorRetains(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(temp)(parameters)(state.reversedInstructions)))
-            else withdrawBorrowedSuccessorRetains(rest)(parameters)(state)
+            else
+                state
+                |> withdrawCopiedLiteralRetains(expression)(temp)(parameters)
+                |> withdrawBorrowedSuccessorRetains(rest)(parameters)
+        | TcoResetArgument { managedList = Some(_list), argumentTemp = temp, argumentRuntime = false, argumentExpression = expression } :: rest ->
+            state
+            |> withdrawCopiedLiteralRetains(expression)(temp)(parameters)
+            |> withdrawBorrowedSuccessorRetains(rest)(parameters)
         | _argument :: rest -> withdrawBorrowedSuccessorRetains(rest)(parameters)(state)
 
 // Each loop parameter's slot beside its active flag at a back edge, -1 for one without (stage 0's
@@ -21769,6 +21784,14 @@ let backEdgeCopiesListSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (lo
             else false
         | _ -> false
 
+// Stage 0's `BackEdgeCopiesLiteralSuccessor`: a list literal of heap elements written as the
+// successor of a list parameter on the reference-counted heap has its arena cells copied at the
+// back edge, the copy taking a reference of its own to each element, so the cells are copied cells.
+let backEdgeCopiesLiteralSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (parameterType: SemanticType) (argument: Expr) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match (unspanArgument(argument), resolveType(state)(parameterType), slot, stateTcoLoopFrame(state)) with
+        | (ExprList(_first :: _rest, _isMultiline), SemList(element), Some(parameterSlot), Some(frame)) -> shape != TcoGrownConsShape && !resultSurvivesReset(element)(state) && loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
+        | _ -> false
+
 // Stage 0's `NoteLateCopiedHeadTuples`: whether the back edge now copies the successor of the
 // self-call argument being lowered, once the cell's own types have resolved the parameter's.
 let backEdgeArgumentNowCopied (state: CoreLoweringState) =
@@ -26564,7 +26587,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
                     match functionState
                     |> withStateBackEdgeArgumentSlot(headSlotOf(slots))
                     |> withStateAffineAppendContext(affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations))
-                    |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState))(argument)
+                    |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState) || backEdgeCopiesLiteralSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(parameterType)(argument)(loop)(functionState))(argument)
                     |> lower(argument)
                     |> duplicatePatternOwnerChild(argument)
                     |> retainTransferredChild(argument)(true) with
