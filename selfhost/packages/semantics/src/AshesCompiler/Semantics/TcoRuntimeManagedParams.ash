@@ -48,6 +48,7 @@ export (
     value tcoOwnReferencePositions,
     value flowCallKeyOf,
     value flowNodes,
+    value tcoTupleTailPartnerOrdinals,
 )
 
 // The reference-ownership shape shared by every exact tail self-call argument at one parameter
@@ -1110,6 +1111,76 @@ let recursive flowNodes (pending: List(Expr)) (nodes: List(Expr)) =
                 | Some(children) ->
                     flowNodes(append(children)(rest))(expression :: nodes)
                 | None -> None
+
+// Whether the tuple pattern element at `position` is a cons whose tail is a plain variable.
+let recursive tupleTailBoundAt (patterns: List(Pattern)) (position: Int) =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            if position == 0
+            then
+                match shapeUnspanPattern(pattern) with
+                    | PatternCons(_head, tail) ->
+                        match shapeUnspanPattern(tail) with
+                            | PatternVar(_name) -> true
+                            | _ -> false
+                    | _ -> false
+            else tupleTailBoundAt(rest)(position - 1)
+
+let recursive casesBindTupleTail (cases: List((Pattern, Expr, Maybe(Expr)))) (position: Int) (count: Int) =
+    match cases with
+        | [] -> false
+        | (pattern, _body, _guard) :: rest ->
+            match shapeUnspanPattern(pattern) with
+                | PatternTuple(patterns) ->
+                    if length(patterns) == count && tupleTailBoundAt(patterns)(position)
+                    then true
+                    else casesBindTupleTail(rest)(position)(count)
+                | _ -> casesBindTupleTail(rest)(position)(count)
+
+// The parameters a tuple holds at every position but `position`.
+let recursive tuplePartnerOrdinals (values: List(Expr)) (position: Int) (parameters: List(Str)) (found: List(Int)) =
+    match values with
+        | [] -> found
+        | value :: rest ->
+            if position == 0
+            then tuplePartnerOrdinals(rest)(position - 1)(parameters)(found)
+            else
+                match shapeScrutineeOrdinal(value)([])(parameters) with
+                    | Some(ordinal) -> tuplePartnerOrdinals(rest)(position - 1)(parameters)(ordinal :: found)
+                    | None -> tuplePartnerOrdinals(rest)(position - 1)(parameters)(found)
+
+let recursive tupleTailPartnersAt (remaining: List(Expr)) (values: List(Expr)) (cases: List((Pattern, Expr, Maybe(Expr)))) (name: Str) (position: Int) (parameters: List(Str)) =
+    match remaining with
+        | [] -> []
+        | value :: rest ->
+            match shapeUnspan(value) with
+                | ExprVar(candidate) ->
+                    if candidate == name && casesBindTupleTail(cases)(position)(length(values))
+                    then tuplePartnerOrdinals(values)(position)(parameters)([])
+                    else tupleTailPartnersAt(rest)(values)(cases)(name)(position + 1)(parameters)
+                | _ -> tupleTailPartnersAt(rest)(values)(cases)(name)(position + 1)(parameters)
+
+let recursive tupleTailPartnersOf (nodes: List(Expr)) (name: Str) (parameters: List(Str)) =
+    match nodes with
+        | [] -> []
+        | ExprMatch(value, cases, _position) :: rest ->
+            match shapeUnspan(value) with
+                | ExprTuple(values) ->
+                    parameters
+                    |> tupleTailPartnersOf(rest)(name)
+                    |> append(tupleTailPartnersAt(values)(values)(cases)(name)(0)(parameters))
+                | _ -> tupleTailPartnersOf(rest)(name)(parameters)
+        | _node :: rest -> tupleTailPartnersOf(rest)(name)(parameters)
+
+// The parameters held beside the list parameter `name` by a tuple scrutinee one of whose arms binds
+// that list's cons tail (`match (pending, state) with | (item :: rest, _)`), the partners whose
+// types stage 0's `IsTupleScrutineeTailBesideHeapParameter` reads; none when the body holds a node
+// the flow walk does not know.
+let tcoTupleTailPartnerOrdinals (parameters: List(Str)) (name: Str) (body: Expr) =
+    match flowNodes([body])([]) with
+        | Some(nodes) -> tupleTailPartnersOf(nodes)(name)(parameters)
+        | None -> []
 
 let recursive flowCaseBinders (cases: List((Pattern, Expr, Maybe(Expr)))) (names: List(Str)) =
     match cases with

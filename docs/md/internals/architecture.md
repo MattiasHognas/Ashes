@@ -1035,7 +1035,11 @@ parameter's consumed tail when a match binds it from that parameter, alone (`mat
 item :: rest`) or at its own position of a tuple of parameters (`match (pending, lowered) with |
 (item :: rest, _)`): such a tuple is a reference-counted scrutinee beside a placed record, its tail
 is retained into the next iteration, and only the consumed-tail placement releases the list that
-iteration was given (`GRC_NO_TUPLETAILOWNER` switches the tuple form off). Closure promotion
+iteration was given (`GRC_NO_TUPLETAILOWNER` switches the tuple form off). A list of inline
+elements walked by its consumed tail otherwise stays in the arena, which reclaims it; in such a tuple
+beside a parameter that owns heap parts it takes the consumed-tail placement as well, since the
+tuple is built on the reference-counted heap and retains the tail it binds
+(`GRC_NO_INLINETUPLETAIL` switches that off). Closure promotion
 also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
 capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
 rechecked against resolved local slots. When body inference resolves an unannotated closure

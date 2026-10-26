@@ -12461,13 +12461,34 @@ let containsBytesLayout (semanticType: SemanticType) (state: CoreLoweringState) 
 // Bytes such a list may own.
 let bytesProvenanceAdmitsListElement (element: SemanticType) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) = containsInt(ordinal)(loop.bytesProvenanceSafeOrdinals) || !containsBytesLayout(element)(state)
 
+let recursive anyHeapTupleTailPartner (partners: List(Int)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match partners with
+        | [] -> false
+        | partner :: rest ->
+            match typeAtIndex(partner)(loop.parameterTypes) with
+                | Some(partnerType) ->
+                    if resultSurvivesReset(partnerType)(state)
+                    then anyHeapTupleTailPartner(rest)(loop)(state)
+                    else true
+                | None -> anyHeapTupleTailPartner(rest)(loop)(state)
+
+// Stage 0's `IsTupleScrutineeTailBesideHeapParameter`: a list of inline elements walked by its
+// tail out of a tuple scrutinee that also holds a parameter owning heap parts takes the
+// consumed-tail placement, since the tuple is built on the reference-counted heap and retains the
+// tail it binds for the next iteration.
+let tupleTailBesideHeapParameter (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match parameterNameAt(ordinal)(loop.parameterNames) with
+        | Some(name) ->
+            anyHeapTupleTailPartner(tcoTupleTailPartnerOrdinals(loop.parameterNames)(name)(loop.body))(loop)(state)
+        | None -> false
+
 let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if bytesProvenanceAdmitsListElement(element)(ordinal)(loop)(state) && (isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && !resultSurvivesReset(element)(state) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state)))
+                    if bytesProvenanceAdmitsListElement(element)(ordinal)(loop)(state) && (isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state)))
                     then Some(element)
                     else None
         | _ -> None

@@ -3346,6 +3346,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_int_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop matches `(pending, lowered)` over a list of integers and passes its tail on: the
+        // tuple is built on the reference-counted heap beside the record, so the list takes the
+        // consumed-tail placement although its elements could live in the arena, and each
+        // iteration releases the list it was given.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildIntListParameterTailMatchedInTupleBesideRecordProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1)) + (14L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list of integers matched by its tail in a tuple beside a record", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_ok_tuple_built_before_error_type_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13896,6 +13921,27 @@ public sealed class LinuxBackendCoverageTests
                 then total
                 else
                     match close(closes(n))(Lowered(state = [], temp = n)) with
+                        | Lowered { state = st, temp = t } -> rounds(n - 1)(total + t + Ashes.Collection.List.length(st))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildIntListParameterTailMatchedInTupleBesideRecordProgram(int rounds)
+        => $$"""
+            type Lowered =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive close (pending: List(Int)) (lowered: Lowered) =
+                match (pending, lowered) with
+                    | ([], _lowered) -> lowered
+                    | (n :: rest, Lowered { state = bodyState, temp = temp }) -> close(rest)(Lowered(state = bodyState, temp = temp + n))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match close([n, 2, 3, 4, 5])(Lowered(state = [], temp = n)) with
                         | Lowered { state = st, temp = t } -> rounds(n - 1)(total + t + Ashes.Collection.List.length(st))
 
             Ashes.IO.print(rounds({{rounds}})(0))
