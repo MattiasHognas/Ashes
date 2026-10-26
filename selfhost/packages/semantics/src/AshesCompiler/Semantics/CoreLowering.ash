@@ -429,6 +429,9 @@ type PatternOwnerSite =
     | siteInsertCount: Int
     | siteType: SemanticType
     | siteFact: PatternBindingFact
+    // Bound out of a tuple matched on the reference-counted heap, which holds its own counted copy of
+    // each element (stage 0's `HeldByReferenceCountedTuple`).
+    | siteHeldByTuple: Bool
 
 // A back edge awaiting its arena block (stage 0's `PendingTcoReset`): the argument types decide
 // the reset once the whole body is lowered, after the iteration-local owners are released. The
@@ -13190,12 +13193,13 @@ let patternSiteRootManaged (site: PatternOwnerSite) (managedLists: List((Int, In
 
 // Stage 0's `ResolvePatternBindingPlacementOutcome`: a copy-typed binding owns nothing; a
 // binding whose root parameter lives on the reference-counted heap, or whose own type is
-// reference-counted whatever holds it, gets its protective owner; any other binding of an
-// arena-placed root keeps its identity markers.
+// reference-counted whatever holds it, gets its protective owner, as does one bound out of a tuple
+// matched on the reference-counted heap, which descends from the tuple's counted copy of an
+// arena-placed root; any other binding of an arena-placed root keeps its identity markers.
 let patternSitePlaced (site: PatternOwnerSite) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     site.siteType
     |> resolveType(state)
-    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(managedAdts)(candidates) || isUnconditionallyRcManagedType(resolved)))
+    |> (given (resolved: SemanticType) -> !resultSurvivesReset(resolved)(state) && (patternSiteRootManaged(site)(managedLists)(managedAdts)(candidates) || site.siteHeldByTuple || isUnconditionallyRcManagedType(resolved)))
 
 let recursive placedPatternOwnerSites (sites: List(PatternOwnerSite)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
     match sites with
@@ -19681,20 +19685,27 @@ let recursive slotAtOrdinal (ordinal: Int) (slots: List(Int)) =
             then Some(slot)
             else slotAtOrdinal(ordinal - 1)(rest)
 
-let recursive patternOwnerSitesOf (frame: CoreTcoLoopFrame) (insertCount: Int) (sites: List(PatternOwnerSite)) (bindings: List(CoreBinding)) =
+let recursive patternOwnerSitesOf (frame: CoreTcoLoopFrame) (insertCount: Int) (heldByTuple: Bool) (sites: List(PatternOwnerSite)) (bindings: List(CoreBinding)) =
     match bindings with
         | [] -> sites
         | CoreBinding { location = CoreLocal(slot), patternOwner = Some(fact), scheme = TypeScheme { body = bindingType } } :: rest ->
             match slotAtOrdinal(fact.rootParameterOrdinal)(frame.parameterSlots) with
-                | Some(rootSlot) -> patternOwnerSitesOf(frame)(insertCount)(PatternOwnerSite(siteSlot = slot, siteRootSlot = rootSlot, siteInsertCount = insertCount, siteType = bindingType, siteFact = fact) :: sites)(rest)
-                | None -> patternOwnerSitesOf(frame)(insertCount)(sites)(rest)
-        | _ :: rest -> patternOwnerSitesOf(frame)(insertCount)(sites)(rest)
+                | Some(rootSlot) -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(PatternOwnerSite(siteSlot = slot, siteRootSlot = rootSlot, siteInsertCount = insertCount, siteType = bindingType, siteFact = fact, siteHeldByTuple = heldByTuple) :: sites)(rest)
+                | None -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(sites)(rest)
+        | _ :: rest -> patternOwnerSitesOf(frame)(insertCount)(heldByTuple)(sites)(rest)
 
 // Stage 0's `TrackPerceusPatternBindingOwners`: once an arm's pattern is lowered, every pattern
 // owner it bound is joined to its slot and to the loop parameter slot it was extracted from, at
 // the instruction count its protective duplicate is later spliced in at; the sites stay most
 // recent first.
-let registerPatternOwnerSites (outerBindings: List(CoreBinding)) (patternResult: LoweredCorePattern) =
+// A fresh tuple scrutinee owned on the reference-counted heap (stage 0's
+// `ScrutineeIsReferenceCountedTuple`).
+let scrutineeOwnerIsTuple (scrutineeOwner: Maybe(MatchScrutineeOwner)) =
+    match scrutineeOwner with
+        | Some(MatchScrutineeOwner { scrutineeTypeName = typeName }) -> typeName == "Tuple"
+        | None -> false
+
+let registerPatternOwnerSites (outerBindings: List(CoreBinding)) (heldByTuple: Bool) (patternResult: LoweredCorePattern) =
     match patternResult with
         | LoweredCorePattern { state = state, error = None } ->
             match stateTcoLoopFrame(state) with
@@ -19702,14 +19713,14 @@ let registerPatternOwnerSites (outerBindings: List(CoreBinding)) (patternResult:
                     state.bindings
                     |> armBindings(length(state.bindings) - length(outerBindings))
                     |> reverse
-                    |> patternOwnerSitesOf(frame)(length(state.reversedInstructions))(statePatternOwnerSites(state))
+                    |> patternOwnerSitesOf(frame)(length(state.reversedInstructions))(heldByTuple)(statePatternOwnerSites(state))
                     |> (given (sites: List(PatternOwnerSite)) -> LoweredCorePattern(state = withStatePatternOwnerSites(sites)(state), error = None))
                 | None -> patternResult
         | _ -> patternResult
 
 let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
     match patternResult
-    |> registerPatternOwnerSites(outerBindings)
+    |> registerPatternOwnerSites(outerBindings)(scrutineeOwnerIsTuple(scrutineeOwner))
     |> reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp) with
         | (reusedPatternResult, tokensBefore) ->
             match reusedPatternResult

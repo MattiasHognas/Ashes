@@ -1560,7 +1560,7 @@ public sealed partial class Lowering
             return;
         }
 
-        TrackPerceusPatternBindingOwners(patternBindings, armPattern);
+        TrackPerceusPatternBindingOwners(patternBindings, armPattern, ScrutineeIsReferenceCountedTuple(matchValue, valueTemp));
 
         (string? ownerName, HashSet<string>? independentlyTrackedFieldNames) =
             TrackRuntimeManagedMatchScrutineeOwner(matchValue, valueTemp, valueType, patternBindings, armPattern);
@@ -1762,7 +1762,8 @@ public sealed partial class Lowering
     /// </summary>
     private void TrackPerceusPatternBindingOwners(
         IReadOnlyDictionary<string, TypeRef> patternBindings,
-        Pattern armPattern)
+        Pattern armPattern,
+        bool heldByReferenceCountedTuple)
     {
         if (_tcoCtx is not { } tco)
         {
@@ -1789,7 +1790,8 @@ public sealed partial class Lowering
                 tco.ParamSlots[ownership.RootParameterOrdinal],
                 _inst.Count,
                 bindingType,
-                ownership));
+                ownership,
+                heldByReferenceCountedTuple));
 
             if (!ownership.RequiresProtectiveDup)
             {
@@ -1808,6 +1810,14 @@ public sealed partial class Lowering
                 perceusRootParameterSlot: tco.ParamSlots[ownership.RootParameterOrdinal]);
         }
     }
+
+    // A tuple literal matched on the reference-counted heap holds its own reference-counted copy of
+    // each element: a binder under it descends from that copy, not from an arena-placed parameter
+    // it was normalized from, and the copy is released with the tuple at the end of the arm.
+    private bool ScrutineeIsReferenceCountedTuple(Expr matchValue, int valueTemp)
+        => matchValue is Expr.TupleLit
+            && Environment.GetEnvironmentVariable("GRC_NO_TUPLEROOTCOPY") is null
+            && IsRuntimeManagedResultTemp(valueTemp);
 
     private int TransferDirectRuntimeManagedMatchResult(Expr body, int bodyTemp)
     {

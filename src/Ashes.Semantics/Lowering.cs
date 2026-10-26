@@ -158,7 +158,8 @@ public sealed partial class Lowering
         int RootParameterSlot,
         int InsertIndex,
         TypeRef Type,
-        PatternBindingOwnershipFact Ownership);
+        PatternBindingOwnershipFact Ownership,
+        bool HeldByReferenceCountedTuple);
 
     // Stable ownership facts are joined to emitted binder slots as soon as a pattern is lowered.
     // The semantic owner is therefore available to ordinary scope cleanup and move handling even
@@ -8276,7 +8277,7 @@ public sealed partial class Lowering
 
         bool widenedProtectionSafeHere = IsUnconditionallyRcManagedType(prunedType)
             && AllowsParallelWorkerIndependentRcPlacement;
-        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || widenedProtectionSafeHere
+        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || widenedProtectionSafeHere || site.HeldByReferenceCountedTuple
             ? PatternBindingPlacementOutcome.ProtectiveOwnerPlaced
             : PatternBindingPlacementOutcome.RootNotRuntimeManaged;
     }

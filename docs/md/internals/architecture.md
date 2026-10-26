@@ -1008,7 +1008,11 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
   (`GRC_NO_TUPLESUBPATTERNHANDON`). The tail of a chain of cons patterns at a list parameter's
   position (`(a :: b :: rest, _)`) is that list's consumed tail as a single cons's is, so the list
   takes the consumed-tail placement and releases the copy the tuple normalized it into
-  (`GRC_NO_TUPLECHAINTAIL`).
+  (`GRC_NO_TUPLECHAINTAIL`). A tuple matched on the reference-counted heap holds its own counted
+  copy of an arena-placed parameter, so a binder under it that needs a protective owner gets one
+  even though its root parameter stays in the arena: the copy is released with the tuple at the end
+  of the arm, and a part of it stored in the next iteration's arena cell must be retained first
+  (`GRC_NO_TUPLEROOTCOPY`).
 - A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
   owned reference-counted copy when the cell's tail is a recursive result or the cell is a
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).
