@@ -2438,7 +2438,7 @@ public sealed partial class Lowering
         {
             if (tuple.Elements[i] is Expr.Var source
                 && parameterScope.TryGetValue(source.Name, out int parameterOrdinal)
-                && parts.Elements[i] is Pattern.Cons { Tail: Pattern.Var tail })
+                && TupleScrutineeTailBinder(parts.Elements[i]) is { } tail)
             {
                 armTailOwners[tail.Name] = parameterOrdinal;
             }
@@ -2447,6 +2447,26 @@ public sealed partial class Lowering
 
     private static bool TupleScrutineeTailsAreOwned
         => Environment.GetEnvironmentVariable("GRC_NO_TUPLETAILOWNER") is null;
+
+    // The tail binder of a list pattern at a tuple position: the tail of a single cons (`item :: rest`),
+    // or of a chain of them (`a :: b :: rest`), which consumes the list as far as its last cell.
+    private static Pattern.Var? TupleScrutineeTailBinder(Pattern pattern)
+    {
+        if (pattern is not Pattern.Cons { Tail: var tail })
+        {
+            return null;
+        }
+
+        while (TupleScrutineeChainTailsAreOwned && tail is Pattern.Cons { Tail: var next })
+        {
+            tail = next;
+        }
+
+        return tail as Pattern.Var;
+    }
+
+    private static bool TupleScrutineeChainTailsAreOwned
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLECHAINTAIL") is null;
 
     // An arm over a call's result binds parts of it; any other arm's binders shadow such a part.
     // Returns the names whose membership changed, for the restore after the arm.

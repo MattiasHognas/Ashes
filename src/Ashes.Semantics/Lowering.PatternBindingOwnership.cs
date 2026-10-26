@@ -426,31 +426,65 @@ public sealed partial class Lowering
                 result[name] = lineage;
             }
 
-            if (elementLineages[i] is { Binding: null }
-                && HandedOnTupleBinderName(parts.Elements[i]) is { } handedOn
-                && result.TryGetValue(handedOn, out PatternBindingLineage handedOnLineage)
-                && handedOnLineage.Binding is { } handedOnBinding)
+            if (elementLineages[i] is not { Binding: null })
             {
-                handedOnBinding.HandedOnThroughTuple = true;
+                continue;
+            }
+
+            foreach (string handedOn in HandedOnTupleBinderNames(parts.Elements[i]))
+            {
+                if (result.TryGetValue(handedOn, out PatternBindingLineage handedOnLineage)
+                    && handedOnLineage.Binding is { } handedOnBinding)
+                {
+                    handedOnBinding.HandedOnThroughTuple = true;
+                }
             }
         }
 
         return result;
     }
 
-    // The binder at a parameter's own tuple position that the next iteration receives without a
-    // transfer of its own: the list's consumed tail, which the consumed-tail placement retains, or
-    // the whole element, which the read out of the reference-counted tuple already retains.
-    private static string? HandedOnTupleBinderName(Pattern part)
-        => part switch
+    // The binders at a parameter's own tuple position that the next iteration receives without a
+    // transfer of its own: the list's consumed tail (of one cons or a chain), which the consumed-tail
+    // placement retains, the whole element, which the read out of the reference-counted tuple
+    // already retains, and a binder under a constructor at that position
+    // (`(Node(l, _), acc) -> go(l)(acc)`), which the same read retains as a pattern owner of its own.
+    private static IEnumerable<string> HandedOnTupleBinderNames(Pattern part)
+    {
+        switch (part)
         {
-            Pattern.Cons { Tail: Pattern.Var tail } when TupleScrutineeTailsAreOwned => tail.Name,
-            Pattern.Var whole when TupleElementsAreHandedOn => whole.Name,
-            _ => null,
-        };
+            case Pattern.Cons:
+                if (TupleScrutineeTailsAreOwned && TupleScrutineeTailBinder(part) is { } tail)
+                {
+                    yield return tail.Name;
+                }
+
+                yield break;
+            case Pattern.Var whole:
+                if (TupleElementsAreHandedOn)
+                {
+                    yield return whole.Name;
+                }
+
+                yield break;
+            default:
+                if (TupleSubpatternsAreHandedOn)
+                {
+                    foreach ((Pattern binder, int _) in EnumeratePatternOwnershipBinders(part, 1))
+                    {
+                        yield return PatternBinderName(binder);
+                    }
+                }
+
+                yield break;
+        }
+    }
 
     private static bool TupleElementsAreHandedOn
         => Environment.GetEnvironmentVariable("GRC_NO_TUPLEELEMENTHANDON") is null;
+
+    private static bool TupleSubpatternsAreHandedOn
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLESUBPATTERNHANDON") is null;
 
     private IReadOnlyDictionary<string, PatternBindingLineage> BindPatternOwnershipLineages(
         Pattern pattern,

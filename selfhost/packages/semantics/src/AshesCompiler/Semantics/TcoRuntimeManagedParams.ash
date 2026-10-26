@@ -304,6 +304,25 @@ let shapeCaseTailOwners (pattern: Pattern) (scrutinee: Maybe(Int)) =
                 | _ -> []
         | _ -> []
 
+// Stage 0's `TupleScrutineeTailBinder`: the tail a list pattern at a tuple position binds, of a single
+// cons (`item :: rest`) or of a chain of them (`a :: b :: rest`), which consumes the list as far as
+// its last cell.
+let recursive shapeChainTail (pattern: Pattern) =
+    match shapeUnspanPattern(pattern) with
+        | PatternCons(_head, tail) -> shapeChainTail(tail)
+        | PatternVar(name) -> Some(name)
+        | _ -> None
+
+let shapeTupleTailBinder (pattern: Pattern) =
+    match shapeUnspanPattern(pattern) with
+        | PatternCons(_head, tail) -> shapeChainTail(tail)
+        | _ -> None
+
+let shapeTupleCaseTailOwners (pattern: Pattern) (scrutinee: Maybe(Int)) =
+    match (scrutinee, shapeTupleTailBinder(pattern)) with
+        | (Some(ordinal), Some(name)) -> [(name, ordinal)]
+        | _ -> []
+
 // A tuple scrutinee built from the parameters (`match (pending, state) with | (item :: rest, _)`)
 // takes each parameter apart as a match on it alone does: the tail bound out of a list
 // parameter's position is that parameter's consumed tail (stage 0's `AddTupleScrutineeTailOwners`).
@@ -314,7 +333,7 @@ let recursive shapeTupleTailOwners (values: List(Expr)) (patterns: List(Pattern)
             |> shapeTupleTailOwners(restValues)(restPatterns)(shadowed)
             |> append(parameters
             |> shapeScrutineeOrdinal(value)(shadowed)
-            |> shapeCaseTailOwners(pattern))
+            |> shapeTupleCaseTailOwners(pattern))
         | _ -> []
 
 let shapeScrutineeTailOwners (value: Expr) (pattern: Pattern) (scrutinee: Maybe(Int)) (shadowed: List(Str)) (parameters: List(Str)) =
@@ -978,13 +997,7 @@ let recursive tupleTailBoundAt (patterns: List(Pattern)) (position: Int) =
         | [] -> false
         | pattern :: rest ->
             if position == 0
-            then
-                match shapeUnspanPattern(pattern) with
-                    | PatternCons(_head, tail) ->
-                        match shapeUnspanPattern(tail) with
-                            | PatternVar(_name) -> true
-                            | _ -> false
-                    | _ -> false
+            then shapeTupleTailBinder(pattern) != None
             else tupleTailBoundAt(rest)(position - 1)
 
 let recursive casesBindTupleTail (cases: List((Pattern, Expr, Maybe(Expr)))) (position: Int) (count: Int) =

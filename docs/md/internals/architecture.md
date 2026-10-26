@@ -1003,6 +1003,12 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
   (`(item :: rest, _)`), which the consumed-tail placement retains, and the whole element at a
   parameter's position (`(n :: rest, kept) -> close(rest)(kept)`), which the read out of the
   reference-counted tuple retains (`GRC_NO_TUPLEELEMENTHANDON` switches the whole-element form off).
+  A binder under a constructor at a parameter's position (`(Node(l, _), acc) -> go(l)(acc)`) is
+  handed on the same way: the read out of the tuple retains it as a pattern owner of its own
+  (`GRC_NO_TUPLESUBPATTERNHANDON`). The tail of a chain of cons patterns at a list parameter's
+  position (`(a :: b :: rest, _)`) is that list's consumed tail as a single cons's is, so the list
+  takes the consumed-tail placement and releases the copy the tuple normalized it into
+  (`GRC_NO_TUPLECHAINTAIL`).
 - A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
   owned reference-counted copy when the cell's tail is a recursive result or the cell is a
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).

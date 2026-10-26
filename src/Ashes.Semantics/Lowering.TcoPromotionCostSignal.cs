@@ -526,7 +526,7 @@ public sealed partial class Lowering
                 && string.Equals(name, parameter, StringComparison.Ordinal)
                 && match.Cases.Any(matchCase => matchCase.Pattern is Pattern.Tuple parts
                     && parts.Elements.Count == tuple.Elements.Count
-                    && parts.Elements[i] is Pattern.Cons { Tail: Pattern.Var }))
+                    && TupleScrutineeTailBinder(parts.Elements[i]) is not null))
             {
                 return i;
             }

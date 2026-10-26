@@ -527,20 +527,35 @@ let tupleScrutineeElements (value: Expr) =
 // that position's element would.
 // Stage 0's `HandedOnThroughTuple`: a binder at a parameter's own position of a tuple scrutinee that
 // the next iteration receives already retained, so passing it back to that parameter is not a
-// transfer of its own: a list parameter's consumed tail, retained by the consumed-tail placement
-// (`shapeTupleTailOwners`), or the whole element, retained by the read out of the tuple.
+// transfer of its own: a list parameter's consumed tail (of one cons or a chain), retained by the
+// consumed-tail placement (`shapeTupleTailOwners`), the whole element, retained by the read out of
+// the tuple, and a binder under a constructor at that position (`(Node(l, _), acc) -> go(l)(acc)`),
+// which the same read retains as a pattern owner of its own.
 let markHandedOnName (name: Str) (lineages: List((Str, PatternLineage))) =
     match lookupLineage(name)(lineages) with
         | Some(lineage) -> setLineage(name)((lineage with lineageHandedOn = true))(lineages)
         | None -> lineages
 
+let recursive handedOnChainTail (pattern: Pattern) (lineages: List((Str, PatternLineage))) =
+    match unspanPattern(pattern) with
+        | PatternCons(_head, tail) -> handedOnChainTail(tail)(lineages)
+        | PatternVar(name) -> markHandedOnName(name)(lineages)
+        | _ -> lineages
+
+let recursive markHandedOnBinders (binders: List((Int, Str, Int))) (lineages: List((Str, PatternLineage))) =
+    match binders with
+        | [] -> lineages
+        | (_key, name, _depth) :: rest ->
+            lineages
+            |> markHandedOnName(name)
+            |> markHandedOnBinders(rest)
+
 let markHandedOnBinder (part: Pattern) (source: PatternLineage) (lineages: List((Str, PatternLineage))) =
     match (source.lineageBinder, unspanPattern(part)) with
-        | (None, PatternCons(_head, tail)) ->
-            match unspanPattern(tail) with
-                | PatternVar(name) -> markHandedOnName(name)(lineages)
-                | _ -> lineages
+        | (None, PatternCons(_head, tail)) -> handedOnChainTail(tail)(lineages)
         | (None, PatternVar(name)) -> markHandedOnName(name)(lineages)
+        | (None, _) ->
+            markHandedOnBinders(enumerateBinders(part)(1)(None))(lineages)
         | _ -> lineages
 
 let recursive bindTupleArm (parts: List(Pattern)) (sources: List(Maybe(PatternLineage))) (lineages: List((Str, PatternLineage))) (scope: PatternWalkScope) (found: List(PatternBinder)) =

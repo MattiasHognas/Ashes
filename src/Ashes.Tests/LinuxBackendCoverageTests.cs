@@ -3346,6 +3346,54 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_tuple_constructor_child_handed_back_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop matches `(t, acc)` and passes the left child of the node it bound at the tree's own
+        // position back: the read out of the tuple already retains the child, so the self call adds
+        // no same-parameter transfer retain and each iteration's tree is released.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildTupleConstructorChildHandedBackProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + (6L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple constructor child handed back to its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_tuple_cons_chain_tail_handed_back_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop matches `(items, kept)` taking two heads at once (`a :: b :: rest`) and passes the
+        // tail back: the chain's tail is the list's consumed tail, so the list is placed on the
+        // reference-counted heap and the copy the tuple normalized it into is released.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildTupleConsChainTailHandedBackProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(5L * rounds) + (5L * rounds * (rounds + 1))}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple cons chain tail handed back to its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13994,6 +14042,53 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match close(closes(n))(Lowered(state = [], temp = n)) with
                         | Lowered { state = st, temp = t } -> rounds(n - 1)(total + t + Ashes.Collection.List.length(st))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTupleConstructorChildHandedBackProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            type Tree =
+                | Leaf(Kept)
+                | Node(Tree, Tree)
+
+            let recursive build (d: Int) (n: Int) =
+                if d == 0
+                then Leaf(Kept(state = [n, d], temp = n))
+                else Node(build(d - 1)(n), build(d - 1)(n + d))
+
+            let recursive leftmost (t: Tree) (acc: Int) =
+                match (t, acc) with
+                    | (Leaf(Kept { state = st, temp = k }), a) -> a + k + Ashes.Collection.List.length(st)
+                    | (Node(l, _), a) -> leftmost(l)(a + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + leftmost(build(4)(n))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTupleConsChainTailHandedBackProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive pairs (items: List(Int)) (kept: Kept) (acc: Int) =
+                match (items, kept) with
+                    | (a :: b :: rest, same) -> pairs(rest)(same)(acc + a * b)
+                    | (_, Kept { state = st, temp = k }) -> acc + k + Ashes.Collection.List.length(st)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + pairs([1, 2, n, 4, 5, n, 7])(Kept(state = [n, 7, 8], temp = n))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
