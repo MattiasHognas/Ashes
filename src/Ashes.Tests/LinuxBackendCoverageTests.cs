@@ -3465,6 +3465,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_string_call_result_compared_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A string a call returns is compared with a literal straight away: the primitive
+        // comparison borrows it and the caller releases it afterwards.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildStringCallResultComparedProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("string call result compared with a literal", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14353,6 +14376,39 @@ public sealed class LinuxBackendCoverageTests
 
             0
             |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildStringCallResultComparedProgram(int rounds)
+        => $$"""
+            type Token =
+                | kind: Int
+                | text: Str
+
+            let currentToken (tokens: List(Token)) =
+                match tokens with
+                    | token :: _ -> token
+                    | [] -> Token(kind = 0, text = "")
+
+            let currentText (tokens: List(Token)) =
+                (let current = currentToken(tokens)
+                in current.text)
+
+            let classify (tokens: List(Token)) =
+                if currentText(tokens) == "out"
+                then 1
+                else
+                    if currentText(tokens) == "FfiStr"
+                    then 2
+                    else 3
+
+            let recursive rounds (tokens: List(Token)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(tokens)(n - 1)(total + classify(tokens))
+
+            0
+            |> rounds([Token(kind = 1, text = "In" + "t")])({{rounds}})
             |> Ashes.IO.print
             """;
 

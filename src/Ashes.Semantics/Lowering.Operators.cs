@@ -898,12 +898,25 @@ public sealed partial class Lowering
 
         if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
+            return LowerStrEquality(leftTemp, rightTemp, negate);
         }
 
         return ReportEqualityTypeMismatch(leftPruned, rightPruned, negate);
+    }
+
+    // The primitive comparison borrows both strings, as the trait method does: a string no binding
+    // owns (a call's result) is released after it.
+    private (int, TypeRef) LowerStrEquality(int leftTemp, int rightTemp, bool negate)
+    {
+        int target = NewTemp();
+        Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
+        if (Environment.GetEnvironmentVariable("GRC_NO_STRCOMPAREOPERAND") is null)
+        {
+            ReleaseFreshComparisonOperand(leftTemp, new TypeRef.TStr());
+            ReleaseFreshComparisonOperand(rightTemp, new TypeRef.TStr());
+        }
+
+        return (target, new TypeRef.TBool());
     }
 
     // Resolve type variables: prefer the other side's concrete type, defaulting to Int

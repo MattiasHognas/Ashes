@@ -38,3 +38,42 @@ internal sealed class ConstrainedCallFreshArgumentTemplate() : LeakCombinationTe
             """;
     }
 }
+
+/// <summary>
+/// A string a call returns compared with <c>==</c> or <c>!=</c> straight away (the parser's
+/// <c>parserCurrentText(state) == "out"</c>): the primitive comparison borrows it, and the caller
+/// releases it after the comparison.
+/// </summary>
+internal sealed class StringCallResultComparedTemplate() : LeakCombinationTemplate(
+    "leak.string-call-result-compared", "stringCallResultCompared", GeneratedFeature.Record, GeneratedFeature.Comparison, GeneratedFeature.Call)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string token = names.Of("LeakToken");
+        string current = names.Of("currentToken");
+        string text = names.Of("currentText");
+        string word = names.Word();
+        string comparison = names.Coin("negated") ? "!=" : "==";
+        return $$"""
+            type {{token}} =
+                | kind: Int
+                | text: Str
+
+            let {{current}} (tokens: List({{token}})) =
+                match tokens with
+                    | first :: _ -> first
+                    | [] -> {{token}}(kind = 0, text = "")
+
+            let {{text}} (tokens: List({{token}})) =
+                (let found = {{current}}(tokens)
+                in found.text)
+
+            let {{names.Entry}} (seed: Int) =
+                (let tokens = [{{token}}(kind = seed, text = {{word}} + Ashes.Text.fromInt(seed))]
+                in
+                    if {{text}}(tokens) {{comparison}} {{word}}
+                    then seed
+                    else seed + {{names.Between(1, 9)}})
+            """;
+    }
+}

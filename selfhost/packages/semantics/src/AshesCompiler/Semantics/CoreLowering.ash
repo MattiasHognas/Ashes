@@ -25074,6 +25074,17 @@ let emitResolvedCoreOrdered name intKind uintKind floatKind lower binary =
         | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
         | _ -> emitCoreTraitOrdered(name)(lower)(binary)
 
+// Stage 0's `LowerStrEquality`: the primitive comparison borrows both strings, as the trait method
+// does, so a string no binding owns (a call's result) is released after it.
+let emitCoreStringEquality kind (binary: LoweredCoreBinary) =
+    match emitCoreBoolBinary(kind)(binary) with
+        | LoweredCoreValue { state = state, temp = temp, error = None } ->
+            state
+            |> releaseFreshComparisonOperand(SemString)(binary.leftTemp)
+            |> releaseFreshComparisonOperand(SemString)(binary.rightTemp)
+            |> success(temp)(SemBool)
+        | failed -> failed
+
 let emitResolvedCoreEquality name intKind floatKind stringKind lower binary =
     match binary with
         | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
@@ -25085,7 +25096,7 @@ let emitResolvedCoreEquality name intKind floatKind stringKind lower binary =
             else operatorMismatch(name)(binary)
         | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreBoolBinary(floatKind)(binary)
         | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
-        | LoweredCoreBinary { leftType = SemString, rightType = SemString } -> emitCoreBoolBinary(stringKind)(binary)
+        | LoweredCoreBinary { leftType = SemString, rightType = SemString } -> emitCoreStringEquality(stringKind)(binary)
         | _ -> emitCoreTraitEquality(name)(lower)(binary)
 
 // The one-argument counterpart of `emitTraitMethodCalls`: a unary trait method takes its operand
