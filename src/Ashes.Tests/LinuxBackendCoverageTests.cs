@@ -3346,6 +3346,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop matches `(pending, kept)` and passes the record it bound whole at its own position
+        // back unchanged: the read out of the tuple already retains it, so the self call adds no
+        // same-parameter transfer retain and each iteration releases the record it was given.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildWholeTupleElementHandedBackProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(3L * rounds * (rounds + 1) / 2) + (16L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("whole tuple element handed back to its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_int_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13922,6 +13946,25 @@ public sealed class LinuxBackendCoverageTests
                 else
                     match close(closes(n))(Lowered(state = [], temp = n)) with
                         | Lowered { state = st, temp = t } -> rounds(n - 1)(total + t + Ashes.Collection.List.length(st))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildWholeTupleElementHandedBackProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive close (pending: List(Int)) (kept: Kept) (acc: Int) =
+                match (pending, kept) with
+                    | ([], Kept { state = st, temp = t }) -> acc + t + Ashes.Collection.List.length(st)
+                    | (n :: rest, same) -> close(rest)(same)(acc + n)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + close([1, 2, 3, 4, n])(Kept(state = [n, 7, 8, 9, 10, 11], temp = n))(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

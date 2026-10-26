@@ -33,10 +33,10 @@ public sealed partial class Lowering
         public SourceLocation? Location { get; } = location;
         public PatternBindingOwnershipUse Uses { get; set; }
 
-        // A list parameter's tail bound at its own position of a tuple scrutinee: the consumed-tail
-        // placement retains it for the next iteration, so passing it back to that parameter is not a
-        // transfer of its own.
-        public bool HandedOnAsConsumedTail { get; set; }
+        // A binder at a parameter's own position of a tuple scrutinee that the next iteration
+        // receives already retained (`HandedOnTupleBinderName`): passing it back to that parameter is
+        // not a transfer of its own.
+        public bool HandedOnThroughTuple { get; set; }
 
         public PatternBindingOwnershipFact Build()
         {
@@ -426,18 +426,31 @@ public sealed partial class Lowering
                 result[name] = lineage;
             }
 
-            if (TupleScrutineeTailsAreOwned
-                && elementLineages[i] is { Binding: null }
-                && parts.Elements[i] is Pattern.Cons { Tail: Pattern.Var tail }
-                && result.TryGetValue(tail.Name, out PatternBindingLineage tailLineage)
-                && tailLineage.Binding is { } tailBinding)
+            if (elementLineages[i] is { Binding: null }
+                && HandedOnTupleBinderName(parts.Elements[i]) is { } handedOn
+                && result.TryGetValue(handedOn, out PatternBindingLineage handedOnLineage)
+                && handedOnLineage.Binding is { } handedOnBinding)
             {
-                tailBinding.HandedOnAsConsumedTail = true;
+                handedOnBinding.HandedOnThroughTuple = true;
             }
         }
 
         return result;
     }
+
+    // The binder at a parameter's own tuple position that the next iteration receives without a
+    // transfer of its own: the list's consumed tail, which the consumed-tail placement retains, or
+    // the whole element, which the read out of the reference-counted tuple already retains.
+    private static string? HandedOnTupleBinderName(Pattern part)
+        => part switch
+        {
+            Pattern.Cons { Tail: Pattern.Var tail } when TupleScrutineeTailsAreOwned => tail.Name,
+            Pattern.Var whole when TupleElementsAreHandedOn => whole.Name,
+            _ => null,
+        };
+
+    private static bool TupleElementsAreHandedOn
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLEELEMENTHANDON") is null;
 
     private IReadOnlyDictionary<string, PatternBindingLineage> BindPatternOwnershipLineages(
         Pattern pattern,
@@ -484,7 +497,7 @@ public sealed partial class Lowering
     }
 
     private static PatternBindingOwnershipUse SameParameterArgumentUse(PatternBindingOwnershipBuilder binding)
-        => binding.HandedOnAsConsumedTail
+        => binding.HandedOnThroughTuple
             ? PatternBindingOwnershipUse.None
             : PatternBindingOwnershipUse.SameParameterTransfer;
 

@@ -998,6 +998,11 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
 - A pattern binder under a tuple literal built only to be matched (`match (items, 0) with |
   (entry :: rest, _)`) descends from the element at its position, as in a match on that element
   alone, so it gets the same protective owner (`GRC_NO_TUPLESCRUTINEELINEAGE` switches it off).
+  A loop handing such a binder back to its own parameter does not transfer it as well when the
+  next iteration already holds a reference: the consumed tail at a list parameter's position
+  (`(item :: rest, _)`), which the consumed-tail placement retains, and the whole element at a
+  parameter's position (`(n :: rest, kept) -> close(rest)(kept)`), which the read out of the
+  reference-counted tuple retains (`GRC_NO_TUPLEELEMENTHANDON` switches the whole-element form off).
 - A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
   owned reference-counted copy when the cell's tail is a recursive result or the cell is a
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).

@@ -108,6 +108,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ListParameterTailMatchedInTupleTemplate());
         registry.Register(new OkTupleBeforeErrorTypeTemplate());
         registry.Register(new InlineListParameterTailMatchedInTupleTemplate());
+        registry.Register(new WholeTupleElementHandedBackTemplate());
         registry.Register(new FreshHeadOverNamedHeadTemplate());
         registry.Register(new FreshHeadOverViewHeadTemplate());
         registry.Register(new BytesRecordAccumulatorTemplate());

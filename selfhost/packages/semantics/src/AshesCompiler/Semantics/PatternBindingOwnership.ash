@@ -85,7 +85,7 @@ type PatternLineage =
     | lineageRootName: Str
     | lineageDepth: Int
     | lineageBinder: Maybe(Int)
-    | lineageHandedOnTail: Bool
+    | lineageHandedOn: Bool
 
 // What stays fixed over the walk of one loop function: its self name and parameters, and the
 // program's constructor names (nullary ones separately, since a bare constructor name in a pattern
@@ -482,7 +482,7 @@ let recursive bindBinders (binders: List((Int, Str, Int))) (source: PatternLinea
                     lineageRootName = source.lineageRootName,
                     lineageDepth = source.lineageDepth + relativeDepth,
                     lineageBinder = Some(key),
-                    lineageHandedOnTail = false
+                    lineageHandedOn = false
                 ))(lineages))(scope)(PatternBinder(
                     key = key,
                     binderName = name,
@@ -525,18 +525,22 @@ let tupleScrutineeElements (value: Expr) =
 
 // Stage 0's `BindTupleScrutineeLineages`: each tuple position's sub-pattern binds as a match on
 // that position's element would.
-// Stage 0's `HandedOnAsConsumedTail`: a list parameter's tail bound at its own position of a tuple
-// scrutinee is retained for the next iteration by the consumed-tail placement
-// (`shapeTupleTailOwners`), so passing it back to that parameter is not a transfer of its own.
-let markHandedOnTail (part: Pattern) (source: PatternLineage) (lineages: List((Str, PatternLineage))) =
+// Stage 0's `HandedOnThroughTuple`: a binder at a parameter's own position of a tuple scrutinee that
+// the next iteration receives already retained, so passing it back to that parameter is not a
+// transfer of its own: a list parameter's consumed tail, retained by the consumed-tail placement
+// (`shapeTupleTailOwners`), or the whole element, retained by the read out of the tuple.
+let markHandedOnName (name: Str) (lineages: List((Str, PatternLineage))) =
+    match lookupLineage(name)(lineages) with
+        | Some(lineage) -> setLineage(name)((lineage with lineageHandedOn = true))(lineages)
+        | None -> lineages
+
+let markHandedOnBinder (part: Pattern) (source: PatternLineage) (lineages: List((Str, PatternLineage))) =
     match (source.lineageBinder, unspanPattern(part)) with
         | (None, PatternCons(_head, tail)) ->
             match unspanPattern(tail) with
-                | PatternVar(name) ->
-                    match lookupLineage(name)(lineages) with
-                        | Some(lineage) -> setLineage(name)((lineage with lineageHandedOnTail = true))(lineages)
-                        | None -> lineages
+                | PatternVar(name) -> markHandedOnName(name)(lineages)
                 | _ -> lineages
+        | (None, PatternVar(name)) -> markHandedOnName(name)(lineages)
         | _ -> lineages
 
 let recursive bindTupleArm (parts: List(Pattern)) (sources: List(Maybe(PatternLineage))) (lineages: List((Str, PatternLineage))) (scope: PatternWalkScope) (found: List(PatternBinder)) =
@@ -544,7 +548,7 @@ let recursive bindTupleArm (parts: List(Pattern)) (sources: List(Maybe(PatternLi
         | (part :: restParts, Some(source) :: restSources) ->
             match bindBinders(enumerateBinders(part)(1)(None))(source)(lineages)(scope)(found) with
                 | (bound, boundFound) ->
-                    bindTupleArm(restParts)(restSources)(markHandedOnTail(part)(source)(bound))(scope)(boundFound)
+                    bindTupleArm(restParts)(restSources)(markHandedOnBinder(part)(source)(bound))(scope)(boundFound)
         | (_part :: restParts, None :: restSources) -> bindTupleArm(restParts)(restSources)(lineages)(scope)(found)
         | _ -> (lineages, found)
 
@@ -735,7 +739,7 @@ and walkArguments (arguments: List(Expr)) (index: Int) (exactSelfCall: Bool) (co
 and walkArgument (argument: Expr) (index: Int) (exactSelfCall: Bool) (constructorCall: Bool) (ordinaryCall: Bool) (lineages: List((Str, PatternLineage))) (shadowedSelf: Bool) (scope: PatternWalkScope) (found: List(PatternBinder)) =
     match argumentLineage(argument)(lineages) with
         | Some((name, lineage)) ->
-            if exactSelfCall && lineage.lineageRoot == index && lineage.lineageHandedOnTail
+            if exactSelfCall && lineage.lineageRoot == index && lineage.lineageHandedOn
             then found
             else
                 recordUse(name)(lineages)(argumentUse(exactSelfCall)(constructorCall)(ordinaryCall)(index)(lineage))(scope)(found)
@@ -755,7 +759,7 @@ and argumentLineage (argument: Expr) (lineages: List((Str, PatternLineage))) =
 let recursive parameterLineages (parameters: List(Str)) (ordinal: Int) =
     match parameters with
         | [] -> []
-        | parameter :: rest -> (parameter, PatternLineage(lineageRoot = ordinal, lineageRootName = parameter, lineageDepth = 0, lineageBinder = None, lineageHandedOnTail = false)) :: parameterLineages(rest)(ordinal + 1)
+        | parameter :: rest -> (parameter, PatternLineage(lineageRoot = ordinal, lineageRootName = parameter, lineageDepth = 0, lineageBinder = None, lineageHandedOn = false)) :: parameterLineages(rest)(ordinal + 1)
 
 let recursive buildFacts (binders: List(PatternBinder)) =
     match binders with
