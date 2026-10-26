@@ -606,12 +606,28 @@ let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
         | ExprCall(function, argument, _sugar, _layout) -> shapeCallSpine(function)(argument :: arguments)
         | root -> (root, arguments)
 
+// Stage 0's `IsCallResultPartRebuild`: a name a match bound out of a call's result, handed on as
+// the successor of a parameter it is not, is a value this iteration received, as the call's result
+// itself is.
+let shapeIsCallResultPart (argument: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (callParts: List(Str)) =
+    match shapeUnspan(argument) with
+        | ExprVar(name) ->
+            if shapeResolveParameter(name)(shadowed)(parameters) != None || shapeLookupTailOwner(name)(tailOwners) != None
+            then false
+            else
+                match parameters
+                |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
+                |> shapeUnspan with
+                    | ExprVar(part) -> shapeContainsName(part)(callParts)
+                    | _ -> false
+        | _ -> false
+
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail, the
 // parameter itself, a call's result, or an empty list, whether one passed the consumed tail,
 // whether one passed a call's result, and whether every one passed the parameter itself or a fresh
-// list, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge`, `AnyRefillEdge` and
-// `FreshOrHandedOnListRebuild`.
-let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (walks: List((Bool, Bool, Bool, Bool))) =
+// list or a part a match bound out of a call's result, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge`,
+// `AnyRefillEdge` and `FreshOrHandedOnListRebuild`.
+let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (callParts: List(Str)) (walks: List((Bool, Bool, Bool, Bool))) =
     match (arguments, walks) with
         | (argument :: restArguments, (everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn) :: restWalks) ->
             (let local = shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters)
@@ -634,7 +650,9 @@ let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: 
                                 parameters
                                 |> shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)
                                 |> shapeIsFreshList
-                            in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill, everyFreshOrHandedOn && (fresh || local == TcoPassThroughShape))) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restWalks)
+                            in
+                                let part = shapeIsCallResultPart(argument)(shadowed)(tailOwners)(letValues)(parameters)(callParts)
+                                in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill, everyFreshOrHandedOn && (fresh || part || local == TcoPassThroughShape))) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(restWalks)
         | _ -> walks
 
 // Per parameter position, whether every self-call so far passed an accumulator edge (the parameter
@@ -720,7 +738,7 @@ and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadow
     match shapeCallSpine(expression)([]) with
         | (ExprVar(callee), arguments) ->
             if callee == self && !shapeContainsName(self)(shadowed) && length(arguments) == length(parameters)
-            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), resets = shapeObserveResets(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.resets), sawSelfCall = true)
+            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), resets = shapeObserveResets(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.resets), sawSelfCall = true)
             else walk
         | _ -> walk
 

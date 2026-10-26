@@ -1585,6 +1585,13 @@ watermark, and there is no owned child to transfer out of a discarded cell.
 Lists with owned pointer-bearing elements retain the RC path so pattern
 payload transfer can preserve child ownership.
 
+A list of inline elements that a loop rebuilds rather than walks takes the reference-counted
+placement instead, once every self-call hands it on unchanged or replaces it with a fresh list: a
+literal, a call's result, or a part matched out of a call's result (`| Some((a, b)) -> go(a)`). The
+part is retained for the parameter when the call's result is released, and only a parameter on the
+reference-counted heap releases that reference at the next back edge (`GRC_NO_CALLPARTREBUILD`
+switches the part off).
+
 ### Buffered standard output
 
 `Ashes.IO.writeBuffered` and `writeBufferedLine` append to a process-wide 64 KiB stdout buffer.

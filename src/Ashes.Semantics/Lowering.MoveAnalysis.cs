@@ -2624,7 +2624,12 @@ public sealed partial class Lowering
             state.Observed[i] = state.Observed[i] is { } already && already != local
                 ? TcoSelfCallArgumentShape.Mixed
                 : state.Observed[i] ?? local;
-            RecordListRebuildEdge(state, i, local, IsArenaSelfContainedListRebuildExpr(structural));
+            RecordListRebuildEdge(
+                state,
+                i,
+                local,
+                IsArenaSelfContainedListRebuildExpr(structural),
+                IsCallResultPartRebuild(structural, passesParameterItself, state));
             RecordResetSite(state, i, local, argument, parameterScope);
             state.FreshClosureRebuild[i] = (state.FreshClosureRebuild[i] ?? true) && freshClosureRebuild;
             state.BytesProvenanceSafeListRebuild[i] =
@@ -2644,14 +2649,29 @@ public sealed partial class Lowering
     }
 
     // An arena-self-contained list rebuild at every site, or at every site that does not hand the
-    // parameter on unchanged.
-    private static void RecordListRebuildEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, bool arenaSelfContainedListRebuild)
+    // parameter on unchanged; at those, a part matched out of a call's result counts as a rebuild.
+    private static void RecordListRebuildEdge(
+        TcoParamFactsState state,
+        int ordinal,
+        TcoSelfCallArgumentShape local,
+        bool arenaSelfContainedListRebuild,
+        bool callResultPart)
     {
         state.ArenaSelfContainedListRebuild[ordinal] =
             (state.ArenaSelfContainedListRebuild[ordinal] ?? true) && arenaSelfContainedListRebuild;
         state.FreshOrHandedOnListRebuild[ordinal] = (state.FreshOrHandedOnListRebuild[ordinal] ?? true)
-            && (arenaSelfContainedListRebuild || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+            && (arenaSelfContainedListRebuild || callResultPart || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
     }
+
+    // A list of scalars handed on from a part matched out of a call's result (`| Some((a, b)) ->
+    // go(a)`) is a value this iteration received, as the call's result is. Left in the arena, the
+    // parameter kept the reference the part was retained with for it, and no later iteration
+    // released it.
+    private static bool IsCallResultPartRebuild(Expr structural, bool passesParameterItself, TcoParamFactsState state)
+        => !passesParameterItself
+            && Environment.GetEnvironmentVariable("GRC_NO_CALLPARTREBUILD") is null
+            && structural is Expr.Var part
+            && state.CallResultParts.Contains(part.Name);
 
     // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a call's
     // result or a part matched out of one; a consumed tail or any other expression is not one.
