@@ -129,6 +129,9 @@ internal static class LeakCombinationTemplates
         registry.Register(new ScalarListHandedACallResultPartTemplate());
         registry.Register(new ConsOntoConsumedTailTemplate());
         registry.Register(new ConstructorAroundTupleBoundOwnerTemplate());
+        registry.Register(new FreshInnerHeadInSuccessorTemplate());
+        registry.Register(new TupleBinderHandedBackTemplate());
+        registry.Register(new RecordFieldConsTemplate());
     }
 }
 

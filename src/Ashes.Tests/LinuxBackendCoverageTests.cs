@@ -3585,6 +3585,79 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_inner_head_in_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop over a list of lists puts a fresh head back onto what is left of the first inner list
+        // (`walk((x - 1 :: xs) :: rest)`): the back edge copies the arena inner cell with the outer one
+        // and shares the counted inner tail with a reference of its own, so the inner cell borrows it.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildFreshInnerHeadInSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(12L * rounds) + 60 + ((long)rounds * (rounds + 1) / 2)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh inner head in a successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_tuple_binder_handed_back_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list parameter left in the arena, matched in a tuple beside a parameter on the
+        // reference-counted heap and handed back to its own position through the tuple's binder
+        // (`(_, same) -> walk(..)(same)`), is passed as the parameter itself, not as the tuple's
+        // counted copy of it.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildTupleBinderHandedBackProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{19L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple binder handed back to its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_record_field_cons_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop grows a list in a record parameter by a cons written as the updated field
+        // (`state with labels = name :: state.labels`): the back edge copies the arena record with
+        // references of its own, and the duplicates the cell took are released after that copy.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildRecordFieldConsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(7L * rounds) + ((long)rounds * (rounds + 1) / 2)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons written as a record field's value", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_ok_of_matched_record_fields_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14590,6 +14663,90 @@ public sealed class LinuxBackendCoverageTests
             0
             |> rounds({{rounds}})
             |> Ashes.IO.print
+            """;
+
+    private static string BuildFreshInnerHeadInSuccessorProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive walk (items: List(List(Int))) (kept: Kept) (acc: Int) =
+                match (items, kept) with
+                    | ((x :: xs) :: rest, same) ->
+                        if x > 0 && x < 4
+                        then walk((x - 1 :: xs) :: rest)(same)(acc + x)
+                        else walk(xs :: rest)(same)(acc)
+                    | (_, Kept { state = st, temp = k }) -> acc + k + Ashes.Collection.List.length(st)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([[3, 2, n, n, n, n, n, n]])(Kept(state = [n, 7, 8], temp = n))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTupleBinderHandedBackProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive peel (items: List(List(Int))) (kept: List(Int)) (acc: Int) =
+                match (items, kept) with
+                    | ((x :: xs) :: rest, same) -> peel(xs :: rest)(same)(acc + x)
+                    | (_, k) -> acc + Ashes.Collection.List.length(k)
+
+            let recursive count (items: List(Int)) (kept: Kept) (acc: Int) =
+                match (items, kept) with
+                    | (all, Kept { state = st, temp = t }) ->
+                        if t > 0
+                        then count(all)(Kept(state = st, temp = t - 1))(acc + t)
+                        else acc + Ashes.Collection.List.length(all) + Ashes.Collection.List.length(st)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + peel([[3, 2, 1], [4, n]])([n, 2])(0) + count([n, 2, 3])(Kept(state = [n, 7], temp = 3))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordFieldConsProgram(int rounds)
+        => $$"""
+            type Item =
+                | Named(Str)
+                | Plain
+
+            type Labels =
+                | labels: List(Str)
+                | current: Maybe(Int)
+
+            type Seen =
+                | seen: List(Item)
+                | count: Int
+
+            let recursive label (items: List(Str)) (state: Labels) =
+                match items with
+                    | [] -> Ashes.Collection.List.length(state.labels)
+                    | name :: rest -> label(rest)(state with labels = name :: state.labels)
+
+            let recursive collect (items: List(Item)) (state: Seen) =
+                match items with
+                    | [] -> Ashes.Collection.List.length(state.seen) + state.count
+                    | item :: rest -> collect(rest)(state with seen = item :: rest, count = state.count + 1)
+
+            let words (n: Int) = ["coal" + Ashes.Text.fromInt(n), "ember" + Ashes.Text.fromInt(n)]
+
+            let items (n: Int) = [Named("coal" + Ashes.Text.fromInt(n)), Plain, Named("ember")]
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + label(words(n))(Labels(labels = ["flint"], current = None)) + collect(items(n))(Seen(seen = [], count = n)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildWholeTupleElementHandedBackProgram(int rounds)

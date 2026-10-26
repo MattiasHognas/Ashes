@@ -1177,7 +1177,21 @@ hands on its consumed tail bound out of a tuple scrutinee, or a cons chain onto 
 (`((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), at least one the chain and no head reading
 a loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): left in the arena, the
 rebuilt cell kept the references its parts were retained with for it, and no later iteration
-released them. The literal's cells are copied at
+released them. In a list of lists of copy-type values the inner cells of such a successor
+(`walk((x - 1 :: xs) :: rest)`) are copied with the outer cell, and their counted suffix is shared
+with a reference of the copy's own, so they borrow their tail as the outer cell borrows its parts
+(`GRC_NO_COPIEDINNERCELL`). A successor known to be copied only once its types resolve (a loop over
+unannotated parameters) keeps the duplicates its cell took for its head and for its tail until the
+copy and then releases them (`GRC_NO_LATECOPIEDCELLTAIL` for the tail's). A binder matched out of a
+tuple scrutinee on the reference-counted heap at a parameter's own position and handed back to that
+position (`(_, same) -> walk(..)(same)`) is passed as the parameter itself
+(`GRC_NO_TUPLEBINDERPASSTHROUGH`): the binder is the tuple's counted copy, and a list parameter left
+in the arena took it over with a reference nothing released. A cons written as an updated field of
+a record successor (`state with labels = name :: state.labels`) is copied when a record parameter on
+the reference-counted heap normalizes the arena record at the back edge, string heads copied
+outright and other parts retained by the copy, so the duplicates the cell took are released after
+that copy (`GRC_NO_RECORDFIELDCELL`); a record literal successor's cells are already balanced by the
+constructor's own child handling. The literal's cells are copied at
 the back edge like a cons cell's, so a head produced right there keeps an owner of its own,
 released once the copy holds its reference (`GRC_NO_COPIEDLITERALCELL`). A tuple that holds a
 reference-counted element is placed on the reference-counted heap with its arena siblings copied

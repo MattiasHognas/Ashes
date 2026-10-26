@@ -289,6 +289,18 @@ type ConsumerRequest =
     // types (an accumulator whose type is left to inference): its cells borrow their parts once
     // those types say the back edge copies the successor.
     | lateCopiedCellParts: Bool
+    // Stage 0's `CollectCopiedInnerListCells`: a cell of the inner list a copied successor cell of a
+    // list of lists of copy-type values takes as its head (`walk((x - 1 :: xs) :: rest)`). The back edge
+    // copies it with the outer cell and shares its reference-counted suffix with a reference of its
+    // own, so it borrows its tail, and a cons tail of it is such a cell too.
+    | copiedInnerCell: Bool
+    // Stage 0's `CollectRecordFieldCells`: a record update a tail self call passes
+    // as a successor it does not copy as a list. Its field values that are cons cells are
+    // `recordFieldCell`s: a record parameter on the reference-counted heap copies the arena record
+    // at the back edge with references of its own, so the duplicates those cells took are released
+    // after that copy.
+    | recordFieldCells: Bool
+    | recordFieldCell: Bool
     // Stage 0's `_callArgumentCell`: the cons written as a call's argument and asked for as a loop's
     // exit cell (`withEscapingArgumentCell`). It reaches the cons itself, through its spans, and
     // nothing else.
@@ -321,6 +333,9 @@ let emptyConsumerRequest =
         runtimeTcoListTailSlot = None,
         borrowsCellParts = false,
         lateCopiedCellParts = false,
+        copiedInnerCell = false,
+        recordFieldCells = false,
+        recordFieldCell = false,
         escapingArgumentCell = false,
         chainTailCell = false
     )
@@ -529,6 +544,9 @@ type CoreProgramState =
     | moveCallSites: List(MoveCallSite)
     | moveNullaryConstructors: List(Str)
     | patternOwnerSites: List(PatternOwnerSite)
+    // The binders matched out of a reference-counted tuple scrutinee at a loop parameter's own
+    // position, each with that parameter's slot (stage 0's `_tupleBinderParameterSlots`).
+    | tupleBinderParameters: List((Int, Int))
     | bodyRuntimeManagedByLabel: MapTree(Str, Bool)
     // The functions whose compiled result is owned under the contract: each normalizes a result of
     // the contract's types at its return, so a caller that names one takes the result over as it is.
@@ -1008,6 +1026,14 @@ let stateMoveNullaryConstructors (state: CoreLoweringState) =
 let withStateMoveNullaryConstructors value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with moveNullaryConstructors = value))
+
+let stateTupleBinderParameters (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.tupleBinderParameters)
+
+let withStateTupleBinderParameters value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with tupleBinderParameters = value))
 
 let statePatternOwnerSites (state: CoreLoweringState) =
     (let group = state.programState
@@ -2058,6 +2084,8 @@ type CoreMatchPlan =
     // The reuse-eligible scrutinee's name with whether its tokens are reference-counted cells
     // (a `let`-owned value) or arena cells (a linear loop accumulator).
     | reuseScrutineeName: Maybe((Str, Bool))
+    // A tuple scrutinee's elements, each the loop parameter slot it reads when it is one.
+    | scrutineeParameterSlots: List(Maybe(Int))
     | error: Maybe(CoreLoweringError)
 
 // One lowered arm: its lowered value, and what it contributed to the match's result.
@@ -2311,6 +2339,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             moveCallSites = [],
             moveNullaryConstructors = [],
             patternOwnerSites = [],
+            tupleBinderParameters = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
             generalRcOwnedResultLabels = [],
             tupleResultPartLabels = Ashes.Collection.Map.empty,
@@ -2965,7 +2994,7 @@ let consumerRequestOf (state: CoreLoweringState) = state.consumerRequest
 // Whether a request asks for nothing at all, which is what most expressions are lowered under.
 let isEmptyConsumerRequest (request: ConsumerRequest) =
     match request with
-        | ConsumerRequest { expectedType = None, argumentSite = None, runtimeString = false, runtimeAdt = false, runtimeRecord = false, runtimeList = false, runtimeTuple = false, transferSlot = None, tailPosition = false, transfersRuntimeManagedChildren = false, tailCall = false, consTailPosition = false, runtimeTcoListTailSlot = None } -> true
+        | ConsumerRequest { expectedType = None, argumentSite = None, runtimeString = false, runtimeAdt = false, runtimeRecord = false, runtimeList = false, runtimeTuple = false, transferSlot = None, tailPosition = false, transfersRuntimeManagedChildren = false, tailCall = false, consTailPosition = false, runtimeTcoListTailSlot = None, recordFieldCell = false } -> true
         | _ -> false
 
 // Replacing a request that asks for nothing with another such request leaves the state as it is.
@@ -3270,6 +3299,13 @@ let consPartsRequestForwards (expression: Expr) =
         | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true
         | _ -> false
 
+// A record successor's flag reaches the record update itself, through its spans.
+let recordSuccessorRequestForwards (expression: Expr) =
+    match expression with
+        | ExprAt(_span, _inner) -> true
+        | ExprRecordUpdate(_target, _fields) -> true
+        | _ -> false
+
 // The escaping argument cell's flag reaches the cons the argument writes out, through its spans.
 let argumentCellRequestForwards (expression: Expr) =
     match expression with
@@ -3302,6 +3338,9 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         else None,
         borrowsCellParts = consPartsRequestForwards(expression) && request.borrowsCellParts,
         lateCopiedCellParts = consPartsRequestForwards(expression) && request.lateCopiedCellParts,
+        copiedInnerCell = consPartsRequestForwards(expression) && request.copiedInnerCell,
+        recordFieldCells = recordSuccessorRequestForwards(expression) && request.recordFieldCells,
+        recordFieldCell = argumentCellRequestForwards(expression) && request.recordFieldCell,
         escapingArgumentCell = argumentCellRequestForwards(expression) && request.escapingArgumentCell,
         chainTailCell = argumentCellRequestForwards(expression) && request.chainTailCell
     )
@@ -3622,6 +3661,11 @@ let recursive unspanArgument (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanArgument(inner)
         | other -> other
+
+let isConsValue (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, _tail) -> true
+        | _ -> false
 
 // The resource a variable names: the slot and resource type of an owned local binding whose
 // resolved type is a resource.
@@ -6029,6 +6073,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateRoutedSpecializationAccumulators([])
             |> withStateDirectReuseCandidates([])
             |> withStatePatternOwnerSites([])
+            |> withStateTupleBinderParameters([])
             |> withStatePatternOwnerResultTemps([])
             |> withStateTcoParameterRetainSites([])
             |> withStateBorrowedScrutineeCells([])
@@ -7517,6 +7562,12 @@ let recursive slotHasManagedListArgument (slot: Int) (arguments: List(TcoResetAr
         | TcoResetArgument { parameterSlot = parameterSlot, managedList = Some(_managed) } :: rest -> parameterSlot == slot || slotHasManagedListArgument(slot)(rest)
         | _argument :: rest -> slotHasManagedListArgument(slot)(rest)
 
+let recursive slotHasManagedAdtArgument (slot: Int) (arguments: List(TcoResetArgument)) =
+    match arguments with
+        | [] -> false
+        | TcoResetArgument { parameterSlot = parameterSlot, managedAdt = Some(_managed) } :: rest -> parameterSlot == slot || slotHasManagedAdtArgument(slot)(rest)
+        | _argument :: rest -> slotHasManagedAdtArgument(slot)(rest)
+
 let recursive retainsAsRuntimeDuplicate (temp: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> false
@@ -7531,7 +7582,7 @@ let recursive emitLateCopiedCellHeadDrops (heads: List((Int, Int, SemanticType))
     match heads with
         | [] -> state
         | (slot, duplicateTemp, headType) :: rest ->
-            if slotHasManagedListArgument(slot)(arguments) && retainsAsRuntimeDuplicate(duplicateTemp)(state.reversedInstructions)
+            if (slotHasManagedListArgument(slot)(arguments) || slotHasManagedAdtArgument(slot)(arguments)) && retainsAsRuntimeDuplicate(duplicateTemp)(state.reversedInstructions)
             then
                 state
                 |> emitOwnedValueRelease(unlocatedInstruction)(duplicateTemp)(headType)
@@ -19761,8 +19812,31 @@ let registerPatternOwnerSites (outerBindings: List(CoreBinding)) (heldByTuple: B
                 | None -> patternResult
         | _ -> patternResult
 
-let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
+// Stage 0's `NoteTupleBinderParameterSlots`: the binders of a reference-counted tuple scrutinee's
+// arm that stand at a loop parameter's own position.
+let recursive noteTupleBinderParameters (parts: List(Pattern)) (slots: List(Maybe(Int))) (state: CoreLoweringState) =
+    match (parts, slots) with
+        | (part :: restParts, Some(parameterSlot) :: restSlots) ->
+            match unwrapPatternSpan(part) with
+                | PatternVar(binder) ->
+                    match lookupBinding(binder)(state.bindings) with
+                        | Some(CoreBinding { location = CoreLocal(binderSlot) }) ->
+                            state
+                            |> withStateTupleBinderParameters((binderSlot, parameterSlot) :: stateTupleBinderParameters(state))
+                            |> noteTupleBinderParameters(restParts)(restSlots)
+                        | _ -> noteTupleBinderParameters(restParts)(restSlots)(state)
+                | _ -> noteTupleBinderParameters(restParts)(restSlots)(state)
+        | (_part :: restParts, None :: restSlots) -> noteTupleBinderParameters(restParts)(restSlots)(state)
+        | _ -> state
+
+let noteArmTupleBinders (heldByTuple: Bool) (pattern: Pattern) (slots: List(Maybe(Int))) (patternResult: LoweredCorePattern) =
+    match (heldByTuple, unwrapPatternSpan(pattern), patternResult) with
+        | (true, PatternTuple(parts), LoweredCorePattern { state = state, error = None }) -> patternResult with state = noteTupleBinderParameters(parts)(slots)(state)
+        | _ -> patternResult
+
+let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (scrutineeParameterSlots: List(Maybe(Int))) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
     match patternResult
+    |> noteArmTupleBinders(scrutineeOwnerIsTuple(scrutineeOwner))(pattern)(scrutineeParameterSlots)
     |> registerPatternOwnerSites(outerBindings)(scrutineeOwnerIsTuple(scrutineeOwner))
     |> reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp) with
         | (reusedPatternResult, tokensBefore) ->
@@ -19780,19 +19854,19 @@ let finishPatternArm (reuseScrutineeName: Maybe((Str, Bool))) (scrutineeOwner: M
 // target. Stage 0 emits the cleanup block for every arm, including one whose pattern cannot fail.
 let lowerMatchArm pattern body guard lower cleanupLabel (bracket: ArenaBracket) plan =
     match plan with
-        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings, reuseScrutineeName = reuseScrutineeName } ->
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings, reuseScrutineeName = reuseScrutineeName, scrutineeParameterSlots = scrutineeParameterSlots } ->
             match state with
                 | CoreLoweringState { bindings = outerBindings } ->
                     state
                     |> preparePattern(pattern)
                     |> lowerPattern(pattern)(valueTemp)(valueType)(cleanupLabel)
-                    |> finishPatternArm(reuseScrutineeName)(scrutineeOwner)(normalizeStaticStrings)(pattern)(valueTemp)(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
+                    |> finishPatternArm(reuseScrutineeName)(scrutineeOwner)(scrutineeParameterSlots)(normalizeStaticStrings)(pattern)(valueTemp)(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
 
 // The plan after one arm: the arm's state and error, and its result recorded ahead of the
 // earlier arms'.
 let recastMatchPlan plan (loweredArm: LoweredMatchArm) =
     match (plan, loweredArm) with
-        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request, armResults = armResults, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings, reuseScrutineeName = reuseScrutineeName }, LoweredMatchArm { lowered = LoweredCoreValue { state = state, error = error }, armResult = armResult }) ->
+        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request, armResults = armResults, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings, reuseScrutineeName = reuseScrutineeName, scrutineeParameterSlots = scrutineeParameterSlots }, LoweredMatchArm { lowered = LoweredCoreValue { state = state, error = error }, armResult = armResult }) ->
             CoreMatchPlan(
                 state = state,
                 valueTemp = valueTemp,
@@ -19806,6 +19880,7 @@ let recastMatchPlan plan (loweredArm: LoweredMatchArm) =
                 scrutineeOwner = scrutineeOwner,
                 normalizeStaticStrings = normalizeStaticStrings,
                 reuseScrutineeName = reuseScrutineeName,
+                scrutineeParameterSlots = scrutineeParameterSlots,
                 error = error
             )
 
@@ -19875,6 +19950,7 @@ let failedMatchPlan state error =
         scrutineeOwner = None,
         normalizeStaticStrings = false,
         reuseScrutineeName = None,
+        scrutineeParameterSlots = [],
         error = Some(error)
     )
 
@@ -19894,6 +19970,7 @@ let finishPreparedMatch valueTemp valueType resultType resultSlot endLabel fresh
                 scrutineeOwner = None,
                 normalizeStaticStrings = false,
                 reuseScrutineeName = None,
+                scrutineeParameterSlots = [],
                 error = None
             )
 
@@ -20106,7 +20183,7 @@ let lowerKnownTagMatchArm pattern body guard failLabel lower (plan: CoreMatchPla
             bracketState
             |> preparePattern(pattern)
             |> lowerKnownTagPattern(pattern)(plan.valueTemp)(plan.valueType)(failLabel)
-            |> finishPatternArm(plan.reuseScrutineeName)(plan.scrutineeOwner)(plan.normalizeStaticStrings)(pattern)(plan.valueTemp)(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
+            |> finishPatternArm(plan.reuseScrutineeName)(plan.scrutineeOwner)(plan.scrutineeParameterSlots)(plan.normalizeStaticStrings)(pattern)(plan.valueTemp)(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
 
 let groupCaseFailLabel rest (groupFailLabel: Str) state =
     match rest with
@@ -20421,11 +20498,32 @@ let checkCoreMatchCoverage cases (plan: CoreMatchPlan) =
                     |> coverageErrorMessage
                     |> CoreMatchCoverageError)
 
+let elementParameterSlot (element: Expr) (state: CoreLoweringState) =
+    match (unspanArgument(element), stateTcoLoopFrame(state)) with
+        | (ExprVar(name), Some(frame)) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreLocal(slot) }) ->
+                    if ordinalOfSlot(slot)(frame.parameterSlots)(0) != None
+                    then Some(slot)
+                    else None
+                | _ -> None
+        | _ -> None
+
+let recursive elementParameterSlots (elements: List(Expr)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> []
+        | element :: rest -> elementParameterSlot(element)(state) :: elementParameterSlots(rest)(state)
+
+let scrutineeParameterSlotsOf (scrutinee: Expr) (state: CoreLoweringState) =
+    match unspanArgument(scrutinee) with
+        | ExprTuple(elements) -> elementParameterSlots(elements)(state)
+        | _ -> []
+
 // The scrutinee owner every arm may adopt, decided once the scrutinee is lowered.
 let withScrutineeOwner (scrutinee: Expr) (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
-        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType } -> plan with scrutineeOwner = scrutineeOwnerOf(scrutinee)(valueTemp)(valueType)(state)
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType } -> plan with scrutineeOwner = scrutineeOwnerOf(scrutinee)(valueTemp)(valueType)(state), scrutineeParameterSlots = scrutineeParameterSlotsOf(scrutinee)(state)
 
 let withStaticStringNormalization cases (plan: CoreMatchPlan) =
     match plan with
@@ -20621,6 +20719,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateRoutedSpecializationAccumulators([])
             |> withStateDirectReuseCandidates([])
             |> withStatePatternOwnerSites([])
+            |> withStateTupleBinderParameters([])
             |> withStatePatternOwnerResultTemps([])
             |> withStateTcoParameterRetainSites([])
             |> withStateBorrowedScrutineeCells([])
@@ -21847,6 +21946,10 @@ let consPartsFor (request: ConsumerRequest) (headExpression: Expr) (tailExpressi
 let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType: SemanticType) (state: CoreLoweringState) =
     match (unspanArgument(tailExpression), request.runtimeTcoListTailSlot) with
         | (ExprCons(_head, _tail), Some(_slot)) -> withConsumerRequest((request with expectedType = Some(SemList(headType)), chainTailCell = true))(state)
+        | (ExprCons(_head, _tail), None) ->
+            if request.copiedInnerCell
+            then withConsumerRequest((emptyConsumerRequest with expectedType = Some(SemList(headType)), borrowsCellParts = true, copiedInnerCell = true))(state)
+            else withOnlyExpectedType(Some(SemList(headType)))(state)
         | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
 
 // Stage 0's `OwnHeadOfCellOverFreshTail`: a cons onto a fresh reference-counted tail (a call's owned
@@ -21998,19 +22101,25 @@ let ownChainHeadOverReferenceCountedTail (request: ConsumerRequest) (headExpress
         | _ -> (head, tail)
 
 // Stage 0's `RecordLateCopiedCellHeadDuplicate`: an arena cell of a successor the back edge may
-// still copy keeps its head's duplicate only until that copy, so the duplicate is noted for the
-// back edge to release once the parameter turns out a list on the reference-counted heap. A
+// still copy keeps its head's and its tail's duplicates only until that copy, so each duplicate is
+// noted for the back edge to release once the parameter turns out a list on the reference-counted
+// heap, or, for a cell written as a record successor's field value, a record there. A
 // reference-counted cell owns the duplicate and keeps it.
-let recordLateCopiedCellHead (request: ConsumerRequest) (ownedHead: LoweredCoreValue) (duplicatedHead: LoweredCoreValue) (cell: LoweredCoreValue) =
-    match (cell, ownedHead, duplicatedHead) with
-        | (LoweredCoreValue { state = state, temp = cellTemp, error = None }, LoweredCoreValue { temp = headTemp }, LoweredCoreValue { temp = duplicateTemp, semanticType = headType }) ->
+let recordLateCopiedCellPart (request: ConsumerRequest) (owned: LoweredCoreValue) (duplicated: LoweredCoreValue) (cell: LoweredCoreValue) =
+    match (cell, owned, duplicated) with
+        | (LoweredCoreValue { state = state, temp = cellTemp, error = None }, LoweredCoreValue { temp = ownedTemp }, LoweredCoreValue { temp = duplicateTemp, semanticType = partType }) ->
             match stateBackEdgeArgumentSlot(state) with
                 | Some(slot) ->
-                    if request.lateCopiedCellParts && duplicateTemp != headTemp && !isRuntimeTemp(cellTemp)(state)
-                    then cell with state = withStateLateCopiedCellHeads((slot, duplicateTemp, headType) :: stateLateCopiedCellHeads(state))(state)
+                    if (request.lateCopiedCellParts || request.recordFieldCell) && duplicateTemp != ownedTemp && !isRuntimeTemp(cellTemp)(state)
+                    then cell with state = withStateLateCopiedCellHeads((slot, duplicateTemp, partType) :: stateLateCopiedCellHeads(state))(state)
                     else cell
                 | None -> cell
         | _ -> cell
+
+let recordLateCopiedCellHead (request: ConsumerRequest) (ownedHead: LoweredCoreValue) (duplicatedHead: LoweredCoreValue) (ownedTail: LoweredCoreValue) (duplicatedTail: LoweredCoreValue) (cell: LoweredCoreValue) =
+    cell
+    |> recordLateCopiedCellPart(request)(ownedHead)(duplicatedHead)
+    |> recordLateCopiedCellPart(request)(ownedTail)(duplicatedTail)
 
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
@@ -22028,7 +22137,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     duplicatedTail
                                     |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                                     |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
-                                    |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)
+                                    |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
                                     |> keepArgumentExitCellOwned(request)(tailExpression)
 
@@ -22261,6 +22370,29 @@ let ownBorrowedHeadForProducerCell (producerCell: Bool) (request: ConsumerReques
                 | _ -> lowered
         | _ -> lowered
 
+let recursive consChainEndsInVariable (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, tail) -> consChainEndsInVariable(tail)
+        | ExprVar(_name) -> true
+        | _ -> false
+
+// Stage 0's `CollectCopiedInnerListCells`: the head of a copied successor cell that is itself a
+// chain of cons cells over a variable, in a list of lists of copy-type values.
+let isCopiedInnerListCell (request: ConsumerRequest) (elementType: Maybe(SemanticType)) (head: Expr) (state: CoreLoweringState) =
+    match (request.borrowsCellParts, unspanArgument(head), elementType) with
+        | (true, ExprCons(_innerHead, _innerTail), Some(element)) ->
+            match resolveType(state)(element) with
+                | SemList(innerElement) -> resultSurvivesReset(innerElement)(state) && consChainEndsInVariable(head)
+                | _ -> false
+        | _ -> false
+
+let consHeadRequest (request: ConsumerRequest) (elementType: Maybe(SemanticType)) (transfers: Bool) (head: Expr) (state: CoreLoweringState) =
+    (let headRequest = listElementRequest(request)(elementType)(transfers)(head)(state)
+    in
+        if isCopiedInnerListCell(request)(elementType)(head)(state)
+        then headRequest with borrowsCellParts = true, copiedInnerCell = true
+        else headRequest)
+
 let lowerCons head tail lower state =
     match consumerRequestOf(state) with
         | outerRequest ->
@@ -22271,7 +22403,7 @@ let lowerCons head tail lower state =
             in
                 state
                 |> markResourceArgumentsMoved([head, tail])
-                |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
+                |> withConsumerRequest(consHeadRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
                 |> lower(head)
                 |> normalizeRuntimeManagedBytesHead(request)(head)
                 |> normalizeRuntimeManagedConsHead(request)(head)(tail)
@@ -24049,7 +24181,16 @@ let handUpdatedFieldToOwnedSlot (expression: Expr) (fieldType: SemanticType) (ha
             else lowered
         | _ -> lowered
 
-let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless handsOver lower reversedTemps reversedTypes state =
+// A cons written as an updated field's value of a record successor is a record field cell.
+let lowerUpdatedFieldValue (fieldCells: Bool) (expression: Expr) lower (state: CoreLoweringState) =
+    if fieldCells && isConsValue(expression)
+    then
+        state
+        |> withConsumerRequest((emptyConsumerRequest with recordFieldCell = true))
+        |> lower(expression)
+    else lower(expression)(state)
+
+let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless handsOver (fieldCells: Bool) lower reversedTemps reversedTypes state =
     match (fieldNames, fieldTypes) with
         | ([], []) -> finishCoreValues(state)(reversedTemps)(reversedTypes)
         | (fieldName :: fieldRest, fieldType :: typeRest) ->
@@ -24068,7 +24209,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         )
                     | Some(expression) ->
                         state
-                        |> lower(expression)
+                        |> lowerUpdatedFieldValue(fieldCells)(expression)(lower)
                         |> finishUpdatedRecordField(fieldType)(reversedTemps)(reversedTypes)
                         |> handUpdatedFieldToOwnedSlot(expression)(fieldType)(handsOver)
             in
@@ -24084,6 +24225,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                             index + 1,
                             tagless,
                             handsOver,
+                            fieldCells,
                             lower,
                             nextTemps,
                             nextTypes,
@@ -24091,30 +24233,30 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         )
         | _ -> failedCoreValues(state)(UnsupportedCoreLoweringExpression("record layout arity"))
 
-let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp targetSlot lower typed =
+let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp targetSlot (fieldCells: Bool) lower typed =
     match (layout, typed) with
         | (_layout, (failedState, Some(error))) -> failure(failedState)(error)
         | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
-            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(runtimeManaged == false && handsFreshChildrenToOwnedSlots(resultType)(typedState))(lower)([])([])
+            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(runtimeManaged == false && handsFreshChildrenToOwnedSlots(resultType)(typedState))(fieldCells)(lower)([])([])
             |> finishConstructorAllocation([])(false)(layout)(resultType)(runtimeManaged)
 
-let finishRecordUpdateShape layout fieldNames fields targetTemp targetSlot targetType lower shape =
+let finishRecordUpdateShape layout fieldNames fields targetTemp targetSlot targetType (fieldCells: Bool) lower shape =
     match shape with
         | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
             state
             |> bindType(targetType)(resultType)
-            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(lower)
+            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(fieldCells)(lower)
 
-let finishRecordUpdateLayout fields targetTemp targetSlot targetType lower state layout =
+let finishRecordUpdateLayout fields targetTemp targetSlot targetType (fieldCells: Bool) lower state layout =
     match layout with
         | None -> failure(state)(CoreRecordUpdateRequiresRecord(targetType))
         | Some(CoreConstructorLayout { fieldNames = fieldNames } as constructor) ->
             state
             |> instantiateConstructor(constructor)
-            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetSlot)(targetType)(lower)
+            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetSlot)(targetType)(fieldCells)(lower)
 
-let finishRecordUpdate fields targetSlot lower loweredTarget =
+let finishRecordUpdate fields targetSlot (fieldCells: Bool) lower loweredTarget =
     match loweredTarget with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = state, temp = targetTemp, semanticType = targetType, error = None } ->
@@ -24122,15 +24264,17 @@ let finishRecordUpdate fields targetSlot lower loweredTarget =
                 | SemNamed(_symbolId, typeName, _arguments) ->
                     state
                     |> recordLayout(typeName)
-                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetSlot)(targetType)(lower)(state)
+                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetSlot)(targetType)(fieldCells)(lower)(state)
                 | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
 
 // A record update whose target reads a loop parameter (or a record field of one) inside the
 // loop body retains the unchanged fields it copies out of that parameter.
 let lowerRecordUpdate target fields lower state =
-    state
-    |> lower(target)
-    |> finishRecordUpdate(fields)(loopParameterReadSlot(target)(state))(lower)
+    match consumerRequestOf(state) with
+        | ConsumerRequest { recordFieldCells = fieldCells } ->
+            state
+            |> lower(target)
+            |> finishRecordUpdate(fields)(loopParameterReadSlot(target)(state))(fieldCells)(lower)
 
 let failedCoreBinary state error =
     LoweredCoreBinary(
@@ -26192,7 +26336,7 @@ and resolveOperationArmMatchArm pattern body guard lower postRegisterIndex capNa
                                 state
                                 |> preparePattern(pattern)
                                 |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
-                                |> finishPatternArm(None)(None)(false)(pattern)(valueTemp)(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
+                                |> finishPatternArm(None)(None)([])(false)(pattern)(valueTemp)(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
 // Each operation arm is bracketed like a linear arm of an ordinary match.
 and resolveOperationArmMatchArms cases lower postRegisterIndex capName opName plan =
     match (cases, plan) with
@@ -26562,10 +26706,15 @@ let buildsCopiedCells (expression: Expr) =
         | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true
         | _ -> false
 
+let isRecordSuccessor (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprRecordUpdate(_target, _fields) -> true
+        | _ -> false
+
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
     withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
     then tailSlot
-    else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument), lateCopiedCellParts = !copiesSuccessor && buildsCopiedCells(argument)))(state)
+    else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument), lateCopiedCellParts = !copiesSuccessor && buildsCopiedCells(argument), recordFieldCells = !copiesSuccessor && isRecordSuccessor(argument)))(state)
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
 // A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was
@@ -27178,18 +27327,47 @@ let emitTailSelfCallBackEdge (enteredFrame: CoreTcoLoopFrame) (loop: CoreTcoLoop
 
 // A tail self-call inside an emitted loop body is the loop's back edge rather than a call: the
 // loop function's own type gives each argument its expected parameter type.
+// A binder matched out of a reference-counted tuple scrutinee at the position of the loop
+// parameter at `slot` (`match (items, kept) with | (_, same)`).
+let recursive isTupleBinderOfParameter (binderSlot: Int) (slot: Int) (binders: List((Int, Int))) =
+    match binders with
+        | [] -> false
+        | (candidate, parameterSlot) :: rest -> candidate == binderSlot && parameterSlot == slot || isTupleBinderOfParameter(binderSlot)(slot)(rest)
+
+// Stage 0's `HandTupleBindersBackAsParameters`: such a binder handed back to its own parameter's
+// position is passed as the parameter itself. Passed as the binder, the successor is the tuple's
+// reference-counted copy of the parameter, retained for a slot that, left in the arena, never
+// releases it.
+let handTupleBinderBack (argument: Expr) (slot: Int) (name: Str) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(binder) ->
+            match (lookupBinding(binder)(state.bindings), lookupBinding(name)(state.bindings)) with
+                | (Some(CoreBinding { location = CoreLocal(binderSlot) }), Some(CoreBinding { location = CoreLocal(parameterSlot) })) ->
+                    if parameterSlot == slot && isTupleBinderOfParameter(binderSlot)(slot)(stateTupleBinderParameters(state))
+                    then ExprVar(name)
+                    else argument
+                | _ -> argument
+        | _ -> argument
+
+let recursive handTupleBindersBack (arguments: List(Expr)) (slots: List(Int)) (names: List(Str)) (state: CoreLoweringState) =
+    match (arguments, slots, names) with
+        | (argument :: restArguments, slot :: restSlots, name :: restNames) -> handTupleBinderBack(argument)(slot)(name)(state) :: handTupleBindersBack(restArguments)(restSlots)(restNames)(state)
+        | _ -> arguments
+
 let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) lower (state: CoreLoweringState) =
     match lookupBinding(loop.selfName)(state.bindings) with
         | None -> failure(state)(UnknownLoweringBinding(loop.selfName))
         | Some(binding) ->
             match instantiateBinding(binding)(state) with
                 | InstantiatedBinding { state = instantiatedState, semanticType = functionType } ->
-                    match lowerTailSelfCallArguments(spine.arguments)(frame.parameterSlots)(loop.argumentShapes)(0)(loop)(frame.affineReservationSlots)(functionType)(lower)(instantiatedState)([])([]) with
-                        | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                        | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
-                            argumentState
-                            |> markCallArgumentsMoved(spine)
-                            |> emitTailSelfCallBackEdge(frame)(loop)(spine.arguments)(temps)(argumentTypes)
+                    let arguments = handTupleBindersBack(spine.arguments)(frame.parameterSlots)(loop.parameterNames)(instantiatedState)
+                    in
+                        match lowerTailSelfCallArguments(arguments)(frame.parameterSlots)(loop.argumentShapes)(0)(loop)(frame.affineReservationSlots)(functionType)(lower)(instantiatedState)([])([]) with
+                            | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                            | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
+                                argumentState
+                                |> markCallArgumentsMoved(spine)
+                                |> emitTailSelfCallBackEdge(frame)(loop)(arguments)(temps)(argumentTypes)
 
 // Whether a reuse specialization's body is being lowered (stage 0's `_inSpecialization`): its
 // fresh inputs are recorded from the generating call until the body is lowered.

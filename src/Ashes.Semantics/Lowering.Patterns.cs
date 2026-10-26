@@ -1560,6 +1560,7 @@ public sealed partial class Lowering
             return;
         }
 
+        NoteTupleBinderParameterSlots(matchValue, armPattern, ScrutineeIsReferenceCountedTuple(matchValue, valueTemp));
         TrackPerceusPatternBindingOwners(patternBindings, armPattern, ScrutineeIsReferenceCountedTuple(matchValue, valueTemp));
 
         (string? ownerName, HashSet<string>? independentlyTrackedFieldNames) =
