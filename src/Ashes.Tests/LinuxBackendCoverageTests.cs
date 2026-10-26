@@ -3512,6 +3512,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_mutual_recursion_tuple_part_from_owned_slot_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Two mutually recursive functions return a tuple whose list is a call's fresh result; the
+        // caller asks for the tuple's parts, and the part handed over is the owned slot's own
+        // value, so the slot's reference goes with it.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildMutualRecursionTuplePartProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual recursion handing over a tuple part from an owned slot", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14533,6 +14557,38 @@ public sealed class LinuxBackendCoverageTests
 
             0
             |> rounds({{rounds}})(false)
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildMutualRecursionTuplePartProgram(int rounds)
+        => $$"""
+            type Item =
+                | name: Str
+                | size: Int
+
+            let recursive items (reversed: List(Item)) (state: (List(Str), Bool)) =
+                match state with
+                    | ([], flag) -> (Ashes.Collection.List.reverse(reversed), state)
+                    | (token :: rest, flag) ->
+                        if token == "let"
+                        then topLet(reversed)((rest, flag))
+                        else (Ashes.Collection.List.reverse(reversed), (rest, flag))
+            and topLet (reversed: List(Item)) (state: (List(Str), Bool)) =
+                match state with
+                    | ([], flag) -> (Ashes.Collection.List.reverse(reversed), state)
+                    | (name :: rest, flag) -> items(Item(name = "item " + name, size = 1) :: reversed)((rest, flag))
+
+            let parse (n: Int) =
+                match items([])((["let", "x" + Ashes.Text.fromInt(n), "y"], false)) with
+                    | (found, (rest, _flag)) -> Ashes.Collection.List.length(found) + Ashes.Collection.List.length(rest)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + parse(n))
+
+            0
+            |> rounds({{rounds}})
             |> Ashes.IO.print
             """;
 

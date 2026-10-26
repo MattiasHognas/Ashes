@@ -1568,6 +1568,10 @@ tuple that retains each counted element it keeps (`GRC_NO_TUPLEJOIN`). The calle
 tuple it takes apart and releases it with its elements at the end of the arm. A pattern binding of
 such a tuple that a constructor stores beyond the arm is copied into a string of its own first, since
 the binding only borrows from the tuple (`GRC_NO_OWNERPARTCHILD`).
+A function that cannot name the arena cells its tuple result may be (a loop, or a mutually recursive
+group fused into one) retains each part a caller asks for at its return. When a part is the very
+value one of its owned slots holds, that slot is released behind it, so the retain moves the slot's
+reference to the caller instead of adding one (`GRC_NO_PARTOWNERMOVE`).
 Whether a successor is a loop parameter or a part of one is traced through the instructions that
 defined it, however far back they lie in the function: a successor matched out of the parameter
 behind a long earlier arm is still the parameter's part, so its iteration's owned values are

@@ -286,12 +286,16 @@ public sealed partial class Lowering
         EmitJumpUnlessTuplePartsRequested(resultTemp, keepLabel);
         if (cells is not { Count: > 0 })
         {
+            List<int> partTemps = [];
             foreach (int part in parts)
             {
                 int childTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(childTemp, resultTemp, part * 8));
                 EmitRetainIfReferenceCounted(childTemp);
+                partTemps.Add(childTemp);
             }
+
+            EmitOwnedSlotDropsBehindRetainedParts([.. _generalRcOwnedSlots.Except(kept)], partTemps);
         }
 
         EmitTupleResultPartsMask(parts);
@@ -302,6 +306,43 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
         _tupleResultPartLabels[label] = parts;
         return true;
+    }
+
+    // A part retained at the return that is the very value an owned slot holds: the slot's reference
+    // is released behind it, so the retain hands that reference over rather than adding one the
+    // function never releases. An owned value a part only reads out of keeps its reference.
+    private void EmitOwnedSlotDropsBehindRetainedParts(List<GeneralRcOwnedSlot> ownedSlots, List<int> partTemps)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_PARTOWNERMOVE") is not null)
+        {
+            return;
+        }
+
+        foreach (GeneralRcOwnedSlot owned in ownedSlots)
+        {
+            string nextLabel = NewLabel("tuple_part_owner_kept");
+            int valueTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(valueTemp, owned.Slot));
+            EmitSkipUnlessReferenceCounted(valueTemp, nextLabel);
+            string dropLabel = NewLabel("tuple_part_owner_moved");
+            foreach (int partTemp in partTemps)
+            {
+                string otherLabel = NewLabel("tuple_part_owner_other");
+                int sameTemp = NewTemp();
+                Emit(new IrInst.CmpIntEq(sameTemp, valueTemp, partTemp));
+                Emit(new IrInst.JumpIfFalse(sameTemp, otherLabel));
+                Emit(new IrInst.Jump(dropLabel));
+                Emit(new IrInst.Label(otherLabel));
+            }
+
+            Emit(new IrInst.Jump(nextLabel));
+            Emit(new IrInst.Label(dropLabel));
+            EmitRuntimeManagedChildDrop(valueTemp, owned.Type);
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            Emit(new IrInst.StoreLocal(owned.Slot, zeroTemp));
+            Emit(new IrInst.Label(nextLabel));
+        }
     }
 
     private static bool ForwardedTupleResultPartsEnabled =>
