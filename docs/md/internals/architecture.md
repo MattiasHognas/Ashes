@@ -1549,6 +1549,10 @@ loop's exit. A join takes its ownership from the arms that reach it: when every 
 over a value it just produced (a loop exit building its result while the other arms jump back), the
 join's value is fresh and the function's return takes it over rather than retaining it again, and a
 `let` passing a join's value on keeps that fact.
+Whether a successor is a loop parameter or a part of one is traced through the instructions that
+defined it, however far back they lie in the function: a successor matched out of the parameter
+behind a long earlier arm is still the parameter's part, so its iteration's owned values are
+released (`GRC_NO_FULLDERIVATION` limits the trace to the last 256 instructions, as it was).
 
 ### Scoped arenas
 

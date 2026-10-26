@@ -616,26 +616,103 @@ public sealed partial class Lowering
             return false;
         }
 
-        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 256; i--)
+        int index = DefinitionIndexOf(temp);
+        return index >= 0 && _inst[index] switch
         {
-            switch (_inst[i])
+            IrInst.LoadLocal load => tco.ParamSlots.Contains(load.Slot) || IsLoopParameterPartSlot(load.Slot),
+            IrInst.LoadMemOffset field => IsLoopParameterDerivedTemp(
+                tco,
+                TryGetLocalAggregateFieldSource(field.BasePtr, field.OffsetBytes, index, out int storedTemp) ? storedTemp : field.BasePtr,
+                depth + 1),
+            IrInst.GetAdtField field => IsLoopParameterDerivedTemp(tco, field.Ptr, depth + 1),
+            IrInst.Borrow borrow => IsLoopParameterDerivedTemp(tco, borrow.SourceTemp, depth + 1),
+            _ => false,
+        };
+    }
+
+    // The instruction defining each temp of a function body that a derivation follows (a local
+    // load, a field read, a borrow, an allocation), recorded as the body grows, so a binding is
+    // traced to its parameter however far back the read lies: a window of recent instructions lost
+    // it behind a long earlier match arm, and the back edge then kept an iteration's owned value
+    // that it could release.
+    private sealed class TempDefinitions
+    {
+        public Dictionary<int, IrInst> Definitions { get; } = [];
+        public Dictionary<int, int> Positions { get; } = [];
+        public int Scanned { get; set; }
+    }
+
+    private readonly Dictionary<List<IrInst>, TempDefinitions> _tempDefinitionsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private static bool TempDefinitionsAreTracked
+        => Environment.GetEnvironmentVariable("GRC_NO_FULLDERIVATION") is null;
+
+    // The current position of the instruction defining `temp`, or -1. An instruction spliced in
+    // earlier only moves a definition later, so a recorded position is where the search starts.
+    private int DefinitionIndexOf(int temp)
+    {
+        if (!TempDefinitionsAreTracked)
+        {
+            return DefinitionIndexInWindow(temp);
+        }
+
+        if (!_tempDefinitionsByBody.TryGetValue(_inst, out TempDefinitions? definitions))
+        {
+            definitions = new TempDefinitions();
+            _tempDefinitionsByBody[_inst] = definitions;
+        }
+
+        for (int i = Math.Min(definitions.Scanned, _inst.Count); i < _inst.Count; i++)
+        {
+            if (DerivationTarget(_inst[i]) is int target)
             {
-                case IrInst.LoadLocal load when load.Target == temp:
-                    return tco.ParamSlots.Contains(load.Slot) || IsLoopParameterPartSlot(load.Slot);
-                case IrInst.LoadMemOffset field when field.Target == temp:
-                    return IsLoopParameterDerivedTemp(
-                        tco,
-                        TryGetLocalAggregateFieldSource(field.BasePtr, field.OffsetBytes, i, out int storedTemp) ? storedTemp : field.BasePtr,
-                        depth + 1);
-                case IrInst.GetAdtField field when field.Target == temp:
-                    return IsLoopParameterDerivedTemp(tco, field.Ptr, depth + 1);
-                case IrInst.Borrow borrow when borrow.Target == temp:
-                    return IsLoopParameterDerivedTemp(tco, borrow.SourceTemp, depth + 1);
+                definitions.Definitions[target] = _inst[i];
+                definitions.Positions[target] = i;
             }
         }
 
-        return false;
+        definitions.Scanned = _inst.Count;
+        if (!definitions.Definitions.TryGetValue(temp, out IrInst? definition))
+        {
+            return -1;
+        }
+
+        for (int i = definitions.Positions[temp]; i < _inst.Count; i++)
+        {
+            if (ReferenceEquals(_inst[i], definition))
+            {
+                definitions.Positions[temp] = i;
+                return i;
+            }
+        }
+
+        return -1;
     }
+
+    private int DefinitionIndexInWindow(int temp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 256; i--)
+        {
+            if (DerivationTarget(_inst[i]) == temp)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int? DerivationTarget(IrInst instruction)
+        => instruction switch
+        {
+            IrInst.LoadLocal load => load.Target,
+            IrInst.LoadMemOffset field => field.Target,
+            IrInst.GetAdtField field => field.Target,
+            IrInst.Borrow borrow => borrow.Target,
+            IrInst.Alloc alloc => alloc.Target,
+            _ => null,
+        };
 
     // A read of a field of an aggregate this function built itself (the tuple a `match (a, b) with`
     // scrutinizes) is the value stored into that field: the read stands for the stored temp, so a
@@ -646,6 +723,23 @@ public sealed partial class Lowering
         if (Environment.GetEnvironmentVariable("GRC_NO_TUPLEPARTS") is not null)
         {
             return false;
+        }
+
+        // The aggregate's stores follow its allocation, which may lie far behind the read.
+        if (TempDefinitionsAreTracked
+            && DefinitionIndexOf(aggregateTemp) is var allocation and >= 0
+            && allocation < beforeIndex
+            && _inst[allocation] is IrInst.Alloc)
+        {
+            for (int i = allocation + 1; i < beforeIndex && i <= allocation + 256; i++)
+            {
+                if (_inst[i] is IrInst.StoreMemOffset store && store.BasePtr == aggregateTemp && store.OffsetBytes == offsetBytes)
+                {
+                    storedTemp = store.Source;
+                }
+            }
+
+            return storedTemp >= 0;
         }
 
         for (int i = beforeIndex - 1; i >= 0 && i >= beforeIndex - 256; i--)

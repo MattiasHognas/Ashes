@@ -3394,6 +3394,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_records_rewritten_after_a_long_match_arm_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop rewrites records through a helper call after an arm long enough that the walked
+        // tail's definition lies far behind the back edge: the back edge still traces the tail to
+        // the loop parameter and releases the helper result each arena record holds.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildRecordsRewrittenAfterLongArmProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{5L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("records rewritten after a long match arm", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14140,6 +14164,64 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + pairs([1, 2, n, 4, 5, n, 7])(Kept(state = [n, 7, 8], temp = n))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordsRewrittenAfterLongArmProgram(int rounds)
+        => $$"""
+            type Kind =
+                | LoadLocal(Int, Int)
+                | StoreLocal(Int, Int)
+                | RcDup(Int, Int)
+                | RcDrop(Int, Int)
+
+            type Inst =
+                | instruction: Kind
+                | location: Int
+
+            let recursive lookup (temp: Int) (remap: List((Int, Int))) =
+                match remap with
+                    | [] -> None
+                    | (key, value) :: rest ->
+                        if key == temp
+                        then Some(value)
+                        else lookup(temp)(rest)
+
+            let recursive resolve (remap: List((Int, Int))) (temp: Int) =
+                match lookup(temp)(remap) with
+                    | None -> temp
+                    | Some(next) -> resolve(remap)(next)
+
+            let remapSources (kind: Kind) (remap: List((Int, Int))) =
+                match kind with
+                    | LoadLocal(target, slot) -> LoadLocal(target)(slot)
+                    | StoreLocal(slot, source) -> StoreLocal(slot)(resolve(remap)(source))
+                    | RcDup(target, source) -> RcDup(target)(resolve(remap)(source))
+                    | RcDrop(source, slot) -> RcDrop(source + 1)(slot)
+
+            let recursive fusePass (insts: List(Inst)) (remap: List((Int, Int))) (acc: List(Inst)) =
+                match insts with
+                    | [] -> Ashes.Collection.List.reverse(acc)
+                    | Inst { instruction = RcDup(dest, src) } :: Inst { instruction = RcDrop(dropSrc, _) } :: tail ->
+                        if dropSrc == src
+                        then fusePass(tail)(remap)(acc)
+                        else fusePass(tail)(remap)(acc)
+                    | Inst { instruction = inst, location = loc } :: tail -> fusePass(tail)(remap)(Inst(instruction = remapSources(inst)(remap), location = loc) :: acc)
+
+            let recursive weight (instructions: List(Inst)) (total: Int) =
+                match instructions with
+                    | [] -> total
+                    | Inst { instruction = StoreLocal(_, source) } :: rest -> weight(rest)(total + source)
+                    | _ :: rest -> weight(rest)(total + 1)
+
+            let recursive rounds (code: List(Inst)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    rounds(code)(n - 1)(total + weight(fusePass(code)([])([]))(0))
+
+            0
+            |> rounds([Inst(instruction = LoadLocal(1)(2), location = 7), Inst(instruction = RcDup(3)(1), location = 0), Inst(instruction = RcDrop(1)(2), location = 0), Inst(instruction = StoreLocal(4)(3), location = 2), Inst(instruction = LoadLocal(5)(4), location = 0)])({{rounds}})
+            |> Ashes.IO.print
             """;
 
     private static string BuildWholeTupleElementHandedBackProgram(int rounds)
