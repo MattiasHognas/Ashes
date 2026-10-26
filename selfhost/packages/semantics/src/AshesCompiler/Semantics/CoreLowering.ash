@@ -22972,6 +22972,9 @@ let emitRetainOrArenaCopyForDestination (temp: Int) (semanticType: SemanticType)
                                                         | FreshTemp { state = loaded, temp = resultTemp } ->
                                                             (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
 
+// An arena cell built as a call's argument is no successor cell, the call's result is: its retain
+// of a parameter read is collected with the call argument's retains and released after the call
+// (stage 0's `RecordCallArgumentArenaRetain` in `RetainRuntimeManagedTcoConstructorArguments`).
 let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (state
     |> statePatternOwnerCopyTemps
@@ -22983,7 +22986,9 @@ let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Exp
             then
                 match arenaSuccessorDestination(runtimeManaged)(state) with
                     | Some(destinationSlot) -> emitRetainOrArenaCopyForDestination(temp)(semanticType)(destinationSlot)(state)
-                    | None -> emitLoopParameterFieldRetain(temp)(semanticType)(state)
+                    | None ->
+                        match emitLoopParameterFieldRetain(temp)(semanticType)(state) with
+                            | (retained, duplicate) -> (recordArenaCellTransferRetain(!runtimeManaged)(temp)(duplicate)(semanticType)(retained), duplicate)
             else emitPendingConstructorFieldRetain(temp)(slot)(state)
 
 let recursive retainLoopParameterArguments (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =

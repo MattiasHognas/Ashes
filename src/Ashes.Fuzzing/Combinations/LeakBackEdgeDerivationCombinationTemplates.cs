@@ -72,3 +72,43 @@ internal sealed class BackEdgeDerivationPastLongArmTemplate() : LeakCombinationT
             """;
     }
 }
+
+/// <summary>
+/// A loop whose successor wraps a constructor over the loop parameter in a helper call
+/// (`build(wrap(0)(Call(current, argument)))`): the constructor is the call's argument, not a cell
+/// of the successor, so the retain it takes of the parameter is released after the call.
+/// </summary>
+internal sealed class CallArgumentCellInSuccessorTemplate() : LeakCombinationTemplate(
+    "leak.call-argument-cell-in-successor", "callArgumentCellInSuccessor", GeneratedFeature.Adt, GeneratedFeature.Match, GeneratedFeature.TailCall)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string expression = names.Of("LeakExpr");
+        string wrap = names.Of("wrap");
+        string build = names.Of("build");
+        string depth = names.Of("depth");
+        string word = names.Word();
+        return $$"""
+            type {{expression}} =
+                | Name(Str)
+                | Applied({{expression}}, {{expression}})
+                | Spanned(Int, {{expression}})
+
+            let {{wrap}} (start: Int) (inner: {{expression}}) = Spanned(start, inner)
+
+            let recursive {{build}} (current: {{expression}}) (remaining: List({{expression}})) =
+                match remaining with
+                    | [] -> current
+                    | argument :: tail -> {{build}}({{wrap}}({{names.Between(0, 9)}})(Applied(current, argument)))(tail)
+
+            let recursive {{depth}} (value: {{expression}}) =
+                match value with
+                    | Applied(function, _) -> 1 + {{depth}}(function)
+                    | Spanned(_, inner) -> {{depth}}(inner)
+                    | _ -> 0
+
+            let {{names.Entry}} (seed: Int) =
+                {{depth}}({{build}}(Name({{word}} + Ashes.Text.fromInt(seed)))([Name({{word}}), Name("x" + Ashes.Text.fromInt(seed))])) + seed
+            """;
+    }
+}

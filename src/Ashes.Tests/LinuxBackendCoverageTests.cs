@@ -3441,6 +3441,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_successor_wraps_constructor_over_parameter_in_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor wraps a constructor over its parameter in a helper call: the
+        // constructor is the call's argument, so its retain of the parameter is released after
+        // the call rather than left with an arena cell nothing releases.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildSuccessorWrapsConstructorInCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("successor wrapping a constructor over its parameter in a call", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14291,6 +14315,44 @@ public sealed class LinuxBackendCoverageTests
 
             0
             |> rounds([Fn(label = "lambda_" + Ashes.Text.fromInt(1), size = 3), Fn(label = "lambda_" + Ashes.Text.fromInt(2), size = 3), Fn(label = "lambda_" + Ashes.Text.fromInt(3), size = 1)])({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildSuccessorWrapsConstructorInCallProgram(int rounds)
+        => $$"""
+            type Expr =
+                | ExprVar(Str)
+                | ExprCall(Expr, Expr)
+                | ExprAt(Int, Expr)
+
+            let wrap (start: Int) (expression: Expr) = ExprAt(start)(expression)
+
+            let recursive build (current: Expr) (remaining: List(Expr)) =
+                match remaining with
+                    | [] -> current
+                    | argument :: tail ->
+                        build(wrap(0)(ExprCall(current)(argument)))(tail)
+
+            let recursive depth (expression: Expr) =
+                match expression with
+                    | ExprCall(f, _) -> 1 + depth(f)
+                    | ExprAt(_, inner) -> depth(inner)
+                    | _ -> 0
+
+            let parse (n: Int) =
+                (let function = ExprVar("f" + Ashes.Text.fromInt(n))
+                in
+                    [ExprVar("x" + Ashes.Text.fromInt(n))]
+                    |> build(function)
+                    |> depth)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + parse(n))
+
+            0
+            |> rounds({{rounds}})
             |> Ashes.IO.print
             """;
 

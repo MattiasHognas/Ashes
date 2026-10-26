@@ -1569,9 +1569,17 @@ public sealed partial class Lowering
             }
             else
             {
+                int readTemp = argumentTemps[index];
                 argumentTemps[index] = EmitRuntimeManagedConstructorFieldRetain(
-                    argumentTemps[index],
+                    readTemp,
                     MayUseEmptyListRepresentation(argumentTypes[index]));
+
+                // An arena cell built as a call's argument is no successor cell: the call's result
+                // is. The retain is released after the call, as an arena tuple argument's is.
+                if (!runtimeManagedCandidate && Environment.GetEnvironmentVariable("GRC_NO_CTORARGRETAIN") is null)
+                {
+                    _ = RecordCallArgumentArenaRetain(readTemp, argumentTemps[index], argumentTypes[index]);
+                }
             }
         }
     }

@@ -112,6 +112,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new TupleConstructorChildHandedBackTemplate());
         registry.Register(new TupleConsChainTailHandedBackTemplate());
         registry.Register(new BackEdgeDerivationPastLongArmTemplate());
+        registry.Register(new CallArgumentCellInSuccessorTemplate());
         registry.Register(new ConstrainedCallFreshArgumentTemplate());
         registry.Register(new FreshHeadOverNamedHeadTemplate());
         registry.Register(new FreshHeadOverViewHeadTemplate());

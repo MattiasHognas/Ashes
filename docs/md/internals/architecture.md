@@ -1556,6 +1556,9 @@ Whether a successor is a loop parameter or a part of one is traced through the i
 defined it, however far back they lie in the function: a successor matched out of the parameter
 behind a long earlier arm is still the parameter's part, so its iteration's owned values are
 released (`GRC_NO_FULLDERIVATION` limits the trace to the last 256 instructions, as it was).
+A cell built as a call's argument inside a successor (`loop(wrap(Call(current, x)))`) is not one of
+the successor's cells, the call's result is: the retain it takes of a loop parameter read is
+released after the call with the other call-argument retains (`GRC_NO_CTORARGRETAIN`).
 
 ### Scoped arenas
 
