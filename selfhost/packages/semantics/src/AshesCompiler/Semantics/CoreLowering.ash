@@ -4709,20 +4709,21 @@ let retainAliasBorrowedOwners (name: Str) (state: CoreLoweringState) =
 // the transfer and the child is the read of a binding that still owns its reference, whole or by
 // a heap-typed field (a borrow of a child the owner releases with itself); a read of an arena
 // binding that borrows owners retains those owners instead; every other child is stored as
-// lowered.
+// lowered. A pattern owner is not retained here (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer`
+// skips it): the pattern-owner duplicate taken of its read is the reference the child carries.
 let retainTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCoreValue) =
     match (transfers, unspanArgument(child), lowered) with
         | (true, ExprVar(name), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }) ->
-            match liveRuntimeOwnerSlot(name)(state) with
-                | Some(_slot) -> emitTransferRetain(temp)(semanticType)(state)
-                | None -> lowered with state = retainAliasBorrowedOwners(name)(state)
+            match (liveRuntimeOwnerSlot(name)(state), patternOwnerBinding(name)(state)) with
+                | (Some(_slot), None) -> emitTransferRetain(temp)(semanticType)(state)
+                | _ -> lowered with state = retainAliasBorrowedOwners(name)(state)
         | (true, ExprQualifiedVar(owner, _field), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }) ->
             if resultSurvivesReset(semanticType)(state)
             then lowered
             else
-                match liveRuntimeOwnerSlot(owner)(state) with
-                    | Some(_slot) -> emitTransferRetain(temp)(semanticType)(state)
-                    | None -> lowered
+                match (liveRuntimeOwnerSlot(owner)(state), patternOwnerBinding(owner)(state)) with
+                    | (Some(_slot), None) -> emitTransferRetain(temp)(semanticType)(state)
+                    | _ -> lowered
         | _ -> lowered
 
 // Stage 0's `LowerCallArgumentValue`: a plain read passed to a callee whose result may reach it

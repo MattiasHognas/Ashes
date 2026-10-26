@@ -1012,7 +1012,9 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
   copy of an arena-placed parameter, so a binder under it that needs a protective owner gets one
   even though its root parameter stays in the arena: the copy is released with the tuple at the end
   of the arm, and a part of it stored in the next iteration's arena cell must be retained first
-  (`GRC_NO_TUPLEROOTCOPY`).
+  (`GRC_NO_TUPLEROOTCOPY`). Such a binder stored into a cell the self-call builds
+  (`(n :: rest, Box(inner)) -> close(rest)(Box(inner))`) carries the protective owner's duplicate
+  and takes no transfer retain on top of it: a pattern owner is never transferred, in either stage.
 - A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
   owned reference-counted copy when the cell's tail is a recursive result or the cell is a
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).
