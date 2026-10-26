@@ -881,7 +881,7 @@ public sealed partial class Lowering
             Unify(bodyType, committed);
         }
 
-        TypeRef pruned = ResolvePhantomResultLayout(label, bodyType);
+        TypeRef pruned = ResolvePhantomNormalizedResultLayout(label, ResolvePhantomResultLayout(label, bodyType));
         _enclosingScopesByLabel.Remove(label);
         if (!GeneralRcEnabled)
         {
@@ -1038,15 +1038,47 @@ public sealed partial class Lowering
             return pruned;
         }
 
+        TypeRef? substituted = SubstitutePhantomResultVariables(label, pruned);
+        return substituted is null ? pruned : ContractLayoutOrSelf(substituted, pruned);
+    }
+
+    private static bool PhantomNormalizedResultRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_PHANTOMNORMALIZED") is null;
+
+    // A result outside the contract's types whose phantoms, read as `Never`, leave a type the
+    // reference-counted heap can own outright or the arena can copy out (a `Result(e, List(Int))`
+    // only `Ok` builds) is normalized as that type, so the owned values its cells were read out of
+    // are released behind it. The reading is taken at the return, where it also decides whether the
+    // function returns a reference-counted result, which its callers take as such.
+    private TypeRef ResolvePhantomNormalizedResultLayout(string label, TypeRef layout)
+    {
+        if (!PhantomNormalizedResultRuleEnabled
+            || layout is TypeRef.TFun
+            || !_letBoundFunctionLabels.Contains(label)
+            || !ContainsUnresolvedLayoutType(layout, [])
+            || SubstitutePhantomResultVariables(label, layout) is not TypeRef substituted
+            || ContainsUnresolvedLayoutType(substituted, []))
+        {
+            return layout;
+        }
+
+        return !CanArenaReset(substituted) && (CanNormalizeIntoOwnedRuntimeValue(substituted) || HasFixedArenaCopyOut(substituted))
+            ? substituted
+            : layout;
+    }
+
+    // The result type with its phantoms read as `Never`; null when it has none.
+    private TypeRef? SubstitutePhantomResultVariables(string label, TypeRef pruned)
+    {
         HashSet<int> phantoms = [];
         FtvType(pruned, phantoms);
         if (phantoms.Count == 0)
         {
-            return pruned;
+            return null;
         }
 
         phantoms.ExceptWith(VariablesHeldBesideFunction(label));
-        return phantoms.Count == 0 ? pruned : ContractLayoutOrSelf(SubstitutePhantomVariables(pruned, phantoms), pruned);
+        return phantoms.Count == 0 ? null : SubstitutePhantomVariables(pruned, phantoms);
     }
 
     private HashSet<int> VariablesHeldBesideFunction(string label)

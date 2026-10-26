@@ -3370,6 +3370,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_ok_of_matched_record_fields_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns `Ok` of the fields of a record it matched, its error type a variable
+        // nothing gives a type: read as `Never`, the result is copied out like any `Result` of lists
+        // and the record is released behind it instead of staying behind the arena `Ok`.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildOkOfMatchedRecordFieldsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("Ok of a matched record's fields", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_int_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -13965,6 +13989,30 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + close([1, 2, 3, 4, n])(Kept(state = [n, 7, 8, 9, 10, 11], temp = n))(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildOkOfMatchedRecordFieldsProgram(int rounds)
+        => $$"""
+            type Fields =
+                | xs: List(Int)
+                | ps: List((Int, Bool))
+                | js: List(Str)
+
+            let make (k: Int) = Fields(xs = [k, k + 1], ps = [(k, true)], js = ["j"])
+
+            let outer (k: Int) =
+                match make(k) with
+                    | Fields { xs = xs, ps = ps, js = js } -> Ok((xs, (ps, js)))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else
+                    match outer(n) with
+                        | Ok((a, _rest)) -> rounds(n - 1)(total + Ashes.Collection.List.length(a))
+                        | Error(_) -> rounds(n - 1)(total)
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

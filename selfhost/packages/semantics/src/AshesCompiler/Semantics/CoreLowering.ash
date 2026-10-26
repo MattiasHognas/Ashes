@@ -9987,6 +9987,19 @@ let recursive joinVariables (left: List(Int)) (right: List(Int)) =
             then joinVariables(rest)(right)
             else joinVariables(rest)(id :: right)
 
+// The variables of a function's resolved result that no binding beside the function's own self
+// reference holds and no pending trait goal names: its phantoms.
+let phantomResultVariables (label: Str) (resolved: SemanticType) (state: CoreLoweringState) =
+    pendingOperatorScheme(state) :: resolvedBindingSchemes(bindingsBesideSelf(label)(state.bindings)(state))(state)
+    |> freeEnvironmentVariables
+    |> joinVariables(state
+    |> resolvedBindingSchemes(bindingsBesideSelf(label)(stateEnclosingBindings(state))(state))
+    |> freeEnvironmentVariables)
+    |> (given (held: List(Int)) ->
+        resolved
+        |> freeTypeVariables
+        |> variablesNotHeld(held))
+
 // Only a function a `let` binds is generalized once lowered; any other (a lambda handed to a call, a
 // constructor taken as a function) is typed by the context it meets afterwards.
 let resolvePhantomResultLayout (label: Str) (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -9998,18 +10011,36 @@ let resolvePhantomResultLayout (label: Str) (semanticType: SemanticType) (state:
                 if !containsUnresolvedLayout(resolved)(state) || !containsLabel(label)(stateLetBoundFunctionLabels(state))
                 then semanticType
                 else
-                    match pendingOperatorScheme(state) :: resolvedBindingSchemes(bindingsBesideSelf(label)(state.bindings)(state))(state)
-                    |> freeEnvironmentVariables
-                    |> joinVariables(state
-                    |> resolvedBindingSchemes(bindingsBesideSelf(label)(stateEnclosingBindings(state))(state))
-                    |> freeEnvironmentVariables)
-                    |> (given (held: List(Int)) ->
-                        resolved
-                        |> freeTypeVariables
-                        |> variablesNotHeld(held)) with
+                    match phantomResultVariables(label)(resolved)(state) with
                         | [] -> semanticType
                         | phantoms ->
                             contractLayoutOrSelf(substitutePhantomVariables(phantoms)(resolved))(semanticType)(state))
+
+// Stage 0's `ResolvePhantomNormalizedResultLayout`: a result outside the contract's types whose
+// phantoms, read as `Never`, leave a type with an independent copy (a `Result(e, List(Int))` only
+// `Ok` builds) is detached as that type, so the owned values its cells were read out of are
+// released behind it. The reading is taken at the return and wherever the return decides whether
+// the function's result is reference-counted, which its callers then take as such.
+let resolvePhantomNormalizedResultLayout (label: Str) (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemFunction(_argument, _result, _row) -> semanticType
+            | _ ->
+                if !containsUnresolvedLayout(resolved)(state) || !containsLabel(label)(stateLetBoundFunctionLabels(state))
+                then semanticType
+                else
+                    match phantomResultVariables(label)(resolved)(state) with
+                        | [] -> semanticType
+                        | phantoms ->
+                            let substituted = substitutePhantomVariables(phantoms)(resolved)
+                            in
+                                if containsUnresolvedLayout(substituted)(state) || resultSurvivesReset(substituted)(state)
+                                then semanticType
+                                else
+                                    match independentResultCopyOf(substituted)(state) with
+                                        | Some(_copy) -> substituted
+                                        | None -> semanticType)
 
 // Stage 0's `IsRuntimeOwnedCopyTupleLayout`: a tuple every element of which a runtime-managed
 // parent can own and the runtime-managed deep copy reproduces without reaching a recursive type.
@@ -11244,7 +11275,7 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                         (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(bodyType)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
 
 let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
-    finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(resolvePhantomResultLayout(label)(bodyType)(state))(state)
+    finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(resolvePhantomNormalizedResultLayout(label)(resolvePhantomResultLayout(label)(bodyType)(state))(state))(state)
 
 let tempIsProducedOwned (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
@@ -11916,7 +11947,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
             |> releaseNormalizedParameterBehindResult(label)(parameter)(body)(parameterType)(bodyType) with
                 | (loweredBody, bodyTemp) ->
                     let bodyRuntimeManaged =
-                        finishedResultRuntimeManaged(bodyTemp)(resolvePhantomResultLayout(label)(bodyType)(loweredBody))(loweredBody)
+                        finishedResultRuntimeManaged(bodyTemp)(resolvePhantomNormalizedResultLayout(label)(resolvePhantomResultLayout(label)(bodyType)(loweredBody))(loweredBody))(loweredBody)
                     in
                         let returned =
                             match normalizeFunctionResult(label)(bodyTemp)(bodyType)(loweredBody) with

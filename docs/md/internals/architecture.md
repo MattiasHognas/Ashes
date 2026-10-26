@@ -1436,6 +1436,14 @@ given the result its error type, still has a known layout: it hands its fresh ch
 slots too, and the return, with the type resolved by then, decides whether the result is normalized
 and the slots released (`GRC_NO_CTORFIELDLESS` switches this off).
 
+A result outside the contract's types that is unresolved only in a phantom, a `Result(e, T)` only
+`Ok` builds (`match make(k) with | R { xs = xs } -> Ok(xs)`), is detached at the return as if the
+phantom were `Never`, when that type has a fixed copy-out or can be normalized onto the
+reference-counted heap. The reading is taken at the return, where it also decides whether
+the function returns a reference-counted result, which its callers then take as such. Without it
+the arena `Ok` kept pointing into the matched record, which the function could then never release
+(`GRC_NO_PHANTOMNORMALIZED` switches this off).
+
 A tuple beside a value of unresolved layout (a generic function's parameter, say) cannot go onto the
 reference-counted heap, and nothing releases what an arena tuple holds. Such a tuple never holds the
 only reference to a reference-counted value: an element that may be reference-counted (other than
