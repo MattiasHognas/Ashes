@@ -3658,6 +3658,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_late_copied_successor_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop over unannotated parameters hands on a cons onto the consumed tail of a plain match
+        // (`At(span, inner) :: rest -> walk(inner :: rest)`): the successor is known to be copied only
+        // once its types resolve, and the duplicates its cell took for its head and its tail are
+        // released after that copy.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildLateCopiedSuccessorTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("late-copied successor tail", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_ok_of_matched_record_fields_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14709,6 +14734,28 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + peel([[3, 2, 1], [4, n]])([n, 2])(0) + count([n, 2, 3])(Kept(state = [n, 7], temp = 3))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildLateCopiedSuccessorTailProgram(int rounds)
+        => $$"""
+            type Item =
+                | At(Int, Item)
+                | Plain
+                | Named(Str)
+
+            let recursive walk items base state =
+                match items with
+                    | [] -> base + Ashes.Collection.List.length(state)
+                    | At(span, inner) :: rest -> walk(inner :: rest)(base)(state)
+                    | Plain :: rest -> walk(rest)(base)(state)
+                    | Named(name) :: rest -> walk(rest)(base)(state)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([At(9, Named("coal" + Ashes.Text.fromInt(n))), At(2, Plain), Named("ember")])(0)(["flint"]))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

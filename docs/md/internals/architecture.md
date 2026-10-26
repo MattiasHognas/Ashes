@@ -1173,11 +1173,14 @@ afresh (`[first]`, or `first :: []`) with elements reading no loop parameter hol
 predecessor, so beside self-calls that hand the parameter on it keeps the list a choice accumulator
 (`GRC_NO_RESETACCUMULATOR`): left in the arena, each fresh start stored a reference-counted element
 built from a call's parts in an arena cell that nothing released. A list whose every self-call
-hands on its consumed tail bound out of a tuple scrutinee, or a cons chain onto it
+hands on its consumed tail, or a cons chain onto it
 (`((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), at least one the chain and no head reading
-a loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): left in the arena, the
-rebuilt cell kept the references its parts were retained with for it, and no later iteration
-released them. In a list of lists of copy-type values the inner cells of such a successor
+a loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): matched in a tuple, the
+list is a counted copy, and left in the arena the rebuilt cell kept the references its parts were
+retained with for it, which no later iteration released. A tail matched out of the parameter alone
+counts the same way (`GRC_NO_CONSEDTAILANYMATCH` counts only a tuple scrutinee's): placed on the
+reference-counted heap, its successor's cell releases the duplicates it took once the back edge has
+copied it. In a list of lists of copy-type values the inner cells of such a successor
 (`walk((x - 1 :: xs) :: rest)`) are copied with the outer cell, and their counted suffix is shared
 with a reference of the copy's own, so they borrow their tail as the outer cell borrows its parts
 (`GRC_NO_COPIEDINNERCELL`). A successor known to be copied only once its types resolve (a loop over

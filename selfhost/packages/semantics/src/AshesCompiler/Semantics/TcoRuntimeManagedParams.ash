@@ -600,29 +600,29 @@ let recursive shapeObserveChoices (arguments: List(Expr)) (index: Int) (names: L
                 in (everyEdge && (choiceEdge || shapeIsAccumulatorArm(structural)(index)(name)(shadowed)(parameters)), anyChoice || choiceEdge, everyHandedOnOrGrown && shapeIsHandedOnOrGrown(argument)(structural)(index)(shadowed)(parameters))) :: shapeObserveChoices(restArguments)(index + 1)(restNames)(shadowed)(tailOwners)(letValues)(parameters)(restChoices)
         | _ -> choices
 
-// A cons chain onto the consumed tail of the parameter at `index` bound out of a tuple scrutinee, none
-// of whose heads reads a loop parameter (`| ((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`),
-// stage 0's `RecordConsedTailEdge`.
-let recursive shapeIsConsedTail (structural: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (tupleTails: List(Str)) (parameters: List(Str)) =
+// A cons chain onto the consumed tail of the parameter at `index`, none of whose heads reads a loop
+// parameter (`| ((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`, or the tail matched out of the
+// parameter alone), stage 0's `RecordConsedTailEdge`.
+let recursive shapeIsConsedTail (structural: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
     match shapeUnspan(structural) with
         | ExprCons(head, tail) ->
             if shapeReadsLoopParameter(head)(shadowed)(parameters)
             then false
             else
                 match shapeUnspan(tail) with
-                    | ExprVar(name) -> shapeResolveParameter(name)(shadowed)(parameters) == None && shapeContainsName(name)(tupleTails) && shapeLookupTailOwner(name)(tailOwners) == Some(index)
-                    | _ -> shapeIsConsedTail(tail)(index)(shadowed)(tailOwners)(tupleTails)(parameters)
+                    | ExprVar(name) -> shapeResolveParameter(name)(shadowed)(parameters) == None && shapeLookupTailOwner(name)(tailOwners) == Some(index)
+                    | _ -> shapeIsConsedTail(tail)(index)(shadowed)(tailOwners)(parameters)
         | _ -> false
 
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail or a
 // cons chain onto it, and whether one passed the chain, stage 0's `ConsedTailEdges` and
 // `AnyConsedTailEdge`.
-let recursive shapeObserveConsedTails (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (tupleTails: List(Str)) (letValues: List((Str, Expr))) (parameters: List(Str)) (consedTails: List((Bool, Bool))) =
+let recursive shapeObserveConsedTails (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (consedTails: List((Bool, Bool))) =
     match (arguments, consedTails) with
         | (argument :: restArguments, (everyEdge, anyConsed) :: restConsed) ->
             (let consed =
-                shapeIsConsedTail(shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters))(index)(shadowed)(tailOwners)(tupleTails)(parameters)
-            in (everyEdge && (consed || shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters) == TcoConsumedTailShape), anyConsed || consed)) :: shapeObserveConsedTails(restArguments)(index + 1)(shadowed)(tailOwners)(tupleTails)(letValues)(parameters)(restConsed)
+                shapeIsConsedTail(shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters))(index)(shadowed)(tailOwners)(parameters)
+            in (everyEdge && (consed || shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters) == TcoConsumedTailShape), anyConsed || consed)) :: shapeObserveConsedTails(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restConsed)
         | _ -> consedTails
 
 let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =
@@ -707,9 +707,6 @@ type ShapeWalk =
     | observed: List(Maybe(TcoArgumentShape))
     | choices: List((Bool, Bool, Bool))
     | consedTails: List((Bool, Bool))
-    // The consumed tails the arms in scope bound out of a tuple scrutinee, stage 0's
-    // `TupleScrutineeTails`.
-    | tupleTails: List(Str)
     | walks: List((Bool, Bool, Bool, Bool))
     | accumulators: List((Bool, Bool))
     // Per position: whether a self-call started the list afresh there, and the shape the other
@@ -735,29 +732,6 @@ let shapeArmCallParts (scrutinee: Expr) (names: List(Str)) (callParts: List(Str)
             |> append(names)
         | _ -> shapeWithoutNames(names)(callParts)
 
-let recursive shapeOwnerNames (owners: List((Str, Int))) =
-    match owners with
-        | [] -> []
-        | (name, _ordinal) :: rest -> name :: shapeOwnerNames(rest)
-
-// The tuple-scrutinee tails in an arm's body: the arm's own names shadow those in scope, and the tails
-// it binds out of a tuple scrutinee join them.
-let shapeArmTupleTails (value: Expr) (pattern: Pattern) (shadowed: List(Str)) (parameters: List(Str)) (tupleTails: List(Str)) =
-    (let outer =
-        shapeWithoutNames(shapePatternNames(pattern)([]))(tupleTails)
-    in
-        match (shapeUnspan(value), shapeUnspanPattern(pattern)) with
-            | (ExprTuple(values), PatternTuple(patterns)) ->
-                if length(values) == length(patterns)
-                then
-                    append(parameters
-                    |> shapeTupleTailOwners(values)(patterns)(shadowed)
-                    |> shapeOwnerNames)(outer)
-                else outer
-            | _ -> outer)
-
-let shapeWithTupleTails (tupleTails: List(Str)) (walk: ShapeWalk) = walk with tupleTails = tupleTails
-
 let recursive shapeWalk (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match expression with
         | ExprAt(_span, inner) -> shapeWalk(self)(parameters)(inner)(shadowed)(tailOwners)(letValues)(callParts)(walk)
@@ -782,17 +756,15 @@ and shapeWalkCases (self: Str) (parameters: List(Str)) (value: Expr) (scrutinee:
         | [] -> walk
         | (pattern, body, _guard) :: rest ->
             walk
-            |> shapeWithTupleTails(shapeArmTupleTails(value)(pattern)(shadowed)(parameters)(walk.tupleTails))
             |> shapeWalk(self)(parameters)(body)(append(shapePatternNames(pattern)([]))(shadowed))(tailOwners
             |> shapeRemoveTailOwners(shapePatternNames(pattern)([]))
             |> append(shapeScrutineeTailOwners(value)(pattern)(scrutinee)(shadowed)(parameters)))(shapeRemoveLetValues(shapePatternNames(pattern)([]))(letValues))(shapeArmCallParts(value)(shapePatternNames(pattern)([]))(callParts))
-            |> shapeWithTupleTails(walk.tupleTails)
             |> shapeWalkCases(self)(parameters)(value)(scrutinee)(rest)(shadowed)(tailOwners)(letValues)(callParts)
 and shapeWalkCall (self: Str) (parameters: List(Str)) (expression: Expr) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (callParts: List(Str)) (walk: ShapeWalk) =
     match shapeCallSpine(expression)([]) with
         | (ExprVar(callee), arguments) ->
             if callee == self && !shapeContainsName(self)(shadowed) && length(arguments) == length(parameters)
-            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), consedTails = shapeObserveConsedTails(arguments)(0)(shadowed)(tailOwners)(walk.tupleTails)(letValues)(parameters)(walk.consedTails), tupleTails = walk.tupleTails, walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), resets = shapeObserveResets(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.resets), sawSelfCall = true)
+            then ShapeWalk(observed = shapeObserveArguments(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.observed), choices = shapeObserveChoices(arguments)(0)(parameters)(shadowed)(tailOwners)(letValues)(parameters)(walk.choices), consedTails = shapeObserveConsedTails(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(walk.consedTails), walks = shapeObserveWalks(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.walks), accumulators = shapeObserveAccumulators(arguments)(0)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(walk.accumulators), resets = shapeObserveResets(arguments)(0)(shadowed)(tailOwners)(parameters)(walk.resets), sawSelfCall = true)
             else walk
         | _ -> walk
 
@@ -890,7 +862,7 @@ let shapeWalkOf (self: Str) (parameters: List(Str)) (body: Expr) =
     |> length
     |> shapeInitialChoices, consedTails = parameters
     |> length
-    |> shapeInitialAccumulators, tupleTails = [], walks = parameters
+    |> shapeInitialAccumulators, walks = parameters
     |> length
     |> shapeInitialWalks, accumulators = parameters
     |> length

@@ -2489,6 +2489,11 @@ public sealed partial class Lowering
     private static bool TupleScrutineeChainTailsAreOwned
         => Environment.GetEnvironmentVariable("GRC_NO_TUPLECHAINTAIL") is null;
 
+    // A consumed tail matched out of the parameter alone, not only out of a tuple scrutinee, makes a
+    // consed-tail edge.
+    private static bool ConsedTailsOfAnyMatchCount
+        => Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILANYMATCH") is null;
+
     // An arm over a call's result binds parts of it; any other arm's binders shadow such a part.
     // Returns the names whose membership changed, for the restore after the arm.
     private static List<string> MarkArmCallResultParts(TcoParamFactsState state, HashSet<string> binders, bool callScrutinee)
@@ -2730,13 +2735,14 @@ public sealed partial class Lowering
             && structural is Expr.Var part
             && state.CallResultParts.Contains(part.Name);
 
-    // A self-call that hands on a cons onto the parameter's consumed tail bound out of a tuple scrutinee
-    // (`| ((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), no head reading a loop parameter. The
-    // tuple matches on a counted copy of the list, so the parts the cell stores are retained for it;
-    // left in the arena, the cell kept those references and no later iteration released them. Placed
-    // on the reference-counted heap like a choice accumulator, the successor is copied at the back
-    // edge and the predecessor released. A consumed tail handed on alone counts as an edge of the
-    // same list.
+    // A self-call that hands on a cons onto the parameter's consumed tail (`| ((x :: xs) :: rest, same)
+    // -> walk(xs :: rest)(same)`), no head reading a loop parameter. Matched in a tuple, the list is a
+    // counted copy, so the parts the cell stores are retained for it; left in the arena, the cell kept
+    // those references and no later iteration released them. Placed on the reference-counted heap like
+    // a choice accumulator, the successor is copied at the back edge and the predecessor released. A
+    // tail matched out of the parameter alone (`At(span, inner) :: rest -> walk(inner :: rest)`) is
+    // placed the same way: its cell's duplicates are released after the copy like a tuple's parts. A
+    // consumed tail handed on alone counts as an edge of the same list.
     private static void RecordConsedTailEdge(
         TcoParamFactsState state,
         int ordinal,
@@ -2748,7 +2754,7 @@ public sealed partial class Lowering
         bool consedTail = Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILREBUILD") is null
             && structural is Expr.Cons
             && GrownConsChainTail(structural) is Expr.Var tail
-            && state.TupleScrutineeTails.Contains(tail.Name)
+            && (state.TupleScrutineeTails.Contains(tail.Name) || ConsedTailsOfAnyMatchCount)
             && tailOwners.TryGetValue(tail.Name, out int ownerOrdinal)
             && ownerOrdinal == ordinal
             && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope));
