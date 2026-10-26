@@ -1462,7 +1462,9 @@ A callee that takes a trait dictionary is called outside the ordinary call path,
 reference-counted argument it only borrows (a call's owned result as a generic lookup's key) goes
 to an owned slot the same way (`GRC_NO_DICTFRESHARG`).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
-is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`).
+is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
+read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that
+owner, which a later read still needs (`GRC_NO_STRCOMPARELOCAL`).
 
 A result outside the contract's types that is unresolved only in a phantom, a `Result(e, T)` only
 `Ok` builds (`match make(k) with | R { xs = xs } -> Ok(xs)`), is detached at the return as if the
