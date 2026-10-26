@@ -3261,6 +3261,7 @@ let consPartsRequestForwards (expression: Expr) =
     match expression with
         | ExprAt(_span, _inner) -> true
         | ExprCons(_head, _tail) -> true
+        | ExprList(_first :: _rest, _isMultiline) -> true
         | ExprIf(_condition, _thenBranch, _elseBranch) -> true
         | ExprMatch(_value, _cases, _position) -> true
         | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true
@@ -22276,6 +22277,13 @@ let copyArenaHeadOverReferenceCountedTail (request: ConsumerRequest) (tailIsFres
             | None -> (state, headTemp)
     else (state, headTemp)
 
+// A literal the back edge copies (`[first]` started afresh as a successor) borrows its heads like
+// a copied cons cell, so a head produced right there keeps an owner of its own.
+let keepCopiedLiteralHeadOwned (request: ConsumerRequest) (expression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    if request.borrowsCellParts
+    then keepCopiedCellFreshHeadOwned(expression)(headTemp)(headType)(state)
+    else state
+
 let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) (tailIsFreshCell: Bool) lower state =
     match elements with
         | [] ->
@@ -22292,7 +22300,9 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
             |> retainListElement(request)(transfers)(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
-                    match bindType(elementType)(headType)(valueState) with
+                    match valueState
+                    |> keepCopiedLiteralHeadOwned(request)(expression)(headTemp)(headType)
+                    |> bindType(elementType)(headType) with
                         | (failedState, Some(error)) -> failure(failedState)(error)
                         | (boundState, None) ->
                             match copyArenaHeadOverReferenceCountedTail(request)(tailIsFreshCell)(expression)(headTemp)(headType)(boundState) with
@@ -26468,6 +26478,7 @@ let isConsExpression (expression: Expr) =
 let buildsCopiedCells (expression: Expr) =
     match unspanArgument(expression) with
         | ExprCons(_head, _tail) -> true
+        | ExprList(_first :: _rest, _isMultiline) -> true
         | ExprIf(_condition, _thenBranch, _elseBranch) -> true
         | ExprMatch(_value, _cases, _position) -> true
         | ExprLet(_name, _value, _body, [], _annotation, _requirements) -> true

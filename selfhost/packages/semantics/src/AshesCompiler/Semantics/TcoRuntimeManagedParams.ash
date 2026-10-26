@@ -492,8 +492,9 @@ let recursive shapeObserveResets (arguments: List(Expr)) (index: Int) (shadowed:
         | _ -> resets
 
 // Stage 0's `IsAccumulatorEdgeArm` and `IsBranchingAccumulatorEdge`: an arm hands the parameter at
-// `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list
-// none of whose elements reads one (nil resets the accumulator), and a choice between such arms
+// `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list,
+// a literal or cells consed onto nil, none of whose elements reads one (nil resets the
+// accumulator), and a choice between such arms
 // (an `if`, or a `match` none of whose patterns rebinds the parameter's name) is an accumulator
 // edge itself.
 let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
@@ -502,7 +503,7 @@ let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadow
         | ExprCons(head, tail) ->
             match shapeUnspan(tail) with
                 | ExprVar(tailName) -> shapeResolveParameter(tailName)(shadowed)(parameters) == Some(index) && !shapeReadsLoopParameter(head)(shadowed)(parameters)
-                | _ -> false
+                | _ -> shapeIsResetList(arm)(shadowed)(parameters)
         | ExprList(elements, _isMultiline) -> shapeElementsReadNoLoopParameter(elements)(shadowed)(parameters)
         | other -> shapeIsChoiceEdge(other)(index)(name)(shadowed)(parameters)
 and shapeIsChoiceEdge (expression: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
@@ -545,8 +546,8 @@ let shapeStructuralArgument (argument: Expr) (shadowed: List(Str)) (tailOwners: 
         | _ -> argument
 
 // A site that hands the parameter at `index` on as it is or conses onto it a head that reads no
-// loop parameter, stage 0's `HandedOnOrGrownEdges`; a fresh list or a same-named rebinding is
-// neither.
+// loop parameter, stage 0's `HandedOnOrGrownEdges`; a fresh list reading a loop parameter or a
+// same-named rebinding is neither.
 let recursive shapeIsGrownCons (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(structural) with
         | ExprCons(head, tail) ->
@@ -556,15 +557,17 @@ let recursive shapeIsGrownCons (structural: Expr) (index: Int) (shadowed: List(S
                 | _ -> false
         | _ -> false
 
-// An empty list literal empties the parameter, which holds nothing older afterwards.
+// An empty list literal empties the parameter, which holds nothing older afterwards, and a list
+// started afresh with elements reading no loop parameter (`[first]`) holds nothing of it either,
+// as the same list in an arm of a choice does.
 let shapeIsHandedOnOrGrown (argument: Expr) (structural: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
     match (shapeUnspan(argument), shapeUnspan(structural)) with
         | (_argument, ExprList([], _isMultiline)) -> true
         | (ExprVar(name), _structural) ->
             if shapeResolveParameter(name)(shadowed)(parameters) == Some(index)
             then true
-            else shapeIsGrownCons(structural)(index)(shadowed)(parameters)
-        | _ -> shapeIsGrownCons(structural)(index)(shadowed)(parameters)
+            else shapeIsGrownCons(structural)(index)(shadowed)(parameters) || shapeIsResetList(structural)(shadowed)(parameters)
+        | _ -> shapeIsGrownCons(structural)(index)(shadowed)(parameters) || shapeIsResetList(structural)(shadowed)(parameters)
 
 // Per parameter position, whether every self-call so far passed an accumulator edge, whether any
 // of them was a choice, and whether every one handed the parameter on or consed onto it, stage 0's

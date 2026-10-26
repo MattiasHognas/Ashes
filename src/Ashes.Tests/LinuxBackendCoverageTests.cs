@@ -3394,6 +3394,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_start_beside_handed_on_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop starts its list afresh with `[Some((a, b))]`, built from a call's fresh result, at
+        // one self call and hands it on at the other: as a choice accumulator its successor is
+        // copied at the back edge and the element the literal built is released behind the copy.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildFreshStartBesideHandedOnListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(2L * rounds) + 1}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list started afresh beside a handed-on list", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_int_list_parameter_tail_matched_in_tuple_beside_record_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14015,6 +14039,21 @@ public sealed class LinuxBackendCoverageTests
                         | Error(_) -> rounds(n - 1)(total)
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildFreshStartBesideHandedOnListProgram(int rounds)
+        => $$"""
+            let produce (k: Int) = Some(([k, k + 1], [k * 2]))
+
+            let recursive restart (remaining: Int) (acc: List(Maybe((List(Int), List(Int))))) (total: Int) =
+                if remaining == 0
+                then total + Ashes.Collection.List.length(acc)
+                else
+                    match produce(remaining) with
+                        | Some((a, b)) -> restart(remaining - 1)([Some((a, b))])(total + Ashes.Collection.List.length(a))
+                        | None -> restart(remaining - 1)(acc)(total)
+
+            Ashes.IO.print(restart({{rounds}})([])(0))
             """;
 
     private static string BuildIntListParameterTailMatchedInTupleBesideRecordProgram(int rounds)

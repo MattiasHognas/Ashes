@@ -286,8 +286,8 @@ internal enum TcoParamReuseAffinity
 /// <param name="ChoiceAccumulatorRebuild">
 /// True when every self-recursive call site passes the parameter itself, a cons onto it, or a
 /// choice (an if or a match) between those, and either one site passes such a choice or the sites
-/// differ with every one of them handing the parameter on or consing onto it (a fresh list or a
-/// same-named rebinding at a site is neither), and no consed head reads a loop parameter: a head
+/// differ with every one of them handing the parameter on or consing onto it (a fresh list
+/// reading a loop parameter, or a same-named rebinding, at a site is neither), and no consed head reads a loop parameter: a head
 /// that is a sibling parameter is released with that parameter's predecessor at the back edge.
 /// </param>
 /// <param name="FreshOrHandedOnListRebuild">

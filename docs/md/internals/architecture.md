@@ -1156,7 +1156,13 @@ which has no count to release. A
 successor that is a choice between the parameter itself and a cons onto it (`ChoiceAccumulatorRebuild`
 in the structural facts) places a list of heap elements on the reference-counted heap, with one
 exception: when a consed head reads a loop parameter, the accumulator stays in the arena, because
-that sibling's predecessor is released at the same back edge. A tuple that holds a
+that sibling's predecessor is released at the same back edge. A self-call that starts the list
+afresh (`[first]`, or `first :: []`) with elements reading no loop parameter holds nothing of the
+predecessor, so beside self-calls that hand the parameter on it keeps the list a choice accumulator
+(`GRC_NO_RESETACCUMULATOR`): left in the arena, each fresh start stored a reference-counted element
+built from a call's parts in an arena cell that nothing released. The literal's cells are copied at
+the back edge like a cons cell's, so a head produced right there keeps an owner of its own,
+released once the copy holds its reference (`GRC_NO_COPIEDLITERALCELL`). A tuple that holds a
 reference-counted element is placed on the reference-counted heap with its arena siblings copied
 there, so that whoever matches on it releases all of it; an arena tuple releases nothing, and a
 reference-counted value stored in one is stranded. A list whose elements hold `Bytes` is placed the

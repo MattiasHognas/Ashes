@@ -11822,7 +11822,7 @@ public sealed partial class Lowering
     private void NoteBackEdgeCopiedCells(TcoContext tco, int index, Expr argument, bool copiedSuccessor)
     {
         _backEdgeCopiedCell = CopiedCellBorrowsEnabled
-            && (copiedSuccessor && argument is Expr.Cons || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
+            && (copiedSuccessor && IsCopiedCellShape(argument) || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
             ? argument
             : null;
         if (CopiedCellBorrowsEnabled && copiedSuccessor && Environment.GetEnvironmentVariable("GRC_NO_COPIEDARMCELLS") is null)
@@ -12015,9 +12015,16 @@ public sealed partial class Lowering
         }
     }
 
+    // A successor's own cells: a cons, or a list literal with elements (`[first]`), whose cells the
+    // back edge copies like a cons cell.
+    private static bool IsCopiedCellShape(Expr expression)
+        => expression is Expr.Cons
+            || (expression is Expr.ListLit { Elements.Count: > 0 }
+                && Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALCELL") is null);
+
     private static void CollectChoiceArmCell(Expr arm, HashSet<Expr> cells)
     {
-        if (arm is Expr.Cons)
+        if (IsCopiedCellShape(arm))
         {
             cells.Add(arm);
             return;
@@ -16139,6 +16146,10 @@ public sealed partial class Lowering
                 list.Elements[i],
                 elementRequest,
                 elemType);
+            if (IsBackEdgeCopiedCell(list))
+            {
+                KeepCopiedCellFreshHeadOwned(list.Elements[i], head);
+            }
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
                 Unify(head.Type, elemType);

@@ -116,6 +116,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new CurriedProducerOverTupleHeadsTemplate());
         registry.Register(new ProducerReturningParameterTailTemplate());
         registry.Register(new OkOfMatchedRecordFieldsTemplate());
+        registry.Register(new FreshStartBesideHandedOnListTemplate());
     }
 }
 

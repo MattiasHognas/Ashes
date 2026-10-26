@@ -2696,7 +2696,9 @@ public sealed partial class Lowering
                 : state.Observed[ordinal];
 
     // A site that hands the parameter on as it is, conses onto it a head reading no loop parameter,
-    // or empties it; any other fresh list, or a same-named rebinding, is none of these.
+    // empties it, or starts it afresh with elements reading no loop parameter (`[first]`, which
+    // holds nothing of the predecessor, as the same list in an arm of a choice does); any other
+    // fresh list, or a same-named rebinding, is none of these.
     private static bool IsHandedOnOrGrownEdge(
         TcoSelfCallArgumentShape local,
         Expr structural,
@@ -2705,10 +2707,15 @@ public sealed partial class Lowering
         return local == TcoSelfCallArgumentShape.UnchangedPassthrough
             || (local == TcoSelfCallArgumentShape.GrownCons
                 && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope)))
-            || (EmptiedAccumulatorsEnabled && structural is Expr.ListLit { Elements.Count: 0 });
+            || (EmptiedAccumulatorsEnabled && structural is Expr.ListLit { Elements.Count: 0 })
+            || (ResetChoiceAccumulatorsEnabled
+                && local != TcoSelfCallArgumentShape.GrownCons
+                && IsFreshResetList(structural, parameterScope));
     }
 
     private static bool EmptiedAccumulatorsEnabled => Environment.GetEnvironmentVariable("GRC_NO_EMPTIEDACCUMULATOR") is null;
+
+    private static bool ResetChoiceAccumulatorsEnabled => Environment.GetEnvironmentVariable("GRC_NO_RESETACCUMULATOR") is null;
 
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
     // a call's result, or an empty list. A list only ever handed on, emptied or refilled holds
@@ -2756,9 +2763,11 @@ public sealed partial class Lowering
             Expr.Cons { Tail: Expr.Var tail } cons => parameterScope.TryGetValue(tail.Name, out int tailOrdinal)
                 && tailOrdinal == ordinal
                 && !ReadsLoopParameter(cons.Head, parameterScope),
-            // A fresh list (nil resets the accumulator) holds nothing of the predecessor's, as long
-            // as none of its elements reads a loop parameter.
+            // A fresh list (nil resets the accumulator), written as a literal or as cells consed onto
+            // nil, holds nothing of the predecessor's, as long as none of its elements reads a loop
+            // parameter.
             Expr.ListLit fresh => fresh.Elements.All(element => !ReadsLoopParameter(element, parameterScope)),
+            Expr.Cons fresh when ResetChoiceAccumulatorsEnabled => IsFreshResetList(fresh, parameterScope),
             _ => IsBranchingAccumulatorEdge(arm, parameterName, ordinal, parameterScope),
         };
 
