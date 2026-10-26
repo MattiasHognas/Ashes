@@ -2228,6 +2228,10 @@ public sealed partial class Lowering
             {
                 handedOver.Add(new HandedOverDictionaryArgument(keptTemp, function.Arg, Marker: false));
             }
+            else if (HandsFreshDictionaryCallArgumentOver(argument, argumentTemp, ownerTemp))
+            {
+                handedOver.Add(new HandedOverDictionaryArgument(argumentTemp, function.Arg, Marker: false));
+            }
             argumentTemps.Add(keptTemp);
             Unify(function.Arg, argumentType);
             SubsumeCalleeRow(function.Row, span);
@@ -2243,6 +2247,14 @@ public sealed partial class Lowering
     /// (<see cref="RetainOwnedDictionaryCallArgumentKeptByResult"/>).
     /// </summary>
     private readonly record struct HandedOverDictionaryArgument(int Temp, TypeRef Type, bool Marker);
+
+    // A fresh reference-counted argument (a call's owned result) passed to a constrained callee
+    // whose result does not keep it whole: the callee borrows it, and nothing else releases the
+    // caller's reference, so it goes to an owned slot like a reference taken for the result.
+    private bool HandsFreshDictionaryCallArgumentOver(Expr argument, int argumentTemp, int ownerTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_DICTFRESHARG") is null
+            && ownerTemp == argumentTemp
+            && IsFreshRuntimeArgument(argument, argumentTemp);
 
     /// <summary>
     /// The owned slot a pattern owner's marker goes to: it holds zero until the marker turns out to

@@ -1451,6 +1451,9 @@ type argument none of its fields mention, an `Ok` in a function's first branch b
 given the result its error type, still has a known layout: it hands its fresh children to owned
 slots too, and the return, with the type resolved by then, decides whether the result is normalized
 and the slots released (`GRC_NO_CTORFIELDLESS` switches this off).
+A callee that takes a trait dictionary is called outside the ordinary call path, and a fresh
+reference-counted argument it only borrows (a call's owned result as a generic lookup's key) goes
+to an owned slot the same way (`GRC_NO_DICTFRESHARG`).
 
 A result outside the contract's types that is unresolved only in a phantom, a `Result(e, T)` only
 `Ok` builds (`match make(k) with | R { xs = xs } -> Ok(xs)`), is detached at the return as if the

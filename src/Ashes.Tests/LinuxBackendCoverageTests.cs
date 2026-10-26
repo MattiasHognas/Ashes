@@ -3418,6 +3418,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_owned_call_result_passed_to_constrained_lookup_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A call's owned string result is the key of a generic lookup that takes an `Eq`
+        // dictionary: the lookup borrows it, and the caller releases it after the call.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildOwnedCallResultPassedToConstrainedLookupProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("owned call result passed to a constrained lookup", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14221,6 +14244,53 @@ public sealed class LinuxBackendCoverageTests
 
             0
             |> rounds([Inst(instruction = LoadLocal(1)(2), location = 7), Inst(instruction = RcDup(3)(1), location = 0), Inst(instruction = RcDrop(1)(2), location = 0), Inst(instruction = StoreLocal(4)(3), location = 2), Inst(instruction = LoadLocal(5)(4), location = 0)])({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildOwnedCallResultPassedToConstrainedLookupProgram(int rounds)
+        => $$"""
+            type Fn =
+                | label: Str
+                | size: Int
+
+            let functionLabel (fn: Fn) = fn.label
+
+            let recursive lookupAssociation key entries =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail ->
+                        if k == key
+                        then Some(v)
+                        else lookupAssociation(key)(tail)
+
+            let recursive addKnown (functions: List(Fn)) (known: List((Str, Str))) (changed: Bool) =
+                match functions with
+                    | [] -> (known, changed)
+                    | fn :: rest ->
+                        match lookupAssociation(functionLabel(fn))(known) with
+                            | Some(_) -> addKnown(rest)(known)(changed)
+                            | None ->
+                                if fn.size > 2
+                                then addKnown(rest)((functionLabel(fn), "closure") :: known)(true)
+                                else addKnown(rest)(known)(changed)
+
+            let recursive count (known: List((Str, Str))) (n: Int) =
+                match known with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let run (functions: List(Fn)) =
+                match addKnown(functions)([("lambda_" + Ashes.Text.fromInt(1), "x")])(false) with
+                    | (known, true) -> count(known)(0)
+                    | (known, false) -> count(known)(100)
+
+            let recursive rounds (functions: List(Fn)) (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(functions)(n - 1)(total + run(functions))
+
+            0
+            |> rounds([Fn(label = "lambda_" + Ashes.Text.fromInt(1), size = 3), Fn(label = "lambda_" + Ashes.Text.fromInt(2), size = 3), Fn(label = "lambda_" + Ashes.Text.fromInt(3), size = 1)])({{rounds}})
             |> Ashes.IO.print
             """;
 
