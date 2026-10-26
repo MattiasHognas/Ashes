@@ -34,7 +34,7 @@ public sealed partial class Lowering
             || reaching.Any(arm => arm.Store is null)
             || CanArenaReset(pruned)
             || ContainsUnresolvedLayoutType(pruned, [])
-            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned)))
+            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned) || IsNormalizableJoinTuple(pruned)))
         {
             return false;
         }
@@ -54,6 +54,14 @@ public sealed partial class Lowering
 
         return true;
     }
+
+    // A tuple join every element of which is a scalar or normalizes into an owned value: an arena
+    // arm is copied into an owned tuple that retains each reference-counted element it keeps.
+    private bool IsNormalizableJoinTuple(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLEJOIN") is null
+            && type is TypeRef.TTuple tuple
+            && tuple.Elements.Any(element => !CanArenaReset(Prune(element)))
+            && tuple.Elements.All(element => CanArenaReset(Prune(element)) || CanNormalizeIntoOwnedRuntimeValue(element));
 
     // An arm that builds its value itself (a cons, a literal, a constructor application): a
     // reference-counted value it hands on is fresh and its own, so it is kept rather than retained.

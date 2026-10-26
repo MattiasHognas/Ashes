@@ -114,6 +114,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new BackEdgeDerivationPastLongArmTemplate());
         registry.Register(new CallArgumentCellInSuccessorTemplate());
         registry.Register(new StringCallResultComparedTemplate());
+        registry.Register(new MixedTupleJoinTemplate());
         registry.Register(new ConstrainedCallFreshArgumentTemplate());
         registry.Register(new FreshHeadOverNamedHeadTemplate());
         registry.Register(new FreshHeadOverViewHeadTemplate());

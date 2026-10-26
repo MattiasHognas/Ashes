@@ -2900,9 +2900,18 @@ public sealed partial class Lowering
                 && !_capabilitySymbols.ContainsKey(qualified.Module),
             Expr.Var variable => Lookup(variable.Name) is null or Binding.Local
                 && !IsNormalizedAlwaysReturnedStringParameterRead(expression)
-                && LookupOwnedValue(variable.Name) is null or { RuntimeManaged: false, PerceusPatternOwner: false },
+                && LookupOwnedValue(variable.Name) is null or { RuntimeManaged: false, PerceusPatternOwner: false }
+                    || IsReferenceCountedOwnerPartRead(variable.Name),
             _ => false,
         };
+
+    // A pattern binding aliased to the reference-counted scrutinee it was taken from (a tuple
+    // element): the owner releases the string with itself at the end of the arm, so a parent that
+    // outlives the arm keeps a string of its own rather than the borrowed one.
+    private bool IsReferenceCountedOwnerPartRead(string name)
+        => Environment.GetEnvironmentVariable("GRC_NO_OWNERPARTCHILD") is null
+            && !string.Equals(ResolveOwnershipAlias(name), name, StringComparison.Ordinal)
+            && LookupOwnedValue(name) is { RuntimeManaged: true, PerceusPatternOwner: false, IsDropped: false };
 
     /// <summary>
     /// A field read out of a local binding — `lexed.diagnostics`, the record-field spelling of the

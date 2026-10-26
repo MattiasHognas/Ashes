@@ -1561,6 +1561,13 @@ loop's exit. A join takes its ownership from the arms that reach it: when every 
 over a value it just produced (a loop exit building its result while the other arms jump back), the
 join's value is fresh and the function's return takes it over rather than retaining it again, and a
 `let` passing a join's value on keeps that fact.
+A join whose arms mix an owned value with one it does not own normalizes the unowned arms, so the
+join owns its value as a whole. A tuple joins the same way when each element is a scalar or a value
+that normalizes (`("", "")` beside a tuple of fresh strings): the arena arm is copied into a counted
+tuple that retains each counted element it keeps (`GRC_NO_TUPLEJOIN`). The caller then owns the
+tuple it takes apart and releases it with its elements at the end of the arm. A pattern binding of
+such a tuple that a constructor stores beyond the arm is copied into a string of its own first, since
+the binding only borrows from the tuple (`GRC_NO_OWNERPARTCHILD`).
 Whether a successor is a loop parameter or a part of one is traced through the instructions that
 defined it, however far back they lie in the function: a successor matched out of the parameter
 behind a long earlier arm is still the parameter's part, so its iteration's owned values are

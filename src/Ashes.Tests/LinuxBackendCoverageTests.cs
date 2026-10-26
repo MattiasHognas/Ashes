@@ -3488,6 +3488,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_mixed_tuple_join_taken_apart_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A match returns a tuple of literals from one arm and a tuple of fresh strings from the
+        // other; the caller takes it apart into a constructor that outlives the match. The join owns
+        // its tuple, and the constructor keeps strings of its own.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildMixedTupleJoinTakenApartProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mixed tuple join taken apart into a constructor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14455,6 +14479,61 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + walk([[1, 2, n], [n, 4], [5]])(Kept(state = [n, 7, 8], temp = n))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMixedTupleJoinTakenApartProgram(int rounds)
+        => $$"""
+            type Expr =
+                | ExprVar(Str)
+                | ExprQualifiedVar(Str, Str)
+
+            let recursive reverseList (items: List(Str)) (acc: List(Str)) =
+                match items with
+                    | [] -> acc
+                    | item :: rest -> reverseList(rest)(item :: acc)
+
+            let recursive join (separator: Str) (parts: List(Str)) =
+                match parts with
+                    | [] -> ""
+                    | part :: [] -> part
+                    | part :: rest -> part + separator + join(separator)(rest)
+
+            let qualifiedName parts =
+                match parts with
+                    | [] -> ("", "")
+                    | name :: moduleParts ->
+                        ([]
+                        |> reverseList(moduleParts)
+                        |> join("."), name)
+
+            let variable (reversedParts: List(Str)) =
+                match qualifiedName(reversedParts) with
+                    | (moduleName, name) ->
+                        if moduleName == ""
+                        then ExprVar(name)
+                        else ExprQualifiedVar(moduleName)(name)
+
+            let size (expression: Expr) =
+                match expression with
+                    | ExprVar(name) -> Ashes.Text.length(name)
+                    | ExprQualifiedVar(moduleName, name) -> Ashes.Text.length(moduleName) + Ashes.Text.length(name)
+
+            let parts (n: Int) (qualified: Bool) =
+                if qualified
+                then [Ashes.Text.fromInt(n - n / 10 * 10), "m" + Ashes.Text.fromInt(n - n / 10 * 10)]
+                else [Ashes.Text.fromInt(n - n / 10 * 10)]
+
+            let recursive rounds (n: Int) (qualified: Bool) (total: Int) =
+                if n == 0
+                then total
+                else
+                    rounds(n - 1)(!qualified)(total + size(qualified
+                    |> parts(n)
+                    |> variable))
+
+            0
+            |> rounds({{rounds}})(false)
+            |> Ashes.IO.print
             """;
 
     private static string BuildWholeTupleElementHandedBackProgram(int rounds)

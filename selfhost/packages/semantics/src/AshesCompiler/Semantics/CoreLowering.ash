@@ -17863,6 +17863,33 @@ let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: 
                 then joinArmTally(rest)(reaching + 1)(owned + 1)
                 else joinArmTally(rest)(reaching + 1)(owned)
 
+// Stage 0's `IsNormalizableJoinTuple`: a tuple element a join normalization can own, a scalar or
+// a value that normalizes into an owned one.
+let recursive joinTupleElementsNormalize (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> true
+        | element :: rest ->
+            (resultSurvivesReset(element)(state) || (match ownedResultPlanOf(element)(state) with
+                | None -> false
+                | Some(ScalarArgumentCopy) -> false
+                | Some(_plan) -> true)) && joinTupleElementsNormalize(rest)(state)
+
+let recursive joinTupleHoldsHeapElement (elements: List(SemanticType)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> false
+        | element :: rest -> !resultSurvivesReset(element)(state) || joinTupleHoldsHeapElement(rest)(state)
+
+// The copy a mixed join's arms are normalized with: stage 0's `CanNormalizeIntoOwnedRuntimeValue`,
+// and a tuple every element of which normalizes (an arena arm is copied into an owned tuple that
+// retains each reference-counted element it keeps).
+let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemTuple(elements) ->
+            if joinTupleHoldsHeapElement(elements)(state) && joinTupleElementsNormalize(elements)(state)
+            then argumentCopyPlanOf(semanticType)(state)
+            else None
+        | _ -> ownedResultPlanOf(semanticType)(state)
+
 // Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
 // one it does not own is not owned as a whole, so the owned arm's reference is never released: the
 // consumer retains or copies the join's value again. Such arms are normalized in place instead,
@@ -17874,7 +17901,7 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
             if joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
             then (state, arms)
             else
-                match ownedResultPlanOf(resultType)(state) with
+                match joinNormalizationPlanOf(resultType)(state) with
                     | None -> (state, arms)
                     | Some(ScalarArgumentCopy) -> (state, arms)
                     | Some(plan) ->
