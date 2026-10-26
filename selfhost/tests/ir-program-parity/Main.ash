@@ -258,12 +258,17 @@ let recursive printEach (lines: List(Str)) =
 // record update it threads: the cell's retain of the field is collected for the call and released
 // once the helper's result holds its own references.
 // tco_unchanged_bytes_parameter_consed_onto_accumulator conses an unchanged Bytes parameter onto a
-// list of Bytes and walks another by its tail: neither self-call rebuilds its list from a fresh
-// buffer, so both stay in the arena, while a loop consing a fresh buffer places its list on the
-// reference-counted heap.
+// list of Bytes and walks another by its tail: under the general contract both lists and the
+// unchanged parameter are placed on the reference-counted heap whatever their heads' provenance,
+// as is the list a loop builds by consing fresh buffers.
 // tco_bytes_view_head_copied_into_counted_cell pushes a fresh buffer over a view of a string
 // literal onto its accumulator: the view is copied onto the reference-counted heap, so both cells
 // and the list are counted.
+// tco_bytes_matched_head_consed_beside_unchanged_parameter conses a buffer matched out of one list
+// onto another beside an unchanged Bytes parameter: the cell over a head of unknown origin stays in
+// the arena, the back edge copies it onto the reference-counted heap and releases the duplicate its
+// head took. tco_bytes_matched_head_under_fresh_head_chain pushes a fresh buffer over a matched one:
+// the innermost cell takes its head over, so both cells are counted.
 let fixtures =
     [
         "simple_arith",
@@ -356,7 +361,9 @@ let fixtures =
         "tco_list_top_cell_compacted_at_back_edge",
         "call_argument_cell_releases_loop_parameter_field_retain",
         "tco_unchanged_bytes_parameter_consed_onto_accumulator",
-        "tco_bytes_view_head_copied_into_counted_cell"
+        "tco_bytes_view_head_copied_into_counted_cell",
+        "tco_bytes_matched_head_consed_beside_unchanged_parameter",
+        "tco_bytes_matched_head_under_fresh_head_chain"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
