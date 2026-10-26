@@ -33,6 +33,11 @@ public sealed partial class Lowering
         public SourceLocation? Location { get; } = location;
         public PatternBindingOwnershipUse Uses { get; set; }
 
+        // A list parameter's tail bound at its own position of a tuple scrutinee: the consumed-tail
+        // placement retains it for the next iteration, so passing it back to that parameter is not a
+        // transfer of its own.
+        public bool HandedOnAsConsumedTail { get; set; }
+
         public PatternBindingOwnershipFact Build()
         {
             return new PatternBindingOwnershipFact(
@@ -420,6 +425,15 @@ public sealed partial class Lowering
             {
                 result[name] = lineage;
             }
+
+            if (TupleScrutineeTailsAreOwned
+                && elementLineages[i] is { Binding: null }
+                && parts.Elements[i] is Pattern.Cons { Tail: Pattern.Var tail }
+                && result.TryGetValue(tail.Name, out PatternBindingLineage tailLineage)
+                && tailLineage.Binding is { } tailBinding)
+            {
+                tailBinding.HandedOnAsConsumedTail = true;
+            }
         }
 
         return result;
@@ -469,6 +483,11 @@ public sealed partial class Lowering
         return result;
     }
 
+    private static PatternBindingOwnershipUse SameParameterArgumentUse(PatternBindingOwnershipBuilder binding)
+        => binding.HandedOnAsConsumedTail
+            ? PatternBindingOwnershipUse.None
+            : PatternBindingOwnershipUse.SameParameterTransfer;
+
     private void WalkPatternBindingOwnershipCall(
         Expr expression,
         IReadOnlyDictionary<string, PatternBindingLineage> lineages,
@@ -500,7 +519,7 @@ public sealed partial class Lowering
                 && lineage.Binding is { } binding)
             {
                 binding.Uses |= exactSelfCall && lineage.RootParameterOrdinal == i
-                    ? PatternBindingOwnershipUse.SameParameterTransfer
+                    ? SameParameterArgumentUse(binding)
                     : exactSelfCall
                         ? PatternBindingOwnershipUse.IndependentEscape
                         : constructorCall
