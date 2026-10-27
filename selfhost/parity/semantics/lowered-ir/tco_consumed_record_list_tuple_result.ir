@@ -32,16 +32,16 @@ function __rcdrop_record_4  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (tco_consumed_record_list_tuple_result.ash:10:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_23   (tco_consumed_record_list_tuple_result.ash:10:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_21   (tco_consumed_record_list_tuple_result.ash:10:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=1 Tagless=true   (tco_consumed_record_list_tuple_result.ash:10:1)
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-  rc_drop_shared_23:
+  rc_drop_shared_21:
     RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
     Return                Source=3   (tco_consumed_record_list_tuple_result.ash:10:1)
 
 function lambda_2  [ClosureHelper from total]
-  locals=38 temps=109
+  locals=37 temps=101
     LoadEnv               Target=0 Index=0   (tco_consumed_record_list_tuple_result.ash:10:1)
     StoreLocal            Slot=2 Source=0   (tco_consumed_record_list_tuple_result.ash:10:1)
     LoadEnv               Target=1 Index=1   (tco_consumed_record_list_tuple_result.ash:10:1)
@@ -167,57 +167,57 @@ function lambda_2  [ClosureHelper from total]
     StoreLocal            Slot=2 Source=29   (tco_consumed_record_list_tuple_result.ash:13:53)
     StoreLocal            Slot=3 Source=23   (tco_consumed_record_list_tuple_result.ash:13:53)
     StoreLocal            Slot=1 Source=28   (tco_consumed_record_list_tuple_result.ash:13:53)
-    LoadLocal             Target=90 Slot=11
-    JumpIfFalse           CondTemp=90 Target=rc_tco_drop_inactive_31
-    StoreLocal            Slot=36 Source=32
-  rcdrop_list_32:
+    LoadLocal             Target=82 Slot=11
+    JumpIfFalse           CondTemp=82 Target=rc_tco_drop_inactive_29
+    StoreLocal            Slot=35 Source=32
+  rcdrop_list_30:
+    LoadLocal             Target=83 Slot=35
+    LoadConstInt          Target=84 Value=0
+    CmpIntNe              Target=85 Left=83 Right=84
+    JumpIfFalse           CondTemp=85 Target=rcdrop_list_end_32
+    RcIsUnique            Target=86 SourceTemp=83
+    JumpIfFalse           CondTemp=86 Target=rcdrop_list_shared_31
+    LoadMemOffset         Target=87 BasePtr=83 OffsetBytes=0
+    LoadConstInt          Target=88 Value=0
+    CallKnown             Target=89 FuncLabel=__rcdrop_record_4 EnvTemp=88 ArgTemp=87
+    LoadMemOffset         Target=90 BasePtr=83 OffsetBytes=8
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=90
+    Jump                  Target=rcdrop_list_30
+  rcdrop_list_shared_31:
+    RcDrop                SourceTemp=83 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_32
+  rcdrop_list_end_32:
+  rc_tco_drop_inactive_29:
+    StoreLocal            Slot=36 Source=30
+  rcdrop_list_33:
     LoadLocal             Target=91 Slot=36
     LoadConstInt          Target=92 Value=0
     CmpIntNe              Target=93 Left=91 Right=92
-    JumpIfFalse           CondTemp=93 Target=rcdrop_list_end_34
+    JumpIfFalse           CondTemp=93 Target=rcdrop_list_end_35
     RcIsUnique            Target=94 SourceTemp=91
-    JumpIfFalse           CondTemp=94 Target=rcdrop_list_shared_33
+    JumpIfFalse           CondTemp=94 Target=rcdrop_list_shared_34
     LoadMemOffset         Target=95 BasePtr=91 OffsetBytes=0
     LoadConstInt          Target=96 Value=0
     CallKnown             Target=97 FuncLabel=__rcdrop_record_4 EnvTemp=96 ArgTemp=95
     LoadMemOffset         Target=98 BasePtr=91 OffsetBytes=8
     RcDrop                SourceTemp=91 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=36 Source=98
-    Jump                  Target=rcdrop_list_32
-  rcdrop_list_shared_33:
+    Jump                  Target=rcdrop_list_33
+  rcdrop_list_shared_34:
     RcDrop                SourceTemp=91 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_34
-  rcdrop_list_end_34:
-  rc_tco_drop_inactive_31:
-    StoreLocal            Slot=37 Source=30
-  rcdrop_list_35:
-    LoadLocal             Target=99 Slot=37
-    LoadConstInt          Target=100 Value=0
-    CmpIntNe              Target=101 Left=99 Right=100
-    JumpIfFalse           CondTemp=101 Target=rcdrop_list_end_37
-    RcIsUnique            Target=102 SourceTemp=99
-    JumpIfFalse           CondTemp=102 Target=rcdrop_list_shared_36
-    LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=0
-    LoadConstInt          Target=104 Value=0
-    CallKnown             Target=105 FuncLabel=__rcdrop_record_4 EnvTemp=104 ArgTemp=103
-    LoadMemOffset         Target=106 BasePtr=99 OffsetBytes=8
-    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=37 Source=106
-    Jump                  Target=rcdrop_list_35
-  rcdrop_list_shared_36:
-    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_37
-  rcdrop_list_end_37:
-    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=35
-    LoadConstInt          Target=107 Value=0
-    StoreLocal            Slot=7 Source=107
-    StoreLocal            Slot=8 Source=107
-    StoreLocal            Slot=9 Source=107
-    StoreLocal            Slot=10 Source=107
+    Jump                  Target=rcdrop_list_end_35
+  rcdrop_list_end_35:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=34
+    LoadConstInt          Target=99 Value=0
+    StoreLocal            Slot=7 Source=99
+    StoreLocal            Slot=8 Source=99
+    StoreLocal            Slot=9 Source=99
+    StoreLocal            Slot=10 Source=99
     StoreLocal            Slot=2 Source=29
-    LoadConstInt          Target=108 Value=1
-    StoreLocal            Slot=11 Source=108
-    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=35
+    LoadConstInt          Target=100 Value=1
+    StoreLocal            Slot=11 Source=100
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=34
     RestoreStackPointer   Slot=14   (tco_consumed_record_list_tuple_result.ash:13:53)
     Jump                  Target=lambda_2_body   (tco_consumed_record_list_tuple_result.ash:13:53)
     LoadConstInt          Target=35 Value=0   (tco_consumed_record_list_tuple_result.ash:13:53)
@@ -234,61 +234,47 @@ function lambda_2  [ClosureHelper from total]
     StoreLocal            Slot=15 Source=38   (tco_consumed_record_list_tuple_result.ash:11:5)
   match_end_0:
     LoadLocal             Target=39 Slot=15   (tco_consumed_record_list_tuple_result.ash:11:5)
-    LoadConstInt          Target=64 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadLocal             Target=64 Slot=2   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadLocal             Target=65 Slot=11   (tco_consumed_record_list_tuple_result.ash:10:1)
+    JumpIfFalse           CondTemp=65 Target=rc_tco_exit_drop_inactive_17   (tco_consumed_record_list_tuple_result.ash:10:1)
     StoreLocal            Slot=32 Source=64   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadLocal             Target=65 Slot=2   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadLocal             Target=66 Slot=11   (tco_consumed_record_list_tuple_result.ash:10:1)
-    CmpIntEq              Target=67 Left=65 Right=39   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadLocal             Target=68 Slot=32   (tco_consumed_record_list_tuple_result.ash:10:1)
-    CmpIntEq              Target=69 Left=68 Right=64   (tco_consumed_record_list_tuple_result.ash:10:1)
-    AndInt                Target=70 Left=66 Right=67   (tco_consumed_record_list_tuple_result.ash:10:1)
-    AndInt                Target=71 Left=70 Right=69   (tco_consumed_record_list_tuple_result.ash:10:1)
-    JumpIfFalse           CondTemp=71 Target=rc_tco_exit_transfer_not_selected_17   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadConstInt          Target=72 Value=1   (tco_consumed_record_list_tuple_result.ash:10:1)
-    StoreLocal            Slot=32 Source=72   (tco_consumed_record_list_tuple_result.ash:10:1)
-    Jump                  Target=rc_tco_exit_transfer_done_18   (tco_consumed_record_list_tuple_result.ash:10:1)
-  rc_tco_exit_transfer_not_selected_17:
-    LoadLocal             Target=73 Slot=11   (tco_consumed_record_list_tuple_result.ash:10:1)
-    JumpIfFalse           CondTemp=73 Target=rc_tco_exit_drop_inactive_19   (tco_consumed_record_list_tuple_result.ash:10:1)
-    StoreLocal            Slot=33 Source=65   (tco_consumed_record_list_tuple_result.ash:10:1)
-  rcdrop_list_20:
-    LoadLocal             Target=74 Slot=33   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadConstInt          Target=75 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
-    CmpIntNe              Target=76 Left=74 Right=75   (tco_consumed_record_list_tuple_result.ash:10:1)
-    JumpIfFalse           CondTemp=76 Target=rcdrop_list_end_22   (tco_consumed_record_list_tuple_result.ash:10:1)
-    RcIsUnique            Target=77 SourceTemp=74
-    JumpIfFalse           CondTemp=77 Target=rcdrop_list_shared_21   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadMemOffset         Target=78 BasePtr=74 OffsetBytes=0   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadConstInt          Target=79 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
-    CallKnown             Target=80 FuncLabel=__rcdrop_record_4 EnvTemp=79 ArgTemp=78   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadMemOffset         Target=81 BasePtr=74 OffsetBytes=8   (tco_consumed_record_list_tuple_result.ash:10:1)
-    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=33 Source=81   (tco_consumed_record_list_tuple_result.ash:10:1)
-    Jump                  Target=rcdrop_list_20   (tco_consumed_record_list_tuple_result.ash:10:1)
-  rcdrop_list_shared_21:
-    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_22   (tco_consumed_record_list_tuple_result.ash:10:1)
-  rcdrop_list_end_22:
-  rc_tco_exit_drop_inactive_19:
-  rc_tco_exit_transfer_done_18:
-    LoadArgumentOwnership Target=82   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadConstInt          Target=83 Value=1   (tco_consumed_record_list_tuple_result.ash:10:1)
-    ShrInt                Target=84 Left=82 Right=83   (tco_consumed_record_list_tuple_result.ash:10:1)
-    AndInt                Target=85 Left=84 Right=83   (tco_consumed_record_list_tuple_result.ash:10:1)
-    JumpIfFalse           CondTemp=85 Target=rc_result_owned_24   (tco_consumed_record_list_tuple_result.ash:10:1)
-    Alloc                 Target=86 SizeBytes=16   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadMemOffset         Target=87 BasePtr=39 OffsetBytes=0   (tco_consumed_record_list_tuple_result.ash:10:1)
-    StoreMemOffset        BasePtr=86 OffsetBytes=0 Source=87   (tco_consumed_record_list_tuple_result.ash:10:1)
-    LoadMemOffset         Target=88 BasePtr=39 OffsetBytes=8   (tco_consumed_record_list_tuple_result.ash:10:1)
-    StoreMemOffset        BasePtr=86 OffsetBytes=8 Source=88   (tco_consumed_record_list_tuple_result.ash:10:1)
+  rcdrop_list_18:
+    LoadLocal             Target=66 Slot=32   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadConstInt          Target=67 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    CmpIntNe              Target=68 Left=66 Right=67   (tco_consumed_record_list_tuple_result.ash:10:1)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_20   (tco_consumed_record_list_tuple_result.ash:10:1)
+    RcIsUnique            Target=69 SourceTemp=66
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_19   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadConstInt          Target=71 Value=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    CallKnown             Target=72 FuncLabel=__rcdrop_record_4 EnvTemp=71 ArgTemp=70   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (tco_consumed_record_list_tuple_result.ash:10:1)
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=73   (tco_consumed_record_list_tuple_result.ash:10:1)
+    Jump                  Target=rcdrop_list_18   (tco_consumed_record_list_tuple_result.ash:10:1)
+  rcdrop_list_shared_19:
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_20   (tco_consumed_record_list_tuple_result.ash:10:1)
+  rcdrop_list_end_20:
+  rc_tco_exit_drop_inactive_17:
+    LoadArgumentOwnership Target=74   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadConstInt          Target=75 Value=1   (tco_consumed_record_list_tuple_result.ash:10:1)
+    ShrInt                Target=76 Left=74 Right=75   (tco_consumed_record_list_tuple_result.ash:10:1)
+    AndInt                Target=77 Left=76 Right=75   (tco_consumed_record_list_tuple_result.ash:10:1)
+    JumpIfFalse           CondTemp=77 Target=rc_result_owned_22   (tco_consumed_record_list_tuple_result.ash:10:1)
+    Alloc                 Target=78 SizeBytes=16   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadMemOffset         Target=79 BasePtr=39 OffsetBytes=0   (tco_consumed_record_list_tuple_result.ash:10:1)
+    StoreMemOffset        BasePtr=78 OffsetBytes=0 Source=79   (tco_consumed_record_list_tuple_result.ash:10:1)
+    LoadMemOffset         Target=80 BasePtr=39 OffsetBytes=8   (tco_consumed_record_list_tuple_result.ash:10:1)
+    StoreMemOffset        BasePtr=78 OffsetBytes=8 Source=80   (tco_consumed_record_list_tuple_result.ash:10:1)
     RcDrop                SourceTemp=39 TypeName=Tuple RuntimeManaged=true
-    StoreLocal            Slot=34 Source=86   (tco_consumed_record_list_tuple_result.ash:10:1)
-    Jump                  Target=rc_result_done_25   (tco_consumed_record_list_tuple_result.ash:10:1)
-  rc_result_owned_24:
-    StoreLocal            Slot=34 Source=39   (tco_consumed_record_list_tuple_result.ash:10:1)
-  rc_result_done_25:
-    LoadLocal             Target=89 Slot=34   (tco_consumed_record_list_tuple_result.ash:10:1)
-    Return                Source=89   (tco_consumed_record_list_tuple_result.ash:10:1)
+    StoreLocal            Slot=33 Source=78   (tco_consumed_record_list_tuple_result.ash:10:1)
+    Jump                  Target=rc_result_done_23   (tco_consumed_record_list_tuple_result.ash:10:1)
+  rc_result_owned_22:
+    StoreLocal            Slot=33 Source=39   (tco_consumed_record_list_tuple_result.ash:10:1)
+  rc_result_done_23:
+    LoadLocal             Target=81 Slot=33   (tco_consumed_record_list_tuple_result.ash:10:1)
+    Return                Source=81   (tco_consumed_record_list_tuple_result.ash:10:1)
 
 function lambda_1  [ClosureHelper from total]
   locals=2 temps=5
@@ -358,15 +344,15 @@ function _start_main  [ProgramEntry]
     CopyOutArena          DestTemp=25 SrcTemp=23 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=10
     StoreLocal            Slot=4 Source=25   (tco_consumed_record_list_tuple_result.ash:15:1)
-    Jump                  Target=match_end_27   (tco_consumed_record_list_tuple_result.ash:15:1)
-  match_arm_cleanup_29:
+    Jump                  Target=match_end_25   (tco_consumed_record_list_tuple_result.ash:15:1)
+  match_arm_cleanup_27:
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=11
-    Jump                  Target=match_none_28   (tco_consumed_record_list_tuple_result.ash:15:1)
-  match_none_28:
+    Jump                  Target=match_none_26   (tco_consumed_record_list_tuple_result.ash:15:1)
+  match_none_26:
     LoadConstInt          Target=26 Value=0   (tco_consumed_record_list_tuple_result.ash:15:1)
     StoreLocal            Slot=4 Source=26   (tco_consumed_record_list_tuple_result.ash:15:1)
-  match_end_27:
+  match_end_25:
     LoadLocal             Target=27 Slot=4   (tco_consumed_record_list_tuple_result.ash:15:1)
     Return                Source=27
 
