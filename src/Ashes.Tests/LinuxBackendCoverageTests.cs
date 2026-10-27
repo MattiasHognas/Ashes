@@ -3852,6 +3852,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_mapped_tuple_closure_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `List.map` over a record's tuple field with a closure returning a fresh tuple of scalars:
+        // the closure's owned result moves into the producer's cell rather than being retained.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildMappedTupleClosureResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{8L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("map of tuples out of a record field", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_late_copied_successor_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15073,6 +15096,25 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(rel(["a", "b", "c", "d", "e", "f", "g", "h"])(["x", "d" + Ashes.Text.fromInt(n)])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMappedTupleClosureResultProgram(int rounds)
+        => $$"""
+            type Box =
+                | pairs: List((Int, Int))
+                | count: Int
+
+            let shift (box: Box) =
+                Ashes.Collection.List.map(given (p: (Int, Int)) ->
+                    match p with
+                        | (a, c) -> (a + 1, c))(box.pairs)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Collection.List.length(shift(Box(pairs = [(n, 1), (2, n), (3, 3), (4, n), (5, 5), (6, n), (7, 7), (n, 8)], count = n))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

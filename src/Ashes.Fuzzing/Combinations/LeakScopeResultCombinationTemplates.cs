@@ -93,3 +93,36 @@ internal sealed class ProducerStringLiteralHeadTemplate() : LeakCombinationTempl
             """;
     }
 }
+
+/// <summary>
+/// A generic map whose closure returns a tuple of scalars (<c>List.map(given (p: (Int, Int)) -&gt;
+/// (a + 1, c))(box.pairs)</c>). The closure hands its reference-counted tuple over owned; the
+/// producer's cell retained it again, so every element kept one reference too many.
+/// </summary>
+internal sealed class MappedTupleClosureResultTemplate() : LeakCombinationTemplate(
+    "leak.mapped-tuple-closure-result", "mappedTupleClosureResult", GeneratedFeature.Lambda, GeneratedFeature.Tuple, GeneratedFeature.Record)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string box = names.Of("LeakBox");
+        string shift = names.Of("shift");
+        string bump = names.Of("bump");
+        string lambda = names.Coin("identity") ? "given (p: (Int, Int)) -> p" : $"given (p: (Int, Int)) -> {bump}(p)";
+        string bumped = names.Coin("swap") ? "(c, a)" : $"(a + {LeakNames.Text(names.Between(1, 5))}, c)";
+        string source = names.Coin("recordField") ? "box.pairs" : $"[(seed, 1), (2, seed)]";
+        return $$"""
+            type {{box}} =
+                | pairs: List((Int, Int))
+                | count: Int
+
+            let {{bump}} (p: (Int, Int)) =
+                match p with
+                    | (a, c) -> {{bumped}}
+
+            let {{shift}} (box: {{box}}) (seed: Int) = Ashes.Collection.List.map({{lambda}})({{source}})
+
+            let {{names.Entry}} (seed: Int) =
+                Ashes.Collection.List.length({{shift}}({{box}}(pairs = [(seed, {{LeakNames.Text(names.Between(1, 9))}}), (3, seed)], count = seed))(seed))
+            """;
+    }
+}

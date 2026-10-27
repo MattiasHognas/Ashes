@@ -1020,7 +1020,10 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).
   A string head of such a cell, a string literal most often (`_ :: tail -> ".." :: parents(tail)`),
   takes the same copy (`GRC_NO_PRODUCERSTRINGHEAD`): an arena cell over the producer's recursive
-  result held a reference-counted copy of that result nothing released.
+  result held a reference-counted copy of that result nothing released. A head that is a closure's
+  result moves into the cell as it is when it is reference-counted, since the closure handed it over
+  owned, and only an arena result is copied (`GRC_NO_PRODUCERCALLHEAD`): a generic map over tuples of
+  scalars retained every element once more than it released.
 - A tail-modulo-cons function whose base case is a borrowed list (`else rest`) gives that list a
   reference of its own on both close-out branches, so the joined result is an owned
   reference-counted list rather than one the caller copies out of an arena it assumes, stranding the

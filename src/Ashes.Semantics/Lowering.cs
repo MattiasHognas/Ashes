@@ -17345,9 +17345,47 @@ public sealed partial class Lowering
             return head;
         }
 
-        int ownedTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, headType);
+        int ownedTemp = IsClosureCallResult(head.Temp)
+            && Environment.GetEnvironmentVariable("GRC_NO_PRODUCERCALLHEAD") is null
+                ? EmitClosureResultOrCopy(head.Temp, headType)
+                : EmitRuntimeManagedTcoDeepCopy(head.Temp, headType);
         MarkRuntimeManagedTemp(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    // Whether a temp is the result of a closure application emitted just now.
+    private bool IsClosureCallResult(int temp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 64; i--)
+        {
+            if (_inst[i] is IrInst.CallClosure call && call.Target == temp)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A closure's reference-counted result of a type with a fixed copy-out is handed over owned, as a
+    // direct call's is taken over behind its window: it moves into the producer's cell as it is, and
+    // only an arena result is copied onto the reference-counted heap.
+    private int EmitClosureResultOrCopy(int resultTemp, TypeRef type)
+    {
+        int resultSlot = NewLocal();
+        string copyLabel = NewLabel("producer_head_copy");
+        string doneLabel = NewLabel("producer_head_done");
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, resultTemp));
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, resultTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitRuntimeManagedTcoDeepCopy(resultTemp, type)));
+        Emit(new IrInst.Label(doneLabel));
+        int ownedTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(ownedTemp, resultSlot));
+        return ownedTemp;
     }
 
     private bool CanBuildRuntimeManagedCell(LoweredValueRequest request, LoweredValue head)
