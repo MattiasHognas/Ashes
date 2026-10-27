@@ -137,6 +137,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new InnerTailToSiblingTemplate());
         registry.Register(new RecordLiteralFieldConsTemplate());
         registry.Register(new ChainOntoConsumedTailTemplate());
+        registry.Register(new FreshTupleArmBesideNormalizedJoinTemplate());
     }
 }
 

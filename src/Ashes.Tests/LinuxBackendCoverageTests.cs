@@ -3536,6 +3536,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_tuple_arm_beside_normalized_join_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A parser's top-level `let` joins a tuple it builds under a `let` with a join already
+        // normalized (another such tuple beside a call of the mutually recursive item loop): the
+        // outer join owns its value, so the function's return takes it over instead of retaining it
+        // a second time, for a list of records and a list of integers alike.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildFreshTupleArmBesideNormalizedJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{12L * rounds / 5} {9L * rounds / 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh tuple arm beside a normalized join", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_loop_conses_record_holding_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15013,6 +15038,126 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + label(words(n))(Labels(labels = ["flint"], current = None)) + collect(items(n))(Seen(seen = [], count = n)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    // The program of the fresh-tuple-arm plateau test without its round count.
+    private const string FreshTupleArmBesideNormalizedJoinDeclarations = """
+        type Token =
+            | kind: Int
+            | text: Str
+            | position: Int
+
+        type Expr =
+            | EInt(Int)
+            | ELet(Str, Expr, Expr)
+
+        type Item =
+            | TopLet(Str, Expr)
+
+        type alias State = (List(Token), Str)
+
+        let eofToken = Token(kind = 0, text = "", position = 0)
+
+        let advance (state: State) =
+            match state with
+                | (token :: tail, source) -> (token, (tail, source))
+                | ([], _source) -> (eofToken, state)
+
+        let isKind (kind: Int) (state: State) =
+            match state with
+                | (token :: _, _source) -> token.kind == kind
+                | ([], _source) -> kind == 0
+
+        let parseExpression (state: State) =
+            match advance(state) with
+                | (token, after) -> (EInt(token.position), after)
+
+        let recursive programItems (reversedItems: List(Item)) (state: State) =
+            if isKind(1)(state)
+            then topLevelLet(reversedItems)(state)
+            else (Ashes.Collection.List.reverse(reversedItems), None, state)
+        and topLevelLet reversedItems state =
+            match advance(state) with
+                | (letToken, afterLet) ->
+                    match topLevelBinding(afterLet) with
+                        | (name, value, afterBinding) ->
+                            if isKind(3)(afterBinding)
+                            then
+                                match parseExpression(afterBinding) with
+                                    | (body, afterBody) ->
+                                        let expression = ELet(name)(value)(body)
+                                        in (Ashes.Collection.List.reverse(reversedItems), Some(expression), afterBody)
+                            else
+                                if letToken.position < 0
+                                then
+                                    let missing = ELet(name)(value)(EInt(0))
+                                    in (Ashes.Collection.List.reverse(reversedItems), Some(missing), afterBinding)
+                                else programItems(TopLet(name)(value) :: reversedItems)(afterBinding)
+        and topLevelBinding state =
+            match advance(state) with
+                | (name, afterName) ->
+                    match parseExpression(afterName) with
+                        | (value, afterValue) -> (name.text, value, afterValue)
+
+        let recursive positions (reversed: List(Int)) (state: State) =
+            if isKind(1)(state)
+            then positionLet(reversed)(state)
+            else (Ashes.Collection.List.reverse(reversed), None, state)
+        and positionLet reversed state =
+            match advance(state) with
+                | (letToken, afterLet) ->
+                    match positionBinding(afterLet) with
+                        | (name, _value, afterBinding) ->
+                            if isKind(3)(afterBinding)
+                            then
+                                match advance(afterBinding) with
+                                    | (_inToken, afterIn) ->
+                                        let found = name + " in"
+                                        in (Ashes.Collection.List.reverse(reversed), Some(found), afterIn)
+                            else
+                                if letToken.position < 0
+                                then
+                                    let missing = name + " missing"
+                                    in (Ashes.Collection.List.reverse(reversed), Some(missing), afterBinding)
+                                else positions(letToken.position :: reversed)(afterBinding)
+        and positionBinding state =
+            match advance(state) with
+                | (name, afterName) ->
+                    match parseExpression(afterName) with
+                        | (value, afterValue) -> (name.text, value, afterValue)
+
+        let token kind text position = Token(kind = kind, text = text, position = position)
+
+        let tokens (n: Int) =
+            [token(1)("let")(1), token(2)("f" + Ashes.Text.fromInt(n))(2), token(4)("1")(3), token(1)("let")(4), token(2)("g")(5), token(4)("2")(6), token(if n % 5 == 0
+            then 3
+            else 4)("4")(7), token(4)("5")(8)]
+
+        let recursive loop rounds total =
+            if rounds == 0
+            then total
+            else
+                match programItems([])((tokens(rounds), "source")) with
+                    | (items, body, _) ->
+                        loop(rounds - 1)(total + Ashes.Collection.List.length(items) + (match body with
+                            | Some(_) -> 3
+                            | None -> 0))
+
+        let recursive loopPositions rounds total =
+            if rounds == 0
+            then total
+            else
+                match positions([])((tokens(rounds), "source")) with
+                    | (found, _, _) -> loopPositions(rounds - 1)(total + Ashes.Collection.List.length(found))
+        """;
+
+    private static string BuildFreshTupleArmBesideNormalizedJoinProgram(int rounds)
+        => FreshTupleArmBesideNormalizedJoinDeclarations + $$"""
+
+
+            let rounds = {{rounds}}
+
+            Ashes.IO.print(Ashes.Text.fromInt(loop(rounds)(0)) + " " + Ashes.Text.fromInt(loopPositions(rounds)(0)))
             """;
 
     private static string BuildLoopConsesRecordHoldingParameterProgram(int rounds)

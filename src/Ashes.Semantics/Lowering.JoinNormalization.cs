@@ -137,8 +137,8 @@ public sealed partial class Lowering
     private bool IsOwnedValueArm(JoinArm arm)
         => arm.Owned || IsRetainedPatternOwnerArm(arm) || (arm.Store is { } store && IsNormalizedJoinTemp(store.Source));
 
-    // A join every reaching arm of which hands over a reference of its own (a normalized join, a cell
-    // it built, nil) owns its value as the normalized joins do.
+    // A join every reaching arm of which hands over a reference of its own (a normalized join, a value
+    // it just produced, nil) owns its value as the normalized joins do.
     private void RecordOwnedUniformJoin(int resultTemp, IReadOnlyList<JoinArm> arms)
     {
         List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
@@ -146,11 +146,20 @@ public sealed partial class Lowering
             && reaching.Any(arm => arm.Store is { } owned && IsNormalizedJoinTemp(owned.Source))
             && reaching.All(arm =>
                 (arm.Body is { } nil && IsEmptyListLiteral(nil))
-                || (!BorrowsLoopParameter(arm) && arm.Store is { } store && IsNormalizedJoinTemp(store.Source))))
+                || (!BorrowsLoopParameter(arm) && arm.Store is { } store
+                    && (IsNormalizedJoinTemp(store.Source) || HandsOverNewlyProducedValue(arm, store)))))
         {
             RecordNormalizedJoinTemp(resultTemp);
         }
     }
+
+    private static bool FreshUniformJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_FRESHUNIFORMJOIN") is null;
+
+    // An owned arm whose value it just produced (a tuple it built) holds a reference no slot of the
+    // function owns, so the join takes it over as it takes a normalized join's.
+    private bool HandsOverNewlyProducedValue(JoinArm arm, IrInst.StoreLocal store)
+        => FreshUniformJoinRuleEnabled && arm.Owned && IsNewlyProducedRcTemp(store.Source);
 
     // The joins normalized in each function (temps are numbered per function): each holds its own
     // reference, so a loop exit returning one releases every parameter rather than transferring one.
