@@ -482,6 +482,10 @@ type CoreTcoReset =
     // Per successor, whether it is written `head :: tail` over one of the loop's parameters (stage 0's
     // `SingleFreshCons`), decided while the body's bindings are in scope.
     | argumentSingleFreshCons: List(Bool)
+    // Per successor, whether it hands on its own parameter as it is (`isTcoBackEdgeArgPassThrough`), decided
+    // while the body's bindings are in scope: by the deferred reset a `let` shadowing the parameter's
+    // name is out of scope, and its value would read as the parameter's own.
+    | argumentPassThrough: List(Bool)
     // Per successor, whether it is a retain taken for the transfer out of an iteration-local owner
     // (stage 0's `TransferRetainedArgs`).
     | argumentTransferRetained: List(Bool)
@@ -7105,6 +7109,7 @@ type TcoResetArgument =
     | managedStr: Maybe(Int)
     | argumentExpression: Expr
     | singleFreshCons: Bool
+    | passesThrough: Bool
 
 // The active flag, resolved type and type name of a runtime-managed ADT slot.
 let recursive lookupRuntimeManagedAdtSlot (slot: Int) (entries: List((Int, Int, SemanticType, Str))) =
@@ -7253,10 +7258,10 @@ let restFlags (flags: List(Bool)) =
         | _flag :: rest -> rest
         | [] -> []
 
-let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (expressions: List(Expr)) (freshConses: List(Bool)) (managed: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+let recursive tcoResetArguments (ordinal: Int) (slots: List(Int)) (types: List(SemanticType)) (temps: List(Int)) (oldTemps: List(Int)) (runtime: List(Bool)) (shapes: List(TcoArgumentShape)) (expressions: List(Expr)) (freshConses: List(Bool)) (passThroughs: List(Bool)) (managed: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match (slots, types, temps, oldTemps, runtime, shapes, expressions) with
         | (slot :: restSlots, argumentType :: restTypes, temp :: restTemps, oldTemp :: restOld, isRuntime :: restRuntime, shape :: restShapes, expression :: restExpressions) ->
-            TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = refreshedArgumentRuntime(temp)(isRuntime)(state), shape = resetArgumentShape(shape)(ordinal)(lookupRuntimeManagedListSlot(slot)(managed))(state), managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts), managedStr = lookupManagedStrSlot(slot)(managedStrs), argumentExpression = expression, singleFreshCons = firstFlag(freshConses)) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(restExpressions)(restFlags(freshConses))(managed)(managedAdts)(managedStrs)(state)
+            TcoResetArgument(ordinal = ordinal, parameterSlot = slot, argumentType = argumentType, argumentTemp = temp, oldTemp = oldTemp, argumentRuntime = refreshedArgumentRuntime(temp)(isRuntime)(state), shape = resetArgumentShape(shape)(ordinal)(lookupRuntimeManagedListSlot(slot)(managed))(state), managedList = lookupRuntimeManagedListSlot(slot)(managed), managedAdt = lookupRuntimeManagedAdtSlot(slot)(managedAdts), managedStr = lookupManagedStrSlot(slot)(managedStrs), argumentExpression = expression, singleFreshCons = firstFlag(freshConses), passesThrough = firstFlag(passThroughs)) :: tcoResetArguments(ordinal + 1)(restSlots)(restTypes)(restTemps)(restOld)(restRuntime)(restShapes)(restExpressions)(restFlags(freshConses))(restFlags(passThroughs))(managed)(managedAdts)(managedStrs)(state)
         | _ -> []
 
 let recursive lookupTypeVariablePair (variableId: Int) (pairs: List((Int, SemanticType))) =
@@ -8404,8 +8409,8 @@ let withdrawCopiedLiteralRetains (expression: Expr) (temp: Int) (parameters: Lis
 let recursive withdrawBorrowedSuccessorRetains (arguments: List(TcoResetArgument)) (parameters: List((Int, Int))) (state: CoreLoweringState) =
     match arguments with
         | [] -> state
-        | TcoResetArgument { managedAdt = Some((_activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = false, argumentExpression = expression } :: rest ->
-            if shape != TcoPassThroughShape && !isTcoBackEdgeArgPassThrough(expression)(slot)(state) && backEdgeCopyBorrows(semanticType)(expression)(state)
+        | TcoResetArgument { managedAdt = Some((_activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = false, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
+            if shape != TcoPassThroughShape && !passesThrough && backEdgeCopyBorrows(semanticType)(expression)(state)
             then withdrawBorrowedSuccessorRetains(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(temp)(parameters)(state.reversedInstructions)))
             else
                 state
@@ -8618,11 +8623,11 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
         // reference-counted list is stored as it is, the parameter's own value is retained, since
         // the predecessor release still runs, and anything else is taken by reference when it
         // turns out reference-counted and copied otherwise.
-        | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoChoiceAccumulatorShape, parameterSlot = slot, argumentTemp = temp, argumentType = argumentType, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
+        | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoChoiceAccumulatorShape, parameterSlot = slot, argumentTemp = temp, argumentType = argumentType, argumentRuntime = isRuntime, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
             if isRuntime
             then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
             else
-                if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
+                if passesThrough
                 then
                     match freshTemp(state) with
                         | FreshTemp { state = allocated, temp = duplicate } ->
@@ -8639,7 +8644,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                     copied
                                     |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
                                     |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
-        | TcoResetArgument { managedAdt = Some((activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
+        | TcoResetArgument { managedAdt = Some((activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
             if shape == TcoPassThroughShape
             then normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
             else
@@ -8651,7 +8656,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                     // (stage 0's `TcoBackEdgeRetainRuntimeManagedArg`), retained for the next
                     // iteration since the predecessor release still runs. A list may be the empty
                     // list, so its retain is guarded.
-                    if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
+                    if passesThrough
                     then
                         match freshTemp(state) with
                             | FreshTemp { state = allocated, temp = duplicate } ->
@@ -8670,8 +8675,8 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                                     copied
                                     |> emitHeldRetainReleases(heldRetains)(semanticType)
                                     |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, copyTemp) :: reversedStores)
-        | TcoResetArgument { managedStr = Some(activeSlot), parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression } :: rest ->
-            if isTcoBackEdgeArgPassThrough(expression)(slot)(state)
+        | TcoResetArgument { managedStr = Some(activeSlot), parameterSlot = slot, argumentTemp = temp, argumentRuntime = isRuntime, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
+            if passesThrough
             then normalizeRuntimeManagedBackEdgeArguments(rest)(reversedStores)(state)
             else
                 if isRuntime
@@ -8695,7 +8700,7 @@ let recursive isAffineAppendResult (temp: Int) (instructions: List(IrInstruction
 
 // A runtime-managed `Str` slot's predecessor is released under the active flag unless the
 // argument is the parameter's own untouched value or the in-place append that consumed it.
-let strPredecessorIsReleased (argument: TcoResetArgument) (state: CoreLoweringState) = !isTcoBackEdgeArgPassThrough(argument.argumentExpression)(argument.parameterSlot)(state) && !isAffineAppendResult(argument.argumentTemp)(state.reversedInstructions)
+let strPredecessorIsReleased (argument: TcoResetArgument) (state: CoreLoweringState) = !argument.passesThrough && !isAffineAppendResult(argument.argumentTemp)(state.reversedInstructions)
 
 // The old root of a consumed list is released once its tail is retained for the successor
 // (stage 0's `TcoBackEdgeDropRuntimeManagedArg` under the active flag): a unique cell frees
@@ -8814,7 +8819,7 @@ let recursive zeroArenaReservations (arguments: List(TcoResetArgument)) (reserva
         | argument :: rest ->
             match lookupAffineReservation(argument.parameterSlot)(reservations) with
                 | Some((reservationStart, reservationEnd)) ->
-                    if argument.argumentRuntime || isTcoBackEdgeArgPassThrough(argument.argumentExpression)(argument.parameterSlot)(state) && resetArgumentIsManaged(argument)
+                    if argument.argumentRuntime || argument.passesThrough && resetArgumentIsManaged(argument)
                     then zeroArenaReservations(rest)(reservations)(zeroTemp)(state)
                     else
                         state
@@ -9575,7 +9580,7 @@ let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(frame), Some(loop)) ->
             state
-            |> tcoResetArguments(0)(frame.parameterSlots)(reset.argumentTypes)(reset.argumentTemps)(reset.oldTemps)(reset.argumentRuntime)(loop.argumentShapes)(reset.argumentExpressions)(reset.argumentSingleFreshCons)(frame.runtimeManagedListSlots)(frame.runtimeManagedAdtSlots)(frame.runtimeManagedStrSlots)
+            |> tcoResetArguments(0)(frame.parameterSlots)(reset.argumentTypes)(reset.argumentTemps)(reset.oldTemps)(reset.argumentRuntime)(loop.argumentShapes)(reset.argumentExpressions)(reset.argumentSingleFreshCons)(reset.argumentPassThrough)(frame.runtimeManagedListSlots)(frame.runtimeManagedAdtSlots)(frame.runtimeManagedStrSlots)
             |> (given (arguments: List(TcoResetArgument)) ->
                 if tcoBackEdgeCanEmitRuntimeManagedReset(loop)(arguments)(state)
                 then emitRuntimeManagedTcoReset(reset)(arguments)(state)
@@ -27170,6 +27175,11 @@ let recursive backEdgeConsesOverParameters (arguments: List(Expr)) (parameterSlo
         | [] -> []
         | argument :: rest -> backEdgeConsOverParameter(parameterSlots)(state)(argument) :: backEdgeConsesOverParameters(rest)(parameterSlots)(state)
 
+let recursive backEdgeArgumentsPassThrough (arguments: List(Expr)) (parameterSlots: List(Int)) (state: CoreLoweringState) =
+    match (arguments, parameterSlots) with
+        | (argument :: rest, slot :: restSlots) -> isTcoBackEdgeArgPassThrough(argument)(slot)(state) :: backEdgeArgumentsPassThrough(rest)(restSlots)(state)
+        | _ -> []
+
 let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (rootDrops: List((Int, SemanticType))) (state: CoreLoweringState) =
     (let loopSlots =
         slotsSharingIteration(ownedSlotsOfActiveFunction(state))(state)
@@ -27200,6 +27210,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     argumentRuntime = runtimeTempFlags(temps)(state),
                     argumentExpressions = arguments,
                     argumentSingleFreshCons = backEdgeConsesOverParameters(arguments)(frame.parameterSlots)(state),
+                    argumentPassThrough = backEdgeArgumentsPassThrough(arguments)(frame.parameterSlots)(state),
                     argumentTransferRetained = transferRetainedFlags(temps)(state),
                     transferredRootDrops = rootDrops,
                     lateCopiedCellHeads = stateLateCopiedCellHeads(state),
