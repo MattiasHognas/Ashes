@@ -17,7 +17,7 @@ internal sealed class ConsedTailChoiceTemplate() : LeakCombinationTemplate(
         string walk = names.Of("walk");
         string fresh = names.Coin("chain") ? "x - 1 :: 0 :: xs" : "x - 1 :: xs";
         string thenArm = names.Coin("freshThen") ? $"({fresh}) :: rest" : "xs :: rest";
-        string elseArm = names.Coin("tailElse") ? "rest" : $"({fresh}) :: rest";
+        string elseArm = $"({fresh}) :: rest";
         bool list = names.Coin("listSibling");
         string listParameter = list ? " (spare: List(Int))" : string.Empty;
         string listScrutinee = list ? ", spare" : string.Empty;
