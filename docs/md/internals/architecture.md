@@ -1487,6 +1487,13 @@ so a loop releasing it at many back edges carries one call each rather than the 
 A function whose entry normalizes a parameter its result always reaches owns that value (it adopts
 the reference a caller handed over, or copies a borrowed argument), so when it returns the parameter
 as it is, its return hands that reference over instead of retaining it as it would a borrowed one.
+When it returns anything else, a record, variant or string parameter is released behind the result:
+right after the result when the result is reference-counted and only reads the parameter or retains
+it, after the result is copied into an owned value when the result is a record or variant, and,
+for a string, right after an escaping arena tuple stores an independent copy of it (`let wrap k t =
+(k, t)`), since the tuple then holds nothing of the parameter. Without that last case, a curried
+helper wrapping its string in a tuple leaked the entry copy of the string at every call
+(`GRC_NO_STRPARAMBEHINDRESULT` turns the string case off).
 
 The contract is one calling convention for the whole program. A function that may run while a
 one-shot handler's post is pending keeps its values in the arena the post captures, so a program

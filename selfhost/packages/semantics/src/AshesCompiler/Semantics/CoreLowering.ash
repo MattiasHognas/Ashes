@@ -753,6 +753,9 @@ type CoreTcoState =
     // `_normalizedAlwaysReturnedParameter`): its name, its slot, and its type. A read of it
     // counts as a fresh owned child of the aggregate storing it.
     | normalizedAlwaysReturnedParameter: Maybe((Str, Int, SemanticType))
+    // Whether an escaping arena tuple of the function being lowered stored an independent copy of
+    // its entry-normalized string parameter (stage 0's `_normalizedParameterClonedIntoArenaTuple`).
+    | normalizedParameterCloned: Bool
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | tcoLoop: Maybe(CoreTcoLoop)
@@ -1895,6 +1898,14 @@ let withStateNormalizedAlwaysReturnedParameter value (state: CoreLoweringState) 
     (let group = state.tcoState
     in state with tcoState = (group with normalizedAlwaysReturnedParameter = value))
 
+let stateNormalizedParameterCloned (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.normalizedParameterCloned)
+
+let withStateNormalizedParameterCloned value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with normalizedParameterCloned = value))
+
 let stateRuntimeNormalizedArgumentLabels (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.runtimeNormalizedArgumentLabels)
@@ -2423,6 +2434,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             affineAppendReservation = None,
             recursiveProducerResultSlots = [],
             normalizedAlwaysReturnedParameter = None,
+            normalizedParameterCloned = false,
             runtimeNormalizedArgumentLabels = [],
             recursiveGroupNames = [],
             tcoLoop = None,
@@ -11988,6 +12000,54 @@ let releaseNormalizedParameterAfterContractResult (label: Str) (parameterType: S
     then registerGeneralRcOwnedSlot(1)(parameterType)(state)
     else state
 
+// A string parameter is released behind the result like a record parameter: a result that copies
+// it out holds references of its own.
+let releasesNormalizedParameterOfType (parameterType: SemanticType) =
+    match parameterType with
+        | SemNamed(_symbolId, _name, _arguments) -> true
+        | SemString -> true
+        | _ -> false
+
+let recursive tupleElementsStoreParameterOnlyBare (name: Str) (elements: List(Expr)) =
+    match elements with
+        | [] -> true
+        | element :: rest -> (isVariableNamed(name)(element) || !exprReadsName(name)(element)) && tupleElementsStoreParameterOnlyBare(name)(rest)
+
+// Stage 0's `ReachesResultOnlyAsClonedTupleElement`: an arena tuple the function returns stores an
+// independent copy of a string parameter read as one of its elements, so the owned parameter the
+// entry normalization made is referenced by nothing once the tuple is built. Only a body that is
+// that tuple, with every other element and every let value before it not mentioning the
+// parameter, qualifies: any other path could store the parameter itself.
+let recursive bodyReachesParameterOnlyAsTupleElement (name: Str) (body: Expr) =
+    match body with
+        | ExprAt(_span, inner) -> bodyReachesParameterOnlyAsTupleElement(name)(inner)
+        | ExprLet(bound, value, rest, _parameters, _annotation, _requirements) -> bound != name && !exprReadsName(name)(value) && bodyReachesParameterOnlyAsTupleElement(name)(rest)
+        | ExprTuple(elements) -> tupleElementsStoreParameterOnlyBare(name)(elements)
+        | _ -> false
+
+let reachesResultOnlyAsClonedTupleElement (parameter: Str) (body: Expr) (parameterType: SemanticType) (state: CoreLoweringState) = parameterType == SemString && stateNormalizedParameterCloned(state) && bodyReachesParameterOnlyAsTupleElement(parameter)(body)
+
+// The release behind a result that is not reference-counted: right after it when the result holds
+// an independent copy of the parameter, after the result's copy into an owned value when the
+// contract can express one, and otherwise at the return, after the result's normalization.
+let releaseNormalizedParameterBehindArenaResult (label: Str) (parameter: Str) (body: Expr) (parameterType: SemanticType) (bodyType: SemanticType) (kept: (CoreLoweringState, Int)) =
+    match kept with
+        | (state, bodyTemp) ->
+            if reachesResultOnlyAsClonedTupleElement(parameter)(body)(parameterType)(state)
+            then (emitNormalizedParameterRelease(parameterType)(state), bodyTemp)
+            else
+                if canOwnResultBehindNormalizedParameter(bodyType)(state)
+                then
+                    match argumentCopyPlanOf(bodyType)(state) with
+                        | None -> kept
+                        | Some(plan) ->
+                            match emitArgumentCopy(bodyTemp)(entryCopyPlanOf(bodyType)(plan)(state))(state) with
+                                | (copied, ownedTemp) ->
+                                    (copied
+                                    |> emitNormalizedParameterRelease(parameterType)
+                                    |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced), ownedTemp)
+                else (releaseNormalizedParameterAfterContractResult(label)(parameterType)(bodyType)(state), bodyTemp)
+
 // Stage 0's `ReleaseNormalizedParameterBehindResult`: a function whose entry normalizes its
 // always-returned parameter owns that parameter, and a result other than the parameter itself only
 // borrows what it reaches of it: a record update shares the parameter's unchanged children, a cons
@@ -12003,27 +12063,18 @@ let releaseNormalizedParameterBehindResult (label: Str) (parameter: Str) (body: 
     match kept with
         | (state, bodyTemp) ->
             match (stateTcoLoopFrame(state), resolveType(state)(parameterType)) with
-                | (None, SemNamed(_symbolId, _name, _arguments) as named) ->
-                    if !acceptsRuntimeManagedArgument(label)(state) || definesSlotRead(bodyTemp)(1)(state.reversedInstructions)
+                | (None, named) ->
+                    if !releasesNormalizedParameterOfType(named) || !acceptsRuntimeManagedArgument(label)(state) || definesSlotRead(bodyTemp)(1)(state.reversedInstructions)
                     then kept
                     else
                         if isRuntimeTemp(bodyTemp)(state)
                         then
-                            if parameterReadOnlyThroughFieldsOrCalls(parameter)(0)(true)(body)
+                            // A reference-counted aggregate stores the owned string parameter as it
+                            // is, without a retain: the result releases it.
+                            if named != SemString && parameterReadOnlyThroughFieldsOrCalls(parameter)(0)(true)(body)
                             then (emitNormalizedParameterRelease(named)(state), bodyTemp)
                             else kept
-                        else
-                            if canOwnResultBehindNormalizedParameter(bodyType)(state)
-                            then
-                                match argumentCopyPlanOf(bodyType)(state) with
-                                    | None -> kept
-                                    | Some(plan) ->
-                                        match emitArgumentCopy(bodyTemp)(entryCopyPlanOf(bodyType)(plan)(state))(state) with
-                                            | (copied, ownedTemp) ->
-                                                (copied
-                                                |> emitNormalizedParameterRelease(named)
-                                                |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced), ownedTemp)
-                            else (releaseNormalizedParameterAfterContractResult(label)(named)(bodyType)(state), bodyTemp)
+                        else releaseNormalizedParameterBehindArenaResult(label)(parameter)(body)(named)(bodyType)(kept)
                 | _ -> kept
 
 // A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so
@@ -12471,8 +12522,14 @@ let normalizesAlwaysReturnedParameter parameter body label parameterType (state:
 // direct argument lives in local slot 1.
 let withNormalizedAlwaysReturnedParameter parameter body label parameterType (state: CoreLoweringState) =
     if normalizesAlwaysReturnedParameter(parameter)(body)(label)(parameterType)(state)
-    then withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))(state)
-    else withStateNormalizedAlwaysReturnedParameter(None)(state)
+    then
+        state
+        |> withStateNormalizedParameterCloned(false)
+        |> withStateNormalizedAlwaysReturnedParameter(Some((parameter, 1, parameterType)))
+    else
+        state
+        |> withStateNormalizedParameterCloned(false)
+        |> withStateNormalizedAlwaysReturnedParameter(None)
 
 let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
     match lowered with
@@ -21536,6 +21593,27 @@ let finishPlacedTuple elements (temps: List(Int)) (semanticTypes: List(SemanticT
             |> markAggregateRuntimeManaged(tupleTemp)(runtimeManaged)
             |> success(tupleTemp)(SemTuple(semanticTypes))
 
+// Stage 0's `MaterializeEscapingArenaTupleElements` for the read of the entry-normalized string
+// parameter: an escaping tuple that stays in the arena stores an independent copy of the string,
+// so the owned parameter is referenced by nothing once the tuple is built and is released behind
+// the result (`reachesResultOnlyAsClonedTupleElement`).
+let recursive cloneNormalizedStringParameterElements (runtimeTuple: Bool) (elements: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (elements, temps) with
+        | (element :: restElements, temp :: restTemps) ->
+            if runtimeTuple && isNormalizedAlwaysReturnedStringParameterRead(element)(state)
+            then
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = copyTemp } ->
+                        match allocated
+                        |> emit(CopyOutArena(copyTemp)(temp)(-1)(false)(IndependentClone)(None))
+                        |> withStateNormalizedParameterCloned(true)
+                        |> cloneNormalizedStringParameterElements(runtimeTuple)(restElements)(restTemps) with
+                            | (cloned, rest) -> (cloned, copyTemp :: rest)
+            else
+                match cloneNormalizedStringParameterElements(runtimeTuple)(restElements)(restTemps)(state) with
+                    | (cloned, rest) -> (cloned, temp :: rest)
+        | _ -> (state, temps)
+
 let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -21548,7 +21626,9 @@ let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered 
                             | (normalizedState, temps) -> finishPlacedTuple(elements)(temps)(semanticTypes)([])(tupleTemp)(true)(transfers)(normalizedState)
                     else
                         match demoteArenaTupleElements(loweredTemps)(semanticTypes)(reservedState) with
-                            | (demotedState, temps, demoted) -> finishPlacedTuple(elements)(temps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(demotedState)
+                            | (demotedState, temps, demoted) ->
+                                match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
+                                    | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with

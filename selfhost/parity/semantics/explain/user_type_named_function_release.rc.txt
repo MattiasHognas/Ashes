@@ -53,8 +53,8 @@ Function: __rcdrop_record_4
 
 Function: makeFunction
   Operations
-    dup:                  2
-    drop:                 0
+    dup:                  3
+    drop:                 1
     uniqueness checks:    0
     allocations:          3
     reused allocations:   0

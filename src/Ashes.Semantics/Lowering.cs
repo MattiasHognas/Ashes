@@ -701,6 +701,10 @@ public sealed partial class Lowering
     // the result.
     private bool _normalizedParameterMovedIntoAggregate;
     private readonly HashSet<string> _normalizedParameterMovedLabels = new(StringComparer.Ordinal);
+    // Whether an escaping arena tuple of the function being lowered stored an independent copy of its
+    // entry-normalized string parameter, and the functions whose tuples did.
+    private bool _normalizedParameterClonedIntoArenaTuple;
+    private readonly HashSet<string> _normalizedParameterClonedLabels = new(StringComparer.Ordinal);
     private Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
@@ -7627,7 +7631,7 @@ public sealed partial class Lowering
             || _inCoroutineBody
             || !_runtimeNormalizedFunctionArgumentLabels.Contains(label)
             || ReturnsNormalizedAlwaysReturnedParameter(label, argumentSlot, bodyTemp)
-            || Prune(parameterType) is not TypeRef.TNamedType)
+            || !ReleasesNormalizedParameterOfType(Prune(parameterType)))
         {
             return bodyTemp;
         }
@@ -7638,15 +7642,23 @@ public sealed partial class Lowering
         // exception: a reference-counted join with such an arm retained the parameter there (see
         // NormalizeMixedJoinArms), so the release below hands that reference to the result. A tuple
         // element or record field reading the parameter retains it too, unless the aggregate took the
-        // owned parameter over as it is.
+        // owned parameter over as it is, which a reference-counted aggregate always does with a string
+        // parameter (IsNormalizedAlwaysReturnedStringParameterRead).
         if (IsRuntimeManagedResultTemp(bodyTemp))
         {
             bool aggregatesRetain = !_normalizedParameterMovedLabels.Contains(label);
-            if (!ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true, aggregatesRetain))
+            if (Prune(parameterType) is TypeRef.TStr
+                || !ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true, aggregatesRetain))
             {
                 return bodyTemp;
             }
 
+            EmitNormalizedParameterRelease(argumentSlot, parameterType);
+            return bodyTemp;
+        }
+
+        if (ReachesResultOnlyAsClonedTupleElement(lambda, label, parameterType))
+        {
             EmitNormalizedParameterRelease(argumentSlot, parameterType);
             return bodyTemp;
         }
@@ -7661,6 +7673,45 @@ public sealed partial class Lowering
         EmitNormalizedParameterRelease(argumentSlot, parameterType);
         MarkRuntimeManagedTemp(ownedTemp);
         return ownedTemp;
+    }
+
+    // A string parameter is released behind the result like a record parameter: a result that
+    // copies it out holds references of its own.
+    private static bool ReleasesNormalizedParameterOfType(TypeRef parameterType)
+        => parameterType is TypeRef.TNamedType
+            || (parameterType is TypeRef.TStr && StringParameterBehindResultEnabled);
+
+    private static bool StringParameterBehindResultEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_STRPARAMBEHINDRESULT") is null;
+
+    // An arena tuple the function returns stores an independent copy of a string parameter read as
+    // one of its elements (MaterializeEscapingArenaTupleElements), so the owned parameter the entry
+    // normalization made is referenced by nothing once the tuple is built. Only a body that is that
+    // tuple, with every other element and every let value before it not mentioning the parameter,
+    // qualifies: any other path could store the parameter itself.
+    private bool ReachesResultOnlyAsClonedTupleElement(Expr.Lambda lambda, string label, TypeRef parameterType)
+    {
+        if (!StringParameterBehindResultEnabled
+            || Prune(parameterType) is not TypeRef.TStr
+            || !_normalizedParameterClonedLabels.Contains(label))
+        {
+            return false;
+        }
+
+        string name = lambda.ParamName;
+        Expr body = lambda.Body;
+        while (body is Expr.Let let)
+        {
+            if (string.Equals(let.Name, name, StringComparison.Ordinal) || ExprMentionsName(let.Value, name, 0))
+            {
+                return false;
+            }
+
+            body = let.Body;
+        }
+
+        return body is Expr.TupleLit tuple
+            && tuple.Elements.All(element => IsVariableNamed(element, name) || !ExprMentionsName(element, name, 0));
     }
 
     // A result of the contract's types the copy above does not express (a generic wrapper such as
@@ -7829,13 +7880,21 @@ public sealed partial class Lowering
         BeginCurryStage(label, lam);
         bool outerParameterMoved = _normalizedParameterMovedIntoAggregate;
         _normalizedParameterMovedIntoAggregate = false;
+        bool outerParameterCloned = _normalizedParameterClonedIntoArenaTuple;
+        _normalizedParameterClonedIntoArenaTuple = false;
         (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
         if (_normalizedParameterMovedIntoAggregate)
         {
             _normalizedParameterMovedLabels.Add(label);
         }
 
+        if (_normalizedParameterClonedIntoArenaTuple)
+        {
+            _normalizedParameterClonedLabels.Add(label);
+        }
+
         _normalizedParameterMovedIntoAggregate = outerParameterMoved;
+        _normalizedParameterClonedIntoArenaTuple = outerParameterCloned;
         _normalizedAlwaysReturnedParameter = outerNormalizedParameter;
         _passthroughParameter = outerPassthroughParameter;
         return body;
@@ -16769,6 +16828,7 @@ public sealed partial class Lowering
         {
             if (EscapingTupleElementNeedsOwnedCopy(tuple.Elements[i], elements[i].Type))
             {
+                _normalizedParameterClonedIntoArenaTuple |= IsNormalizedAlwaysReturnedParameterRead(tuple.Elements[i]);
                 int copiedTemp = EmitDeepCopy(elements[i].Temp, elements[i].Type);
                 elements[i] = CreateLoweredValue(copiedTemp, elements[i].Type);
             }
