@@ -1419,6 +1419,12 @@ The IR makes every remaining copy operation declare its purpose:
 | `IndependentClone` | Explicit `deepCopy`, reuse defense, or worker publication. |
 | `ArenaResultBoundary` | A reference-counted result handed to a caller that cannot own one (a generic body applying a closure parameter): the callee clones it into the arena and releases the original. |
 
+A scope that releases a value its result may view (a split of a let-bound string) copies the result
+into the arena first. When the result is a join that owns its reference (normalized, or every arm
+handing over one of its own: nil, a value it just produced, a retain it took, or another such join),
+the join is released behind the copy (`GRC_NO_VIEWCOPYRELEASE`); before, a path function returning
+its parts this way leaked the tuple, its strings and the parts list on every call.
+
 `AllocAdtToSpace` and `CopyOutArenaToSpace` are not general escape mechanisms;
 they belong only to the persistent `Map`/`HashMap` region described below.
 

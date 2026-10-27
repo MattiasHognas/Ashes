@@ -3805,6 +3805,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_view_copied_scope_join_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns a join of tuples splitting a let-bound string whose scope ends with the
+        // function: the join is copied into the arena before the string is released, and the join,
+        // which owned its reference, is released behind its copy.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildViewCopiedScopeJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{6L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("join copied out of a viewed scope", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_late_copied_successor_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14978,6 +15002,32 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + walk([["x"], ["y"]])([])(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildViewCopiedScopeJoinProgram(int rounds)
+        => $$"""
+            let recursive rebuild (path: Str) =
+                match Ashes.Text.unconsText(path) with
+                    | None -> ""
+                    | Some((head, tail)) -> head + rebuild(tail)
+
+            let parts (flag: Bool) (path: Str) =
+                (let slashed = rebuild(path)
+                in
+                    if flag
+                    then ("", true, Ashes.Text.split(slashed)("/"))
+                    else
+                        match Ashes.Text.split(slashed)("/") with
+                            | server :: rest -> (server + "x", true, [])
+                            | _ -> ("", true, []))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + (match parts(true)("/a/./b/../c" + Ashes.Text.fromInt(n)) with
+                    | (p, a, ps) -> Ashes.Text.length(p) + Ashes.Collection.List.length(ps)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

@@ -151,6 +151,11 @@ public sealed partial class Lowering
         {
             RecordNormalizedJoinTemp(resultTemp);
         }
+
+        if (reaching.Count > 0 && reaching.All(IsOwnedScopeResultArm))
+        {
+            RecordOwnedScopeJoinTemp(resultTemp);
+        }
     }
 
     private static bool FreshUniformJoinRuleEnabled =>
@@ -160,6 +165,43 @@ public sealed partial class Lowering
     // function owns, so the join takes it over as it takes a normalized join's.
     private bool HandsOverNewlyProducedValue(JoinArm arm, IrInst.StoreLocal store)
         => FreshUniformJoinRuleEnabled && arm.Owned && IsNewlyProducedRcTemp(store.Source);
+
+    // An arm handing the join a reference of its own without borrowing from a loop parameter: nil, a
+    // value it just produced on the reference-counted heap, a retain it took of a binding whose scope
+    // releases its own reference, or a join that owns its value itself.
+    private bool IsOwnedScopeResultArm(JoinArm arm)
+        => (arm.Body is { } nil && IsEmptyListLiteral(nil))
+            || (!BorrowsLoopParameter(arm)
+                && arm.Store is { } store
+                && (IsNormalizedJoinTemp(store.Source)
+                    || IsOwnedScopeJoinTemp(store.Source)
+                    || IsNewlyProducedRcTemp(store.Source)
+                    || IsRuntimeRetainTemp(store.Source)));
+
+    private bool IsRuntimeRetainTemp(int temp)
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc
+            && fact.Producer == LoweredTempProducerKind.RcDup;
+
+    // The joins whose every arm hands over a reference of its own: a scope replacing such a join
+    // with its arena copy releases the join (MaterializeScopeResultViews). Unlike a normalized join,
+    // one recorded here changes nothing about how a loop exit releases its parameters.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _ownedScopeJoinTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordOwnedScopeJoinTemp(int temp)
+    {
+        if (!_ownedScopeJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _ownedScopeJoinTempsByBody[_inst] = temps;
+        }
+
+        temps.Add(temp);
+    }
+
+    private bool IsOwnedScopeJoinTemp(int temp)
+        => _ownedScopeJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps) && temps.Contains(temp);
 
     // The joins normalized in each function (temps are numbered per function): each holds its own
     // reference, so a loop exit returning one releases every parameter rather than transferring one.

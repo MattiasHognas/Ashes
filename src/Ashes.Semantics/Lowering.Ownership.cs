@@ -4522,8 +4522,22 @@ public sealed partial class Lowering
             return resultTemp;
         }
 
-        return EmitDeepCopy(resultTemp, Prune(resultType), IrInst.CopyOutPurpose.ArenaResultBoundary);
+        int copyTemp = EmitDeepCopy(resultTemp, Prune(resultType), IrInst.CopyOutPurpose.ArenaResultBoundary);
+        if (OwnsReferenceCountedScopeResult(resultTemp))
+        {
+            EmitRuntimeManagedResultDrop(resultTemp, resultType);
+        }
+
+        return copyTemp;
     }
+
+    // A scope result holding a reference of its own (a join normalized onto the reference-counted
+    // heap, or a value just produced there) is replaced by its arena copy, so the copy's source is
+    // released once it is copied.
+    private bool OwnsReferenceCountedScopeResult(int resultTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_VIEWCOPYRELEASE") is null
+            && IsRuntimeManagedResultTemp(resultTemp)
+            && (IsNormalizedJoinTemp(resultTemp) || IsOwnedScopeJoinTemp(resultTemp) || IsNewlyProducedRcTemp(resultTemp));
 
     private void KeepViewedBackingsAlive()
     {
