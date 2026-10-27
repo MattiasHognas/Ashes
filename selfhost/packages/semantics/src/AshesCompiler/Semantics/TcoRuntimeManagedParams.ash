@@ -614,6 +614,23 @@ let recursive shapeIsConsedTail (structural: Expr) (index: Int) (shadowed: List(
                     | _ -> shapeIsConsedTail(tail)(index)(shadowed)(tailOwners)(parameters)
         | _ -> false
 
+let shapeIsOwnedConsumedTail (arm: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
+    match shapeUnspan(arm) with
+        | ExprVar(name) -> shapeResolveParameter(name)(shadowed)(parameters) == None && shapeLookupTailOwner(name)(tailOwners) == Some(index)
+        | _ -> false
+
+// A cons chain onto the consumed tail, or a choice between such chains (`walk(if c then xs :: rest else
+// (x - 1 :: xs) :: rest)`), an arm of which may hand on the consumed tail itself as long as one arm
+// conses, stage 0's `IsConsedTailArgument`.
+let recursive shapeIsConsedTailArgument (structural: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
+    match shapeUnspan(structural) with
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            let thenConsed = shapeIsConsedTailArgument(thenBranch)(index)(shadowed)(tailOwners)(parameters)
+            in
+                let elseConsed = shapeIsConsedTailArgument(elseBranch)(index)(shadowed)(tailOwners)(parameters)
+                in (thenConsed || shapeIsOwnedConsumedTail(thenBranch)(index)(shadowed)(tailOwners)(parameters)) && (elseConsed || shapeIsOwnedConsumedTail(elseBranch)(index)(shadowed)(tailOwners)(parameters)) && (thenConsed || elseConsed)
+        | _ -> shapeIsConsedTail(structural)(index)(shadowed)(tailOwners)(parameters)
+
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail or a
 // cons chain onto it, and whether one passed the chain, stage 0's `ConsedTailEdges` and
 // `AnyConsedTailEdge`.
@@ -621,7 +638,7 @@ let recursive shapeObserveConsedTails (arguments: List(Expr)) (index: Int) (shad
     match (arguments, consedTails) with
         | (argument :: restArguments, (everyEdge, anyConsed) :: restConsed) ->
             (let consed =
-                shapeIsConsedTail(shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters))(index)(shadowed)(tailOwners)(parameters)
+                shapeIsConsedTailArgument(shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters))(index)(shadowed)(tailOwners)(parameters)
             in (everyEdge && (consed || shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters) == TcoConsumedTailShape), anyConsed || consed)) :: shapeObserveConsedTails(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restConsed)
         | _ -> consedTails
 

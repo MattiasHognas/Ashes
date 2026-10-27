@@ -1180,7 +1180,10 @@ list is a counted copy, and left in the arena the rebuilt cell kept the referenc
 retained with for it, which no later iteration released. A tail matched out of the parameter alone
 counts the same way (`GRC_NO_CONSEDTAILANYMATCH` counts only a tuple scrutinee's): placed on the
 reference-counted heap, its successor's cell releases the duplicates it took once the back edge has
-copied it. In a list of lists of copy-type values the inner cells of such a successor
+copied it. A choice between such chains, an arm of which may hand on the consumed tail itself
+(`walk(if x > 2 then (x - 1 :: xs) :: rest else xs :: rest)`), hands on the same list whichever arm
+runs and counts as a chain (`GRC_NO_CONSEDTAILCHOICE`). In a list of lists of copy-type values the
+inner cells of such a successor
 (`walk((x - 1 :: xs) :: rest)`) are copied with the outer cell, and their counted suffix is shared
 with a reference of the copy's own, so they borrow their tail as the outer cell borrows its parts
 (`GRC_NO_COPIEDINNERCELL`). A successor known to be copied only once its types resolve (a loop over

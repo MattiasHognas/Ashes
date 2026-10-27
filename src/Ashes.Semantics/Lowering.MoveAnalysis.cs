@@ -2752,16 +2752,44 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, int> parameterScope)
     {
         bool consedTail = Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILREBUILD") is null
-            && structural is Expr.Cons
+            && IsConsedTailArgument(state, ordinal, structural, tailOwners, parameterScope);
+        state.ConsedTailEdges[ordinal] = (state.ConsedTailEdges[ordinal] ?? true)
+            && (consedTail || local == TcoSelfCallArgumentShape.ConsumedTail);
+        state.AnyConsedTailEdge[ordinal] |= consedTail;
+    }
+
+    // A cons chain onto the consumed tail, or a choice between such chains (`walk(if c then xs :: rest
+    // else (x - 1 :: xs) :: rest)`), which hands on the same list whichever arm runs. A choice arm
+    // may hand on the consumed tail itself; one arm must cons.
+    private static bool IsConsedTailArgument(
+        TcoParamFactsState state,
+        int ordinal,
+        Expr structural,
+        IReadOnlyDictionary<string, int> tailOwners,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        if (structural is Expr.If conditional && ConsedTailChoicesCount)
+        {
+            bool thenConsed = IsConsedTailArgument(state, ordinal, conditional.Then, tailOwners, parameterScope);
+            bool elseConsed = IsConsedTailArgument(state, ordinal, conditional.Else, tailOwners, parameterScope);
+            return (thenConsed || IsOwnedConsumedTail(conditional.Then, ordinal, tailOwners))
+                && (elseConsed || IsOwnedConsumedTail(conditional.Else, ordinal, tailOwners))
+                && (thenConsed || elseConsed);
+        }
+
+        return structural is Expr.Cons
             && GrownConsChainTail(structural) is Expr.Var tail
             && (state.TupleScrutineeTails.Contains(tail.Name) || ConsedTailsOfAnyMatchCount)
             && tailOwners.TryGetValue(tail.Name, out int ownerOrdinal)
             && ownerOrdinal == ordinal
             && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope));
-        state.ConsedTailEdges[ordinal] = (state.ConsedTailEdges[ordinal] ?? true)
-            && (consedTail || local == TcoSelfCallArgumentShape.ConsumedTail);
-        state.AnyConsedTailEdge[ordinal] |= consedTail;
     }
+
+    private static bool IsOwnedConsumedTail(Expr arm, int ordinal, IReadOnlyDictionary<string, int> tailOwners)
+        => arm is Expr.Var tail && tailOwners.TryGetValue(tail.Name, out int owner) && owner == ordinal;
+
+    private static bool ConsedTailChoicesCount
+        => Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILCHOICE") is null;
 
     // An accumulator's edge hands the parameter on, conses onto it, or replaces it with a call's
     // result or a part matched out of one; a consumed tail or any other expression is not one.

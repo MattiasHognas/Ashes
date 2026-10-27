@@ -3658,6 +3658,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_consed_tail_choice_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop hands on a choice between cons chains onto the consumed tail (`walk(if x > 2 then
+        // (x - 1 :: xs) :: rest else xs :: rest)`): the list is a choice accumulator as each arm
+        // alone makes it, so the back edge copies the successor and releases the predecessor.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildConsedTailChoiceProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{11L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("choice between cons chains onto the consumed tail", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_record_literal_field_cons_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14759,6 +14783,28 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + peel([[3, 2, 1], [4, n]])([n, 2])(0) + count([n, 2, 3])(Kept(state = [n, 7], temp = 3))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsedTailChoiceProgram(int rounds)
+        => $$"""
+            type Kept =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive walk (items: List(List(Int))) (kept: Kept) (acc: Int) =
+                match (items, kept) with
+                    | ((x :: xs) :: rest, same) ->
+                        if x > 0
+                        then walk(if x > 2 then (x - 1 :: xs) :: rest else xs :: rest)(same)(acc + x)
+                        else walk(xs :: rest)(same)(acc)
+                    | (_, Kept { state = st, temp = k }) -> acc + k + Ashes.Collection.List.length(st)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([[3, 2, 0], [4, 0]])(Kept(state = [n, 7, 8], temp = 1))(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
