@@ -3923,6 +3923,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_normalized_record_loop_parameter_in_exit_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A record state threaded through a loop is returned beside the reversed accumulator in a
+        // reference-counted tuple, which takes the normalized state as its one reference.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildNormalizedRecordLoopParameterInExitTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{4L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("normalized record loop parameter in exit tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_curried_string_parameter_into_aggregate_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15264,6 +15287,36 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Text.byteLength(build([Ashes.Text.fromInt(n)])(60)("")))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildNormalizedRecordLoopParameterInExitTupleProgram(int rounds)
+        => $$"""
+            type ThreadState =
+                | names: List(Int)
+                | counter: Int
+
+            let stepOne (state: ThreadState) (x: Int) =
+                if x % 2 == 0
+                then (x + 1, state with names = (x * 2) :: state.names, counter = state.counter + 1)
+                else (x, state)
+
+            let recursive threadLoop (state: ThreadState) remaining acc =
+                match remaining with
+                    | [] -> (Ashes.Collection.List.reverse(acc), state)
+                    | x :: tail ->
+                        match stepOne(state)(x) with
+                            | (y, nextState) -> threadLoop(nextState)(tail)(y :: acc)
+
+            let run (seed: Int) =
+                match threadLoop(ThreadState(names = [], counter = seed))([seed, 2, 4, 5])([]) with
+                    | (built, _finalState) -> Ashes.Collection.List.length(built)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

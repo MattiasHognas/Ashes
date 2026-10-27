@@ -16690,7 +16690,7 @@ public sealed partial class Lowering
         List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor, duplicates);
 
         int tupleTemp = NewTemp();
-        bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request);
+        bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request, out bool[] normalized);
         RecordLateCopiedHeadTupleDuplicates(tuple, duplicates, runtimeManaged);
         if (copiedSuccessor && runtimeManaged)
         {
@@ -16702,7 +16702,7 @@ public sealed partial class Lowering
             elements,
             request,
             runtimeManaged);
-        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted);
+        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted, normalized);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)
         {
@@ -16776,7 +16776,8 @@ public sealed partial class Lowering
         List<LoweredValue> elements,
         LoweredValueRequest request,
         bool runtimeManaged,
-        bool[] demoted)
+        bool[] demoted,
+        bool[] normalized)
     {
         if (!runtimeManaged && !request.TransfersRuntimeManagedChildren)
         {
@@ -16785,7 +16786,7 @@ public sealed partial class Lowering
 
         for (int i = 0; i < elements.Count; i++)
         {
-            if (demoted[i])
+            if (demoted[i] || normalized[i])
             {
                 continue;
             }

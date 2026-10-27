@@ -1635,6 +1635,12 @@ the binding only borrows from the tuple (`GRC_NO_OWNERPARTCHILD`).
 A join of such a normalized join and an arm handing over a value it just built (the parser's
 `if in then (items, Some(expression), state) else <normalized join>`) owns its value too, so the
 function's return takes it over instead of retaining it a second time (`GRC_NO_FRESHUNIFORMJOIN`).
+A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
+not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
+retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record
+state beside the reversed accumulator (`| [] -> (reverse(acc), state)`) otherwise left one reference
+to the final state at every call, which the stage-1 optimizer's scalarization pass leaked once per
+program (`GRC_NO_NORMALIZEDELEMENTRETAIN`).
 A function that cannot name the arena cells its tuple result may be (a loop, or a mutually recursive
 group fused into one) retains each part a caller asks for at its return. When a part is the very
 value one of its owned slots holds, that slot is released behind it, so the retain moves the slot's

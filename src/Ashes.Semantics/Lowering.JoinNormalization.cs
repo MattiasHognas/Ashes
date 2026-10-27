@@ -667,8 +667,8 @@ public sealed partial class Lowering
 
     // Whether a tuple is a reference-counted one: it was requested, or it holds a reference-counted
     // element; and every element is manageable, one of the contract's types included, and those are
-    // made the tuple's own.
-    private bool PlaceRuntimeManagedTuple(List<LoweredValue> elements, LoweredValueRequest request)
+    // made the tuple's own. An element normalized here already holds the reference the tuple stores.
+    private bool PlaceRuntimeManagedTuple(List<LoweredValue> elements, LoweredValueRequest request, out bool[] normalized)
     {
         bool holdsReferenceCounted = HoldsReferenceCountedElement(elements);
         bool runtimeManaged = request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)
@@ -680,7 +680,7 @@ public sealed partial class Lowering
                 || (holdsReferenceCounted && IsNormalizableSiblingElement(elements[i]));
         }
 
-        NormalizeGeneralRcTupleElements(elements, runtimeManaged, holdsReferenceCounted);
+        normalized = NormalizeGeneralRcTupleElements(elements, runtimeManaged, holdsReferenceCounted);
         return runtimeManaged;
     }
 
@@ -709,11 +709,13 @@ public sealed partial class Lowering
 
     // A reference-counted tuple owns its children: an element of the contract's types (borrowed, or
     // held by an owned slot the function releases) is retained or copied into it.
-    private void NormalizeGeneralRcTupleElements(List<LoweredValue> elements, bool runtimeManaged, bool holdsReferenceCounted)
+    // Returns the elements normalized, which the tuple stores without a further retain.
+    private bool[] NormalizeGeneralRcTupleElements(List<LoweredValue> elements, bool runtimeManaged, bool holdsReferenceCounted)
     {
+        bool[] normalized = new bool[elements.Count];
         if (!runtimeManaged)
         {
-            return;
+            return normalized;
         }
 
         for (int i = 0; i < elements.Count; i++)
@@ -725,9 +727,15 @@ public sealed partial class Lowering
                 ReleaseNormalizedPatternOwnerDuplicate(elements[i].Temp, elements[i].Type);
                 MarkRuntimeManagedTemp(normalizedTemp);
                 elements[i] = CreateLoweredValue(normalizedTemp, elements[i].Type);
+                normalized[i] = NormalizedElementOwnsItsReference;
             }
         }
+
+        return normalized;
     }
+
+    private static bool NormalizedElementOwnsItsReference
+        => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDELEMENTRETAIN") is null;
 
     // An if's join: owned when both branches are, or once a mixed pair is normalized.
     private void MarkIfJoinResult(
