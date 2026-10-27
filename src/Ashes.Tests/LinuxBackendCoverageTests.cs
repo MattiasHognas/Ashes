@@ -3682,6 +3682,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_inner_tail_handed_to_sibling_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop hands the tail of its first inner list to a sibling list of scalars
+        // (`((x :: xs) :: rest, s) -> walk((x - 1 :: s) :: rest)(xs)`), and the sibling on as its own
+        // tuple binder elsewhere: the sibling is placed on the reference-counted heap, takes the
+        // reference the match retained, and its back edge releases the value it replaces.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildInnerTailHandedToSiblingProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{8L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("inner tail handed to a sibling parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_record_literal_field_cons_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14805,6 +14830,24 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + walk([[3, 2, 0], [4, 0]])(Kept(state = [n, 7, 8], temp = 1))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildInnerTailHandedToSiblingProgram(int rounds)
+        => $$"""
+            let recursive walk (items: List(List(Int))) (spare: List(Int)) (acc: Int) =
+                match (items, spare) with
+                    | ((x :: xs) :: rest, s) ->
+                        if x > 0
+                        then walk((x - 1 :: s) :: rest)(xs)(acc + x)
+                        else walk(xs :: rest)(s)(acc)
+                    | (_, s) -> acc + Ashes.Collection.List.length(s)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([[3, 2, 1], [4, 1]])([0, 0, 0])(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

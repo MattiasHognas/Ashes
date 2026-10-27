@@ -48,6 +48,49 @@ internal sealed class ConsedTailChoiceTemplate() : LeakCombinationTemplate(
 }
 
 /// <summary>
+/// A loop over a list of lists that hands the tail of the first inner list to a sibling list of
+/// scalars (<c>((x :: xs) :: rest, s) -&gt; walk((x - 1 :: s) :: rest)(xs)</c>), and that sibling
+/// on as itself elsewhere. The match retained the tail for the arm; the sibling, left in the arena,
+/// kept that reference, and the value it replaced was never released.
+/// </summary>
+internal sealed class InnerTailToSiblingTemplate() : LeakCombinationTemplate(
+    "leak.inner-tail-to-sibling", "innerTailToSibling", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.Tuple)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string value = names.Of("LeakKept");
+        string walk = names.Of("walk");
+        string head = names.Coin("spareInHead") ? "x - 1 :: s" : "x - 1 :: []";
+        bool record = names.Coin("recordSibling");
+        string extraParameter = record ? $" (kept: {value})" : string.Empty;
+        string extraScrutinee = record ? ", kept" : string.Empty;
+        string extraPattern = record ? ", same" : string.Empty;
+        string extraExitPattern = record ? $", {value} {{ state = st, temp = k }}" : string.Empty;
+        string extraArgument = record ? "(same)" : string.Empty;
+        string extraExit = record ? " + k + Ashes.Collection.List.length(st)" : string.Empty;
+        string extraValue = record ? $"({value}(state = [seed, {LeakNames.Text(names.Between(1, 9))}], temp = seed))" : string.Empty;
+        string first = $"[{LeakNames.Text(names.Between(2, 4))}, {LeakNames.Text(names.Between(1, 9))}, seed]";
+        string second = $"[{LeakNames.Text(names.Between(1, 9))}, seed]";
+        return $$"""
+            type {{value}} =
+                | state: List(Int)
+                | temp: Int
+
+            let recursive {{walk}} (items: List(List(Int))) (spare: List(Int)){{extraParameter}} (acc: Int) =
+                match (items, spare{{extraScrutinee}}) with
+                    | ((x :: xs) :: rest, s{{extraPattern}}) ->
+                        if x > 0
+                        then {{walk}}(({{head}}) :: rest)(xs){{extraArgument}}(acc + x)
+                        else {{walk}}(xs :: rest)(s){{extraArgument}}(acc)
+                    | (_, s{{extraExitPattern}}) -> acc + Ashes.Collection.List.length(s){{extraExit}}
+
+            let {{names.Entry}} (seed: Int) =
+                {{walk}}([{{first}}, {{second}}])([seed, {{LeakNames.Text(names.Between(1, 9))}}, 8]){{extraValue}}(seed)
+            """;
+    }
+}
+
+/// <summary>
 /// A loop that grows a list held in a record parameter by a cons written as a field of a record
 /// literal successor (<c>walk(rest)(State(seen = name :: state.seen, count = state.count))</c>).
 /// The back edge copies the arena record, string heads copied outright and other parts retained by

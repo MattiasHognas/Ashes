@@ -133,6 +133,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new TupleBinderHandedBackTemplate());
         registry.Register(new RecordFieldConsTemplate());
         registry.Register(new ConsedTailChoiceTemplate());
+        registry.Register(new InnerTailToSiblingTemplate());
         registry.Register(new RecordLiteralFieldConsTemplate());
     }
 }

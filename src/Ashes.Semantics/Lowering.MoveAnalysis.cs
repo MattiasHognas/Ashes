@@ -1199,6 +1199,8 @@ public sealed partial class Lowering
         public required bool?[] HandedOnOrGrownEdges { get; init; }
         public required bool?[] ConsedTailEdges { get; init; }
         public required bool[] AnyConsedTailEdge { get; init; }
+        public required bool?[] InnerTailEdges { get; init; }
+        public required bool[] AnyInnerTailEdge { get; init; }
         public required TcoSelfCallArgumentShape?[] ObservedBesideResets { get; init; }
         public required bool[] AnyResetSite { get; init; }
         public required string SelfName { get; init; }
@@ -1211,6 +1213,14 @@ public sealed partial class Lowering
         // The consumed tails a `match` arm in scope bound out of a tuple scrutinee built from the
         // parameters, which matches on a counted copy of an arena-placed list.
         public HashSet<string> TupleScrutineeTails { get; } = new(StringComparer.Ordinal);
+
+        // The tails a `match` arm in scope bound out of the head of a list parameter's first cell
+        // (`(x :: xs) :: rest`): retained for the arm like the parameter's own consumed tail.
+        public HashSet<string> InnerListTails { get; } = new(StringComparer.Ordinal);
+
+        // The binders a `match` arm in scope bound to a whole parameter at its own position in a tuple
+        // scrutinee built from the parameters (`match (items, spare) with | (_, s)`), by ordinal.
+        public Dictionary<string, int> OwnTupleBinders { get; } = new(StringComparer.Ordinal);
 
         public static TcoParamFactsState ForParameters(int count, string selfName)
             => new()
@@ -1229,6 +1239,8 @@ public sealed partial class Lowering
                 AnyRefillEdge = new bool[count],
                 HandedOnOrGrownEdges = new bool?[count],
                 ConsedTailEdges = new bool?[count],
+                InnerTailEdges = new bool?[count],
+                AnyInnerTailEdge = new bool[count],
                 AnyConsedTailEdge = new bool[count],
                 ObservedBesideResets = new TcoSelfCallArgumentShape?[count],
                 AnyResetSite = new bool[count],
@@ -1303,7 +1315,8 @@ public sealed partial class Lowering
                     state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
                     IsChoiceAccumulatorRebuild(state, i, shape),
                     state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i],
-                    state.FreshOrHandedOnListRebuild[i] == true && state.AnyRebuildEdge[i]));
+                    (state.FreshOrHandedOnListRebuild[i] == true && state.AnyRebuildEdge[i])
+                        || (state.InnerTailEdges[i] == true && state.AnyInnerTailEdge[i])));
             }
         }
 
@@ -2344,6 +2357,8 @@ public sealed partial class Lowering
         TcoParamFactsState state)
     {
         bool shadowsCallResultPart = state.CallResultParts.Remove(name);
+        bool shadowsInnerTail = state.InnerListTails.Remove(name);
+        bool shadowsOwnBinder = state.OwnTupleBinders.Remove(name, out int ownOrdinal);
         TcoParamFactsWalk(
             body,
             RemoveTailOwnerNames(tailOwners, [name]),
@@ -2357,6 +2372,16 @@ public sealed partial class Lowering
         if (shadowsCallResultPart)
         {
             state.CallResultParts.Add(name);
+        }
+
+        if (shadowsInnerTail)
+        {
+            state.InnerListTails.Add(name);
+        }
+
+        if (shadowsOwnBinder)
+        {
+            state.OwnTupleBinders[name] = ownOrdinal;
         }
     }
 
@@ -2418,7 +2443,12 @@ public sealed partial class Lowering
 
             List<string> tupleTails = AddTupleScrutineeTailOwners(match.Value, matchCase.Pattern, parameterScope, armTailOwners);
             List<string> changedParts = MarkArmCallResultParts(state, binders, match.Value is Expr.Call);
-            List<(string Name, bool Added)> changedTupleTails = MarkArmTupleScrutineeTails(state, binders, tupleTails);
+            List<(string Name, bool Added)> changedTupleTails = MarkArmTupleScrutineeTails(state.TupleScrutineeTails, binders, tupleTails);
+            List<(string Name, bool Added)> changedInnerTails = MarkArmTupleScrutineeTails(
+                state.InnerListTails,
+                binders,
+                InnerListTailBinders(match.Value, matchCase.Pattern, parameterScope));
+            List<(string Name, int? Previous)> changedOwnBinders = MarkArmOwnTupleBinders(state, match.Value, matchCase.Pattern, binders, parameterScope);
             TcoParamFactsWalk(
                 matchCase.Body,
                 armTailOwners,
@@ -2430,7 +2460,99 @@ public sealed partial class Lowering
                 RemoveLetValueNames(letValues, binders),
                 state);
             RestoreArmCallResultParts(state, changedParts, match.Value is Expr.Call);
-            RestoreArmTupleScrutineeTails(state, changedTupleTails);
+            RestoreArmTupleScrutineeTails(state.TupleScrutineeTails, changedTupleTails);
+            RestoreArmTupleScrutineeTails(state.InnerListTails, changedInnerTails);
+            RestoreArmOwnTupleBinders(state, changedOwnBinders);
+        }
+    }
+
+    // The tail of a list matched out as the head of a list parameter's first cell (`(x :: xs) :: rest`),
+    // on the parameter alone or at its position in a tuple scrutinee built from the parameters.
+    private static List<string> InnerListTailBinders(
+        Expr scrutinee,
+        Pattern pattern,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        var tails = new List<string>();
+        if (!InnerListTailsAreHandedOn)
+        {
+            return tails;
+        }
+
+        if (scrutinee is Expr.Var source && parameterScope.ContainsKey(source.Name))
+        {
+            AddInnerListTail(pattern, tails);
+        }
+        else if (scrutinee is Expr.TupleLit tuple
+            && pattern is Pattern.Tuple parts
+            && tuple.Elements.Count == parts.Elements.Count)
+        {
+            for (int i = 0; i < tuple.Elements.Count; i++)
+            {
+                if (tuple.Elements[i] is Expr.Var element && parameterScope.ContainsKey(element.Name))
+                {
+                    AddInnerListTail(parts.Elements[i], tails);
+                }
+            }
+        }
+
+        return tails;
+    }
+
+    private static void AddInnerListTail(Pattern pattern, List<string> tails)
+    {
+        if (pattern is Pattern.Cons { Head: Pattern.Cons { Tail: Pattern.Var inner } })
+        {
+            tails.Add(inner.Name);
+        }
+    }
+
+    private static bool InnerListTailsAreHandedOn
+        => Environment.GetEnvironmentVariable("GRC_NO_INNERTAILHANDON") is null;
+
+    // An arm's binders shadow the own-position tuple binders in scope, and the binders it puts at a
+    // parameter's own position of a tuple scrutinee built from the parameters join them.
+    private static List<(string Name, int? Previous)> MarkArmOwnTupleBinders(
+        TcoParamFactsState state,
+        Expr scrutinee,
+        Pattern pattern,
+        HashSet<string> binders,
+        IReadOnlyDictionary<string, int> parameterScope)
+    {
+        var changed = new List<(string Name, int? Previous)>();
+        foreach (string binder in binders)
+        {
+            changed.Add((binder, state.OwnTupleBinders.Remove(binder, out int previous) ? previous : null));
+        }
+
+        if (InnerListTailsAreHandedOn
+            && scrutinee is Expr.TupleLit tuple
+            && pattern is Pattern.Tuple parts
+            && tuple.Elements.Count == parts.Elements.Count)
+        {
+            for (int i = 0; i < tuple.Elements.Count; i++)
+            {
+                if (tuple.Elements[i] is Expr.Var element
+                    && parameterScope.TryGetValue(element.Name, out int ordinal)
+                    && parts.Elements[i] is Pattern.Var own)
+                {
+                    state.OwnTupleBinders[own.Name] = ordinal;
+                }
+            }
+        }
+
+        return changed;
+    }
+
+    private static void RestoreArmOwnTupleBinders(TcoParamFactsState state, List<(string Name, int? Previous)> changed)
+    {
+        foreach ((string name, int? previous) in changed)
+        {
+            state.OwnTupleBinders.Remove(name);
+            if (previous is { } ordinal)
+            {
+                state.OwnTupleBinders[name] = ordinal;
+            }
         }
     }
 
@@ -2528,7 +2650,7 @@ public sealed partial class Lowering
     // An arm's binders shadow the tuple-scrutinee tails in scope, and the tails it binds out of a
     // tuple scrutinee join them, for the arm's body.
     private static List<(string Name, bool Added)> MarkArmTupleScrutineeTails(
-        TcoParamFactsState state,
+        HashSet<string> inScope,
         HashSet<string> binders,
         List<string> tupleTails)
     {
@@ -2536,7 +2658,7 @@ public sealed partial class Lowering
         foreach (string binder in binders)
         {
             bool tail = tupleTails.Contains(binder, StringComparer.Ordinal);
-            if (tail ? state.TupleScrutineeTails.Add(binder) : state.TupleScrutineeTails.Remove(binder))
+            if (tail ? inScope.Add(binder) : inScope.Remove(binder))
             {
                 changed.Add((binder, tail));
             }
@@ -2545,17 +2667,17 @@ public sealed partial class Lowering
         return changed;
     }
 
-    private static void RestoreArmTupleScrutineeTails(TcoParamFactsState state, List<(string Name, bool Added)> changed)
+    private static void RestoreArmTupleScrutineeTails(HashSet<string> inScope, List<(string Name, bool Added)> changed)
     {
         foreach ((string name, bool added) in changed)
         {
             if (added)
             {
-                state.TupleScrutineeTails.Remove(name);
+                inScope.Remove(name);
             }
             else
             {
-                state.TupleScrutineeTails.Add(name);
+                inScope.Add(name);
             }
         }
     }
@@ -2707,6 +2829,7 @@ public sealed partial class Lowering
                 && IsHandedOnOrGrownEdge(local, structural, parameterScope);
             RecordWalkOrRefillEdge(state, i, local, structural);
             RecordConsedTailEdge(state, i, local, structural, tailOwners, parameterScope);
+            RecordInnerTailEdge(state, i, local, structural, passesParameterItself);
         }
     }
 
@@ -2734,6 +2857,29 @@ public sealed partial class Lowering
             && Environment.GetEnvironmentVariable("GRC_NO_CALLPARTREBUILD") is null
             && structural is Expr.Var part
             && state.CallResultParts.Contains(part.Name);
+
+    // A list of scalars handed on from the tail of a sibling list's inner list (`| ((x :: xs) :: rest, s)
+    // -> walk(rest)(xs)`) holds a reference the match retained for the arm. Left in the arena, the
+    // parameter kept that reference and no later iteration released it. When every other self-call
+    // hands the parameter on, as itself or as its own tuple binder (`s`), it is placed on the
+    // reference-counted heap: it takes the reference and its back edge releases the predecessor.
+    private static void RecordInnerTailEdge(
+        TcoParamFactsState state,
+        int ordinal,
+        TcoSelfCallArgumentShape local,
+        Expr structural,
+        bool passesParameterItself)
+    {
+        bool innerTail = !passesParameterItself
+            && structural is Expr.Var part
+            && state.InnerListTails.Contains(part.Name);
+        bool ownBinder = structural is Expr.Var binder
+            && state.OwnTupleBinders.TryGetValue(binder.Name, out int binderOrdinal)
+            && binderOrdinal == ordinal;
+        state.InnerTailEdges[ordinal] = (state.InnerTailEdges[ordinal] ?? true)
+            && (innerTail || ownBinder || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+        state.AnyInnerTailEdge[ordinal] |= innerTail;
+    }
 
     // A self-call that hands on a cons onto the parameter's consumed tail (`| ((x :: xs) :: rest, same)
     // -> walk(xs :: rest)(same)`), no head reading a loop parameter. Matched in a tuple, the list is a

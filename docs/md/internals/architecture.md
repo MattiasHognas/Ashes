@@ -1646,7 +1646,11 @@ placement instead, once every self-call hands it on unchanged or replaces it wit
 literal, a call's result, or a part matched out of a call's result (`| Some((a, b)) -> go(a)`). The
 part is retained for the parameter when the call's result is released, and only a parameter on the
 reference-counted heap releases that reference at the next back edge (`GRC_NO_CALLPARTREBUILD`
-switches the part off).
+switches the part off). The tail of a sibling list's inner list (`| ((x :: xs) :: rest, s) ->
+walk((x - 1 :: s) :: rest)(xs)`) is such a part as well: the match retains it for the arm, and when every
+other self-call hands the parameter on, as itself or as its own tuple binder (`s`), the parameter takes
+the reference-counted placement and its back edge releases the value it replaces
+(`GRC_NO_INNERTAILHANDON`).
 
 ### Buffered standard output
 
