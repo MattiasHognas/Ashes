@@ -12000,7 +12000,13 @@ public sealed partial class Lowering
             return;
         }
 
-        foreach ((string _, Expr value) in argument is Expr.RecordUpdate update ? update.Updates : [])
+        IReadOnlyList<(string Name, Expr Value)> fields = argument switch
+        {
+            Expr.RecordUpdate update => update.Updates,
+            Expr.RecordLit literal when Environment.GetEnvironmentVariable("GRC_NO_LITERALFIELDCELL") is null => literal.Fields,
+            _ => [],
+        };
+        foreach ((string _, Expr value) in fields)
         {
             if (value is Expr.Cons)
             {
@@ -12110,12 +12116,24 @@ public sealed partial class Lowering
             if (duplicate.Retains
                 && (BackEdgeCopiesListSuccessor(info.Tco, duplicate.Index)
                     || (duplicate.CellHead && BackEdgeNormalizesListParameter(info.Tco, duplicate.Index))
-                    || (duplicate.RecordFieldCell && BackEdgeNormalizesRecordParameter(info.Tco, duplicate.Index))))
+                    || (duplicate.RecordFieldCell
+                        && BackEdgeNormalizesRecordParameter(info.Tco, duplicate.Index)
+                        && !LiteralSuccessorReleasesItsCells(info, duplicate.Index))))
             {
                 EmitRuntimeManagedResultDrop(duplicate.Temp, duplicate.Type);
             }
         }
     }
+
+    // A record literal successor the back edge copies inline releases its children after the copy
+    // (SuccessorOwnsItsChildren), its field cells' parts among them; only one copied by the type's
+    // normalizer leaves them to the duplicates' release.
+    private bool LiteralSuccessorReleasesItsCells(PendingTcoReset info, int index)
+        => index < info.ArgExpressions.Length
+            && info.ArgExpressions[index] is Expr.RecordLit literal
+            && info.Tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TNamedType named
+            && SuccessorOwnsItsChildren(named, literal);
 
     private sealed class LateCopiedHeadTupleDuplicate(TcoContext loop, int index, int temp, TypeRef type)
     {

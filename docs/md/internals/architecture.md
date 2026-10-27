@@ -1193,8 +1193,12 @@ in the arena took it over with a reference nothing released. A cons written as a
 a record successor (`state with labels = name :: state.labels`) is copied when a record parameter on
 the reference-counted heap normalizes the arena record at the back edge, string heads copied
 outright and other parts retained by the copy, so the duplicates the cell took are released after
-that copy (`GRC_NO_RECORDFIELDCELL`); a record literal successor's cells are already balanced by the
-constructor's own child handling. The literal's cells are copied at
+that copy (`GRC_NO_RECORDFIELDCELL`). A cons written as a field of a record literal successor
+(`State(labels = name :: state.labels, current = state.current)`) is the same cell when the record's
+type is copied by its normalizer, and its duplicates are released after the copy too
+(`GRC_NO_LITERALFIELDCELL`); a literal the back edge copies inline already releases its children
+after the copy, the cell's parts among them, so its duplicates are not released a second time. The
+literal's cells are copied at
 the back edge like a cons cell's, so a head produced right there keeps an owner of its own,
 released once the copy holds its reference (`GRC_NO_COPIEDLITERALCELL`). A tuple that holds a
 reference-counted element is placed on the reference-counted heap with its arena siblings copied

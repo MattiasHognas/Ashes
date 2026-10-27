@@ -132,6 +132,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FreshInnerHeadInSuccessorTemplate());
         registry.Register(new TupleBinderHandedBackTemplate());
         registry.Register(new RecordFieldConsTemplate());
+        registry.Register(new RecordLiteralFieldConsTemplate());
     }
 }
 

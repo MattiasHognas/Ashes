@@ -3658,6 +3658,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_literal_field_cons_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop grows a list in a record parameter by a cons written as a field of a record literal
+        // successor (`Labels(labels = name :: state.labels, current = state.current)`): a record its
+        // type's normalizer copies has the duplicates its cell took released after that copy, and one
+        // copied inline (`Seen(seen = item :: rest, ...)`) releases them with its other children.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildRecordLiteralFieldConsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(7L * rounds) + ((long)rounds * (rounds + 1) / 2)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons written as a record literal's field", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_late_copied_successor_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14734,6 +14759,42 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + peel([[3, 2, 1], [4, n]])([n, 2])(0) + count([n, 2, 3])(Kept(state = [n, 7], temp = 3))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordLiteralFieldConsProgram(int rounds)
+        => $$"""
+            type Item =
+                | Named(Str)
+                | Plain
+
+            type Labels =
+                | labels: List(Str)
+                | current: Maybe(Int)
+
+            type Seen =
+                | seen: List(Item)
+                | count: Int
+
+            let recursive label (items: List(Str)) (state: Labels) =
+                match items with
+                    | [] -> Ashes.Collection.List.length(state.labels)
+                    | name :: rest -> label(rest)(Labels(labels = name :: state.labels, current = state.current))
+
+            let recursive collect (items: List(Item)) (state: Seen) =
+                match items with
+                    | [] -> Ashes.Collection.List.length(state.seen) + state.count
+                    | item :: rest -> collect(rest)(Seen(seen = item :: rest, count = state.count + 1))
+
+            let words (n: Int) = ["coal-and-ember-and-flint-and-ash-and-smoke-and-cinder-and-soot-" + Ashes.Text.fromInt(n), "ember-and-coal-and-ash-and-flint-and-cinder-and-smoke-and-soot-" + Ashes.Text.fromInt(n)]
+
+            let items (n: Int) = [Named("coal" + Ashes.Text.fromInt(n)), Plain, Named("ember")]
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + label(words(n))(Labels(labels = ["flint"], current = None)) + collect(items(n))(Seen(seen = [], count = n)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

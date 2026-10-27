@@ -294,8 +294,8 @@ type ConsumerRequest =
     // copies it with the outer cell and shares its reference-counted suffix with a reference of its
     // own, so it borrows its tail, and a cons tail of it is such a cell too.
     | copiedInnerCell: Bool
-    // Stage 0's `CollectRecordFieldCells`: a record update a tail self call passes
-    // as a successor it does not copy as a list. Its field values that are cons cells are
+    // Stage 0's `CollectRecordFieldCells`: a record update or record literal a tail self call
+    // passes as a successor it does not copy as a list. Its field values that are cons cells are
     // `recordFieldCell`s: a record parameter on the reference-counted heap copies the arena record
     // at the back edge with references of its own, so the duplicates those cells took are released
     // after that copy.
@@ -3304,6 +3304,7 @@ let recordSuccessorRequestForwards (expression: Expr) =
     match expression with
         | ExprAt(_span, _inner) -> true
         | ExprRecordUpdate(_target, _fields) -> true
+        | ExprRecord(_name, _fields, _isMultiline) -> true
         | _ -> false
 
 // The escaping argument cell's flag reaches the cons the argument writes out, through its spans.
@@ -7574,21 +7575,6 @@ let recursive retainsAsRuntimeDuplicate (temp: Int) (instructions: List(IrInstru
         | IrInstruction { instruction = RcDup(target, _source, true, _mayBeEmpty) } :: rest -> target == temp || retainsAsRuntimeDuplicate(temp)(rest)
         | _instruction :: rest -> retainsAsRuntimeDuplicate(temp)(rest)
 
-// Stage 0's `EmitLateCopiedHeadTupleDuplicateDrops` for cell heads: once the successors are copied,
-// the duplicate an arena cell's head took is released where its parameter is a list on the
-// reference-counted heap (the copy holds a reference of its own) and the duplicate became a real
-// retain when the loop's pattern owners were placed.
-let recursive emitLateCopiedCellHeadDrops (heads: List((Int, Int, SemanticType))) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
-    match heads with
-        | [] -> state
-        | (slot, duplicateTemp, headType) :: rest ->
-            if (slotHasManagedListArgument(slot)(arguments) || slotHasManagedAdtArgument(slot)(arguments)) && retainsAsRuntimeDuplicate(duplicateTemp)(state.reversedInstructions)
-            then
-                state
-                |> emitOwnedValueRelease(unlocatedInstruction)(duplicateTemp)(headType)
-                |> emitLateCopiedCellHeadDrops(rest)(arguments)
-            else emitLateCopiedCellHeadDrops(rest)(arguments)(state)
-
 // The release of a runtime-managed ADT slot's old value under its active flag.
 let emitGuardedAdtRelease emitter (labelName: Str) (activeSlot: Int) (cellTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match freshTemp(state) with
@@ -8238,6 +8224,40 @@ let emitTcoBackEdgeAdtCopy (sourceTemp: Int) (semanticType: SemanticType) (expre
                 | FreshTemp { state = reserved } ->
                     emitBackEdgeReferenceOrCopy(sourceTemp)(semanticType)(unlocatedDeepCopy(sourceTemp)(NormalizerArgumentCopy(named)))(reserved)
         | plan -> unlocatedDeepCopy(sourceTemp)(plan)(state)
+
+// A record literal successor of a runtime-managed ADT slot the back edge copies inline releases its
+// children after the copy, its field cells' parts among them (stage 0's
+// `LiteralSuccessorReleasesItsCells`); only one copied by the type's normalizer leaves them to the
+// duplicates' release.
+let recursive literalSuccessorReleasesItsCells (slot: Int) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> false
+        | TcoResetArgument { parameterSlot = parameterSlot, managedAdt = Some((_activeSlot, semanticType, _typeName)), argumentExpression = expression } :: rest ->
+            if parameterSlot == slot
+            then
+                match unspanArgument(expression) with
+                    | ExprRecord(_name, _fields, _isMultiline) ->
+                        match backEdgeAdtCopyPlanOf(semanticType)(expression)(state) with
+                            | ConstructorArgumentCopy(_plan) -> true
+                            | _ -> false
+                    | _ -> false
+            else literalSuccessorReleasesItsCells(slot)(rest)(state)
+        | _argument :: rest -> literalSuccessorReleasesItsCells(slot)(rest)(state)
+
+// Stage 0's `EmitLateCopiedHeadTupleDuplicateDrops` for cell heads: once the successors are copied,
+// the duplicate an arena cell's head took is released where its parameter is a list on the
+// reference-counted heap (the copy holds a reference of its own) and the duplicate became a real
+// retain when the loop's pattern owners were placed.
+let recursive emitLateCopiedCellHeadDrops (heads: List((Int, Int, SemanticType))) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match heads with
+        | [] -> state
+        | (slot, duplicateTemp, headType) :: rest ->
+            if (slotHasManagedListArgument(slot)(arguments) || slotHasManagedAdtArgument(slot)(arguments) && !literalSuccessorReleasesItsCells(slot)(arguments)(state)) && retainsAsRuntimeDuplicate(duplicateTemp)(state.reversedInstructions)
+            then
+                state
+                |> emitOwnedValueRelease(unlocatedInstruction)(duplicateTemp)(headType)
+                |> emitLateCopiedCellHeadDrops(rest)(arguments)
+            else emitLateCopiedCellHeadDrops(rest)(arguments)(state)
 
 // Stage 0's `RegisterGeneralRcOwnedSlot`: the slot just stored holds a value of the contract's
 // types the function owns. Inside a loop it takes a flag of its own, set while this iteration's
@@ -22915,7 +22935,7 @@ let isTupleType (semanticType: SemanticType) =
 // tuple for a tuple literal in a tuple or type-parameter field; the transfer is forwarded.
 let constructorArgumentRequest (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match request with
-        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, transfersRuntimeManagedChildren = transfers
+        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers, recordFieldCells = fieldCells } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, transfersRuntimeManagedChildren = transfers, recordFieldCell = fieldCells && isConsValue(argument)
 
 let emitListNormalizingCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match freshTemp(state) with
@@ -26709,6 +26729,7 @@ let buildsCopiedCells (expression: Expr) =
 let isRecordSuccessor (expression: Expr) =
     match unspanArgument(expression) with
         | ExprRecordUpdate(_target, _fields) -> true
+        | ExprRecord(_name, _fields, _isMultiline) -> true
         | _ -> false
 
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
