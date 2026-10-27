@@ -1533,7 +1533,11 @@ A tuple beside a value of unresolved layout (a generic function's parameter, say
 reference-counted heap, and nothing releases what an arena tuple holds. Such a tuple never holds the
 only reference to a reference-counted value: an element that may be reference-counted (other than
 one of the contract's types) is copied into the arena beside it, a fresh one is released after its
-copy, and no reference is taken for the tuple. Likewise, a loop parameter kept in the arena on a
+copy, and no reference is taken for the tuple. A tuple kept in the arena by a sibling the
+reference-counted heap cannot take a copy of (a borrowed tuple parameter, as in a function returning
+`(reverse(acc), state)`) is in the same place beside a reference-counted element: that element
+alone is copied into the arena and released when it was fresh, so the borrowed sibling is not copied
+(`GRC_NO_DEMOTEBESIDEARENA` switches this off). Likewise, a loop parameter kept in the arena on a
 back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
 the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
 

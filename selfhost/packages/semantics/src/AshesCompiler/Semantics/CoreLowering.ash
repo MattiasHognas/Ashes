@@ -21556,32 +21556,38 @@ let neutralizeElementDuplicate (temp: Int) (state: CoreLoweringState) =
 // resolved heap value the reference-counted heap may hold, other than one of the contract's types.
 let demotesTupleElement (semanticType: SemanticType) (state: CoreLoweringState) = !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && !isGeneralRcValueType(semanticType)(state)
 
-let recursive demoteTupleElements (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
-    match (temps, semanticTypes) with
-        | (temp :: restTemps, semanticType :: restTypes) ->
-            if demotesTupleElement(semanticType)(state)
+// `runtimeOnly` limits the copies to the elements held as reference-counted values.
+let recursive demoteTupleElements (runtimeOnly: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
+            if (runtimeOnly == false || childIsRuntimeManaged(element)(temp)(state)) && demotesTupleElement(semanticType)(state)
             then
                 match neutralizeElementDuplicate(temp)(state) with
                     | (neutralized, sourceTemp) ->
                         match emitArenaCopyOfReferenceCounted(sourceTemp)(semanticType)(tempIsNewlyProduced(sourceTemp)(neutralized))(neutralized) with
                             | (copied, copyTemp) ->
-                                match demoteTupleElements(restTemps)(restTypes)(copied) with
+                                match demoteTupleElements(runtimeOnly)(restElements)(restTemps)(restTypes)(copied) with
                                     | (demotedState, restCopies, restFlags) -> (demotedState, copyTemp :: restCopies, true :: restFlags)
             else
-                match demoteTupleElements(restTemps)(restTypes)(state) with
+                match demoteTupleElements(runtimeOnly)(restElements)(restTemps)(restTypes)(state) with
                     | (demotedState, restCopies, restFlags) -> (demotedState, temp :: restCopies, false :: restFlags)
         | _ -> (state, temps, [])
 
 // Stage 0's `DemoteElementsBesideAbstractSibling`: a tuple beside an element of unresolved layout
 // (a generic value) stays in the arena, where nothing releases what it holds, so it never holds
 // the only reference to a reference-counted value. Such an element is copied into the arena, a
-// fresh one released after the copy, and none is retained for the tuple.
-let demoteArenaTupleElements (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+// fresh one released after the copy, and none is retained for the tuple. A tuple kept in the
+// arena by a sibling the reference-counted heap cannot take (a borrowed tuple parameter) is in the
+// same place beside a reference-counted element: that element alone is copied.
+let demoteArenaTupleElements (elements: List(Expr)) (holdsReferenceCounted: Bool) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match stateSpecializationFreshInputs(state) with
         | None ->
             if anyUnresolvedLayout(semanticTypes)(state)
-            then demoteTupleElements(temps)(semanticTypes)(state)
-            else (state, temps, [])
+            then demoteTupleElements(false)(elements)(temps)(semanticTypes)(state)
+            else
+                if holdsReferenceCounted
+                then demoteTupleElements(true)(elements)(temps)(semanticTypes)(state)
+                else (state, temps, [])
         | Some(_inputs) -> (state, temps, [])
 
 let finishPlacedTuple elements (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (tupleTemp: Int) (runtimeManaged: Bool) (transfers: Bool) (state: CoreLoweringState) =
@@ -21625,7 +21631,7 @@ let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered 
                         match normalizeTupleSiblings(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
                             | (normalizedState, temps) -> finishPlacedTuple(elements)(temps)(semanticTypes)([])(tupleTemp)(true)(transfers)(normalizedState)
                     else
-                        match demoteArenaTupleElements(loweredTemps)(semanticTypes)(reservedState) with
+                        match demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes)(reservedState) with
                             | (demotedState, temps, demoted) ->
                                 match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
                                     | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)

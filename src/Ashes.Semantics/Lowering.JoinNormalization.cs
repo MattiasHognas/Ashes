@@ -583,13 +583,22 @@ public sealed partial class Lowering
     // nothing releases what it holds. An arena tuple never holds the only reference to a
     // reference-counted value: such an element is copied into the arena beside it, a fresh one is
     // released after the copy, and none is retained for the tuple. Returns the elements copied.
+    // A tuple kept in the arena by a sibling the reference-counted heap cannot take (a borrowed
+    // tuple parameter) is in the same place beside a reference-counted element: that element alone
+    // is copied, so the sibling is not.
     private bool[] DemoteElementsBesideAbstractSibling(List<LoweredValue> elements, bool runtimeManaged)
     {
         bool[] demoted = new bool[elements.Count];
         if (runtimeManaged
             || !GeneralRcEnabled
-            || Environment.GetEnvironmentVariable("GRC_NO_DEMOTE") is not null
-            || !elements.Exists(element => ContainsUnresolvedLayoutType(Prune(element.Type), [])))
+            || Environment.GetEnvironmentVariable("GRC_NO_DEMOTE") is not null)
+        {
+            return demoted;
+        }
+
+        bool besideAbstract = elements.Exists(element => ContainsUnresolvedLayoutType(Prune(element.Type), []));
+        bool besideArenaOnly = !besideAbstract && DemotesBesideArenaOnlySibling && HoldsReferenceCountedElement(elements);
+        if (!besideAbstract && !besideArenaOnly)
         {
             return demoted;
         }
@@ -597,7 +606,8 @@ public sealed partial class Lowering
         for (int i = 0; i < elements.Count; i++)
         {
             TypeRef type = Prune(elements[i].Type);
-            if (CanArenaReset(type)
+            if ((besideArenaOnly && elements[i].Ownership.Representation != LoweredTempRepresentation.RuntimeRc)
+                || CanArenaReset(type)
                 || type is TypeRef.TFun
                 || ContainsUnresolvedLayoutType(type, [])
                 || !IsGeneralRcAdmissible(type)
@@ -614,6 +624,9 @@ public sealed partial class Lowering
 
         return demoted;
     }
+
+    private static bool DemotesBesideArenaOnlySibling
+        => Environment.GetEnvironmentVariable("GRC_NO_DEMOTEBESIDEARENA") is null;
 
     // The duplicate a pattern-owner read took for the aggregate is not needed once the aggregate
     // holds a copy; left as a marker, it could still be upgraded to a retain nothing releases.

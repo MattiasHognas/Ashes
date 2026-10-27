@@ -3946,6 +3946,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_fresh_list_beside_borrowed_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A result tuple holding a fresh reference-counted list beside a borrowed tuple parameter
+        // stays in the arena: the list is copied into the arena beside it and the fresh one released.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildFreshListBesideBorrowedTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{4L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh list beside a borrowed tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_walked_stack_of_strings_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15265,6 +15288,19 @@ public sealed class LinuxBackendCoverageTests
                 else
                     let text = "word" + Ashes.Text.fromInt(n)
                     in rounds(n - 1)(total + Ashes.Collection.List.length([pair(KindA)(text), pair(KindB)("b")]) + Ashes.Collection.List.length([token(KindA)(text), token(KindB)("b")]))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildFreshListBesideBorrowedTupleProgram(int rounds)
+        => $$"""
+            let finish (acc: List(Int)) (state: (List(Int), Str)) = (Ashes.Collection.List.reverse(acc), state)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + (match finish([n, 2, 3, 4])(([1], "w" + Ashes.Text.fromInt(n))) with
+                    | (found, _) -> Ashes.Collection.List.length(found)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
