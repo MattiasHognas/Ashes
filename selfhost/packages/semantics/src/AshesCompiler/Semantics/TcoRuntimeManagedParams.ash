@@ -667,11 +667,12 @@ let shapeIsCallResultPart (argument: Expr) (shadowed: List(Str)) (tailOwners: Li
 // Per parameter position, whether every self-call so far passed the parameter's consumed tail, the
 // parameter itself, a call's result, or an empty list, whether one passed the consumed tail,
 // whether one passed a call's result, and whether every one passed the parameter itself or a fresh
-// list or a part a match bound out of a call's result, stage 0's `WalkOrRefillEdges`, `AnyWalkEdge`,
-// `AnyRefillEdge` and `FreshOrHandedOnListRebuild`.
-let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (callParts: List(Str)) (walks: List((Bool, Bool, Bool, Bool))) =
+// list or a part a match bound out of a call's result, and whether one pushed onto the parameter (a
+// cons onto it; a fresh list reading no loop parameter is a push edge as well), stage 0's
+// `WalkOrRefillEdges`, `AnyWalkEdge`, `AnyRefillEdge`, `FreshOrHandedOnListRebuild` and `AnyPushEdge`.
+let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (callParts: List(Str)) (walks: List((Bool, Bool, Bool, Bool, Bool))) =
     match (arguments, walks) with
-        | (argument :: restArguments, (everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn) :: restWalks) ->
+        | (argument :: restArguments, (everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn, anyPush) :: restWalks) ->
             (let local = shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters)
             in
                 let refill =
@@ -694,7 +695,10 @@ let recursive shapeObserveWalks (arguments: List(Expr)) (index: Int) (shadowed: 
                                 |> shapeIsFreshList
                             in
                                 let part = shapeIsCallResultPart(argument)(shadowed)(tailOwners)(letValues)(parameters)(callParts)
-                                in (everyEdge && (walk || refill || emptied || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill, everyFreshOrHandedOn && (fresh || part || local == TcoPassThroughShape))) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(restWalks)
+                                in
+                                    let push =
+                                        local == TcoGrownConsShape || local != TcoConsumedTailShape && local != TcoPassThroughShape && shapeIsResetList(shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters))(shadowed)(parameters)
+                                    in (everyEdge && (walk || refill || emptied || push || local == TcoPassThroughShape), anyWalk || walk, anyRefill || refill, everyFreshOrHandedOn && (fresh || part || local == TcoPassThroughShape), anyPush || local == TcoGrownConsShape)) :: shapeObserveWalks(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(callParts)(restWalks)
         | _ -> walks
 
 // Per parameter position, whether every self-call so far passed an accumulator edge (the parameter
@@ -724,7 +728,7 @@ type ShapeWalk =
     | observed: List(Maybe(TcoArgumentShape))
     | choices: List((Bool, Bool, Bool))
     | consedTails: List((Bool, Bool))
-    | walks: List((Bool, Bool, Bool, Bool))
+    | walks: List((Bool, Bool, Bool, Bool, Bool))
     | accumulators: List((Bool, Bool))
     // Per position: whether a self-call started the list afresh there, and the shape the other
     // self-calls agree on (stage 0's `AnyResetSite` and `ObservedBesideResets`).
@@ -908,7 +912,7 @@ let recursive shapeInitialChoices (count: Int) =
 let recursive shapeInitialWalks (count: Int) =
     if count == 0
     then []
-    else (true, false, false, true) :: shapeInitialWalks(count - 1)
+    else (true, false, false, true, false) :: shapeInitialWalks(count - 1)
 
 let recursive shapeInitialResets (count: Int) =
     if count == 0
@@ -929,25 +933,27 @@ let recursive shapeResolveResets (resets: List((Bool, Maybe(TcoArgumentShape))))
 // on or conses onto it, some doing each, or every one hands on the consumed tail or a cons chain
 // onto it, one the chain; and a walked-or-refilled list when every self-call passed
 // the parameter's consumed tail, the parameter itself, a call's result or an empty list, a call's
-// result among them, stage 0's `WalkedOrRefilled`. One whose self-calls all hand the parameter on
+// result among them, stage 0's `WalkedOrRefilled`. A stack (popped by its consumed tail, pushed by a cons
+// onto the parameter) is walked-or-refilled as well. One whose self-calls all hand the parameter on
 // or pass a fresh list is stage 0's `FreshOrHandedOnListRebuild`, a fresh-list rebuild of a list
 // of scalars; when those fresh lists include a call's result it is also walked-or-refilled, which
 // decides for a list of strings.
-let shapeResolveWalk (walk: (Bool, Bool, Bool, Bool)) =
+let shapeResolveWalk (walk: (Bool, Bool, Bool, Bool, Bool)) =
     match walk with
-        | (true, _anyWalk, true, true) -> TcoRefilledFreshListShape
-        | (true, _anyWalk, true, false) -> TcoWalkedOrRefilledShape
-        | (_everyWalk, _anyWalk, _anyRefill, true) -> TcoHandedOnFreshListShape
+        | (true, _anyWalk, true, true, _anyPush) -> TcoRefilledFreshListShape
+        | (true, _anyWalk, true, false, _anyPush) -> TcoWalkedOrRefilledShape
+        | (true, true, false, false, true) -> TcoWalkedOrRefilledShape
+        | (_everyWalk, _anyWalk, _anyRefill, true, _anyPush) -> TcoHandedOnFreshListShape
         | _ -> TcoOtherShape
 
 // A position that is no other shape is a choice accumulator when its self-calls hand on its consumed
 // tail or a cons chain onto it.
-let shapeResolveConsedTail (consedTail: (Bool, Bool)) (walk: (Bool, Bool, Bool, Bool)) =
+let shapeResolveConsedTail (consedTail: (Bool, Bool)) (walk: (Bool, Bool, Bool, Bool, Bool)) =
     match (shapeResolveWalk(walk), consedTail) with
         | (TcoOtherShape, (true, true)) -> TcoChoiceAccumulatorShape
         | (shape, _consedTail) -> shape
 
-let shapeResolveOther (choice: (Bool, Bool, Bool)) (consedTail: (Bool, Bool)) (walk: (Bool, Bool, Bool, Bool)) =
+let shapeResolveOther (choice: (Bool, Bool, Bool)) (consedTail: (Bool, Bool)) (walk: (Bool, Bool, Bool, Bool, Bool)) =
     match choice with
         | (true, anyChoice, everyHandedOnOrGrown) ->
             if anyChoice || everyHandedOnOrGrown
@@ -955,7 +961,7 @@ let shapeResolveOther (choice: (Bool, Bool, Bool)) (consedTail: (Bool, Bool)) (w
             else shapeResolveConsedTail(consedTail)(walk)
         | _ -> shapeResolveConsedTail(consedTail)(walk)
 
-let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool, Bool))) (consedTails: List((Bool, Bool))) (walks: List((Bool, Bool, Bool, Bool))) =
+let recursive shapeResolveObserved (observed: List(Maybe(TcoArgumentShape))) (choices: List((Bool, Bool, Bool))) (consedTails: List((Bool, Bool))) (walks: List((Bool, Bool, Bool, Bool, Bool))) =
     match (observed, choices, consedTails, walks) with
         | (Some(TcoOtherShape) :: rest, choice :: restChoices, consedTail :: restConsed, walk :: restWalks) -> shapeResolveOther(choice)(consedTail)(walk) :: shapeResolveObserved(rest)(restChoices)(restConsed)(restWalks)
         | (Some(shape) :: rest, _choice :: restChoices, _consedTail :: restConsed, _walk :: restWalks) -> shape :: shapeResolveObserved(rest)(restChoices)(restConsed)(restWalks)
@@ -1002,9 +1008,9 @@ let shapeWalkOf (self: Str) (parameters: List(Str)) (body: Expr) =
 // A position whose every self-call hands on a sibling list's inner tail, the parameter itself or its
 // own tuple binder, one the inner tail, counts as handed on or fresh, as in stage 0's
 // `FreshOrHandedOnListRebuild`.
-let recursive shapeMergeInnerTails (walks: List((Bool, Bool, Bool, Bool))) (innerTailEdges: List((Bool, Bool))) =
+let recursive shapeMergeInnerTails (walks: List((Bool, Bool, Bool, Bool, Bool))) (innerTailEdges: List((Bool, Bool))) =
     match (walks, innerTailEdges) with
-        | ((everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn) :: restWalks, (everyInner, anyInner) :: restInner) -> (everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn || everyInner && anyInner) :: shapeMergeInnerTails(restWalks)(restInner)
+        | ((everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn, anyPush) :: restWalks, (everyInner, anyInner) :: restInner) -> (everyEdge, anyWalk, anyRefill, everyFreshOrHandedOn || everyInner && anyInner, anyPush) :: shapeMergeInnerTails(restWalks)(restInner)
         | _ -> walks
 
 // The shape of every parameter position of the loop function `self` over `parameters` (the whole

@@ -154,3 +154,54 @@ internal sealed class MappedTupleClosureResultTemplate() : LeakCombinationTempla
             """;
     }
 }
+
+/// <summary>
+/// A loop over borrowed strings that keeps a stack of them, pushing a head onto the stack and
+/// popping it by its consumed tail (<c>".." -&gt; match stack with | _top :: rest -&gt; keep(tail)(rest)</c>),
+/// as a path normalizer does. Neither a choice accumulator nor a walked list, the stack stayed in
+/// the arena, and the reference each push took of its head was never released.
+/// </summary>
+internal sealed class WalkedStackOfStringsTemplate() : LeakCombinationTemplate(
+    "leak.walked-stack-of-strings", "walkedStackOfStrings", GeneratedFeature.RecursiveFunction, GeneratedFeature.Match, GeneratedFeature.Tuple)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string keep = names.Of("keep");
+        string reverse = names.Of("reverseAll");
+        string make = names.Of("make");
+        string emptyPop = names.Coin("literalReset") ? $"{keep}(tail)([\"..\"])" : $"{keep}(tail)([])";
+        string exit = names.Coin("reversed") ? $"{reverse}(stack)([])" : "stack";
+        string doubled = names.Coin("doubledPop")
+            ? $$"""
+                if top == ".."
+                                        then {{keep}}(tail)(".." :: stack)
+                                        else {{keep}}(tail)(rest)
+                """
+            : $"{keep}(tail)(rest)";
+        string path = names.Pick("\"/a/b/../c\"", "\"a/../b/c/d\"", "\"/x/y/z/../..\"");
+        return $$"""
+            let recursive {{reverse}} (values: List(Str)) (result: List(Str)) =
+                match values with
+                    | [] -> result
+                    | head :: tail -> {{reverse}}(tail)(head :: result)
+
+            let recursive {{keep}} (parts: List(Str)) (stack: List(Str)) =
+                match parts with
+                    | [] -> {{exit}}
+                    | head :: tail ->
+                        if head == ".."
+                        then
+                            match stack with
+                                | [] -> {{emptyPop}}
+                                | top :: rest ->
+                                    {{doubled}}
+                        else {{keep}}(tail)(head :: stack)
+
+            let {{make}} (s: Str) = ("", Ashes.Text.split({{path}} + s)("/"))
+
+            let {{names.Entry}} (seed: Int) =
+                match {{make}}(Ashes.Text.fromInt(seed)) with
+                    | (_prefix, parts) -> Ashes.Collection.List.length({{keep}}(parts)([]))
+            """;
+    }
+}

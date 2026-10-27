@@ -3898,6 +3898,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_walked_stack_of_strings_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A path normalizer's loop pushes borrowed strings onto a stack and pops it by its consumed
+        // tail: the stack is placed on the reference-counted heap, so each push's retained head is
+        // released with its cell.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildWalkedStackOfStringsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("stack of strings pushed and popped", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_late_copied_successor_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15150,6 +15174,30 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(shift(Box(pairs = [(n, 1), (2, n), (3, 3), (4, n), (5, 5), (6, n), (7, 7), (n, 8)], count = n))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildWalkedStackOfStringsProgram(int rounds)
+        => $$"""
+            let recursive keep (parts: List(Str)) (stack: List(Str)) =
+                match parts with
+                    | [] -> stack
+                    | head :: tail ->
+                        if head == ".."
+                        then
+                            match stack with
+                                | [] -> keep(tail)([])
+                                | _top :: rest -> keep(tail)(rest)
+                        else keep(tail)(head :: stack)
+
+            let mk (s: Str) = ("", Ashes.Text.split("/a/b/../c" + s)("/"))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + (match mk(Ashes.Text.fromInt(n % 10)) with
+                    | (p, parts) -> Ashes.Collection.List.length(keep(parts)([]))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

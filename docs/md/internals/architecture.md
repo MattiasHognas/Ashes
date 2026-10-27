@@ -1678,6 +1678,13 @@ other self-call hands the parameter on, as itself or as its own tuple binder (`s
 the reference-counted placement and its back edge releases the value it replaces
 (`GRC_NO_INNERTAILHANDON`).
 
+A list of strings (or of lists of strings) the loop walks by its consumed tail and refills with a
+call's result, a worklist, is placed on the reference-counted heap. So is one used as a stack:
+popped by its consumed tail (`| _top :: rest -> keep(tail)(rest)`) and pushed by a cons onto the
+parameter (`keep(tail)(head :: stack)`), with fresh lists of literals beside them, as a path
+normalizer does (`GRC_NO_WALKEDSTACK`). Left in the arena, each push retained its borrowed head for a
+cell nothing released; both stages place it so.
+
 ### Buffered standard output
 
 `Ashes.IO.writeBuffered` and `writeBufferedLine` append to a process-wide 64 KiB stdout buffer.

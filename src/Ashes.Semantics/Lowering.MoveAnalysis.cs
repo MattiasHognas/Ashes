@@ -1196,6 +1196,7 @@ public sealed partial class Lowering
         public required bool?[] WalkOrRefillEdges { get; init; }
         public required bool[] AnyWalkEdge { get; init; }
         public required bool[] AnyRefillEdge { get; init; }
+        public required bool[] AnyPushEdge { get; init; }
         public required bool?[] HandedOnOrGrownEdges { get; init; }
         public required bool?[] ConsedTailEdges { get; init; }
         public required bool[] AnyConsedTailEdge { get; init; }
@@ -1237,6 +1238,7 @@ public sealed partial class Lowering
                 WalkOrRefillEdges = new bool?[count],
                 AnyWalkEdge = new bool[count],
                 AnyRefillEdge = new bool[count],
+                AnyPushEdge = new bool[count],
                 HandedOnOrGrownEdges = new bool?[count],
                 ConsedTailEdges = new bool?[count],
                 InnerTailEdges = new bool?[count],
@@ -1314,7 +1316,9 @@ public sealed partial class Lowering
                         : TcoParamReuseAffinity.GeneralOrUnknown,
                     state.AccumulatorEdges[i] == true && state.AnyRebuildEdge[i],
                     IsChoiceAccumulatorRebuild(state, i, shape),
-                    state.WalkOrRefillEdges[i] == true && (state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i],
+                    state.WalkOrRefillEdges[i] == true
+                        && (((state.AnyWalkEdge[i] || RefillOnlyListsEnabled) && state.AnyRefillEdge[i])
+                            || (state.AnyWalkEdge[i] && state.AnyPushEdge[i])),
                     (state.FreshOrHandedOnListRebuild[i] == true && state.AnyRebuildEdge[i])
                         || (state.InnerTailEdges[i] == true && state.AnyInnerTailEdge[i])));
             }
@@ -2827,7 +2831,7 @@ public sealed partial class Lowering
             state.AnyChoiceEdge[i] |= choiceEdge;
             state.HandedOnOrGrownEdges[i] = (state.HandedOnOrGrownEdges[i] ?? true)
                 && IsHandedOnOrGrownEdge(local, structural, parameterScope);
-            RecordWalkOrRefillEdge(state, i, local, structural);
+            RecordWalkOrRefillEdge(state, i, local, structural, parameterScope);
             RecordConsedTailEdge(state, i, local, structural, tailOwners, parameterScope);
             RecordInnerTailEdge(state, i, local, structural, passesParameterItself);
         }
@@ -3029,19 +3033,35 @@ public sealed partial class Lowering
 
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
     // a call's result, or an empty list. A list only ever handed on, emptied or refilled holds
-    // nothing older than its refills, so a walk among its edges is not required of it.
-    private static void RecordWalkOrRefillEdge(TcoParamFactsState state, int ordinal, TcoSelfCallArgumentShape local, Expr structural)
+    // nothing older than its refills, so a walk among its edges is not required of it. A list walked
+    // as a stack, popped by its consumed tail and pushed by cells consed onto the parameter (or
+    // started afresh with elements reading no loop parameter), is walked and refilled by its pushes.
+    private static void RecordWalkOrRefillEdge(
+        TcoParamFactsState state,
+        int ordinal,
+        TcoSelfCallArgumentShape local,
+        Expr structural,
+        IReadOnlyDictionary<string, int> parameterScope)
     {
+        bool push = WalkedStacksEnabled
+            && (local == TcoSelfCallArgumentShape.GrownCons
+                || (local != TcoSelfCallArgumentShape.ConsumedTail
+                    && local != TcoSelfCallArgumentShape.UnchangedPassthrough
+                    && structural is Expr.Cons or Expr.ListLit { Elements.Count: > 0 }
+                    && IsFreshResetList(structural, parameterScope)));
         bool walk = local == TcoSelfCallArgumentShape.ConsumedTail;
         bool refill = local != TcoSelfCallArgumentShape.ConsumedTail
             && local != TcoSelfCallArgumentShape.UnchangedPassthrough
             && structural is Expr.Call;
         bool emptied = RefillOnlyListsEnabled && structural is Expr.ListLit { Elements.Count: 0 };
         state.WalkOrRefillEdges[ordinal] = (state.WalkOrRefillEdges[ordinal] ?? true)
-            && (walk || refill || emptied || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
+            && (walk || refill || emptied || push || local == TcoSelfCallArgumentShape.UnchangedPassthrough);
         state.AnyWalkEdge[ordinal] |= walk;
         state.AnyRefillEdge[ordinal] |= refill;
+        state.AnyPushEdge[ordinal] |= push && local == TcoSelfCallArgumentShape.GrownCons;
     }
+
+    private static bool WalkedStacksEnabled => Environment.GetEnvironmentVariable("GRC_NO_WALKEDSTACK") is null;
 
     private static bool RefillOnlyListsEnabled => Environment.GetEnvironmentVariable("GRC_NO_REFILLONLY") is null;
 
