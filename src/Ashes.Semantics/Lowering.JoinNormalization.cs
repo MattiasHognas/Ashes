@@ -184,8 +184,8 @@ public sealed partial class Lowering
             && fact.Producer == LoweredTempProducerKind.RcDup;
 
     // The joins whose every arm hands over a reference of its own: a scope replacing such a join
-    // with its arena copy releases the join (MaterializeScopeResultViews). Unlike a normalized join,
-    // one recorded here changes nothing about how a loop exit releases its parameters.
+    // with its arena copy releases the join (MaterializeScopeResultViews), and a loop exit returning
+    // one releases every parameter rather than transferring the one it equals.
     private readonly Dictionary<List<IrInst>, HashSet<int>> _ownedScopeJoinTempsByBody =
         new(ReferenceEqualityComparer.Instance);
 

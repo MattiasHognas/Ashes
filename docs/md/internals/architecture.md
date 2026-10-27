@@ -1259,7 +1259,13 @@ lifetime operations from lexical anchors to control-flow-precise positions:
 - TCO back-edges drop replaced owners, and function exit transfers the returned root while dropping
   every other active owner. When an active TCO parameter is stored inside a returned tuple or ADT,
   construction retains the field reference before the parameter owner is dropped; this applies even
-  when post-body inference is what first proves the parameter runtime-managed.
+  when post-body inference is what first proves the parameter runtime-managed. The exit compares the
+  result with each parameter at run time and transfers the one it equals, unless the result already
+  holds a reference of its own: one it just produced, or a join every arm of which hands over its
+  own reference (a list moved out of a call's result tuple). Such a result may still be the very list
+  a parameter holds, which the exit then releases like every other parameter. A fixpoint loop
+  returning the list its helper handed back in a tuple otherwise kept one reference to it per call
+  (`GRC_NO_FRESHEXITRESULT`).
 
 A task frame carries its own ownership description. The transform publishes
 where it saves each value; lowering turns those offsets and the capture words

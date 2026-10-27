@@ -10482,15 +10482,20 @@ public sealed partial class Lowering
     // A heap result may still be one of the parameters the syntactic walk cannot see through (a
     // mutual-recursion group's dispatcher body, say), so the exit compares at run time before
     // releasing each parameter: releasing the returned one would hand out freed memory. A result
-    // the general contract normalized holds its own reference, so every parameter goes.
+    // the general contract normalized, one just produced, or a join every arm of which hands over
+    // a reference of its own holds its own reference, so every parameter goes.
     private bool TcoExitResultMayBeParameter(Expr.Lambda lam, TcoContext tco, int bodyTemp)
         => bodyTemp != _generalRcIndependentResultTemp
             && !IsNormalizedJoinTemp(bodyTemp)
+            && !(ExitResultOwnsItsReference && (IsNewlyProducedRcTemp(bodyTemp) || IsOwnedScopeJoinTemp(bodyTemp)))
             && (IsRuntimeManagedResultTemp(bodyTemp)
                 || ResultReachesRuntimeManagedLoopParameter(lam, tco)
                 || (tco.ResultType is { } resultType
                     && !CanArenaReset(Prune(resultType))
                     && tco.RuntimeManagedSlotsInOrder.Any(slot => tco.TryGetRuntimeManagedActiveSlot(slot, out _))));
+
+    private static bool ExitResultOwnsItsReference
+        => Environment.GetEnvironmentVariable("GRC_NO_FRESHEXITRESULT") is null;
 
     private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(Expr.Lambda lam, TcoContext? tco, int bodyTemp)
     {

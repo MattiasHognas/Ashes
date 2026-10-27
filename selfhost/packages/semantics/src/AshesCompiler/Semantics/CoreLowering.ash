@@ -719,6 +719,10 @@ type CoreOwnerState =
     // result reach is unknown, such a list is left to that callee's arena result rather than
     // released after the call.
     | genericDeepCopiedListTemps: List(Int)
+    // Stage 0's `_ownedScopeJoinTempsByBody`: the joins every reaching arm of which hands over a
+    // reference of its own, borrowing nothing from a loop parameter. A loop exit returning one
+    // releases every parameter rather than transferring the one it equals.
+    | ownedReferenceJoins: List((Maybe(IrFunctionOrigin), Int))
 
 type CoreTcoState =
     // The identity duplicates of loop-parameter reads stored into constructor cells, with the
@@ -1493,6 +1497,21 @@ let stateGenericDeepCopiedListTemps (state: CoreLoweringState) =
 let withStateGenericDeepCopiedListTemps value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with genericDeepCopiedListTemps = value))
+
+let recordOwnedReferenceJoin (temp: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with ownedReferenceJoins = (stateActiveFunctionOrigin(state), temp) :: group.ownedReferenceJoins))
+
+let recursive containsOwnedReferenceJoin (origin: Maybe(IrFunctionOrigin)) (temp: Int) (joins: List((Maybe(IrFunctionOrigin), Int))) =
+    match joins with
+        | [] -> false
+        | (joinOrigin, joinTemp) :: rest -> joinTemp == temp && joinOrigin == origin || containsOwnedReferenceJoin(origin)(temp)(rest)
+
+// Whether `temp` is a join of the function being lowered that holds a reference of its own.
+let isOwnedReferenceJoin (temp: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in
+        containsOwnedReferenceJoin(stateActiveFunctionOrigin(state))(temp)(group.ownedReferenceJoins))
 
 let stateRetiredLocals (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -2433,7 +2452,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             resolvingCallsAgain = false,
             runtimeOwnerAliases = [],
             pendingRuntimeArgumentFlags = [],
-            genericDeepCopiedListTemps = []
+            genericDeepCopiedListTemps = [],
+            ownedReferenceJoins = []
         ),
         tcoState = CoreTcoState(
             tcoParameterRetainSites = [],
@@ -3073,6 +3093,13 @@ let isRuntimeTemp (temp: Int) (state: CoreLoweringState) =
     match runtimeTempStateOf(temp)(state) with
         | Some(_runtimeState) -> true
         | None -> false
+
+// Stage 0's exit test in `TcoExitResultMayBeParameter`: a join that holds a reference of its own
+// is never one of the parameters' own references, though it may be the very value a parameter
+// holds, so the exit releases every parameter instead of transferring one. Stage 0 also exempts a
+// result its facts call newly produced; a runtime temp marked newly produced here can still be a
+// parameter handed on through a join, so this lowering does not.
+let exitResultOwnsItsReference (temp: Int) (state: CoreLoweringState) = isOwnedReferenceJoin(temp)(state)
 
 let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.setInt(temp)(runtimeState)(state.runtimeTemps)
 
@@ -11867,7 +11894,7 @@ let unifySelfCallResults (lowered: LoweredCoreValue) =
 let reserveTcoExitTransferSlot (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match stateTcoLoopFrame(state) with
         | Some(CoreTcoLoopFrame { bodyLabel = bodyLabel, runtimeManagedListSlots = [], runtimeManagedAdtSlots = [], runtimeManagedStrSlots = [] }) ->
-            if bodyLabel == label + "_body" && isRuntimeTemp(bodyTemp)(state) && !isGeneralRcValueType(bodyType)(state)
+            if bodyLabel == label + "_body" && isRuntimeTemp(bodyTemp)(state) && !exitResultOwnsItsReference(bodyTemp)(state) && !isGeneralRcValueType(bodyType)(state)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = slotState, local = transferSelectedSlot } ->
@@ -13585,7 +13612,7 @@ let emitTcoExitDrops (bodyTemp: Int) (resultType: SemanticType) (slots: List(Int
         | _entries ->
             ((given (prepared: (CoreLoweringState, Maybe((Int, Int)))) ->
                 match prepared with
-                    | (preparedState, transfer) -> emitTcoExitDropsInOrder(bodyTemp)(transfer)(slots)(managedLists)(managedAdts)(managedStrs)(preparedState)))(if !isGeneralRcFinishedResult(bodyTemp)(state) && (isRuntimeTemp(bodyTemp)(state) || isCopyTypeSemantic(resolveType(state)(resultType)) == false)
+                    | (preparedState, transfer) -> emitTcoExitDropsInOrder(bodyTemp)(transfer)(slots)(managedLists)(managedAdts)(managedStrs)(preparedState)))(if !isGeneralRcFinishedResult(bodyTemp)(state) && !exitResultOwnsItsReference(bodyTemp)(state) && (isRuntimeTemp(bodyTemp)(state) || isCopyTypeSemantic(resolveType(state)(resultType)) == false)
             then
                 match freshLocal(state) with
                     | FreshLocal { state = slotState, local = transferSelectedSlot } ->
@@ -18089,11 +18116,32 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
                         normalizeUnownedJoinArms(resultSlot)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state)
         | _ -> (state, arms)
 
+// Stage 0's `IsOwnedScopeResultArm` over every arm that reaches the join: a fresh value, a retain the
+// arm took of a reference-counted value, or a join that holds its own reference, none borrowed
+// from a loop parameter.
+let recursive armsOwnTheirReference (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> true
+        | arm :: rest -> (arm.armStoreTemp < 0 || !arm.armBorrowsLoopParameter && (arm.armNewlyProduced || isOwnedReferenceJoin(arm.armStoreTemp)(state) || isRuntimeTemp(arm.armStoreTemp)(state) && definedByRetain(arm.armStoreTemp)(state.reversedInstructions))) && armsOwnTheirReference(rest)(state)
+
+let recursive anyArmReachesJoin (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 || anyArmReachesJoin(rest)
+
+let reachingArmsOwnTheirReference (arms: List(MatchArmResult)) (state: CoreLoweringState) = anyArmReachesJoin(arms) && armsOwnTheirReference(arms)(state)
+
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     ((given (marked: CoreLoweringState) ->
-        if joinIsRetainedOwner(arms)
-        then withStatePatternOwnerResultTemps(resultTemp :: statePatternOwnerResultTemps(marked))(marked)
-        else marked))(match (joinIsRuntimeManaged(arms) || reachingArmsAllNewlyProduced(arms), joinIsNewlyProduced(arms) || reachingArmsAllNewlyProduced(arms)) with
+        marked
+        |> (given (owners: CoreLoweringState) ->
+            if joinIsRetainedOwner(arms)
+            then withStatePatternOwnerResultTemps(resultTemp :: statePatternOwnerResultTemps(owners))(owners)
+            else owners)
+        |> (given (owned: CoreLoweringState) ->
+            if reachingArmsOwnTheirReference(arms)(owned)
+            then recordOwnedReferenceJoin(resultTemp)(owned)
+            else owned)))(match (joinIsRuntimeManaged(arms) || reachingArmsAllNewlyProduced(arms), joinIsNewlyProduced(arms) || reachingArmsAllNewlyProduced(arms)) with
         | (true, true) ->
             state
             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
