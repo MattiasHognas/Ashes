@@ -1178,7 +1178,11 @@ that sibling's predecessor is released at the same back edge. A self-call that s
 afresh (`[first]`, or `first :: []`) with elements reading no loop parameter holds nothing of the
 predecessor, so beside self-calls that hand the parameter on it keeps the list a choice accumulator
 (`GRC_NO_RESETACCUMULATOR`): left in the arena, each fresh start stored a reference-counted element
-built from a call's parts in an arena cell that nothing released. A list whose every self-call
+built from a call's parts in an arena cell that nothing released. Such a fresh start places a string
+accumulator beside it on the reference-counted heap as well, so the loop's string promotion leaves
+alone a concatenation that the exit's join normalization already retained or copied
+(`acc + fromInt(length(table))`; `GRC_NO_NORMALIZEDARMCONCAT`): promoted, it became a fresh
+reference-counted string the normalization retained and nothing released. A list whose every self-call
 hands on its consumed tail, or a single cons cell onto it
 (`((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), at least one the cell and its head reading
 no loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): matched in a tuple, the
@@ -1189,9 +1193,9 @@ reference-counted heap, its successor's cell releases the duplicates it took onc
 copied it. A choice between such cells, an arm of which may hand on the consumed tail itself
 (`walk(if x > 2 then (x - 1 :: xs) :: rest else xs :: rest)`), hands on the same list whichever arm
 runs and counts as a cell (`GRC_NO_CONSEDTAILCHOICE`). An arm handing on the bare tail (`else rest`) retains that pattern binding
-before the binding's scope releases it, so the arm hands the join a reference of its own whether or
-not the binding is itself a loop parameter, in both stages: stage 1 counted the retain only for a
-loop parameter's own binding, took the join as borrowed and retained it again at the back edge. A chain of two or more cells pushed onto the
+before the binding's scope releases it, so the arm hands the join a reference of its own whenever the binding's root parameter is placed on
+the reference-counted heap, at the loop's entry or by its back edge, in both stages; under an arena
+root the retain stays an identity marker and the arm a plain read. A chain of two or more cells pushed onto the
 consumed tail (`walk(targets(name) :: more :: rest)`, a worklist's push) is not one: placed on the
 reference-counted heap its cells were never released, so it keeps the placement it had before
 (`GRC_NO_CONSEDTAILSINGLECELL` takes chains again). In a list of lists of copy-type values the

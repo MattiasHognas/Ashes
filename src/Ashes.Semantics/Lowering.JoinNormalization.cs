@@ -780,7 +780,25 @@ public sealed partial class Lowering
         _inst.RemoveAt(index);
         _inst.InsertRange(index, buffer);
         ShiftRecordedInstructionIndices(index, buffer.Count - 1);
+        if (!_joinNormalizedArmSourcesByBody.TryGetValue(_inst, out HashSet<int>? sources))
+        {
+            sources = [];
+            _joinNormalizedArmSourcesByBody[_inst] = sources;
+        }
+
+        sources.Add(store.Source);
     }
+
+    // The arm values each function's join normalization retained or copied: the normalization keeps
+    // its source alive as it found it, so a source the loop's string promotion later turned into a
+    // fresh reference-counted concatenation would be retained and never released.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _joinNormalizedArmSourcesByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private bool IsJoinNormalizedArmSource(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDARMCONCAT") is null
+            && _joinNormalizedArmSourcesByBody.TryGetValue(_inst, out HashSet<int>? sources)
+            && sources.Contains(temp);
 
     // Positions recorded for a later splice into the function being lowered move with the
     // instructions after the arm's store.

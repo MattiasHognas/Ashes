@@ -3898,6 +3898,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_concatenated_loop_exit_beside_fresh_start_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The loop's exit concatenates its string accumulator, which the fresh start beside the
+        // handed-on list places on the reference-counted heap: the join normalization takes the
+        // concatenation as an arena value, so it stays one rather than becoming a fresh
+        // reference-counted string the normalization retains and nothing releases.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildConcatenatedLoopExitBesideFreshStartProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{61L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("concatenated loop exit beside a fresh start", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_walked_stack_of_strings_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15174,6 +15199,25 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(shift(Box(pairs = [(n, 1), (2, n), (3, 3), (4, n), (5, 5), (6, n), (7, 7), (n, 8)], count = n))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConcatenatedLoopExitBesideFreshStartProgram(int rounds)
+        => $$"""
+            let recursive build : List(Str) -> Int -> Str -> Str = given table -> given remaining -> given acc ->
+                if remaining <= 0
+                then acc + Ashes.Text.fromInt(Ashes.Collection.List.length(table))
+                else if remaining == 1
+                then build(table)(remaining - 1)(acc + "x")
+                else
+                    let table = ["next"]
+                    in build(table)(remaining - 1)(acc + "x")
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Text.byteLength(build([Ashes.Text.fromInt(n)])(60)("")))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

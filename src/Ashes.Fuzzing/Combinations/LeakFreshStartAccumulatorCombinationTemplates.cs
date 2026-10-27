@@ -44,3 +44,36 @@ internal sealed class FreshStartBesideHandedOnListTemplate() : LeakCombinationTe
             """;
     }
 }
+
+/// <summary>
+/// A loop over a string accumulator whose list parameter one self-call starts afresh and another
+/// hands on, with an exit that concatenates the accumulator (<c>acc + fromInt(length(table))</c>).
+/// The fresh start puts both parameters on the reference-counted heap; the exit's join normalization
+/// retained the concatenation the loop's string promotion then made a fresh reference-counted string,
+/// and nothing released it.
+/// </summary>
+internal sealed class ConcatenatedExitBesideFreshStartTemplate() : LeakCombinationTemplate(
+    "leak.concatenated-exit-beside-fresh-start", "concatenatedExitBesideFreshStart", GeneratedFeature.TailCall, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string loop = names.Of("build");
+        string fresh = names.Coin("freshHead") ? "[Ashes.Text.fromInt(remaining), \"next\"]" : $"[{names.Word()}]";
+        string exit = names.Coin("joined")
+            ? "acc + Ashes.Text.join(\",\")(table)"
+            : "acc + Ashes.Text.fromInt(Ashes.Collection.List.length(table))";
+        string handOn = names.Coin("modulo") ? $"remaining % {LeakNames.Text(names.Between(2, 4))} == 1" : "remaining == 1";
+        return $$"""
+            let recursive {{loop}} (table: List(Str)) (remaining: Int) (acc: Str) =
+                if remaining <= 0
+                then {{exit}}
+                else if {{handOn}}
+                then {{loop}}(table)(remaining - 1)(acc + "x")
+                else
+                    let table = {{fresh}}
+                    in {{loop}}(table)(remaining - 1)(acc + "x")
+
+            let {{names.Entry}} (seed: Int) = Ashes.Text.byteLength({{loop}}([Ashes.Text.fromInt(seed)])(seed % {{LeakNames.Text(names.Between(3, 7))}} + 2)(""))
+            """;
+    }
+}

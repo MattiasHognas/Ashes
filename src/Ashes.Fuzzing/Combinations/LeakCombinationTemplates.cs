@@ -144,6 +144,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new DeepCopiedCallResultTemplate());
         registry.Register(new MappedTupleClosureResultTemplate());
         registry.Register(new WalkedStackOfStringsTemplate());
+        registry.Register(new ConcatenatedExitBesideFreshStartTemplate());
     }
 }
 

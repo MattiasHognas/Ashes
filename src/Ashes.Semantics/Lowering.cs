@@ -8543,7 +8543,7 @@ public sealed partial class Lowering
         HashSet<int> loopBound = TempsFlowingToLoopParameters(tco, reachableInstructions, bodyTemp);
         PromoteRuntimeManagedStringConcats(
             managedTemps,
-            temp => loopBound.Contains(temp) && !mixedJoinSources.Contains(temp));
+            temp => loopBound.Contains(temp) && !mixedJoinSources.Contains(temp) && !IsJoinNormalizedArmSource(temp));
 
         if (managedTemps.Contains(bodyTemp))
         {
