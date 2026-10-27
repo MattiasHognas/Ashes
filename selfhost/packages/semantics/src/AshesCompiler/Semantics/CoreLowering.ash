@@ -793,6 +793,9 @@ type CoreTcoState =
     // The recursive bindings whose result type was still unresolved when the body being lowered
     // began: a call to one of them sees a fresh result type, stage 0's lowering-local self arrow.
     | selfResultDeferredNames: List(Str)
+    // The other members of the recursive group whose result type was still unresolved when the body
+    // being lowered began: stage 0 lowers the body before those members close their arrows.
+    | siblingResultOpenNames: List(Str)
     // Each such call's fresh result type beside the binding's own, unified once the body is done.
     | selfCallResultUnifications: List((SemanticType, SemanticType))
     // Stage 0's `CallArgumentRetainFrame`: the retains of a record update's unchanged loop-parameter
@@ -1762,6 +1765,14 @@ let withStateSelfResultDeferredNames value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with selfResultDeferredNames = value))
 
+let stateSiblingResultOpenNames (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.siblingResultOpenNames)
+
+let withStateSiblingResultOpenNames value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with siblingResultOpenNames = value))
+
 let stateSelfCallResultUnifications (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.selfCallResultUnifications)
@@ -2449,6 +2460,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             withdrawnTuplePartsRequests = [],
             listHeadCells = [],
             selfResultDeferredNames = [],
+            siblingResultOpenNames = [],
             selfCallResultUnifications = [],
             callArgumentRecordRetains = [],
             collectingCallArgumentRetains = false,
@@ -15921,12 +15933,22 @@ let deferredSelfResultNamedByConsumer (context: CoreCallContext) (state: CoreLow
         | Some(expected) -> containsUnresolvedLayout(expected)(state) == false
         | None -> false)
 
+// A call to another member of the recursive group whose arrow was still open when this body began
+// asks for an arena result as stage 0's does, also when the body is lowered again against the
+// result the first lowering resolved.
+let siblingResultOpen (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    match (context.calleeName, resolveType(state)(resultType)) with
+        | (_name, SemFunction(_argument, _result, _row)) -> false
+        | (Some(name), _resolved) ->
+            context.selfCallee && containsLabel(name)(stateSiblingResultOpenNames(state))
+        | (None, _resolved) -> false
+
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one. Only the
 // last application of a spine asks: an earlier one yields a closure, which stage 0 sees as a
 // function type, while a self call of a recursive binding whose arrow is still open sees a variable.
 let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if requestsArenaResult(resultType)(state) && deferredSelfResultNamedByConsumer(context)(state) == false
+    if (requestsArenaResult(resultType)(state) || siblingResultOpen(context)(resultType)(state)) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
         match freshTemp(if selfResultDeferred(context)(state)
         then state
@@ -20771,6 +20793,14 @@ let recursive deferredResultNames (selfName: Str) (bindings: List(CoreBinding)) 
             then name :: deferredResultNames(selfName)(rest)(state)
             else deferredResultNames(selfName)(rest)(state)
 
+let recursive openSiblingResultNames (selfName: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> []
+        | CoreBinding { name = name, scheme = TypeScheme { body = bindingType } } :: rest ->
+            if name != selfName && containsUnresolvedLayout(innermostResultType(bindingType)(state))(state)
+            then name :: openSiblingResultNames(selfName)(rest)(state)
+            else openSiblingResultNames(selfName)(rest)(state)
+
 let recursive withoutFirstName (name: Str) (names: List(Str)) =
     match names with
         | [] -> []
@@ -20810,6 +20840,8 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             withStateSelfResultDeferredNames(current
             |> stateSelfResultDeferredNames
             |> append(deferredResultNames(selfName)(selfBindings)(current)))(current))
+        |> (given (current: CoreLoweringState) ->
+            withStateSiblingResultOpenNames(openSiblingResultNames(selfName)(selfBindings)(current))(current))
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> withStatePendingOperatorDefaults([])(current))
         |> (given (current: CoreLoweringState) -> withStateResourceStates([])(current))

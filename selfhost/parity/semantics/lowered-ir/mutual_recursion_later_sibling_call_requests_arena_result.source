@@ -1,0 +1,29 @@
+let recursive rev (xs: List(Int)) (out: List(Int)) =
+    match xs with
+        | [] -> out
+        | h :: t -> rev(t)(h :: out)
+
+let recursive count (acc: List(Int)) (state: (List(Int), Str)) =
+    match state with
+        | ([], _source) -> (rev(acc)([]), 0)
+        | (x :: rest, source) -> step(acc)((rest, source))(Some(x))
+and step acc state (x: Maybe(Int)) =
+    match x with
+        | Some(value) -> count(value :: acc)(state)
+        | None -> count(acc)(state)
+
+let run (seed: Int) =
+    match count([])(([1, 2, 3, 4], "w")) with
+        | (found, n) ->
+            match found with
+                | [] -> n
+                | h :: _ -> h + seed
+
+let recursive rounds (n: Int) (total: Int) =
+    match n with
+        | 0 -> total
+        | _ -> rounds(n - 1)(total + run(n))
+
+0
+|> rounds(3)
+|> Ashes.IO.print

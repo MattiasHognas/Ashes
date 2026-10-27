@@ -269,6 +269,9 @@ let recursive printEach (lines: List(Str)) =
 // the arena, the back edge copies it onto the reference-counted heap and releases the duplicate its
 // head took. tco_bytes_matched_head_under_fresh_head_chain pushes a fresh buffer over a matched one:
 // the innermost cell takes its head over, so both cells are counted.
+// mutual_recursion_later_sibling_call_requests_arena_result calls a later member of its recursive
+// group, whose result is still open when the body is lowered: the call asks for an arena result,
+// also when the body is lowered again against the result the first lowering resolved.
 let fixtures =
     [
         "simple_arith",
@@ -363,7 +366,8 @@ let fixtures =
         "tco_unchanged_bytes_parameter_consed_onto_accumulator",
         "tco_bytes_view_head_copied_into_counted_cell",
         "tco_bytes_matched_head_consed_beside_unchanged_parameter",
-        "tco_bytes_matched_head_under_fresh_head_chain"
+        "tco_bytes_matched_head_under_fresh_head_chain",
+        "mutual_recursion_later_sibling_call_requests_arena_result"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because
