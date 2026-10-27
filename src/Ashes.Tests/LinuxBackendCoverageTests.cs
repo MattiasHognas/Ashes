@@ -3732,6 +3732,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_two_cells_onto_consumed_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist loop pushes two cells back onto the consumed tail of its list of lists
+        // (`(name :: more) :: rest -> walk(targetsOf(3)(name) :: more :: rest)`): the chain is not taken
+        // for a single cons onto the tail, so the list keeps the placement whose back edge releases it.
+        int[] roundCounts = [2000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildTwoCellsOntoConsumedTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{14L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("two cells pushed onto the consumed tail", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_late_copied_successor_tail_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14884,6 +14908,27 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + label(words(n))(Labels(labels = ["flint"], current = None)) + collect(items(n))(Seen(seen = [], count = n)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTwoCellsOntoConsumedTailProgram(int rounds)
+        => $$"""
+            let targetsOf (width: Int) (name: Str) =
+                if Ashes.Text.byteLength(name) < width
+                then [name + "a", name + "b"]
+                else []
+
+            let recursive walk (stack: List(List(Str))) (seen: List(Str)) (n: Int) =
+                match stack with
+                    | [] -> n
+                    | [] :: rest -> walk(rest)(seen)(n)
+                    | (name :: more) :: rest -> walk(targetsOf(3)(name) :: more :: rest)(name :: seen)(n + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + walk([["x"], ["y"]])([])(0))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

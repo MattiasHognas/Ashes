@@ -600,10 +600,10 @@ let recursive shapeObserveChoices (arguments: List(Expr)) (index: Int) (names: L
                 in (everyEdge && (choiceEdge || shapeIsAccumulatorArm(structural)(index)(name)(shadowed)(parameters)), anyChoice || choiceEdge, everyHandedOnOrGrown && shapeIsHandedOnOrGrown(argument)(structural)(index)(shadowed)(parameters))) :: shapeObserveChoices(restArguments)(index + 1)(restNames)(shadowed)(tailOwners)(letValues)(parameters)(restChoices)
         | _ -> choices
 
-// A cons chain onto the consumed tail of the parameter at `index`, none of whose heads reads a loop
+// A single cons cell onto the consumed tail of the parameter at `index`, whose head reads no loop
 // parameter (`| ((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`, or the tail matched out of the
 // parameter alone), stage 0's `RecordConsedTailEdge`.
-let recursive shapeIsConsedTail (structural: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
+let shapeIsConsedTail (structural: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =
     match shapeUnspan(structural) with
         | ExprCons(head, tail) ->
             if shapeReadsLoopParameter(head)(shadowed)(parameters)
@@ -611,7 +611,7 @@ let recursive shapeIsConsedTail (structural: Expr) (index: Int) (shadowed: List(
             else
                 match shapeUnspan(tail) with
                     | ExprVar(name) -> shapeResolveParameter(name)(shadowed)(parameters) == None && shapeLookupTailOwner(name)(tailOwners) == Some(index)
-                    | _ -> shapeIsConsedTail(tail)(index)(shadowed)(tailOwners)(parameters)
+                    | _ -> false
         | _ -> false
 
 let shapeIsOwnedConsumedTail (arm: Expr) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (parameters: List(Str)) =

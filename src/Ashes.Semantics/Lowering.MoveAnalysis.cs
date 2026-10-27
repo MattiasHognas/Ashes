@@ -2904,7 +2904,7 @@ public sealed partial class Lowering
         state.AnyConsedTailEdge[ordinal] |= consedTail;
     }
 
-    // A cons chain onto the consumed tail, or a choice between such chains (`walk(if c then xs :: rest
+    // A cons cell onto the consumed tail, or a choice between such cells (`walk(if c then xs :: rest
     // else (x - 1 :: xs) :: rest)`), which hands on the same list whichever arm runs. A choice arm
     // may hand on the consumed tail itself; one arm must cons.
     private static bool IsConsedTailArgument(
@@ -2923,13 +2923,19 @@ public sealed partial class Lowering
                 && (thenConsed || elseConsed);
         }
 
-        return structural is Expr.Cons
+        return structural is Expr.Cons { Tail: var consTail }
+            && (consTail is Expr.Var || ConsedTailChainsCount)
             && GrownConsChainTail(structural) is Expr.Var tail
             && (state.TupleScrutineeTails.Contains(tail.Name) || ConsedTailsOfAnyMatchCount)
             && tailOwners.TryGetValue(tail.Name, out int ownerOrdinal)
             && ownerOrdinal == ordinal
             && ConsChainHeads(structural).All(head => !ReadsLoopParameter(head, parameterScope));
     }
+
+    // A chain of two or more cells pushed onto the consumed tail (`walk(fresh :: more :: rest)`) leaked
+    // its cells once the list was placed on the reference-counted heap, so only a single cell counts.
+    private static bool ConsedTailChainsCount
+        => Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILSINGLECELL") is not null;
 
     private static bool IsOwnedConsumedTail(Expr arm, int ordinal, IReadOnlyDictionary<string, int> tailOwners)
         => arm is Expr.Var tail && tailOwners.TryGetValue(tail.Name, out int owner) && owner == ordinal;

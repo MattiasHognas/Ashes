@@ -1173,16 +1173,19 @@ afresh (`[first]`, or `first :: []`) with elements reading no loop parameter hol
 predecessor, so beside self-calls that hand the parameter on it keeps the list a choice accumulator
 (`GRC_NO_RESETACCUMULATOR`): left in the arena, each fresh start stored a reference-counted element
 built from a call's parts in an arena cell that nothing released. A list whose every self-call
-hands on its consumed tail, or a cons chain onto it
-(`((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), at least one the chain and no head reading
-a loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): matched in a tuple, the
+hands on its consumed tail, or a single cons cell onto it
+(`((x :: xs) :: rest, same) -> walk(xs :: rest)(same)`), at least one the cell and its head reading
+no loop parameter, is a choice accumulator too (`GRC_NO_CONSEDTAILREBUILD`): matched in a tuple, the
 list is a counted copy, and left in the arena the rebuilt cell kept the references its parts were
 retained with for it, which no later iteration released. A tail matched out of the parameter alone
 counts the same way (`GRC_NO_CONSEDTAILANYMATCH` counts only a tuple scrutinee's): placed on the
 reference-counted heap, its successor's cell releases the duplicates it took once the back edge has
-copied it. A choice between such chains, an arm of which may hand on the consumed tail itself
+copied it. A choice between such cells, an arm of which may hand on the consumed tail itself
 (`walk(if x > 2 then (x - 1 :: xs) :: rest else xs :: rest)`), hands on the same list whichever arm
-runs and counts as a chain (`GRC_NO_CONSEDTAILCHOICE`). In a list of lists of copy-type values the
+runs and counts as a cell (`GRC_NO_CONSEDTAILCHOICE`). A chain of two or more cells pushed onto the
+consumed tail (`walk(targets(name) :: more :: rest)`, a worklist's push) is not one: placed on the
+reference-counted heap its cells were never released, so it keeps the placement it had before
+(`GRC_NO_CONSEDTAILSINGLECELL` takes chains again). In a list of lists of copy-type values the
 inner cells of such a successor
 (`walk((x - 1 :: xs) :: rest)`) are copied with the outer cell, and their counted suffix is shared
 with a reference of the copy's own, so they borrow their tail as the outer cell borrows its parts
