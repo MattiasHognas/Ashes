@@ -17326,8 +17326,8 @@ public sealed partial class Lowering
     }
 
     // The tail of a recursive producer's cell, a recursive call's result or a tail-modulo-cons link,
-    // is reference-counted. A tuple head the cell cannot count (a borrowed read out of an
-    // arena-placed parameter) would put that cell in the arena, where nothing releases the
+    // is reference-counted. A tuple or string head the cell cannot count (a borrowed read out of an
+    // arena-placed parameter, a string literal) would put that cell in the arena, where nothing releases the
     // reference-counted tail stored in it. An owned reference-counted copy of the head lets the cell
     // be reference-counted too, so it owns both its children.
     private LoweredValue OwnBorrowedHeadForProducerCell(bool producerCell, LoweredValueRequest request, LoweredValue head)
@@ -17337,7 +17337,8 @@ public sealed partial class Lowering
             || !GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_PRODUCERHEADCOPY") is not null
             || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
-            || headType is not TypeRef.TTuple
+            || !(headType is TypeRef.TTuple
+                || (headType is TypeRef.TStr && Environment.GetEnvironmentVariable("GRC_NO_PRODUCERSTRINGHEAD") is null))
             || IsRuntimeManageableListElement(headType, head.Temp)
             || !CanEmitRuntimeManagedListElementDeepCopy(headType))
         {

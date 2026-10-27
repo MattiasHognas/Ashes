@@ -56,3 +56,40 @@ internal sealed class ViewCopiedScopeJoinTemplate() : LeakCombinationTemplate(
             """;
     }
 }
+
+/// <summary>
+/// A recursive producer consing a string literal onto its own recursive call
+/// (<c>_head :: tail -&gt; ".." :: parents(tail)</c>). The literal could not be counted, so the cell
+/// stayed in the arena and the reference-counted copy of each level's result it held was never
+/// released.
+/// </summary>
+internal sealed class ProducerStringLiteralHeadTemplate() : LeakCombinationTemplate(
+    "leak.producer-string-literal-head", "producerStringLiteralHead", GeneratedFeature.RecursiveFunction, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string parents = names.Of("parents");
+        string append = names.Of("appendAll");
+        string literal = names.Word();
+        string baseCase = names.Coin("literalBase") ? $"[{names.Word()}]" : "[]";
+        bool appended = names.Coin("appended");
+        string body = appended
+            ? $"Ashes.Collection.List.length({append}({parents}(parts))([\"x\" + Ashes.Text.fromInt(seed)]))"
+            : $"Ashes.Collection.List.length({parents}(parts))";
+        return $$"""
+            let recursive {{parents}} parts =
+                match parts with
+                    | [] -> {{baseCase}}
+                    | _head :: tail -> {{literal}} :: {{parents}}(tail)
+
+            let recursive {{append}} left right =
+                match left with
+                    | [] -> right
+                    | head :: tail -> head :: {{append}}(tail)(right)
+
+            let {{names.Entry}} (seed: Int) =
+                (let parts = [{{names.Word()}}, "y" + Ashes.Text.fromInt(seed){{(names.Coin("third") ? ", \"z\"" : string.Empty)}}]
+                in {{body}})
+            """;
+    }
+}

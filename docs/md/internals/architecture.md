@@ -1018,6 +1018,9 @@ close-out from forcing an arena cell over a reference-counted tail, which nothin
 - A tuple head the cell cannot count, a borrowed read out of an arena-placed parameter, takes an
   owned reference-counted copy when the cell's tail is a recursive result or the cell is a
   tail-modulo-cons candidate (`GRC_NO_PRODUCERHEADCOPY`).
+  A string head of such a cell, a string literal most often (`_ :: tail -> ".." :: parents(tail)`),
+  takes the same copy (`GRC_NO_PRODUCERSTRINGHEAD`): an arena cell over the producer's recursive
+  result held a reference-counted copy of that result nothing released.
 - A tail-modulo-cons function whose base case is a borrowed list (`else rest`) gives that list a
   reference of its own on both close-out branches, so the joined result is an owned
   reference-counted list rather than one the caller copies out of an arena it assumes, stranding the
