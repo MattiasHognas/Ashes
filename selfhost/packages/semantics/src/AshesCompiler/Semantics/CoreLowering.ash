@@ -16029,6 +16029,18 @@ let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argument
             else (state, argumentTemp)
         | None -> (state, argumentTemp)
 
+// Stage 0's `ApplyReuseSpecializationClosure`: a call routed to a reuse specialization (its callee
+// bound to the specialization's closure while the call is lowered) passes every argument but the
+// accumulator borrowed, since the specialization copies them into the persistent region rather
+// than keeping them. A fresh argument keeps its own hand-off, which releases it after the call.
+let borrowedByReuseSpecialization (context: CoreCallContext) (arity: Int) (state: CoreLoweringState) (handOff: CoreArgumentHandOff) =
+    match context.calleeName with
+        | Some(callee) ->
+            if arity > 1 && context.selfCallee == false && handOff.fresh == false && containsName(callee)(stateSpecializingInProgress(state))
+            then handOff with borrowsOnly = true, borrowedReach = false, mayReach = false, transfers = false, keptWholeUnderOwnedResult = false, borrowsForPlacement = true, pendingRootSlot = None
+            else handOff
+        | None -> handOff
+
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
 // follows.
@@ -16045,6 +16057,7 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
                         | (decidedState, readsResult, resultNormalizedOwned) ->
                             decidedState
                             |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
+                            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
                             |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
@@ -27890,6 +27903,23 @@ let recordFullyReusingSpecialization (callee: Str) (accumulatorType: SemanticTyp
                                     then lowered with state = withStateFullyReusingCallees(callee :: stateFullyReusingCallees(state))(state)
                                     else lowered
 
+// Stage 0's `BuildReuseSpecializationFunctionType`: the specialization's body is lowered at the
+// candidate's own declared type, instantiated afresh, so a parameter whose type its body pins only
+// in a later arm (a key a comparison reads) is already known where an earlier arm stores it, and a
+// constructor field built from it is relocated into to-space by its concrete type.
+let pinSpecializationType (callee: Str) (prepared: PreparedCoreRecursiveGroup) =
+    match prepared with
+        | PreparedCoreRecursiveGroup { state = state, members = (PreparedCoreRecursiveBinding { semanticType = semanticType } as member) :: [], error = None } ->
+            match lookupBinding(callee)(state.bindings) with
+                | None -> prepared
+                | Some(binding) ->
+                    match instantiateBinding(binding)(state) with
+                        | InstantiatedBinding { state = instantiatedState, semanticType = declared } ->
+                            match bindType(semanticType)(declared)(instantiatedState) with
+                                | (boundState, None) -> PreparedCoreRecursiveGroup(state = boundState, members = [member], error = None)
+                                | (_failedState, Some(_error)) -> prepared
+        | _ -> prepared
+
 let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let label =
         state
@@ -27908,6 +27938,7 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: Lis
                 |> withStateSpecializationFreshInputs(Some(parameters))
                 |> withStateReuseSpecializations((cacheKey, label) :: stateReuseSpecializations(state)))
                 |> relabelReuseSpecialization(label)
+                |> pinSpecializationType(callee)
                 |> lowerPreparedRecursiveGroup([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
