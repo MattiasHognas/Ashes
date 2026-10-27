@@ -23591,6 +23591,8 @@ let finishBuiltinEmission resultType lower consumedOperand consumedBytes state e
 // resolved type. An argument whose type is still a variable passes through as it is and its
 // type is recorded, so the body is lowered again once the type resolves (stage 0 defers the
 // copy to that point).
+// A value just produced on the reference-counted heap and handed only to the copy (a call's owned
+// result) is released once it is copied: nothing else holds it.
 let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemNever -> success(temp)(SemNever)(state)
@@ -23600,7 +23602,10 @@ let lowerInternalDeepCopy (temp: Int) (semanticType: SemanticType) (state: CoreL
             |> success(temp)(unresolved)
         | resolved ->
             match emitTcoDeepCopy(temp)(resolved)(state) with
-                | (copied, resultTemp) -> success(resultTemp)(resolved)(copied)
+                | (copied, resultTemp) ->
+                    (if tempIsNewlyProduced(temp)(state)
+                    then emitArenaResultRelease(temp)(resolved)(copied)
+                    else copied) |> success(resultTemp)(resolved)
 
 let emitBuiltin layout resultType lower runtimeManaged reuseInput lowered =
     match (layout, lowered) with

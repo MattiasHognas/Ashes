@@ -398,7 +398,20 @@ public sealed partial class Lowering
             return (DeferDeepCopy(temp, pruned), pruned);
         }
 
-        return (EmitDeepCopy(temp, pruned), pruned);
+        int copyTemp = EmitDeepCopy(temp, pruned);
+        ReleaseDeepCopiedFreshValue(temp, pruned);
+        return (copyTemp, pruned);
+    }
+
+    // A value just produced on the reference-counted heap and handed only to the copy (a call's
+    // owned result) is released once it is copied: nothing else holds it.
+    private void ReleaseDeepCopiedFreshValue(int temp, TypeRef type)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_DEEPCOPYRELEASE") is null
+            && IsNewlyProducedRcTemp(temp))
+        {
+            EmitRuntimeManagedResultDrop(temp, type);
+        }
     }
 
     // Ashes.Task.Parallel.both : forall a b. (Unit -> a) -> (Unit -> b) -> (a, b)

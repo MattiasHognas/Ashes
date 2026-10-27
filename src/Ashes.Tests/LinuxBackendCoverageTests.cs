@@ -3852,6 +3852,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_deep_copied_call_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `Ashes.Internal.deepCopy(Ashes.Text.drop(text)(2))`: the call's owned result is released
+        // once its copy stands in for it.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildDeepCopiedCallResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{101L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("deep copy of a call's owned result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_mapped_tuple_closure_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15096,6 +15119,18 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(rel(["a", "b", "c", "d", "e", "f", "g", "h"])(["x", "d" + Ashes.Text.fromInt(n)])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildDeepCopiedCallResultProgram(int rounds)
+        => $$"""
+            let parts (slashed: Str) = Ashes.Internal.deepCopy(Ashes.Text.drop(slashed)(2))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Text.length(parts("C:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + Ashes.Text.fromInt(n % 10))))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

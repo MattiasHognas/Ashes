@@ -95,6 +95,34 @@ internal sealed class ProducerStringLiteralHeadTemplate() : LeakCombinationTempl
 }
 
 /// <summary>
+/// A deep copy of a call's owned result (<c>Ashes.Internal.deepCopy(Ashes.Text.drop(text)(2))</c>).
+/// The copy stood in for the result, and the result, which nothing else held, was never released.
+/// </summary>
+internal sealed class DeepCopiedCallResultTemplate() : LeakCombinationTemplate(
+    "leak.deep-copied-call-result", "deepCopiedCallResult", GeneratedFeature.Call, GeneratedFeature.Let)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string copy = names.Of("copied");
+        int count = names.Between(1, 3);
+        string call = names.Variant("producer", 3) switch
+        {
+            0 => $"Ashes.Text.drop(text)({LeakNames.Text(count)})",
+            1 => $"Ashes.Text.take(text)({LeakNames.Text(count)})",
+            _ => "Ashes.Text.trim(text)",
+        };
+        string use = names.Coin("listCopy")
+            ? $"Ashes.Collection.List.length(Ashes.Internal.deepCopy(Ashes.Text.split({call})(\"/\")))"
+            : $"Ashes.Text.length(Ashes.Internal.deepCopy({call}))";
+        return $$"""
+            let {{copy}} (text: Str) = {{use}}
+
+            let {{names.Entry}} (seed: Int) = {{copy}}(" C:/a/b" + Ashes.Text.fromInt(seed) + " ")
+            """;
+    }
+}
+
+/// <summary>
 /// A generic map whose closure returns a tuple of scalars (<c>List.map(given (p: (Int, Int)) -&gt;
 /// (a + 1, c))(box.pairs)</c>). The closure hands its reference-counted tuple over owned; the
 /// producer's cell retained it again, so every element kept one reference too many.

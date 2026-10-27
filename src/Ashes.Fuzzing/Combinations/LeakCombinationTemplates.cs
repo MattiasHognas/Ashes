@@ -140,6 +140,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FreshTupleArmBesideNormalizedJoinTemplate());
         registry.Register(new ViewCopiedScopeJoinTemplate());
         registry.Register(new ProducerStringLiteralHeadTemplate());
+        registry.Register(new DeepCopiedCallResultTemplate());
         registry.Register(new MappedTupleClosureResultTemplate());
     }
 }

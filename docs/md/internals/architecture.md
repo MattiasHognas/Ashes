@@ -1429,7 +1429,9 @@ A scope that releases a value its result may view (a split of a let-bound string
 into the arena first. When the result is a join that owns its reference (normalized, or every arm
 handing over one of its own: nil, a value it just produced, a retain it took, or another such join),
 the join is released behind the copy (`GRC_NO_VIEWCOPYRELEASE`); before, a path function returning
-its parts this way leaked the tuple, its strings and the parts list on every call.
+its parts this way leaked the tuple, its strings and the parts list on every call. An explicit
+`deepCopy` of a value just produced on the reference-counted heap (a call's owned result) releases
+that value once the clone stands in for it, in both stages (`GRC_NO_DEEPCOPYRELEASE`).
 
 `AllocAdtToSpace` and `CopyOutArenaToSpace` are not general escape mechanisms;
 they belong only to the persistent `Map`/`HashMap` region described below.
