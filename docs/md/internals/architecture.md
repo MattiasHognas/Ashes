@@ -1188,7 +1188,10 @@ counts the same way (`GRC_NO_CONSEDTAILANYMATCH` counts only a tuple scrutinee's
 reference-counted heap, its successor's cell releases the duplicates it took once the back edge has
 copied it. A choice between such cells, an arm of which may hand on the consumed tail itself
 (`walk(if x > 2 then (x - 1 :: xs) :: rest else xs :: rest)`), hands on the same list whichever arm
-runs and counts as a cell (`GRC_NO_CONSEDTAILCHOICE`). A chain of two or more cells pushed onto the
+runs and counts as a cell (`GRC_NO_CONSEDTAILCHOICE`). An arm handing on the bare tail (`else rest`) retains that pattern binding
+before the binding's scope releases it, so the arm hands the join a reference of its own whether or
+not the binding is itself a loop parameter, in both stages: stage 1 counted the retain only for a
+loop parameter's own binding, took the join as borrowed and retained it again at the back edge. A chain of two or more cells pushed onto the
 consumed tail (`walk(targets(name) :: more :: rest)`, a worklist's push) is not one: placed on the
 reference-counted heap its cells were never released, so it keeps the placement it had before
 (`GRC_NO_CONSEDTAILSINGLECELL` takes chains again). In a list of lists of copy-type values the

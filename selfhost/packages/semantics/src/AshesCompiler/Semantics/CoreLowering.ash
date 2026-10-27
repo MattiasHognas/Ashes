@@ -17787,9 +17787,10 @@ let recursive definedByRetain (temp: Int) (instructions: List(IrInstruction)) =
 
 // What a branch stored into its join slot: a reference-counted value when its final temp is one,
 // or when it is the empty list literal of a list-typed join; newly produced only when the temp
-// itself was freshly produced. A branch returning a pattern binding of a loop parameter retained
-// it before the binding's scope releases it (stage 0's `IsRetainedPatternOwnerArm`): the arm hands
-// the join a reference of its own, not one the parameter owns. The empty list literal owns no
+// itself was freshly produced. A branch returning a pattern binding retained it before the
+// binding's scope releases it (stage 0's `IsRetainedPatternOwnerArm`), whether or not the binding
+// is a loop parameter's own: the arm hands the join a reference-counted value of its own, not one
+// the parameter owns. The empty list literal owns no
 // cell, so it takes nothing from the join's freshness: a join of it and fresh lists is a fresh
 // list its `let` owns, as stage 0's `TrackLetOwnership` owns any reference-counted join that
 // borrows nothing.
@@ -17797,7 +17798,7 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
     (let emptyListArm = branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state)
     in
         MatchArmResult(
-            armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || emptyListArm,
+            armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || retainedParameterPart || emptyListArm,
             armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart || emptyListArm,
             armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
             armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
@@ -17811,7 +17812,7 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
 let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     (let borrowsParameter = armBorrowsLoopParameterOf(body)(state)
     in
-        matchArmResultWith(body)(finalTemp)(resultType)(borrowsParameter)(borrowsParameter && containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && definedByRetain(finalTemp)(state.reversedInstructions))(state))
+        matchArmResultWith(body)(finalTemp)(resultType)(borrowsParameter)(containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && definedByRetain(finalTemp)(state.reversedInstructions))(state))
 
 let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false)
 

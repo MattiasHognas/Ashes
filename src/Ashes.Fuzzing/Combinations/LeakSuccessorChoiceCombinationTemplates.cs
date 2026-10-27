@@ -6,7 +6,8 @@ namespace Ashes.Fuzzing.Combinations;
 /// A loop over a list of lists that hands on a choice between cons chains onto what is left of the
 /// list (<c>walk(if x &gt; 2 then (x - 1 :: xs) :: rest else xs :: rest)</c>). Each arm alone makes
 /// the list a choice accumulator placed on the reference-counted heap; the choice did not, and the
-/// arena cells kept the references they took for the tuple's parts.
+/// arena cells kept the references they took for the tuple's parts. An arm handing on the bare tail
+/// (<c>else rest</c>) retains it, and the join counts that retain as its own.
 /// </summary>
 internal sealed class ConsedTailChoiceTemplate() : LeakCombinationTemplate(
     "leak.consed-tail-choice", "consedTailChoice", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.Tuple)
@@ -17,7 +18,7 @@ internal sealed class ConsedTailChoiceTemplate() : LeakCombinationTemplate(
         string walk = names.Of("walk");
         string fresh = names.Coin("chain") ? "x - 1 :: 0 :: xs" : "x - 1 :: xs";
         string thenArm = names.Coin("freshThen") ? $"({fresh}) :: rest" : "xs :: rest";
-        string elseArm = $"({fresh}) :: rest";
+        string elseArm = names.Coin("tailElse") ? "rest" : $"({fresh}) :: rest";
         bool list = names.Coin("listSibling");
         string listParameter = list ? " (spare: List(Int))" : string.Empty;
         string listScrutinee = list ? ", spare" : string.Empty;
