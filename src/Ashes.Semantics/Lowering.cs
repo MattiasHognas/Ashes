@@ -1924,6 +1924,10 @@ public sealed partial class Lowering
         {
             WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
         }
+        else if (BackEdgeCopyBorrowsConsHead(info, index, argType))
+        {
+            WithdrawLoopParameterRetainsOfCopiedConsHead(info.ArgTemps[index], BackEdgeLoopParameters(info));
+        }
 
         int normalizedTemp = TcoBackEdgeNormalizeRuntimeManagedArg(
             info.ArgTemps[index], argType, info.RuntimeManagedArgResults[index],
@@ -1959,6 +1963,15 @@ public sealed partial class Lowering
             && argType is TypeRef.TList
             && info.ArgExpressions[index] is Expr.ListLit { Elements.Count: > 0 }
             && Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALSUCCESSOR") is null;
+
+    // A successor consing a freshly built cell onto a list (`Site(...) :: sites`): the back edge
+    // copies the arena head the same way, so the retains it was built with for loop-parameter reads
+    // are withdrawn; the tail is left to the list copy's own rules.
+    private static bool BackEdgeCopyBorrowsConsHead(PendingTcoReset info, int index, TypeRef argType)
+        => !info.RuntimeManagedArgResults[index]
+            && argType is TypeRef.TList
+            && info.ArgExpressions[index] is Expr.Cons
+            && Environment.GetEnvironmentVariable("GRC_NO_COPIEDCONSHEAD") is null;
 
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,

@@ -3536,6 +3536,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_loop_conses_record_holding_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop conses a record holding one of its parameters onto the list it threads; the back
+        // edge copies the arena record, and the retain its construction took is withdrawn. The
+        // program runs in time quadratic in its rounds, so the counts stay small.
+        int[] roundCounts = [2000, 10000, 40000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildLoopConsesRecordHoldingParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop consing a record holding its parameter", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_whole_tuple_element_handed_back_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14989,6 +15013,61 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + label(words(n))(Labels(labels = ["flint"], current = None)) + collect(items(n))(Seen(seen = [], count = n)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildLoopConsesRecordHoldingParameterProgram(int rounds)
+        => $$"""
+            type Facts =
+                | defs: List(Str)
+                | names: List(Str)
+
+            type Site =
+                | target: Str
+                | index: Int
+                | creator: Facts
+                | source: Int
+
+            let recursive addSites (label: Str) (index: Int) (count: Int) (facts: Facts) sites unresolvable =
+                if index >= count
+                then (sites, unresolvable)
+                else
+                    if index == 1
+                    then addSites(label)(index + 1)(count)(facts)(sites)((label, index) :: unresolvable)
+                    else addSites(label)(index + 1)(count)(facts)(Site(target = label, index = index, creator = facts, source = index) :: sites)(unresolvable)
+
+            let recursive inBody (items: List(Int)) (label: Str) (facts: Facts) sites unresolvable =
+                match items with
+                    | [] -> (sites, unresolvable)
+                    | item :: rest ->
+                        if item > 0
+                        then
+                            match addSites(label + Ashes.Text.fromInt(item))(0)(item)(facts)(sites)(unresolvable) with
+                                | (nextSites, nextUnresolvable) -> inBody(rest)(label)(facts)(nextSites)(nextUnresolvable)
+                        else inBody(rest)(label)(facts)(sites)(unresolvable)
+
+            let factsOf (items: List(Int)) =
+                Facts(defs = Ashes.Collection.List.map(given (x) -> Ashes.Text.fromInt(x))(items), names = ["a" + Ashes.Text.fromInt(Ashes.Collection.List.length(items))])
+
+            let recursive collect (functions: List(List(Int))) sites unresolvable =
+                match functions with
+                    | [] -> (sites, unresolvable)
+                    | fn :: tail ->
+                        match inBody(fn)("f")(factsOf(fn))(sites)(unresolvable) with
+                            | (nextSites, nextUnresolvable) -> collect(tail)(nextSites)(nextUnresolvable)
+
+            let probe (n: Int) =
+                match collect([[1, 2, 3], [n, 0, 2]])([])([]) with
+                    | ([], []) -> 0
+                    | _ -> 1
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + probe(n))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
             """;
 
     private static string BuildWholeTupleElementHandedBackProgram(int rounds)

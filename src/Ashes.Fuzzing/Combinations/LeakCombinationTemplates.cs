@@ -116,6 +116,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new StringCallResultComparedTemplate());
         registry.Register(new MixedTupleJoinTemplate());
         registry.Register(new MutualRecursionTuplePartTemplate());
+        registry.Register(new CopiedConsHeadTemplate());
         registry.Register(new ConstrainedCallFreshArgumentTemplate());
         registry.Register(new FreshHeadOverNamedHeadTemplate());
         registry.Register(new FreshHeadOverViewHeadTemplate());

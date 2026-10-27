@@ -1582,6 +1582,9 @@ element produced right there keeps an owner of its own, released after the copy,
 arena element (a contract record, say) was built with for loop-parameter reads are withdrawn as a
 copied record's are. Otherwise the element and the sibling parameter it read stayed behind the arena
 cell with nothing to release them (`GRC_NO_COPIEDLITERALSUCCESSOR` switches this off).
+A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
+arena head copied the same way, so the retains that head was built with for loop-parameter reads are
+withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).
 
 A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
 of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs
