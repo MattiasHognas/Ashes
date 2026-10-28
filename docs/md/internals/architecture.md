@@ -2016,9 +2016,13 @@ with its own parameter normalizes that parameter into an owned reference-counted
 returns it). When the operation's result type has a complete copy-out layout (a string, bytes, a
 shallow-copyable ADT, or a list over such heads), the site reads that bit at the saturating
 call, keeps a reference-counted result as newly produced, and normalizes an arena result into a
-reference-counted copy; a result whose layout is still unresolved, or a site in a function that
-may execute inside a coroutine, asks the arm for the arena form through the ownership word
-instead. A `handle` whose body value is owned this way applies its `return` arm as a
+reference-counted copy. Every other result (one whose layout is still unresolved, or a heap shape
+with no flat copy-out such as a constructor or `Result` holding a string), and every result at a
+site in a function that may execute inside a coroutine, asks the arm for the arena form through
+bit 1 of the ownership word instead; the arm's epilogue copies a reference-counted result into
+the arena and releases the original, and does nothing when its result never was
+reference-counted. The self-hosted compiler's perform site follows the same plan (it has no
+coroutine bodies, so only the layout decides). A `handle` whose body value is owned this way applies its `return` arm as a
 continuation `given pattern -> body` under the same contract as a post: the value is retained
 only when the closure's entry adopts reference-counted arguments, the result is adopted or
 normalized by the closure's returns bit, and the original is released once the result cannot

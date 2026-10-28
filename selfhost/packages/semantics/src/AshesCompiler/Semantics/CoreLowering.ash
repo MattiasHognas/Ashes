@@ -26439,6 +26439,14 @@ let performResultType (capName: Str) (opName: Str) (argumentTypes: List(Semantic
                                 | (failedState, Some(error)) -> (failedState, resultType, Some(error))
                                 | (boundState, None) -> (boundState, resolveType(boundState)(resultType), None)
 
+// A perform site whose result has a call copy-out adopted the arm's result (stage 0's
+// `PerformResultOwnership.Adopt`): it owns a reference-counted value on both branches, newly
+// produced for its consumer.
+let markPerformResultAdopted (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    match callCopyOutOf(resultType)(state) with
+        | Some(_copyOut) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
+        | None -> state
+
 let lowerPerform operation lower state =
     match collectCallSpine(operation) with
         | CoreCallSpine { root = ExprQualifiedVar(capName, opName), arguments = arguments } ->
@@ -26513,13 +26521,16 @@ let lowerPerform operation lower state =
                                                                     | StringInterning { state = internedState, label = panicLabel } ->
                                                                         match internedState with
                                                                             | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
-                                                                                match emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType)(panicLabel) with
+                                                                                match internedState
+                                                                                |> callCopyOutOf(resType)
+                                                                                |> emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType)(panicLabel) with
                                                                                     | CoreCapabilityPerformEmission { instructions = performInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resultSemType, error = None } ->
                                                                                         let emittedState =
                                                                                             internedState
                                                                                             |> emitInstructions(performInstrs)
                                                                                             |> withNextTemp(endTemp)
                                                                                             |> withNextLocal(endLocal)
+                                                                                            |> markPerformResultAdopted(resTemp)(resultSemType)
                                                                                         in
                                                                                             match collectCapabilityPost(globalCount)(layout.index)(emittedState) with
                                                                                                 | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
@@ -26942,8 +26953,8 @@ let recursive foldCapabilityPosts postsHeadPtrTemp initialResultTemp resultType 
                                             | FreshLabel { state = doneLabelState, label = doneLabel } ->
                                                 doneLabelState
                                                 |> emit(Label(loopLabel))
-                                                |> foldCapabilityPostsLoop(loopLabel)(doneLabel)(cellLocal)(resultLocal)(resultType)
-and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal resultType state =
+                                                |> foldCapabilityPostsLoop(loopLabel)(doneLabel)(cellLocal)(resultLocal)(initialResultTemp)(resultType)
+and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal initialResultTemp resultType state =
     match freshTemp(state) with
         | FreshTemp { state = cellState, temp = cellTemp } ->
             match cellState
@@ -26983,12 +26994,16 @@ and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal resultType
                                                                             |> emit(StoreLocal(cellLocal)(nextCellTemp))
                                                                             |> emit(Jump(loopLabel))
                                                                             |> emit(Label(doneLabel))
-                                                                            |> finishCapabilityPostsFold(resultLocal)(resultType)
-and finishCapabilityPostsFold resultLocal resultType state =
+                                                                            |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
+// The handle's value read back after the fold keeps the reference-counted fact of the value the
+// fold started from: only a non-tail `resume` collects a post, and this lowering rejects one, so
+// the value read back is the handled body's (or `return` arm's) own, owned exactly as it was.
+and finishCapabilityPostsFold resultLocal initialResultTemp resultType state =
     match freshTemp(state) with
         | FreshTemp { state = readState, temp = finalResultTemp } ->
             readState
             |> emit(LoadLocal(finalResultTemp)(resultLocal))
+            |> joinedCopyFact(initialResultTemp)(finalResultTemp)
             |> success(finalResultTemp)(resultType)
 
 let lowerHandleWithExpected body arms (request: ConsumerRequest) lower state =

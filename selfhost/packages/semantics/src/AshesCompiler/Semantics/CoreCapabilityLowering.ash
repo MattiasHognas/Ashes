@@ -8,6 +8,7 @@
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.Types
@@ -212,7 +213,60 @@ let recursive emitCurriedClosureCalls (currentTemp: Int) (startTemp: Int) (argTe
                         append(instructions)([callInst])
                     )
 
-let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int) (opIndex: Int) (globalCount: Int) (startTemp: Int) (startLocal: Int) (argTemps: List(Int)) (resultType: SemanticType) (panicLabel: Str) =
+// Stage 0's `EmitPerformCallArm`: the operation's arguments applied to the arm closure, where only
+// the saturating call produces the operation's result. With an adopted result (`Some(copyOut)`)
+// that call reads the closure's result-ownership bit, bit 63 of its packed word, first; otherwise
+// it passes the arena-result request (bit 1 of the ownership word), which an arm returning a
+// reference-counted result honors by copying it into the arena and releasing the original. The
+// returned flag temp is -1 when no bit was read.
+let recursive emitPerformArmCalls (adoptCopyOut: Maybe(CallCopyOut)) (currentTemp: Int) (startTemp: Int) (argTemps: List(Int)) (instructions: List(IrInstructionKind)) =
+    match argTemps with
+        | [] -> (currentTemp, instructions, startTemp, -1)
+        | argTemp :: [] ->
+            match adoptCopyOut with
+                | Some(_copyOut) ->
+                    (startTemp + 3, append(instructions)([
+                        LoadMemOffset(startTemp)(currentTemp)(16),
+                        LoadConstInt(startTemp + 1)(63),
+                        ShrInt(startTemp + 2)(startTemp)(startTemp + 1),
+                        CallClosure(startTemp + 3)(currentTemp)(argTemp)(-1)
+                    ]), startTemp + 4, startTemp + 2)
+                | None ->
+                    (startTemp + 1, append(instructions)([
+                        LoadConstInt(startTemp)(2),
+                        CallClosure(startTemp + 1)(currentTemp)(argTemp)(startTemp)
+                    ]), startTemp + 2, -1)
+        | argTemp :: tail ->
+            emitPerformArmCalls(
+                adoptCopyOut
+            )(
+                startTemp
+            )(
+                startTemp + 1
+            )(
+                tail
+            )(
+                append(instructions)([CallClosure(startTemp)(currentTemp)(argTemp)(-1)])
+            )
+
+// Stage 0's `EmitPerformAdoptResult`: a reference-counted arm result is kept as it is, and an
+// arena one is normalized into a reference-counted copy stored over it in the result slot, so the
+// perform site owns its result on both branches.
+let performAdoptInstructions (adoptCopyOut: Maybe(CallCopyOut)) (flagTemp: Int) (armResultTemp: Int) (copiedTemp: Int) (resultSlot: Int) (copyLabel: Str) (doneLabel: Str) =
+    match adoptCopyOut with
+        | Some(copyOut) ->
+            [
+                JumpIfFalse(flagTemp)(copyLabel),
+                Jump(doneLabel),
+                Label(copyLabel),
+                callCopyOutInstruction(copyOut)(copiedTemp)(armResultTemp),
+                StoreLocal(resultSlot)(copiedTemp)
+            ]
+        | None -> []
+
+// A perform site: the handler frame's evidence swapped in, the arm closure applied, the evidence
+// restored, and the arm's result taken as `adoptCopyOut` says (see `emitPerformArmCalls`).
+let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int) (opIndex: Int) (globalCount: Int) (startTemp: Int) (startLocal: Int) (argTemps: List(Int)) (resultType: SemanticType) (panicLabel: Str) (adoptCopyOut: Maybe(CallCopyOut)) =
     (let frameTemp = startTemp
     in
         let zeroTemp = startTemp + 1
@@ -245,8 +299,8 @@ let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int
                                                         in
                                                             match [loadClosure]
                                                             |> append(switchInstructions)
-                                                            |> emitCurriedClosureCalls(closureTemp)(closureTemp + 1)(argTemps) with
-                                                                | (callResultTemp, callInstructions, afterCallTemp) ->
+                                                            |> emitPerformArmCalls(adoptCopyOut)(closureTemp)(closureTemp + 1)(argTemps) with
+                                                                | (callResultTemp, callInstructions, afterCallTemp, returnsFlagTemp) ->
                                                                     let restoreInstructions = emitPerformEvidenceRestore(0)(globalCount)(savedTemps)(callInstructions)
                                                                     in
                                                                         let resultSlot = startLocal
@@ -256,23 +310,21 @@ let emitDynamicPerform (capabilityName: Str) (opName: Str) (capabilityIndex: Int
                                                                                 let panicMessage = panicLabel
                                                                                 in
                                                                                     let finalInstructions =
-                                                                                        append(
-                                                                                            restoreInstructions
-                                                                                        )(
-                                                                                            [
-                                                                                                StoreLocal(resultSlot)(callResultTemp),
-                                                                                                Jump(doneLabel),
-                                                                                                Label(unhandledLabel),
-                                                                                                LoadConstStr(panicMsgTemp)(panicMessage),
-                                                                                                PanicStr(panicMsgTemp),
-                                                                                                Label(doneLabel),
-                                                                                                LoadLocal(resultTemp)(resultSlot)
-                                                                                            ]
-                                                                                        )
+                                                                                        [
+                                                                                            Jump(doneLabel),
+                                                                                            Label(unhandledLabel),
+                                                                                            LoadConstStr(panicMsgTemp)(panicMessage),
+                                                                                            PanicStr(panicMsgTemp),
+                                                                                            Label(doneLabel),
+                                                                                            LoadLocal(resultTemp)(resultSlot)
+                                                                                        ]
+                                                                                        |> append(performAdoptInstructions(adoptCopyOut)(returnsFlagTemp)(callResultTemp)(resultTemp + 1)(resultSlot)("capability_copy_arena_result_" + siteId)(doneLabel))
+                                                                                        |> append([StoreLocal(resultSlot)(callResultTemp)])
+                                                                                        |> append(restoreInstructions)
                                                                                     in
                                                                                         CoreCapabilityPerformEmission(
                                                                                             instructions = finalInstructions,
-                                                                                            nextTemp = resultTemp + 1,
+                                                                                            nextTemp = resultTemp + 2,
                                                                                             nextLocal = startLocal + 1,
                                                                                             resultTemp = resultTemp,
                                                                                             semanticType = resultType,

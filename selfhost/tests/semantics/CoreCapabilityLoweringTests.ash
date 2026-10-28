@@ -106,7 +106,8 @@ let testDynamicPerformEmission unit =
             0,
             [1],
             SemInt,
-            "str_0"
+            "str_0",
+            None
         )
     in
         match emission with
