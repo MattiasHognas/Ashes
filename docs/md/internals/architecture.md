@@ -1638,6 +1638,13 @@ loop's exit. A join takes its ownership from the arms that reach it: when every 
 over a value it just produced (a loop exit building its result while the other arms jump back), the
 join's value is fresh and the function's return takes it over rather than retaining it again, and a
 `let` passing a join's value on keeps that fact.
+A value an earlier iteration left in an owned slot (the slot's predecessor) is released at the back
+edge once no successor can still reach it. A pipeline step (`[] |> prepare(x)(state) |> relabel(id)
+|> open(outer)`) is never bound to a name and is only ever the argument of the next call, whose result
+is kept in an owned slot of its own and holds references of its own, so no successor reaches it
+whatever the successors' placement. Without this, a loop whose successors include an arena list that
+might hold such a value's parts (the whole-program lowering's remaining top-level items) released the
+steps only at its exit, two group records per `let recursive` (`GRC_NO_HANDEDONPREDECESSOR`).
 A join whose arms mix an owned value with one it does not own normalizes the unowned arms, so the
 join owns its value as a whole. A tuple joins the same way when each element is a scalar or a value
 that normalizes (`("", "")` beside a tuple of fresh strings): the arena arm is copied into a counted

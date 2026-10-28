@@ -148,6 +148,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new WalkedStackOfStringsTemplate());
         registry.Register(new ConcatenatedExitBesideFreshStartTemplate());
         registry.Register(new CurriedStringParameterIntoAggregateTemplate());
+        registry.Register(new HandedOnPipelineStepTemplate());
     }
 }
 

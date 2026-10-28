@@ -136,7 +136,8 @@ public sealed partial class Lowering
     // Branches names the match arms and if branches the slot was stored inside, outermost first.
     // Binders are the source names bound to the value or to its parts (the let it is bound by, the
     // pattern bindings of a match on it), shared between the slot and its predecessor slot.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null);
+    // Origin, on a predecessor, is the owned slot whose earlier value it holds.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -249,11 +250,11 @@ public sealed partial class Lowering
         return predecessorSlot;
     }
 
-    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type, HashSet<string>? binders = null)
+    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type, HashSet<string>? binders = null, int origin = -1)
     {
         if (predecessorSlot >= 0)
         {
-            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches], Binders: binders));
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches], Binders: binders, Origin: origin));
         }
     }
 
@@ -477,6 +478,77 @@ public sealed partial class Lowering
         _generalRcBackEdgeArgumentPartSlots[pendingId] = argumentTemps
             .Select(temp => OwnedSlotReadInto(temp, loopSlots, parts: true))
             .ToArray();
+        _generalRcBackEdgeHandedOnPredecessors[pendingId] = loopSlots
+            .Where(owned => owned.Predecessor && OnlyHandedToOwnedResults(owned, loopSlots))
+            .Select(owned => owned.Slot)
+            .ToHashSet();
+    }
+
+    // Per back edge, the earlier iteration's values whose only use is to be handed to calls.
+    private readonly Dictionary<int, HashSet<int>> _generalRcBackEdgeHandedOnPredecessors = [];
+
+    // Whether the value an earlier iteration left in a predecessor's slot was never bound to a name
+    // and every read of it is the argument of a call whose result is kept in an owned slot (a step
+    // of a pipeline): no successor can hold a part of it but through such a result, which holds
+    // references of its own. Reads by the slot's own release and by the save into its predecessor
+    // are no uses.
+    private bool OnlyHandedToOwnedResults(GeneralRcOwnedSlot predecessor, List<GeneralRcOwnedSlot> loopSlots)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_HANDEDONPREDECESSOR") is not null
+            || predecessor.Origin < 0
+            || predecessor.Binders is not { Count: 0 })
+        {
+            return false;
+        }
+
+        HashSet<int> ownedResultSlots = loopSlots.Where(owned => !owned.Predecessor).Select(owned => owned.Slot).ToHashSet();
+        HashSet<int> savedInto = loopSlots.Where(owned => owned.Predecessor && owned.Origin == predecessor.Origin).Select(owned => owned.Slot).ToHashSet();
+        if (HandedOnCallTargets(predecessor.Origin, savedInto) is not { Count: > 0 } callTargets)
+        {
+            return false;
+        }
+
+        foreach (IrInst inst in _inst)
+        {
+            if (inst is IrInst.StoreLocal store && callTargets.Contains(store.Source) && ownedResultSlots.Contains(store.Slot))
+            {
+                callTargets.Remove(store.Source);
+            }
+        }
+
+        return callTargets.Count == 0;
+    }
+
+    // The results of the calls an owned slot's value is the argument of, or null when it is read
+    // any other way.
+    private HashSet<int>? HandedOnCallTargets(int slot, HashSet<int> savedInto)
+    {
+        HashSet<int> reads = _inst.OfType<IrInst.LoadLocal>().Where(load => load.Slot == slot).Select(load => load.Target).ToHashSet();
+        HashSet<int> callTargets = [];
+        foreach (IrInst inst in _inst)
+        {
+            foreach (int used in StateMachineTransform.GetUsedTemps(inst).Where(reads.Contains))
+            {
+                switch (inst)
+                {
+                    case IrInst.StoreLocal store when savedInto.Contains(store.Slot):
+                    case IrInst.CmpIntNe:
+                    case IrInst.IsReferenceCounted:
+                    case IrInst.CallKnown dropCall when dropCall.FuncLabel.StartsWith("__rcdrop", StringComparison.Ordinal):
+                        break;
+                    case IrInst.CallClosure call when call.ArgTemp == used && call.ClosureTemp != used && call.RuntimeManagedArgumentFlagTemp != used:
+                        callTargets.Add(call.Target);
+                        break;
+                    case IrInst.CallKnown call when call.ArgTemp == used && call.EnvTemp != used && call.RuntimeManagedArgumentFlagTemp != used:
+                        callTargets.Add(call.Target);
+                        break;
+                    default:
+                        return null;
+                }
+            }
+        }
+
+        return callTargets;
     }
 
     // Per back edge, the owned slot each successor argument is a plain read of, or -1; and the owned
@@ -952,7 +1024,7 @@ public sealed partial class Lowering
 
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
-        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders);
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders, ownedSlot);
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -1555,15 +1627,17 @@ public sealed partial class Lowering
     // self call (it holds nothing newer than the loop's entry), an expression naming neither the
     // value's binders nor a parameter that may hold a part of it, or of a type that cannot hold its
     // parts. A parameter handed on unchanged at this edge alone may be that very value, so it counts
-    // only by its type.
+    // only by its type. A value no name was bound to and only ever handed to calls whose results are
+    // owned is out of every successor's reach.
     private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
     {
         int[] argumentSlots = _generalRcBackEdgeArgumentPartSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
         foreach (GeneralRcOwnedSlot predecessor in predecessors)
         {
             List<TypeRef> parts = PredecessorPartTypes(predecessor.Type);
+            HashSet<int> handedOn = _generalRcBackEdgeHandedOnPredecessors.GetValueOrDefault(_generalRcBackEdgeId, []);
             bool[] unnamed = SuccessorsNamingNoPartOf(info, predecessor, successorsNormalized);
-            bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
+            bool unreachable = handedOn.Contains(predecessor.Slot) || Enumerable.Range(0, info.ArgTypes.Length).All(index =>
                 CanArenaReset(Prune(info.ArgTypes[index]))
                 || (index < argumentSlots.Length && argumentSlots[index] >= 0)
                 || SuccessorPredatesTheLoop(info, index)

@@ -3969,6 +3969,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_handed_on_pipeline_step_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop arm pipes a record through calls and continues with a part of the last result, beside
+        // an item list a generic list sibling keeps in the arena. The intermediate results are never
+        // named and only handed to the next call, so the back edge releases the ones an earlier
+        // iteration left instead of the loop's exit.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildHandedOnPipelineStepProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{5L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handed-on pipeline step", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_curried_string_parameter_into_aggregate_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15363,6 +15388,80 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private const string HandedOnPipelineStepDeclarations = """
+            type State =
+                | names: List(Str)
+                | count: Int
+                | bindings: List(Str)
+
+            type Group =
+                | state: State
+                | members: List(Str)
+                | error: Maybe(Str)
+
+            type Lowered =
+                | state: State
+                | temp: Int
+                | error: Maybe(Str)
+
+            type Item =
+                | ItemPlain(Str)
+                | ItemWrapped(Item)
+                | ItemMany(List(Str))
+
+            let recursive prepare (names: List(Str)) (state: State) (reversed: List(Str)) =
+                match names with
+                    | [] -> Group(state = state, members = Ashes.Collection.List.reverse(reversed), error = None)
+                    | name :: rest ->
+                        match state with
+                            | State { count = count } -> prepare(rest)((state with names = [name], count = count + 1))(name :: reversed)
+
+            let relabel (id: Int) (prepared: Group) =
+                match prepared with
+                    | Group { state = state, members = member :: [], error = None } -> Group(state = state, members = [member + Ashes.Text.fromInt(id)], error = None)
+                    | _ -> prepared
+
+            let openGroup (outer: List(Str)) (prepared: Group) =
+                match prepared with
+                    | Group { state = failed, error = Some(error) } -> Lowered(state = failed, temp = 0, error = Some(error))
+                    | Group { state = state, members = members, error = None } -> Lowered(state = (state with bindings = members), temp = Ashes.Collection.List.length(outer), error = None)
+
+            """;
+
+    private static string BuildHandedOnPipelineStepProgram(int rounds)
+        => HandedOnPipelineStepDeclarations + "\n\n" + $$"""
+            let recursive loop (items: List(Item)) wrap seen (state: State) =
+                match items with
+                    | [] -> state.count + Ashes.Collection.List.length(state.names)
+                    | ItemWrapped(inner) :: rest -> loop(inner :: rest)(wrap)(seen)(state)
+                    | ItemMany(_names) :: rest -> loop(rest)(wrap)(seen)(state)
+                    | ItemPlain(item) :: rest ->
+                        match state with
+                            | State { bindings = outer, count = id } ->
+                                match []
+                                |> prepare([item])(state)
+                                |> relabel(id)
+                                |> openGroup(outer) with
+                                    | Lowered { state = failed, error = Some(_error) } -> failed.count
+                                    | Lowered { state = opened, error = None } -> loop(rest)(wrap)(wrap(item) :: seen)(opened)
+
+            let recursive items (n: Int) (acc: List(Item)) =
+                if n <= 0
+                then acc
+                else items(n - 1)(ItemWrapped(ItemPlain("walk")) :: acc)
+
+            let run (seed: Int) =
+                State(names = ["x"], count = seed, bindings = [])
+                |> loop(items(3)([]))(given (s: Str) -> [s])([])
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

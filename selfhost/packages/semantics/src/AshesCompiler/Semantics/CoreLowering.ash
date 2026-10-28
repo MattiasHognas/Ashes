@@ -60,6 +60,7 @@ import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
+import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTempsThrough
@@ -27419,13 +27420,125 @@ let predecessorPartTypes (semanticType: SemanticType) (state: CoreLoweringState)
             |> heapPartTypesInto([semanticType])([])([])
             |> withoutStringParts
 
-let recursive predecessorDropsOf (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+let recursive anyIntIn (items: List(Int)) (candidates: List(Int)) =
+    match items with
+        | [] -> false
+        | item :: rest -> containsInt(item)(candidates) || anyIntIn(rest)(candidates)
+
+// What one instruction does with the reads of an owned slot: nothing (Some of no targets), hands
+// one to a call as its argument (Some of the call's result), or anything else (None). The slot's
+// own release and the save into its predecessor are no uses.
+let handedOnUse (reads: List(Int)) (savedInto: List(Int)) (instruction: IrInstructionKind) =
+    if !anyIntIn(getUsedTemps(instruction))(reads)
+    then Some([])
+    else
+        match instruction with
+            | StoreLocal(slot, _source) ->
+                if containsInt(slot)(savedInto)
+                then Some([])
+                else None
+            | CmpIntNe(_target, _left, _right) -> Some([])
+            | IsReferenceCounted(_target, _source) -> Some([])
+            | CallKnown(target, label, environment, argument, flag, _requestsArena) ->
+                if Ashes.Text.startsWith(label)("__rcdrop")
+                then Some([])
+                else
+                    if containsInt(argument)(reads) && !containsInt(environment)(reads) && !containsInt(flag)(reads)
+                    then Some([target])
+                    else None
+            | CallClosure(target, closure, argument, flag) ->
+                if containsInt(argument)(reads) && !containsInt(closure)(reads) && !containsInt(flag)(reads)
+                then Some([target])
+                else None
+            | _ -> None
+
+let recursive handedOnCallTargets (reads: List(Int)) (savedInto: List(Int)) (instructions: List(IrInstruction)) (targets: List(Int)) =
+    match instructions with
+        | [] -> Some(targets)
+        | IrInstruction { instruction = instruction } :: rest ->
+            match handedOnUse(reads)(savedInto)(instruction) with
+                | None -> None
+                | Some(added) ->
+                    targets
+                    |> append(added)
+                    |> handedOnCallTargets(reads)(savedInto)(rest)
+
+let recursive slotReadTemps (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = LoadLocal(target, candidate) } :: rest ->
+            if candidate == slot
+            then target :: slotReadTemps(slot)(rest)
+            else slotReadTemps(slot)(rest)
+        | _ :: rest -> slotReadTemps(slot)(rest)
+
+let recursive storedIntoOwnedSlot (target: Int) (ownedResultSlots: List(Int)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest -> source == target && containsInt(slot)(ownedResultSlots) || storedIntoOwnedSlot(target)(ownedResultSlots)(rest)
+        | _ :: rest -> storedIntoOwnedSlot(target)(ownedResultSlots)(rest)
+
+let recursive allStoredIntoOwnedSlots (targets: List(Int)) (ownedResultSlots: List(Int)) (instructions: List(IrInstruction)) =
+    match targets with
+        | [] -> true
+        | target :: rest -> storedIntoOwnedSlot(target)(ownedResultSlots)(instructions) && allStoredIntoOwnedSlots(rest)(ownedResultSlots)(instructions)
+
+let recursive slotsOtherThan (slots: List((Int, SemanticType))) (excluded: List(Int)) =
+    match slots with
+        | [] -> []
+        | (slot, _semanticType) :: rest ->
+            if containsInt(slot)(excluded)
+            then slotsOtherThan(rest)(excluded)
+            else slot :: slotsOtherThan(rest)(excluded)
+
+let recursive predecessorsOfOwner (owner: Int) (predecessors: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match predecessors with
+        | [] -> []
+        | (slot, _semanticType) :: rest ->
+            if predecessorOwnerOf(stateActiveFunctionOrigin(state))(slot)(stateGeneralRcPredecessorOwners(state)) == owner
+            then slot :: predecessorsOfOwner(owner)(rest)(state)
+            else predecessorsOfOwner(owner)(rest)(state)
+
+let recursive slotNumbersOf (slots: List((Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | (slot, _semanticType) :: rest -> slot :: slotNumbersOf(rest)
+
+// Stage 0's `OnlyHandedToOwnedResults`: the value an earlier iteration left in a predecessor's slot
+// was never bound to a name and every read of it is the argument of a call whose result is kept in
+// an owned slot (a step of a pipeline), so no successor can hold a part of it but through such a
+// result, which holds references of its own.
+let predecessorOnlyHandedOn (predecessorSlot: Int) (predecessors: List((Int, SemanticType))) (ownedSlots: List((Int, SemanticType))) (state: CoreLoweringState) =
+    (let owner =
+        state
+        |> stateGeneralRcPredecessorOwners
+        |> predecessorOwnerOf(stateActiveFunctionOrigin(state))(predecessorSlot)
+    in
+        match (owner < 0, predecessorBindersOf(predecessorSlot)(state)) with
+            | (false, []) ->
+                let instructions = state.reversedInstructions
+                in
+                    match handedOnCallTargets(slotReadTemps(owner)(instructions))(predecessorsOfOwner(owner)(predecessors)(state))(instructions)([]) with
+                        | None -> false
+                        | Some([]) -> false
+                        | Some(targets) ->
+                            allStoredIntoOwnedSlots(targets)(predecessors
+                            |> slotNumbersOf
+                            |> slotsOtherThan(ownedSlots))(instructions)
+            | _ -> false)
+
+let recursive predecessorDropsWith (all: List((Int, SemanticType))) (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match predecessors with
         | [] -> []
         | (slot, semanticType) :: rest ->
             match predecessorUnnamedSuccessors(slot)(arguments)(frame)(state) with
                 | (unnamedPlain, unnamedNormalized) ->
-                    (slot, semanticType, predecessorBlockers(0)(predecessorPartTypes(semanticType)(state))(argumentTypes)(temps)(ownedSlots)(state), unnamedPlain, unnamedNormalized) :: predecessorDropsOf(rest)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)
+                    (slot, semanticType, if predecessorOnlyHandedOn(slot)(all)(ownedSlots)(state)
+                    then []
+                    else
+                        predecessorBlockers(0)(predecessorPartTypes(semanticType)(state))(argumentTypes)(temps)(ownedSlots)(state), unnamedPlain, unnamedNormalized) :: predecessorDropsWith(all)(rest)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)
+
+let predecessorDropsOf (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) = predecessorDropsWith(predecessors)(predecessors)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)
 
 // The ordinals of the successors whose type may hold one of these heap parts: neither inline nor of
 // a type that cannot hold any of them.
