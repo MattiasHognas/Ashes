@@ -187,6 +187,7 @@ export default defineConfig({
           page("Inferred Borrow Lifetimes", "/future/INFERRED_BORROW_LIFETIMES"),
           page("Optimizer Pass Observability", "/future/OPTIMIZER_PASS_OBSERVABILITY"),
           page("Package Registry Website", "/future/REGISTRY_WEBSITE"),
+          page("Single Ownership Pass", "/future/SINGLE_OWNERSHIP_PASS"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
           page("Self-Hosting Log", "/future/SELF_HOSTING_LOG"),
           page("WebAssembly Target", "/future/WASM_TARGET"),

@@ -699,8 +699,9 @@ J. **Establish the fixpoint.** Stage 2 compiles the same sources to a stage 3 by
    After the fixpoint, one measurement: what the four cross-language benchmarks would cost if every
    allocation that can escape its scope went to the reference-counted heap rather than the arena. It
    is stage 0 only, behind a local switch, and nothing of it is committed; the times and peak memory,
-   off and on, decide whether a later single ownership pass makes reference counting the default or
-   keeps the arena as the default, and may change how K is best done.
+   off and on, decide whether the later [single ownership pass](SINGLE_OWNERSHIP_PASS.md) makes
+   reference counting the default or keeps the arena as the default, and may change how K is best
+   done.
 K. **Bring fannkuch-redux back to its memory footprint.** The benchmark peaks at about 3.3 GB on
    `main` where its README records 8 MB. It did so before the ownership contract landed, so the
    cause is older than step C.
