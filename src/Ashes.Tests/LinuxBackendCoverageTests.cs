@@ -4017,6 +4017,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_nested_tuple_in_copied_head_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A head tuple holding a nested tuple over a pattern-bound label is consed in the arena beside
+        // a pass-through arm and copied at the back edge; the nested tuple borrows the label.
+        int[] roundCounts = [2000, 50000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildNestedTupleInCopiedHeadTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nested tuple in copied head tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_curried_string_parameter_into_aggregate_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15381,6 +15404,26 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Collection.List.length(settle([1, 2, 3])([])))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildNestedTupleInCopiedHeadTupleProgram(int rounds)
+        => $$"""
+            let recursive resolveGroups (groups: List((Str, Int))) (known: List(((Str, Int), Int))) =
+                match groups with
+                    | [] -> known
+                    | (label, index) :: tail ->
+                        if index == 1
+                        then resolveGroups(tail)(known)
+                        else resolveGroups(tail)(((label, index), 0) :: known)
+
+            let run (n: Int) = Ashes.Collection.List.length(resolveGroups([("lambda_3", 0), ("lambda_3", 1), ("lambda_10", n + 1)])([]))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

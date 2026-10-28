@@ -1559,6 +1559,11 @@ unchanged) is retained when it is stored, since its placement is decided only on
 lowered. When the loop then places the parameter on the reference-counted heap, that retain is
 replaced by an arena copy of the parameter, as for a resolved element, of the contract's types too:
 the retain left the whole accumulator alive at every call (`GRC_NO_ARENAPARAMCOPY`).
+A tuple written inside the head tuple of a successor cell the back edge copies
+(`((label, index), 0) :: known`, built in the arena because another arm passes `known` through
+unchanged) is copied with it, so it borrows its parts like the head tuple does: the duplicate of
+the pattern-bound `label` it took was never released, one per consed entry
+(`GRC_NO_NESTEDHEADTUPLE`).
 
 When such a tuple is a function's result, its contract elements (an owned call result, a borrowed
 parameter, a part of an owned value) point into values the function would otherwise have to leave

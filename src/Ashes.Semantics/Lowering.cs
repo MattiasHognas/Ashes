@@ -12098,6 +12098,25 @@ public sealed partial class Lowering
         if (cell is Expr.Cons { Head: Expr.TupleLit head })
         {
             tuples.Add(head);
+            CollectNestedCopiedTuples(head, tuples);
+        }
+    }
+
+    // A tuple written inside a copied head tuple (`((label, index), value) :: known`) is copied
+    // with it, so it borrows its parts like the head tuple does.
+    private static void CollectNestedCopiedTuples(Expr.TupleLit tuple, HashSet<Expr> tuples)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_NESTEDHEADTUPLE") is not null)
+        {
+            return;
+        }
+
+        foreach (Expr element in tuple.Elements)
+        {
+            if (element is Expr.TupleLit nested && tuples.Add(nested))
+            {
+                CollectNestedCopiedTuples(nested, tuples);
+            }
         }
     }
 

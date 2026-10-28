@@ -141,6 +141,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FusedSiblingTailFreshArgumentTemplate());
         registry.Register(new NormalizedTupleElementRetainedTwiceTemplate());
         registry.Register(new UnresolvedParameterInArenaExitTupleTemplate());
+        registry.Register(new NestedCopiedHeadTupleTemplate());
         registry.Register(new FixpointExitResultOwnsItsReferenceTemplate());
         registry.Register(new ViewCopiedScopeJoinTemplate());
         registry.Register(new ProducerStringLiteralHeadTemplate());
