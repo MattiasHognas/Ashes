@@ -740,6 +740,10 @@ type CoreTcoState =
     // parameter slot and the read's type; promoted to real retains once the frame's placements
     // are known.
     | tcoParameterRetainSites: List((Int, Int, SemanticType))
+    // The loop-parameter retain markers stored into an arena tuple while the parameter's layout
+    // was unresolved, with the read value and the parameter slot: each becomes an arena copy once
+    // the frame places the parameter on the reference-counted heap.
+    | arenaParameterCopies: List((Int, Int, Int, SemanticType))
     // The arena cells a loop body built only to match them, with no arm binding a heap-typed part:
     // the retains of loop-parameter reads they were built with are withdrawn once the loop's
     // placements are final (stage 0's `_borrowedScrutinees`).
@@ -1859,6 +1863,14 @@ let withStateTcoParameterRetainSites value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with tcoParameterRetainSites = value))
 
+let stateArenaParameterCopies (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.arenaParameterCopies)
+
+let withStateArenaParameterCopies value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with arenaParameterCopies = value))
+
 let stateBorrowedScrutineeCells (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.borrowedScrutineeCells)
@@ -2495,6 +2507,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         ),
         tcoState = CoreTcoState(
             tcoParameterRetainSites = [],
+            arenaParameterCopies = [],
             borrowedScrutineeCells = [],
             backEdgeArgumentSlot = None,
             lateCopiedCellHeads = [],
@@ -6172,6 +6185,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateTupleBinderParameters([])
             |> withStatePatternOwnerResultTemps([])
             |> withStateTcoParameterRetainSites([])
+            |> withStateArenaParameterCopies([])
             |> withStateBorrowedScrutineeCells([])
             |> withStatePendingRuntimeArgumentFlags([])
             |> withStateBackEdgeArgumentSlot(None)
@@ -13594,6 +13608,56 @@ let promoteTcoParameterRetains (managedLists: List((Int, Int, SemanticType))) (m
         | [] -> withStateTcoParameterRetainSites([])(state)
         | promoted -> withStateTcoParameterRetainSites([])((state with reversedInstructions = promoteRetainInstructions(state.reversedInstructions)(promoted)))
 
+// Whether an element of an arena tuple beside a generic sibling is copied into the arena: a
+// resolved heap value the reference-counted heap may hold, other than one of the contract's types.
+let demotesTupleElement (semanticType: SemanticType) (state: CoreLoweringState) = !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && !isGeneralRcValueType(semanticType)(state)
+
+// Whether a parameter an arena tuple stores is copied into the arena in place of its retain: a
+// resolved heap value the reference-counted heap may hold, the contract's own types included.
+let copiesArenaParameter (semanticType: SemanticType) (state: CoreLoweringState) =
+    !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && (match semanticType with
+        | SemFunction(_parameter, _result, _row) -> false
+        | _ -> true)
+
+// The arena copy that replaces a promoted retain, emitted on its own and ending with the retain's
+// own temp loaded from the copy's slot.
+let arenaParameterCopyInstructions (duplicate: Int) (source: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match emitArenaCopyOfReferenceCounted(source)(semanticType)(false)((state with reversedInstructions = [])) with
+        | (copied, copyTemp) ->
+            match freshLocal(copied) with
+                | FreshLocal { state = slotted, local = copySlot } ->
+                    slotted
+                    |> emit(StoreLocal(copySlot)(copyTemp))
+                    |> emit(LoadLocal(duplicate)(copySlot))
+
+let recursive spliceArenaParameterCopy (duplicate: Int) (copy: List(IrInstruction)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, _source, true, _mayBeEmpty) } as instruction) :: rest ->
+            if target == duplicate
+            then append(copy)(rest)
+            else instruction :: spliceArenaParameterCopy(duplicate)(copy)(rest)
+        | instruction :: rest -> instruction :: spliceArenaParameterCopy(duplicate)(copy)(rest)
+
+let recursive copyArenaParameterRetains (pending: List((Int, Int, Int, SemanticType))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> state
+        | (duplicate, source, slot, semanticType) :: rest ->
+            copyArenaParameterRetains(rest)(managedLists)(managedAdts)(candidates)((if tcoParameterPlaced(slot)(managedLists)(managedAdts)(candidates) && copiesArenaParameter(resolveType(state)(semanticType))(state)
+            then
+                match arenaParameterCopyInstructions(duplicate)(source)(resolveType(state)(semanticType))(state) with
+                    | copied -> copied with reversedInstructions = spliceArenaParameterCopy(duplicate)(copied.reversedInstructions)(state.reversedInstructions)
+            else state))
+
+// Stage 0's `FinalizeArenaParameterCopies`: the promoted retain of a parameter an arena tuple
+// stores becomes an arena copy of the parameter once its type allows one, so the tuple holds no
+// reference nothing releases. It runs once the loop's result is finished, whose copy out of the
+// arena withdraws the retains its cells were built with: a withdrawn retain needs no copy.
+let copyArenaTupleParameters (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
+    state
+    |> copyArenaParameterRetains(stateArenaParameterCopies(state))(managedLists)(managedAdts)(candidates)
+    |> withStateArenaParameterCopies([])
+
 let recursive unadmittedPendingFlags (flags: List((Int, Int))) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) =
     match flags with
         | [] -> []
@@ -13713,6 +13777,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
                 match finished with
                     | (finishedState, resultTemp) ->
                         finishedState
+                        |> copyArenaTupleParameters(managedLists)(managedAdts)(candidates)
                         |> emitTcoExitDrops(resultTemp)(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
                         |> success(resultTemp)(semanticType))
 
@@ -21031,6 +21096,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateTupleBinderParameters([])
             |> withStatePatternOwnerResultTemps([])
             |> withStateTcoParameterRetainSites([])
+            |> withStateArenaParameterCopies([])
             |> withStateBorrowedScrutineeCells([])
             |> withStatePendingRuntimeArgumentFlags([])
             |> withStateBackEdgeArgumentSlot(None)
@@ -21604,6 +21670,27 @@ let recordArenaCellParameterRetain (arenaCell: Bool) (element: Expr) (source: In
             else lowered
         | _ -> lowered
 
+let recursive collectsCallArgumentRetain (temp: Int) (retains: List((Int, Int, SemanticType))) =
+    match retains with
+        | [] -> false
+        | (retained, _slot, _semanticType) :: rest -> retained == temp || collectsCallArgumentRetain(temp)(rest)
+
+// Stage 0's `DeferArenaCopyOfUnresolvedParameter`: the retain marker of a loop parameter read whole
+// into an arena tuple, and not collected for a release after a call, is recorded so the loop's
+// finalize pass replaces it with an arena copy: an arena tuple never releases what it holds. Stage 0
+// records only a read whose layout is still unresolved there; this lowering resolves the read's type
+// from the expected type first, so the tuple is in the arena with the read resolved.
+let recordArenaParameterCopy (arenaCell: Bool) (element: Expr) (source: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match (unspanArgument(element), loopParameterReadSlot(element)(state)) with
+                | (ExprVar(_name), Some(slot)) ->
+                    if arenaCell && temp != source && newestIsParameterRetainMarker(temp)(source)(state) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state))
+                    then lowered with state = withStateArenaParameterCopies((temp, source, slot, semanticType) :: stateArenaParameterCopies(state))(state)
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
 // Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
 // binding that still owns its reference is retained, any other child is stored as lowered. A
 // pattern owner is not (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` skips it): its
@@ -21654,7 +21741,8 @@ let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)
                         |> recordArenaCellTransferRetain(arenaCell)(temp)(retainedTemp)(semanticType)
                         |> success(retainedTemp)(semanticType)
                         |> retainLoopParameterChild(element)(temp)
-                        |> recordArenaCellParameterRetain(arenaCell)(element)(temp) with
+                        |> recordArenaCellParameterRetain(arenaCell)(element)(temp)
+                        |> recordArenaParameterCopy(arenaCell)(element)(temp) with
                             | LoweredCoreValue { state = marked, temp = markedTemp } ->
                                 retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(arenaCell)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
@@ -21811,10 +21899,6 @@ let neutralizeElementDuplicate (temp: Int) (state: CoreLoweringState) =
     match findElementDuplicate(temp)(state.reversedInstructions) with
         | Some(source) -> ((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)), source)
         | None -> (state, temp)
-
-// Whether an element of an arena tuple beside a generic sibling is copied into the arena: a
-// resolved heap value the reference-counted heap may hold, other than one of the contract's types.
-let demotesTupleElement (semanticType: SemanticType) (state: CoreLoweringState) = !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && !isGeneralRcValueType(semanticType)(state)
 
 // `runtimeOnly` limits the copies to the elements held as reference-counted values.
 let recursive demoteTupleElements (runtimeOnly: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
