@@ -616,6 +616,19 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    memory plateau that show E is done. Winning back `n-body`'s 4 to 5% and reclaiming the persistent
    map's region are no longer part of E and follow it as tasks of their own.
 
+   The goal of E is that every known leak is fixed, in both stages. No known class or open lead is
+   parked as too small or as waiting for a real program to show it; E is done only when each of these
+   is fixed, with a census template, or shown not to be a leak:
+   - every class of the ranked exit residual and the census classes below;
+   - the curried tuple's string-parameter join;
+   - the open ends of `sort`;
+   - `regex-redux`'s 130 MB of extra peak memory;
+   - the `perform` site adopting a handler arm's `List(Int)` result;
+   - the non-generic return arm;
+   - stage 1's generic-map loop leak and stage 0's generic map growing per call in a loop;
+   - stage 1's two capture-group gaps: the escaping string tuple element and element specialization
+     for generic list builders.
+
    **The census classes, named.** A debug build of stage 1 run on the probe to its exit, a census
    that prints each leaked root two levels deep (strings decoded, claims summed), and a hardware
    watch on one root's count through the whole run name the source behind each class. The probe's
