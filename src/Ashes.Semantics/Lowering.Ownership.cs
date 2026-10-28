@@ -603,6 +603,16 @@ public sealed partial class Lowering
         }
     }
 
+    // The arena copies are settled once the function's result is: a contract result copied out of
+    // the arena withdraws the retains its cells were built with, and a withdrawn retain needs no
+    // copy.
+    private int FinishLoopFunctionResult(string label, int bodyTemp, TypeRef bodyType, bool closesProducerChain, TcoContext? loopTco)
+    {
+        int resultTemp = FinishGeneralRcFunctionResult(label, bodyTemp, bodyType, closesProducerChain, loopTco);
+        FinalizeArenaParameterCopies(loopTco);
+        return resultTemp;
+    }
+
     private void ReplaceRetainWithArenaCopy(int instIndex, PendingArenaParameterCopy pending, TypeRef type)
     {
         List<IrInst> function = _inst;

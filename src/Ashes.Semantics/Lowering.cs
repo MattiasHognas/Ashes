@@ -7259,7 +7259,7 @@ public sealed partial class Lowering
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
         bodyTemp = savedTcoCtx is { TmcActivated: true } tmc ? LowerLambdaCoreCloseTmcChain(tmc, bodyTemp) : bodyTemp;
-        bodyTemp = FinishGeneralRcFunctionResult(label, ReleaseNormalizedParameterBehindResult(lam, label, argSlot, paramTy, KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType), bodyType, savedTcoCtx is null && !isChainLambda), bodyType, savedTcoCtx is { TmcActivated: true }, savedTcoCtx);
+        bodyTemp = FinishLoopFunctionResult(label, ReleaseNormalizedParameterBehindResult(lam, label, argSlot, paramTy, KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType), bodyType, savedTcoCtx is null && !isChainLambda), bodyType, savedTcoCtx is { TmcActivated: true }, savedTcoCtx);
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
         // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
@@ -8272,7 +8272,6 @@ public sealed partial class Lowering
         FinalizePerceusPatternBindingOwners(tco);
         SettleLateCopiedHeadTupleDuplicates(tco);
         FinalizeTcoParameterAggregateRetains(tco);
-        FinalizeArenaParameterCopies(tco);
         FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         WithdrawBorrowedScrutineeRetains(tco);
