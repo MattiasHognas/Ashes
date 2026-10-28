@@ -638,6 +638,12 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    - *Qualified identifiers, 2.5 MB:* a consumed list argument is released spine-only when an arena
      tuple result may hold its heads, so every head the tuple does not hold leaks.
      `OwnResultBeforeArgumentRelease` skips tuple results and handed-over arguments.
+
+   One measurement belongs to E as well: what the four cross-language benchmarks would cost if every
+   allocation that can escape its scope went to the reference-counted heap rather than the arena. It
+   is stage 0 only, behind a local switch, and nothing of it is committed; the times and peak memory,
+   off and on, decide whether a later single ownership pass makes reference counting the default or
+   keeps the arena as the default.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
