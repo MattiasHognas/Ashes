@@ -638,6 +638,12 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    - *Qualified identifiers, 2.5 MB:* a consumed list argument is released spine-only when an arena
      tuple result may hold its heads, so every head the tuple does not hold leaks.
      `OwnResultBeforeArgumentRelease` skips tuple results and handed-over arguments.
+   - *Exit residual, 1,775 cells per added function (after the pipeline-step fix):* 85 cell classes,
+     the top three 43% and the top ten 82%. In rank order: a pair cell pointing at a 48-byte cell
+     (336, not named), a cell holding a 208-byte lowering state (287), cells reachable only through a
+     cycle (132), integer list cells (120), a record keyed by the input's name (114, possibly not a
+     leak), the one-field cells of the qualified-identifier item above (109), then four classes of 78
+     to 103 cells, none named. The other 75 classes add about 320 cells together.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
