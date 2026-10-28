@@ -542,6 +542,90 @@ public sealed partial class Lowering
         return retainedTemp;
     }
 
+    /// <summary>
+    /// A loop-parameter child of unresolved layout retained into an arena aggregate: the parameter's
+    /// type is only known once its body is lowered, so the arena copy that
+    /// <see cref="DemoteElementsBesideAbstractSibling"/> makes of a resolved reference-counted element
+    /// waits for TCO finalization, where it replaces the retain once the retain is a real one.
+    /// </summary>
+    private readonly record struct PendingArenaParameterCopy(TcoContext Tco, int DupTemp, int SourceTemp, TypeRef Type);
+
+    private readonly List<PendingArenaParameterCopy> _pendingArenaParameterCopies = [];
+
+    // An arena aggregate never releases what it holds, so a retain of a loop parameter it stores
+    // (taken for the exit or back edge that releases the parameter) would never be balanced.
+    private void DeferArenaCopyOfUnresolvedParameter(Expr element, int elementTemp, int retainedTemp, TypeRef elementType)
+    {
+        if (retainedTemp == elementTemp
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENAPARAMCOPY") is not null
+            || _tcoCtx is not { } tco
+            || !ContainsUnresolvedLayoutType(Prune(elementType), [])
+            || _inst.Count == 0
+            || _inst[^1] is not IrInst.RcDup retain
+            || retain.Target != retainedTemp
+            || TryResolveTcoParameterRead(element, elementType, out bool isFieldRead) is null
+            || isFieldRead)
+        {
+            return;
+        }
+
+        _pendingArenaParameterCopies.Add(new PendingArenaParameterCopy(tco, retainedTemp, retain.SourceTemp, elementType));
+    }
+
+    // The retain becomes an arena copy of the parameter once the parameter is placed on the
+    // reference-counted heap and its type allows the copy; a parameter left in the arena keeps the
+    // erased marker.
+    private void FinalizeArenaParameterCopies(TcoContext? tco)
+    {
+        for (int index = _pendingArenaParameterCopies.Count - 1; index >= 0; index--)
+        {
+            PendingArenaParameterCopy pending = _pendingArenaParameterCopies[index];
+            if (tco is null || !ReferenceEquals(pending.Tco, tco))
+            {
+                continue;
+            }
+
+            _pendingArenaParameterCopies.RemoveAt(index);
+            TypeRef type = Prune(pending.Type);
+            int instIndex = _inst.FindIndex(instruction => instruction is IrInst.RcDup { RuntimeManaged: true } duplicate
+                && duplicate.Target == pending.DupTemp);
+            if (instIndex < 0
+                || CanArenaReset(type)
+                || type is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(type, [])
+                || !IsGeneralRcAdmissible(type))
+            {
+                continue;
+            }
+
+            ReplaceRetainWithArenaCopy(instIndex, pending, type);
+        }
+    }
+
+    private void ReplaceRetainWithArenaCopy(int instIndex, PendingArenaParameterCopy pending, TypeRef type)
+    {
+        List<IrInst> function = _inst;
+        List<IrInst> buffer = [];
+        _inst = buffer;
+        try
+        {
+            int copiedTemp = EmitArenaCopyOfReferenceCounted(pending.SourceTemp, type, releasesSource: false);
+            int copiedSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(copiedSlot, copiedTemp));
+            Emit(new IrInst.LoadLocal(pending.DupTemp, copiedSlot));
+        }
+        finally
+        {
+            _inst = function;
+        }
+
+        _inst.RemoveAt(instIndex);
+        _inst.InsertRange(instIndex, buffer);
+        ShiftRecordedInstructionIndices(instIndex, buffer.Count - 1);
+        _tempOwnershipFacts.Remove(pending.DupTemp);
+    }
+
     private void FinalizeTcoParameterAggregateRetains(TcoContext? tco)
     {
         if (tco is null)

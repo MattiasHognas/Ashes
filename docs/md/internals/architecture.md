@@ -1553,6 +1553,12 @@ alone is copied into the arena and released when it was fresh, so the borrowed s
 (`GRC_NO_DEMOTEBESIDEARENA` switches this off). Likewise, a loop parameter kept in the arena on a
 back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
 the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
+A loop parameter of still unresolved layout that such a tuple stores (an unannotated accumulator in
+`| [] -> (known, conflicting, extra)`, kept in the arena by the unannotated `extra` passed through
+unchanged) is retained when it is stored, since its placement is decided only once the loop body is
+lowered. When the loop then places the parameter on the reference-counted heap, that retain is
+replaced by an arena copy of the parameter, as for a resolved element, of the contract's types too:
+the retain left the whole accumulator alive at every call (`GRC_NO_ARENAPARAMCOPY`).
 
 When such a tuple is a function's result, its contract elements (an owned call result, a borrowed
 parameter, a part of an owned value) point into values the function would otherwise have to leave

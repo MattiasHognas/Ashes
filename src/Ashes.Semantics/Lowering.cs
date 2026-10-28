@@ -8272,6 +8272,7 @@ public sealed partial class Lowering
         FinalizePerceusPatternBindingOwners(tco);
         SettleLateCopiedHeadTupleDuplicates(tco);
         FinalizeTcoParameterAggregateRetains(tco);
+        FinalizeArenaParameterCopies(tco);
         FinalizeAccessorResultRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         WithdrawBorrowedScrutineeRetains(tco);
@@ -16804,6 +16805,7 @@ public sealed partial class Lowering
                 && !RecordCallArgumentArenaRetain(elements[i].Temp, retainedTemp, elements[i].Type))
             {
                 HandArenaAggregateRetainToOwnedSlot(elements[i].Temp, retainedTemp, elements[i].Type);
+                DeferArenaCopyOfUnresolvedParameter(tuple.Elements[i], elements[i].Temp, retainedTemp, elements[i].Type);
             }
 
             elements[i] = CreateLoweredValue(retainedTemp, elements[i].Type);
