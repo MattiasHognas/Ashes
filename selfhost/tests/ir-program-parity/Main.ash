@@ -272,6 +272,10 @@ let recursive printEach (lines: List(Str)) =
 // mutual_recursion_later_sibling_call_requests_arena_result calls a later member of its recursive
 // group, whose result is still open when the body is lowered: the call asks for an arena result,
 // also when the body is lowered again against the result the first lowering resolved.
+// mutual_recursion_later_sibling_result_beside_fresh_tuple_arm calls a later member whose result, a
+// tuple of the contract's types, the group settles only once that member is lowered: the group is
+// lowered again with the call's result type pinned, so the call takes it as a contract result, and
+// the join beside a fresh tuple normalizes the call's arm with the contract's copy.
 let fixtures =
     [
         "simple_arith",
@@ -367,7 +371,8 @@ let fixtures =
         "tco_bytes_view_head_copied_into_counted_cell",
         "tco_bytes_matched_head_consed_beside_unchanged_parameter",
         "tco_bytes_matched_head_under_fresh_head_chain",
-        "mutual_recursion_later_sibling_call_requests_arena_result"
+        "mutual_recursion_later_sibling_call_requests_arena_result",
+        "mutual_recursion_later_sibling_result_beside_fresh_tuple_arm"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

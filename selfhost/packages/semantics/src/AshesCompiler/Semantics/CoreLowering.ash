@@ -613,6 +613,10 @@ type CoreProgramState =
     // Stage 0's `_provenAmbiguousTraitGoalTypes`: the operand types a first pass proved for those
     // sites, read by the pass that lowers with them pinned.
     | provenTraitGoals: MapTree(Str, SemanticType)
+    // Stage 0's `_provenCallResultTypes` for the calls between the members of a recursive group: the
+    // result type the group's first lowering settled for a call to a member whose result was still
+    // open there, by call site, pinned at the same site when the group is lowered again.
+    | provenSiblingCallResults: MapTree(Str, SemanticType)
 
 type CoreFunctionState =
     | deferredLabelNext: Int
@@ -653,6 +657,9 @@ type CoreFunctionState =
     // AFTER the site — a top-level binding whose parameter only a later use pins — so a pass
     // reaching the site cannot tell a genuinely ambiguous operand from one not determined yet.
     | pendingTraitGoals: List((Str, SemanticType))
+    // Stage 0's `_pendingCallResultTypes` for the calls between the members of a recursive group: a
+    // call to a member whose result type was still open at the call, by call site.
+    | pendingSiblingCallResults: List((Str, SemanticType))
     // Whether this pass lowers with a previous pass's proofs: a site the proofs do not answer is
     // ambiguous to both passes, which is the only case that is genuinely ambiguous.
     | traitGoalsPinned: Bool
@@ -1253,6 +1260,14 @@ let withStateProvenTraitGoals value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with provenTraitGoals = value))
 
+let stateProvenSiblingCallResults (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.provenSiblingCallResults)
+
+let withStateProvenSiblingCallResults value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with provenSiblingCallResults = value))
+
 let stateCurrentItem (state: CoreLoweringState) =
     (let group = state.functionState
     in group.currentItem)
@@ -1388,6 +1403,14 @@ let statePendingTraitGoals (state: CoreLoweringState) =
 let withStatePendingTraitGoals value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with pendingTraitGoals = value))
+
+let statePendingSiblingCallResults (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.pendingSiblingCallResults)
+
+let withStatePendingSiblingCallResults value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with pendingSiblingCallResults = value))
 
 let stateTraitGoalsPinned (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2416,7 +2439,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             traitEnvironment = standardLoweringTraitEnvironment,
             traitMethodLabels = Ashes.Collection.Map.empty,
             closureDropperLabels = [],
-            provenTraitGoals = Ashes.Collection.Map.empty
+            provenTraitGoals = Ashes.Collection.Map.empty,
+            provenSiblingCallResults = Ashes.Collection.Map.empty
         ),
         functionState = CoreFunctionState(
             deferredLabelNext = deferredLabelBase,
@@ -2439,6 +2463,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             activeTraitMethods = [],
             activeTypeParameters = [],
             pendingTraitGoals = [],
+            pendingSiblingCallResults = [],
             traitGoalsPinned = false
         ),
         ownerState = CoreOwnerState(
@@ -6082,6 +6107,8 @@ let restoreOuterFrame outer bodyState =
                 withStateTraitMethodLabels(stateTraitMethodLabels(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingTraitGoals(statePendingTraitGoals(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
+                withStatePendingSiblingCallResults(statePendingSiblingCallResults(bodyState))(current))
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -14809,6 +14836,13 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
     |> lower(body) with
         | LoweredCoreValue { state = againState, temp = temp, semanticType = semanticType, error = error } -> LoweredCoreValue(state = withStateResolvingCallsAgain(outer)(againState), temp = temp, semanticType = semanticType, error = error)
 
+// The state a body is lowered again from: the scope it entered with, the substitution an earlier
+// lowering settled, and the calls to a later group member that lowering recorded. Stage 0 sees such a
+// call's result open at the call even when the body's own later use settles it, so the site keeps
+// its record for the group's pinned lowering.
+let restartedAgainst (entered: CoreLoweringState) (lowered: CoreLoweringState) =
+    withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))((entered with substitution = lowered.substitution, typeSupply = lowered.typeSupply))
+
 let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
     match entered
     |> prepare
@@ -14821,10 +14855,16 @@ let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> 
                 match close(first) with
                     | LoweredCoreValue { state = closedState } ->
                         if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then lowerFunctionBodyAgain(body)(prepare)(lower)(false)((entered with substitution = closedState.substitution, typeSupply = closedState.typeSupply))
+                        then
+                            closedState
+                            |> restartedAgainst(entered)
+                            |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)
                         else
                             if anyCallResultResolved(stateUnresolvedCallResults(firstState))(firstState)
-                            then lowerFunctionBodyAgain(body)(prepare)(lower)(false)((entered with substitution = firstState.substitution, typeSupply = firstState.typeSupply))
+                            then
+                                firstState
+                                |> restartedAgainst(entered)
+                                |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)
                             else first
 
 // A recursive member nested in a body that is being lowered again takes fresh type variables for
@@ -14843,7 +14883,10 @@ let lowerRecursiveBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState ->
                 match close(first) with
                     | LoweredCoreValue { state = closedState } ->
                         if bodyEncounteredRequirementClosedScope(body)(entered)(closedState)
-                        then lowerFunctionBodyAgain(body)(prepare)(lower)(true)((entered with substitution = closedState.substitution, typeSupply = closedState.typeSupply))
+                        then
+                            closedState
+                            |> restartedAgainst(entered)
+                            |> lowerFunctionBodyAgain(body)(prepare)(lower)(true)
                         else first
     else lowerFunctionBodyResolvingCalls(body)(prepare)(close)(lower)(entered)
 
@@ -15186,6 +15229,8 @@ type CoreCallContext =
     // The label a lambda applied where it is written (a pipe stage) is lowered to: the spine's
     // callee is the lambda itself, whose compiled result the call reads.
     | appliedLambdaLabel: Maybe(Str)
+    // The span the call is lowered under, the site stage 0's `CallResultTypeKey` names it by.
+    | siteSpan: Maybe(TextSpan)
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -15982,6 +16027,26 @@ let siblingResultOpen (context: CoreCallContext) (resultType: SemanticType) (sta
             context.selfCallee && containsLabel(name)(stateSiblingResultOpenNames(state))
         | (None, _resolved) -> false
 
+let siblingCallSiteKey (context: CoreCallContext) =
+    match (context.siteSpan, context.calleeName) with
+        | (Some(TextSpan { start = start, end = end }), Some(name)) -> Some(Ashes.Text.fromInt(start) + ":" + Ashes.Text.fromInt(end) + ":" + name + ":" + Ashes.Text.fromInt(context.argumentCount))
+        | _ -> None
+
+// A call to a later member of the recursive group whose result the group's first lowering settled.
+// Stage 0 lowers such a call with its result type still open and pins the type only once the call is
+// lowered, so the call is lowered that way here too, also in a body lowered again against a scope
+// the pin closed: it asks for no tuple parts, reads the closure's owned-result flag rather than
+// taking the result as owned, and does not lower the body again once the pin resolves it.
+let siblingResultPinned (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    siblingResultOpen(context)(resultType)(state) && (match siblingCallSiteKey(context) with
+        | Some(key) ->
+            match state
+            |> stateProvenSiblingCallResults
+            |> Ashes.Collection.Map.getStr(key) with
+                | Some(_proven) -> true
+                | None -> false
+        | None -> false)
+
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one. Only the
 // last application of a spine asks: an earlier one yields a closure, which stage 0 sees as a
@@ -15989,7 +16054,7 @@ let siblingResultOpen (context: CoreCallContext) (resultType: SemanticType) (sta
 let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if (requestsArenaResult(resultType)(state) || siblingResultOpen(context)(resultType)(state)) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
-        match freshTemp(if selfResultDeferred(context)(state)
+        match freshTemp(if selfResultDeferred(context)(state) || siblingResultPinned(context)(resultType)(state)
         then state
         else withStateUnresolvedCallResults(resultType :: stateUnresolvedCallResults(state))(state)) with
             | FreshTemp { state = requestState, temp = requestTemp } ->
@@ -16090,7 +16155,9 @@ let calleeTupleResultParts (context: CoreCallContext) (resultType: SemanticType)
 // callee writes the mask of the parts it handed over into; the request word is on the left of the
 // word.
 let emitTupleResultPartsRequestWord (context: CoreCallContext) (resultType: SemanticType) (wordTemp: Int) (state: CoreLoweringState) =
-    match calleeTupleResultParts(context)(resultType)(state) with
+    match if siblingResultPinned(context)(resultType)(state)
+    then None
+    else calleeTupleResultParts(context)(resultType)(state) with
         | None -> (state, wordTemp)
         | Some(_parts) ->
             match freshTempRun(4)(state) with
@@ -17371,7 +17438,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                                             |> success(resultTemp)(semanticType)
 
 let lowerGeneralRcCallResultOwned (context: CoreCallContext) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state)
+    (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state) && !siblingResultPinned(context)(semanticType)(state)
     in
         match takeTupleResultPartsRequest(context)(temp)(semanticType)(returnsOwned)(state) with
             | (requestState, handedParts) -> lowerGeneralRcCallResultTakingParts(returnsOwned)(handedParts)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(requestState))
@@ -17539,7 +17606,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             argumentCount = coreListLength(spine.arguments),
             expectedResult = expected,
             calleeScheme = calleeSchemeOf(spine)(state),
-            appliedLambdaLabel = appliedLambdaLabelOf(spine)(state)
+            appliedLambdaLabel = appliedLambdaLabelOf(spine)(state),
+            siteSpan = state.currentSpan
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless
@@ -17777,6 +17845,41 @@ let withCallResultType (applied: CoreCallStage) (lowered: LoweredCoreValue) =
         | (CoreCallStage { lowered = LoweredCoreValue { semanticType = semanticType, error = None } }, LoweredCoreValue { error = None }) -> lowered with semanticType = semanticType
         | _ -> lowered
 
+// Stage 0's `ContainsUnsettledVariable`: a variable anywhere in the type, also one its layout does not
+// depend on.
+let holdsUnsettledVariable (semanticType: SemanticType) (state: CoreLoweringState) =
+    match semanticType
+    |> resolveType(state)
+    |> freeTypeVariables with
+        | [] -> false
+        | _variables -> true
+
+let recordOrPinSiblingCallResult (key: Str) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state
+    |> stateProvenSiblingCallResults
+    |> Ashes.Collection.Map.getStr(key) with
+        | None -> withStatePendingSiblingCallResults((key, semanticType) :: statePendingSiblingCallResults(state))(state)
+        | Some(proven) ->
+            match bindType(semanticType)(proven)(state) with
+                | (pinned, None) -> pinned
+                | (_failed, Some(_error)) -> state
+
+// Stage 0's `RecordOrPinCallResultType` for a call to a later member of the recursive group, whose
+// result type is still open when the call is lowered: the group's first lowering records the site,
+// and the lowering that follows it pins the type the whole group settled there, so the call and the
+// caller's own return decide the result's ownership against the type stage 0's discovery pass
+// pins.
+let pinSiblingCallResult (context: CoreCallContext) (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as lowered } ->
+            match siblingCallSiteKey(context) with
+                | Some(key) ->
+                    if siblingResultOpen(context)(semanticType)(state) && holdsUnsettledVariable(semanticType)(state)
+                    then stage with lowered = (lowered with state = recordOrPinSiblingCallResult(key)(semanticType)(state))
+                    else stage
+                | None -> stage
+        | _ -> stage
+
 let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
     match state
     |> ensureResultRcEligibility
@@ -17788,6 +17891,7 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                 match opened |> lowerCallSpineStage(function)(argument)(context)(expected)(site)(1)(transfers)(lower) with
                     | applied ->
                         match applied
+                        |> pinSiblingCallResult(context)
                         |> withCallResultLayout(context)
                         |> markCallSpineResult(context) with
                             | stage ->
@@ -18101,13 +18205,17 @@ let recursive joinTupleHoldsHeapElement (elements: List(SemanticType)) (state: C
 
 // The copy a mixed join's arms are normalized with: stage 0's `CanNormalizeIntoOwnedRuntimeValue`,
 // and a tuple every element of which normalizes (an arena arm is copied into an owned tuple that
-// retains each reference-counted element it keeps).
+// retains each reference-counted element it keeps), and stage 0's `IsGeneralRcValueType`: a tuple of the
+// contract's types is copied as the contract copies it.
 let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemTuple(elements) ->
             if joinTupleHoldsHeapElement(elements)(state) && joinTupleElementsNormalize(elements)(state)
             then argumentCopyPlanOf(semanticType)(state)
-            else None
+            else
+                if isGeneralRcValueType(semanticType)(state)
+                then generalCopyPlanOf(semanticType)(state)
+                else None
         | _ -> ownedResultPlanOf(semanticType)(state)
 
 // Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
@@ -21170,6 +21278,53 @@ let recursive lowerPreparedRecursiveMembers members selfBindings captures enviro
                             |> emit(StoreLocal(slot)(closureTemp))
                             |> lowerPreparedRecursiveMembers(rest)(selfBindings)(captures)(environmentTemp)(lower)
 
+let recursive pinnableCallResult (semanticType: SemanticType) =
+    match semanticType with
+        | SemVariable(_variable) -> false
+        | SemFunction(_argument, _result, _row) -> false
+        | SemRow(_elements, _tail) -> false
+        | SemCapability(_name, _arguments) -> false
+        | SemList(element) -> pinnableCallResult(element)
+        | SemTuple(elements) -> allPinnableCallResults(elements)
+        | SemNamed(_symbolId, _name, arguments) -> allPinnableCallResults(arguments)
+        | SemPointer(pointee) -> pinnableCallResult(pointee)
+        | _ -> true
+and allPinnableCallResults (types: List(SemanticType)) =
+    match types with
+        | [] -> true
+        | semanticType :: rest -> pinnableCallResult(semanticType) && allPinnableCallResults(rest)
+
+// The sites the group's own lowering recorded (the first `count` of the pending list) whose type its
+// substitution has since settled, stage 0's `ResolveProvenCallResultTypes`.
+let recursive settledSiblingCallResults (pending: List((Str, SemanticType))) (count: Int) (state: CoreLoweringState) (proven: MapTree(Str, SemanticType)) (settled: Bool) =
+    match (pending, count > 0) with
+        | ((key, semanticType) :: rest, true) ->
+            let resolved = resolveType(state)(semanticType)
+            in
+                if pinnableCallResult(resolved)
+                then
+                    settledSiblingCallResults(rest)(count - 1)(state)(Ashes.Collection.Map.setStr(key)(resolved)(proven))(true)
+                else settledSiblingCallResults(rest)(count - 1)(state)(proven)(settled)
+        | _ -> (proven, settled)
+
+// A group whose members call a later member before its result is known is lowered twice, as stage 0
+// lowers the whole program twice: the first lowering settles each such call's result type, and the
+// one that stands starts over from the state before the group with those types pinned at their
+// sites, so its numbering is the single lowering's.
+let lowerRecursiveMembersPinningSiblingResults members selfBindings captures environmentTemp memberLower (environmentState: CoreLoweringState) =
+    match lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)(environmentState) with
+        | LoweredCoreValue { error = Some(_error) } as failed -> failed
+        | LoweredCoreValue { state = firstState } as first ->
+            let recorded =
+                coreListLength(statePendingSiblingCallResults(firstState)) - coreListLength(statePendingSiblingCallResults(environmentState))
+            in
+                match settledSiblingCallResults(statePendingSiblingCallResults(firstState))(recorded)(firstState)(stateProvenSiblingCallResults(environmentState))(false) with
+                    | (_proven, false) -> first
+                    | (proven, true) ->
+                        environmentState
+                        |> withStateProvenSiblingCallResults(proven)
+                        |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)
+
 let recursive addRecursiveGroupContinuationBindings members outerBindings state =
     match members with
         | [] -> state
@@ -21223,7 +21378,7 @@ let openPreparedRecursiveGroup bindings memberLower outerBindings prepared =
                             let selfBindings = preparedSelfBindings(captureCount(captures) * 8)(members)
                             in
                                 environmentState
-                                |> lowerPreparedRecursiveMembers(
+                                |> lowerRecursiveMembersPinningSiblingResults(
                                     members,
                                     selfBindings,
                                     captures,

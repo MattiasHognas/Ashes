@@ -1510,6 +1510,13 @@ A call emitted while its result type is still unresolved (a sibling of a recursi
 requests an arena result, for a caller that could not own one. Once the result turns out to be of a
 contract type, the caller owns it after all, so the request is withdrawn: the callee hands over its
 reference-counted result instead of deep-copying it into the arena for the caller to normalize back.
+Whether it does is read at the call, and a later sibling's result is often settled only once that
+sibling is lowered, after its caller. So the compiler pins it: a first pass records each call whose
+result type is still open, and the pass that emits the code unifies the call's result with the
+type the first pass settled there, right after the call. The call then takes a contract result over
+(or normalizes it), and so does the caller's own return when the result flows out. The self-hosted
+compiler lowers only the recursive group twice, from the state before the group, and only when the
+group's first lowering settled such a call.
 
 An arena cell never releases a fresh reference-counted child stored into it (an owned call result,
 or a tuple holding fresh lists). A constructor of the contract's types hands such a child to an
