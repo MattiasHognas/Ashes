@@ -55,7 +55,7 @@ let expectSequentialBindings unit =
             "value",
             ExprVar("value"),
             None
-        ), sugarParameters = [], typeAnnotation = None, requirements = [])
+        ), sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
     in
         let answer =
             LetBindingSyntax(name = "answer", value = ExprCall(
@@ -63,7 +63,7 @@ let expectSequentialBindings unit =
                 ExprInt(42),
                 false,
                 callArgumentsInline
-            ), sugarParameters = [], typeAnnotation = None, requirements = [])
+            ), sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
         in
             expectProgramType(
                 "Int",
@@ -79,7 +79,7 @@ let expectRecursiveBinding unit =
         |> ExprIf(
             ExprBool(true),
             ExprVar("value")
-        ))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
+        ))(None), sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
     in
         expectProgramType("Int")(ProgramSyntax(items = [TopLevelLet(loop)(true)], body = callArgumentsInline
         |> ExprCall(ExprVar("loop"))(ExprInt(1))(false)
@@ -91,14 +91,14 @@ let expectMutualBindings unit =
             "value",
             ExprCall(ExprVar("second"))(ExprVar("value"))(false)(callArgumentsInline),
             None
-        ), sugarParameters = [], typeAnnotation = None, requirements = [])
+        ), sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
     in
         let second =
             LetBindingSyntax(name = "second", value = ExprLambda(
                 "value",
                 ExprVar("value"),
                 None
-            ), sugarParameters = [], typeAnnotation = None, requirements = [])
+            ), sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
         in
             let uses =
                 ExprTuple(
@@ -121,7 +121,7 @@ let expectTypeAlias unit =
             [ExprInt(1), ExprInt(2)]
         ), sugarParameters = [], typeAnnotation = [TypeNamed("Int")]
         |> TypeApplied("Pair")
-        |> Some, requirements = [])
+        |> Some, requirements = [], declarationStart = -1)
     in
         expectProgramType("(Int, Int)")(ProgramSyntax(items = [Unit
         |> pairAlias
@@ -149,7 +149,7 @@ let rejectWrongAliasArity unit =
     (let binding =
         LetBindingSyntax(name = "badPair", value = ExprTuple([]), sugarParameters = [], typeAnnotation = []
         |> TypeApplied("Pair")
-        |> Some, requirements = [])
+        |> Some, requirements = [], declarationStart = -1)
     in
         match inferProgram(ProgramSyntax(items = [Unit
         |> pairAlias
@@ -172,7 +172,7 @@ let rejectPolymorphicRecursion unit =
             None
         )
     in
-        let binding = LetBindingSyntax(name = "bad", value = body, sugarParameters = [], typeAnnotation = None, requirements = [])
+        let binding = LetBindingSyntax(name = "bad", value = body, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
         in
             match inferProgram(ProgramSyntax(items = [TopLevelLet(binding)(true)], body = None)) with
                 | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit

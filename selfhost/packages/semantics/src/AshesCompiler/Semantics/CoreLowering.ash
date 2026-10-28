@@ -637,6 +637,9 @@ type CoreFunctionState =
     | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
     | resourceStates: List((Int, ResourceReleaseKind))
     | recursiveDeclarationSpan: Maybe(TextSpan)
+    // The later members of the top-level recursive group being lowered, each with where its `and`
+    // starts, beside the group's own start.
+    | recursiveMemberStarts: List((Str, Int, Int))
     // The requirement evidence of the generic implementation method being lowered, stage 0's
     // active trait dictionary parameters: for each required trait's method at the requirement's
     // type argument, the hidden parameter binding that carries its closure.
@@ -1353,6 +1356,14 @@ let stateRecursiveDeclarationSpan (state: CoreLoweringState) =
 let withStateRecursiveDeclarationSpan value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with recursiveDeclarationSpan = value))
+
+let stateRecursiveMemberStarts (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.recursiveMemberStarts)
+
+let withStateRecursiveMemberStarts value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with recursiveMemberStarts = value))
 
 let stateActiveTypeParameters (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2424,6 +2435,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             pendingClosureNormalizers = [],
             resourceStates = [],
             recursiveDeclarationSpan = None,
+            recursiveMemberStarts = [],
             activeTraitMethods = [],
             activeTypeParameters = [],
             pendingTraitGoals = [],
@@ -20994,6 +21006,16 @@ let closeRecursiveBodyResult (resultType: SemanticType) (lowered: LoweredCoreVal
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (bound, None) -> LoweredCoreValue(state = bound, temp = temp, semanticType = bodyType, error = None)
 
+// A later member of a top-level recursive group is located at its own `and`, as stage 0's
+// binding spans place it; the first member and every other group keep the group's span.
+let recursive memberDeclarationSpan (name: Str) (starts: List((Str, Int, Int))) (groupSpan: Maybe(TextSpan)) =
+    match (starts, groupSpan) with
+        | ((member, start, groupStart) :: rest, Some(TextSpan(spanStart, spanEnd))) ->
+            if member == name && groupStart == spanStart
+            then Some(TextSpan(start = start, end = spanEnd))
+            else memberDeclarationSpan(name)(rest)(groupSpan)
+        | _ -> groupSpan
+
 // A recursive member is a known callee like a let-bound lambda: its label is remembered under
 // its name, so a call through the name can consult the member's recorded body placement.
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower (state: CoreLoweringState) =
@@ -21012,6 +21034,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                         |> noteLetBoundFunction(label)(origin)
                         |> lowerRecursiveBodyResolvingCalls(labeled
                         |> stateRecursiveDeclarationSpan
+                        |> memberDeclarationSpan(name)(stateRecursiveMemberStarts(labeled))
                         |> sugarChainBody(body))(given (entered: CoreLoweringState) ->
                             entered
                             |> refreshSelfResultDeferral(name)
@@ -28736,6 +28759,20 @@ let recursive letBindingSyntaxPairs bindings =
         | [] -> []
         | LetBindingSyntax { name = name, value = value } :: rest -> (name, value) :: letBindingSyntaxPairs(rest)
 
+let recursive recursiveMemberStartsOf (groupStart: Int) (bindings: List(LetBindingSyntax)) =
+    match bindings with
+        | [] -> []
+        | LetBindingSyntax { name = name, declarationStart = start } :: rest ->
+            if start >= 0
+            then (name, start, groupStart) :: recursiveMemberStartsOf(groupStart)(rest)
+            else recursiveMemberStartsOf(groupStart)(rest)
+
+let groupMemberStarts (bindings: List(LetBindingSyntax)) (state: CoreLoweringState) =
+    match stateRecursiveDeclarationSpan(state) with
+        | Some(TextSpan(start, _end)) ->
+            withStateRecursiveMemberStarts(recursiveMemberStartsOf(start)(bindings))(state)
+        | None -> state
+
 let recursive letBindingSyntaxNames bindings =
     match bindings with
         | [] -> []
@@ -29850,7 +29887,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                             let pairs = letBindingSyntaxPairs(bindings)
                             in
                                 match []
-                                |> prepareRecursiveGroup(pairs)(state)
+                                |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
                                 |> openPreparedRecursiveGroup(pairs)(lowerCore)(outerBindings) with
                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                     | LoweredCoreValue { state = opened, error = None } ->

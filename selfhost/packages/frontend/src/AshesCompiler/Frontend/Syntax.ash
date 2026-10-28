@@ -262,6 +262,9 @@ type LetBindingSyntax =
     | sugarParameters: List(Str)
     | typeAnnotation: Maybe(TypeExpr)
     | requirements: List(TraitConstraintSyntax)
+    // Where a later member of a recursive group starts (its `and`), or -1: the member's own
+    // instructions are located there rather than at the group's start.
+    | declarationStart: Int
 
 type TopLevelItem =
     | TopLevelAt(TextSpan, TopLevelItem)

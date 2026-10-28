@@ -1049,7 +1049,7 @@ let rewriteImplementationDeclaration project moduleName boundary declaration =
 
 let rewriteTopLevelBinding project moduleName boundary binding =
     match binding with
-        | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements } ->
+        | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements, declarationStart = declarationStart } ->
             let compilerName = declarationCompilerName(project)(moduleName)(boundary)(StitchedValue)(name)
             in
                 LetBindingSyntax(name = compilerName, value = rewriteExpression(
@@ -1070,7 +1070,7 @@ let rewriteTopLevelBinding project moduleName boundary binding =
                     boundary,
                     [],
                     requirements
-                ))
+                ), declarationStart = declarationStart)
 
 let recursive rewriteRecursiveBindings project moduleName boundary bindings =
     match bindings with

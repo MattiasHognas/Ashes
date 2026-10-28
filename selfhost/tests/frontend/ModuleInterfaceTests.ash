@@ -10,7 +10,7 @@ let assertNamed name expected actual =
 let makeBinding name =
     LetBindingSyntax(name = name, value = ExprInt(
         0
-    ), sugarParameters = [], typeAnnotation = None, requirements = [])
+    ), sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
 
 let makeConstructor name = TypeConstructor(name = name, parameters = [], fieldNames = [])
 

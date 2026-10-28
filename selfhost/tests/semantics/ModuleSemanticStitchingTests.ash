@@ -9,7 +9,7 @@ export (
 
 let binding : Str -> Expr -> LetBindingSyntax =
     given (name) ->
-        given (value) -> LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
+        given (value) -> LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
 
 let moduleInterface : Str -> List(ModuleImportExport) -> ModuleImportInterface =
     given (name) ->

@@ -8,7 +8,7 @@ export (
     value runModuleReferenceRewritingTests,
 )
 
-let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
+let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
 
 let renderTrait =
     TraitDecl(name = "Render", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "render", signature = TypeArrow(
