@@ -621,7 +621,8 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    is fixed, with a census template, or shown not to be a leak:
    - every class of the ranked exit residual and the census classes below;
    - the curried tuple's string-parameter join;
-   - the open ends of `sort`;
+   - the open ends sorted into E on 25 October: generic `setAssociation`, coverage expansion with
+     dynamic imports, `FloatText`, and generic named results;
    - `regex-redux`'s 130 MB of extra peak memory;
    - the `perform` site adopting a handler arm's `List(Int)` result;
    - the non-generic return arm;
