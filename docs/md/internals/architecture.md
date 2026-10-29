@@ -2073,7 +2073,10 @@ continuation `given pattern -> body` under the same contract as a post: the valu
 only when the closure's entry adopts reference-counted arguments, the result is adopted or
 normalized by the closure's returns bit, and the original is released once the result cannot
 reach it. The posts fold applies each one-shot continuation the same way, so the handle's value
-stays reference-counted through every post and its caller releases it exactly once.
+stays reference-counted through every post and its caller releases it exactly once. The
+self-hosted compiler applies the `return` arm inline instead, as a `let` of the body value scoped
+over the arm and bracketed like a nested `let`: the binding adopts a newly produced body value and
+releases it when the arm's result does not hand it on.
 
 ### One-shot resumptive arms: the pre/post split
 
