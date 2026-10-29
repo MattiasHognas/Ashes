@@ -1015,6 +1015,7 @@ public sealed partial class Lowering
 
             (int MaskTemp, int[] PartTemps) partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
             EmitJumpIfWholeResultHandedOver(partTemps.MaskTemp, ownedLabel);
+            EmitJumpIfIndependentCountedResult(partTemps.MaskTemp, currentTemp, callResultType, handedParts, ownedLabel);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
             ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
             ReleaseHandedOverListHeads(callResultType, partTemps.MaskTemp, currentTemp);

@@ -3995,6 +3995,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_forwarded_independent_record_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's next record result comes from a generic helper returning a closure parameter's
+        // result as it is. The record holds a recursive variant, so the closure keeps its owned
+        // reference-counted result when the helper asks for an arena one and only says the result
+        // is independent; taken as owned, the loop's copy no longer strands the closure's reference.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildForwardedIndependentResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + (2L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("forwarded independent record result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_handed_on_pipeline_step_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15551,6 +15576,81 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + reach(blocksFor(n))([0, 1, 2])([0])([]))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private const string ForwardedIndependentResultDeclarations = """
+            type Ty =
+                | TyInt
+                | TyList(Ty)
+
+            type St =
+                | instructions: List(Int)
+                | names: List(Str)
+                | next: Int
+                | known: List(Ty)
+
+            type Err =
+                | Bad(Str)
+
+            type Res =
+                | state: St
+                | error: Maybe(Err)
+
+            type Pat =
+                | PVar(Str)
+                | PTuple(List(Pat))
+
+            let emit (item: Int) (state: St) = state with instructions = item :: state.instructions
+
+            let fresh (state: St) = ((state with next = state.next + 1), state.next)
+
+            let lowerVar (name: Str) (temp: Int) (state: St) =
+                if name == ""
+                then Res(state = state, error = Some(Bad(name)))
+                else Res(state = emit(temp)(state), error = None)
+
+            let lowerLoaded pat lower loaded =
+                match loaded with
+                    | (state, temp) -> lower(pat)(temp)(state)
+
+            let loadField (index: Int) pat lower (state: St) =
+                state
+                |> fresh
+                |> (given (pair) ->
+                    match pair with
+                        | (loadState, temp) -> (emit(temp + index)(loadState), temp))
+                |> lowerLoaded(pat)(lower)
+
+            let recursive lowerFields (pats: List(Pat)) (index: Int) lower (result: Res) =
+                match result with
+                    | Res { error = Some(_error) } -> result
+                    | Res { state = state } ->
+                        match pats with
+                            | [] -> result
+                            | pat :: rest ->
+                                state
+                                |> loadField(index)(pat)(lower)
+                                |> lowerFields(rest)(index + 1)(lower)
+
+            let recursive lowerPat (pat: Pat) (temp: Int) (state: St) =
+                match pat with
+                    | PVar(name) -> lowerVar(name)(temp)(state)
+                    | PTuple(parts) -> lowerFields(parts)(0)(lowerPat)(Res(state = state, error = None))
+
+            let run (seed: Int) =
+                let start = St(instructions = [seed], names = ["a", "b"], next = seed, known = [TyList(TyInt)])
+                in match lowerPat(PTuple([PVar("left"), PVar("right")]))(0)(start) with
+                    | Res { state = St { next = next } } -> next
+            """;
+
+    private static string BuildForwardedIndependentResultProgram(int rounds)
+        => ForwardedIndependentResultDeclarations + "\n\n" + $$"""
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

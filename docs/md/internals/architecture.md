@@ -1618,6 +1618,16 @@ over whole, bit 62, says as much). Once the call returns, the forwarding functio
 on either bit, releases the owned values its result reached only through the call. A function that
 was not asked keeps them, as before.
 
+The caller that asked reads bit 61 too. A forwarding function asks its own callee for an arena
+result, and a function whose record result cannot be copied into the arena (one holding a recursive
+variant, say) keeps its reference-counted result and writes only bit 61. The value that reaches the
+caller is then that function's owned result, since a forwarder passes the request on only to a call
+it returns as it is, so a caller that named no parts and finds bit 61 on a reference-counted result
+of a record or variant type of the contract takes the result as its own owned value, as for bit 62.
+Copying it instead left the callee's reference unreleased: one lowering state record per tuple
+pattern field in stage 1, through `loadTuplePatternField` and its closure parameter.
+`GRC_NO_INDEPENDENTCOUNTEDRESULT` turns this off.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:
 exactly those, read back from the instructions that built the cell, so a child the construction only

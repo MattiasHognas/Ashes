@@ -153,6 +153,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new HandedOnPipelineStepTemplate());
         registry.Register(new PerformArmResultTemplate());
         registry.Register(new WorklistOfIndicesWalkedAndRefilledTemplate());
+        registry.Register(new ForwardedIndependentResultTemplate());
     }
 }
 

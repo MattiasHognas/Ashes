@@ -17379,6 +17379,29 @@ let emitJumpIfWholeResultHandedOver (maskTemp: Int) (ownedLabel: Str) (state: Co
                     |> emit(Jump(ownedLabel))
                     |> emit(Label(copyLabel))
 
+// Stage 0's `EmitJumpIfIndependentCountedResult`: after a call that asked for a record or variant
+// result of the contract's types and named no parts, jumps to the owned path when the mask says
+// the result is independent and the result is reference-counted. Only a function of a contract
+// result type writes that bit, and a forwarder passes the request only to a call whose result it
+// returns as it is, so the value is that function's owned result.
+let emitJumpIfIndependentCountedResult (maskTemp: Int) (resultTemp: Int) (semanticType: SemanticType) (parts: List(Int)) (ownedLabel: Str) (state: CoreLoweringState) =
+    match (parts, resolveType(state)(semanticType), isGeneralRcValueType(semanticType)(state)) with
+        | ([], SemNamed(_id, _name, _arguments), true) ->
+            match freshTempRun(4)(state) with
+                | FreshTemp { state = allocated, temp = bitTemp } ->
+                    match freshLabel("independent_result_not_counted")(allocated) with
+                        | FreshLabel { state = labelled, label = copyLabel } ->
+                            labelled
+                            |> emit(LoadConstInt(bitTemp)(independentResultBit))
+                            |> emit(AndInt(bitTemp + 1)(maskTemp)(bitTemp))
+                            |> emit(LoadConstInt(bitTemp + 2)(0))
+                            |> emit(CmpIntNe(bitTemp + 3)(bitTemp + 1)(bitTemp + 2))
+                            |> emit(JumpIfFalse(bitTemp + 3)(copyLabel))
+                            |> emitSkipUnlessReferenceCounted(resultTemp)(copyLabel)
+                            |> emit(Jump(ownedLabel))
+                            |> emit(Label(copyLabel))
+        | _ -> state
+
 // Stage 0's `ReleaseHandedOverListHeads`: after a call's list result is copied out of the arena,
 // when the callee's mask says it handed the heads over, the reference each arena cell's
 // reference-counted head holds is released, up to the first reference-counted cell, from which on
@@ -17451,6 +17474,7 @@ let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan
                 | (loaded, maskTemp, partTemps) ->
                     match loaded
                     |> emitJumpIfWholeResultHandedOver(maskTemp)(ownedLabel)
+                    |> emitJumpIfIndependentCountedResult(maskTemp)(temp)(semanticType)(parts)(ownedLabel)
                     |> emitGuardedDeepCopy(temp)(plan) with
                         | (copied, copyTemp) ->
                             copied
