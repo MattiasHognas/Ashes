@@ -3382,7 +3382,10 @@ public sealed partial class Lowering
             // closure environment, so reconstruct its closure directly from the label with a null env, and
             // instantiate its type scheme fresh for this use (polymorphic helpers unify against the
             // concrete call). Reached only when Lookup fails; normal top-level references resolve via the
-            // scope and never get here, so this cannot change well-scoped code.
+            // scope and never get here, so this cannot change well-scoped code. The rebuilt closure
+            // carries the helper's own adoption bit: a caller hands a fresh argument to a helper whose
+            // entry normalizes its parameter under that bit, so a closure without it would leave the
+            // argument with a caller that already gave it up.
             int envTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envTemp, 0));
             int closTemp = NewTemp();
@@ -3393,7 +3396,9 @@ public sealed partial class Lowering
                 0,
                 RuntimeManaged: request.EmitsRuntime(
                     LoweredValueRuntimeRepresentation.Closure),
-                ReturnsRuntimeManaged: _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
+                ReturnsRuntimeManaged: _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label),
+                AcceptsRuntimeManagedArgument: TopLevelReferenceAdoptionRuleEnabled
+                    && _runtimeNormalizedFunctionArgumentLabels.Contains(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
 

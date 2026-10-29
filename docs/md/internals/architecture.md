@@ -1529,6 +1529,15 @@ the same way and the callee copies its result into the arena before releasing it
 verifies its reference-counted result the way a named callee's does, and the list consumed by the
 pipe is released with its heads rather than spine-only (`GRC_NO_APPLIEDLAMBDAVERIFIED`).
 
+A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
+as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry
+adopts it; for a callee it knows to normalize, the caller then gives the reference up. A body
+lowered where its top-level helpers are out of scope (a function inlined into a loop's body)
+rebuilds each helper's closure from its label, and that closure carries the helper's adoption bit
+as well. Without it the helper copies the argument while the caller has already let it go, and the
+fresh list piped or passed into the helper (`xs |> modulesOf |> dropFirst`) leaks
+(`GRC_NO_TOPREFADOPTION` switches this off).
+
 An arena cell never releases a fresh reference-counted child stored into it (an owned call result,
 or a tuple holding fresh lists). A constructor of the contract's types hands such a child to an
 owned slot, released once the result holds a reference of its own; any other constructor is placed

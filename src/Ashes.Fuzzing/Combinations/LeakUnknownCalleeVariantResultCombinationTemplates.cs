@@ -117,3 +117,79 @@ internal sealed class AppliedLambdaConsumedListTemplate() : LeakCombinationTempl
     protected override string? TrailingWorkload(LeakNames names) =>
         $"{names.Of("rounds")}(ROUNDS)(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print";
 }
+
+/// <summary>
+/// A list read out of records (module-name strings or integer ids) handed to a named helper, through
+/// a pipe or as a nested call, inside a function the counting loop inlines. The helper's entry
+/// adopts a handed-over argument, so the closure the inlined body rebuilds for it carries the
+/// adoption bit, and the helper takes the fresh list over rather than copying it. The list comes
+/// from a reuse specialization over the fresh records, whose self call and rebuilt cells stay in
+/// place across its scopes' resets.
+/// </summary>
+internal sealed class NamedHelperConsumedListTemplate() : LeakCombinationTemplate(
+    "leak.named-helper-consumed-list", "namedHelperList", GeneratedFeature.Record, GeneratedFeature.Match)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string reference = names.Of("LeakReference");
+        string fieldsOf = names.Of("fieldsOf");
+        string dropFirst = names.Of("dropFirst");
+        string mkRefs = names.Of("mkRefs");
+        string needed = names.Of("needed");
+        string count = names.Of("count");
+        string rounds = names.Of("rounds");
+        string word = names.Word();
+        string other = names.Word();
+        bool ids = names.Coin("ids");
+        string element = ids ? "Int" : "Str";
+        string field = ids ? "referenceId" : "referenceModule";
+        string dropped = ids ? "1" : $"{word} + \"1\"";
+        string neededBody = names.Coin("nested")
+            ? $"    {dropFirst}({fieldsOf}({mkRefs}(seed)))"
+            : $"""
+                  seed
+                  |> {mkRefs}
+                  |> {fieldsOf}
+                  |> {dropFirst}
+              """;
+        return $$"""
+            type {{reference}} =
+                | referenceModule: Str
+                | referenceId: Int
+
+            let recursive {{fieldsOf}} (references: List({{reference}})) =
+                match references with
+                    | [] -> []
+                    | reference :: rest -> reference.{{field}} :: {{fieldsOf}}(rest)
+
+            let recursive {{dropFirst}} (values: List({{element}})) =
+                match values with
+                    | [] -> []
+                    | value :: rest ->
+                        if value == {{dropped}}
+                        then {{dropFirst}}(rest)
+                        else value :: {{dropFirst}}(rest)
+
+            let {{mkRefs}} (seed: Int) = [{{reference}}(referenceModule = {{word}} + Ashes.Text.fromInt(seed - seed + 1), referenceId = seed - seed + 1), {{reference}}(referenceModule = {{other}} + Ashes.Text.fromInt(seed), referenceId = seed + 1), {{reference}}(referenceModule = {{word}} + "b", referenceId = seed + 2)]
+
+            let {{needed}} (seed: Int) =
+            {{neededBody}}
+
+            let recursive {{count}} (values: List({{element}})) (total: Int) =
+                match values with
+                    | [] -> total
+                    | _ :: rest -> {{count}}(rest)(total + 1)
+
+            let {{names.Entry}} (seed: Int) = seed + {{count}}({{needed}}(seed))(0)
+
+            let recursive {{rounds}} (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else {{rounds}}(n - 1)(total + {{names.Entry}}({{names.Between(1, 9)}}))
+            """;
+    }
+
+    // The entry runs from a plain counting loop, which inlines the helper call into its body.
+    protected override string? TrailingWorkload(LeakNames names) =>
+        $"{names.Of("rounds")}(ROUNDS)(0)\n|> Ashes.Text.fromInt\n|> Ashes.IO.print";
+}

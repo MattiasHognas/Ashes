@@ -4018,6 +4018,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_list_piped_into_named_helper_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list of strings read out of records is piped into a named helper whose entry adopts a
+        // handed-over argument. The pipe is inlined into the loop, where the helper's closure is
+        // rebuilt from its label; the rebuilt closure carries the adoption bit, so the helper takes
+        // the fresh list over instead of copying it while the caller has already given it up.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildListPipedIntoNamedHelperProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list piped into named helper", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_of_indices_walked_and_refilled_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15616,6 +15641,48 @@ public sealed class LinuxBackendCoverageTests
                 |> (given (names) -> dropFirst(names))
 
             let run (seed: Int) = seed + Ashes.Collection.List.length(needed(seed))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildListPipedIntoNamedHelperProgram(int rounds)
+        => $$"""
+            type Reference =
+                | referenceModule: Str
+                | referenceMember: Str
+
+            let recursive modulesOf (references: List(Reference)) =
+                match references with
+                    | [] -> []
+                    | reference :: rest -> reference.referenceModule :: modulesOf(rest)
+
+            let recursive dropFirst (names: List(Str)) =
+                match names with
+                    | [] -> []
+                    | name :: rest ->
+                        if name == "Ashes.Text"
+                        then dropFirst(rest)
+                        else name :: dropFirst(rest)
+
+            let mkRefs (seed: Int) = [Reference(referenceModule = "Ashes." + "Text", referenceMember = "jo" + "in"), Reference(referenceModule = "Ashes." + "Byte", referenceMember = "len" + "gth")]
+
+            let needed (seed: Int) =
+                seed
+                |> mkRefs
+                |> modulesOf
+                |> dropFirst
+
+            let recursive count (names: List(Str)) (total: Int) =
+                match names with
+                    | [] -> total
+                    | _ :: rest -> count(rest)(total + 1)
+
+            let run (seed: Int) = seed + count(needed(seed))(0)
 
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0

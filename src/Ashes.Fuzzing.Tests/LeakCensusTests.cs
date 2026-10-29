@@ -147,9 +147,15 @@ public sealed class LeakCensusTrailingWorkloadTests
         var fixture = TestFixture.Create();
         FuzzProfile profile = fixture.Profiles.Get("memory-growth");
         string[] rotation = fixture.Generator.RotationOrder(profile);
+        HashSet<string> trailingTemplates = new(StringComparer.Ordinal)
+        {
+            "leak.entry-trailing-pipe-fresh-argument",
+            "leak.applied-lambda-consumed-list",
+            "leak.named-helper-consumed-list",
+        };
         for (int caseIndex = 0; caseIndex < rotation.Length; caseIndex++)
         {
-            if (string.Equals(rotation[caseIndex], "leak.entry-trailing-pipe-fresh-argument", StringComparison.Ordinal))
+            if (trailingTemplates.Contains(rotation[caseIndex]))
             {
                 continue;
             }

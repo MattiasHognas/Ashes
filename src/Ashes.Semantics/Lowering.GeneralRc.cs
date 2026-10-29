@@ -374,6 +374,9 @@ public sealed partial class Lowering
     // is, where a borrowed parameter's read would be retained.
     private int _generalRcOwnedParameterResultTemp = -1;
 
+    private static bool TopLevelReferenceAdoptionRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_TOPREFADOPTION") is null;
+
     private static bool OwnedParameterResultRuleEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_OWNEDPARAMRESULT") is null;
 
