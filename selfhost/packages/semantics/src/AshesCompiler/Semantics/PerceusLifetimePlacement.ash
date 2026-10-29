@@ -35,8 +35,9 @@ export (
 )
 
 // placedDominators carries the function's immediate dominators from the first owner that needed
-// them to every later owner: an owner's edits move instruction indices but never change the
-// block graph, so the table is computed once per function, as stage 0's PlaceOwner does.
+// them to every later owner: an owner's edits move instruction indices and change the block graph
+// only by a split edge appended after the last block, so the table is recomputed only when the
+// block count has grown, as stage 0's PlaceOwner does.
 type PlacedInstructions =
     | placedInstructions: List(IrInstruction)
     | placedTempCount: Int
@@ -167,23 +168,34 @@ let recursive ownerDefinition (instructions: List(IrInstruction)) (slot: Int) (i
             else ownerDefinition(rest)(slot)(index + 1)
         | _ :: rest -> ownerDefinition(rest)(slot)(index + 1)
 
-// The blocks reachable from `start` that it dominates and that lie before the boundary, gathered
-// in visit order with one cell per block; `sortedBlocks` turns the result into the sorted set the
-// region consumers expect.
-let recursive reachableBeforeBoundary (blocks: List(IrCfgBlock)) (dominators: List(Int)) (start: Int) (boundary: Int) (pending: List(Int)) (reachable: List(Int)) =
+// An earlier owner's split edge (`<function>_rc_edge_<slot>_<block>`) sits after the function's
+// last block but stands on an edge between two blocks; one that rejoins a block before the
+// boundary is part of the region, so the owner is released on that edge too.
+let isSplitEdgeWithin (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) (label: Str) (boundary: Int) (blockIndex: Int) =
+    match listAt(blocks)(blockIndex) with
+        | Some(IrCfgBlock { blockStart = start, blockSuccessors = successor :: [] }) ->
+            match listAt(instructions)(start) with
+                | Some(IrInstruction { instruction = Label(name) }) -> successor <= boundary && Ashes.Text.startsWith(name)(label + "_rc_edge_")
+                | _ -> false
+        | _ -> false
+
+// The blocks reachable from `start` that it dominates and that lie before the boundary (an earlier
+// owner's split edge rejoining the region included), gathered in visit order with one cell per
+// block; `sortedBlocks` turns the result into the sorted set the region consumers expect.
+let recursive reachableBeforeBoundary (instructions: List(IrInstruction)) (label: Str) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (start: Int) (boundary: Int) (pending: List(Int)) (reachable: List(Int)) =
     match pending with
         | [] -> reachable
         | current :: rest ->
-            if current > boundary || dominates(dominators)(start)(current) == false || containsInt(current)(reachable)
-            then reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(reachable)
+            if current > boundary && isSplitEdgeWithin(instructions)(blocks)(label)(boundary)(current) == false || dominates(dominators)(start)(current) == false || containsInt(current)(reachable)
+            then reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(rest)(reachable)
             else
                 if current == boundary
-                then reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
+                then reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
                 else
                     match listAt(blocks)(current) with
                         | Some(IrCfgBlock { blockSuccessors = successors }) ->
-                            reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(append(successors)(rest))(current :: reachable)
-                        | None -> reachableBeforeBoundary(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
+                            reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(append(successors)(rest))(current :: reachable)
+                        | None -> reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(start)(boundary)(rest)(current :: reachable)
 
 // The members of `visited` among the block indices below `count`, ascending.
 let recursive sortedBlocks (visited: List(Int)) (index: Int) (acc: List(Int)) =
@@ -728,7 +740,7 @@ let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: O
 
 let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
     []
-    |> reachableBeforeBoundary(blocks)(dominators)(definitionBlock)(boundaryBlock)([definitionBlock])
+    |> reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(definitionBlock)(boundaryBlock)([definitionBlock])
     |> (given (visited) -> sortedBlocks(visited)(length(blocks) - 1)([]))
     |> (given (region) ->
         if length(region) == 0
@@ -747,9 +759,9 @@ let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: Own
                 then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators)
                 else
                     let dominators =
-                        match knownDominators with
-                            | [] -> computeImmediateDominators(blocks)
-                            | _ -> knownDominators
+                        if length(knownDominators) == length(blocks)
+                        then knownDominators
+                        else computeImmediateDominators(blocks)
                     in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(boundaryBlock)(arenaAdtCells)(borrowedCalls))
 
 // Removes the lexical anchor (and the owner load feeding it) and places the owner's drop.

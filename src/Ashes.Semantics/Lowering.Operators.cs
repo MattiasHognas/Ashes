@@ -165,6 +165,33 @@ public sealed partial class Lowering
         return (-1, -1);
     }
 
+    // A string read out of a local some owner releases (a `let` binding, or the owned slot a call's
+    // result is kept in) stays with that owner, which a later read of it still needs: only an
+    // operand no owner holds (a call's result) is the comparison's to release.
+    private void ReleaseUnboundStringOperand(int operandTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_STRCOMPARELOCAL") is null && ReadsOwnedLocal(operandTemp))
+        {
+            return;
+        }
+
+        ReleaseFreshComparisonOperand(operandTemp, new TypeRef.TStr());
+    }
+
+    // A read, through borrows, of a local some owner releases: a binding's tracked owned value, or
+    // the owned slot a call's result of the contract's types is kept in.
+    private bool ReadsOwnedLocal(int temp)
+    {
+        while (DefinitionOf(temp) is IrInst.Borrow borrow)
+        {
+            temp = borrow.SourceTemp;
+        }
+
+        return DefinitionOf(temp) is IrInst.LoadLocal load
+            && (_generalRcOwnedSlots.Any(owned => owned.Slot == load.Slot)
+                || _ownershipScopes.Any(scope => scope.Values.Any(owned => owned.Slot == load.Slot && !owned.IsDropped)));
+    }
+
     // Resolve type variables: prefer the other side's concrete type, defaulting to Int
     private (TypeRef Left, TypeRef Right) ResolveAddOperandTypes(TypeRef leftPruned, TypeRef rightPruned)
     {
@@ -898,12 +925,25 @@ public sealed partial class Lowering
 
         if (leftPruned is TypeRef.TStr && rightPruned is TypeRef.TStr)
         {
-            int target = NewTemp();
-            Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
-            return (target, new TypeRef.TBool());
+            return LowerStrEquality(leftTemp, rightTemp, negate);
         }
 
         return ReportEqualityTypeMismatch(leftPruned, rightPruned, negate);
+    }
+
+    // The primitive comparison borrows both strings, as the trait method does: a string no binding
+    // owns (a call's result) is released after it.
+    private (int, TypeRef) LowerStrEquality(int leftTemp, int rightTemp, bool negate)
+    {
+        int target = NewTemp();
+        Emit(negate ? new IrInst.CmpStrNe(target, leftTemp, rightTemp) : new IrInst.CmpStrEq(target, leftTemp, rightTemp));
+        if (Environment.GetEnvironmentVariable("GRC_NO_STRCOMPAREOPERAND") is null)
+        {
+            ReleaseUnboundStringOperand(leftTemp);
+            ReleaseUnboundStringOperand(rightTemp);
+        }
+
+        return (target, new TypeRef.TBool());
     }
 
     // Resolve type variables: prefer the other side's concrete type, defaulting to Int

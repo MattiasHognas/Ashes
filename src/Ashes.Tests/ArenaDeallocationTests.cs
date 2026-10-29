@@ -798,8 +798,11 @@ public sealed class ArenaDeallocationTests
     }
 
     [Test]
-    public void TCO_shadowed_heap_parameter_does_not_license_a_back_edge_reset()
+    public void TCO_shadowed_heap_parameter_is_copied_to_the_rc_heap_before_the_back_edge_reset()
     {
+        // The rebound list is a fresh start beside the handed-on parameter, so the parameter is a
+        // choice accumulator on the reference-counted heap: the back edge copies the arena list
+        // `["next"]` there before its reset reclaims the iteration, and the reset is safe.
         (Lowering lowering, IrProgram ir) = LowerProgramWithOwnership(
             """
             let recursive build : List(Str) -> Int -> Str -> Str = given table -> given remaining -> given acc ->
@@ -817,8 +820,18 @@ public sealed class ArenaDeallocationTests
 
         summary.ShouldNotBeNull();
         summary.TcoParamFacts[0].Shape.ShouldBe(TcoSelfCallArgumentShape.Mixed);
-        HasTcoBackEdgeReclaim(instructions).ShouldBeFalse(
-            "A same-named rebound list is not the original parameter and must not survive a plain reset.");
+        summary.TcoParamFacts[0].ChoiceAccumulatorRebuild.ShouldBeTrue();
+        HasTcoBackEdgeReclaim(instructions).ShouldBeTrue();
+        int backEdgeIndex = instructions.FindLastIndex(instruction => instruction is IrInst.Jump jump
+            && jump.Target.Contains("_body", StringComparison.Ordinal));
+        int reclaimIndex = instructions.FindLastIndex(backEdgeIndex, instruction => instruction is IrInst.ReclaimArenaChunks);
+        int armIndex = instructions.FindLastIndex(reclaimIndex, instruction => instruction is IrInst.Label label
+            && label.Name.StartsWith("else", StringComparison.Ordinal));
+        instructions.Skip(armIndex).Take(reclaimIndex - armIndex).Any(instruction => instruction is IrInst.CopyOutList
+        {
+            RuntimeManaged: true,
+            Purpose: IrInst.CopyOutPurpose.RcNormalization,
+        }).ShouldBeTrue("The rebound list reaches the reference-counted heap before the reset reclaims the iteration.");
     }
 
     // --- Extended TCO copy-out ---

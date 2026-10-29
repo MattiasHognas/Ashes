@@ -545,7 +545,7 @@ internal static partial class LlvmCodegen
         }
         else
         {
-            LlvmValueHandle nonBlockingSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_nonblocking_slot");
+            LlvmValueHandle nonBlockingSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_nonblocking_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), nonBlockingSlot);
             EmitWindowsIoctlSocket(
                 state,
@@ -570,8 +570,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitCStringToI64(LlvmCodegenState state, LlvmValueHandle cstrPtr, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle accSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_acc");
-        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_i");
+        LlvmValueHandle accSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_acc");
+        LlvmValueHandle idxSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_i");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), accSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
         LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop");
@@ -601,10 +601,10 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         // Fill a 24-byte scratch from the end, then copy the used tail forward into bufPtr.
         LlvmTypeHandle tmpType = LlvmApi.ArrayType2(state.I8, 24);
-        LlvmValueHandle tmp = LlvmApi.BuildAlloca(builder, tmpType, prefix + "_tmp");
+        LlvmValueHandle tmp = EmitEntryScratchSlot(state, tmpType, prefix + "_tmp");
         LlvmValueHandle tmpPtr = GetArrayElementPointer(state, tmpType, tmp, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_tmp_ptr");
-        LlvmValueHandle nSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_n");
-        LlvmValueHandle posSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_pos");
+        LlvmValueHandle nSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_n");
+        LlvmValueHandle posSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_pos");
         LlvmApi.BuildStore(builder, value, nSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 23, 0), posSlot);
         LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop");
@@ -650,8 +650,8 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         // Copy tmp[endPos+1 .. 24) to bufPtr, then NUL-terminate.
         LlvmApi.PositionBuilderAtEnd(builder, copyBody);
-        LlvmValueHandle srcSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_src");
-        LlvmValueHandle dstSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_dst");
+        LlvmValueHandle srcSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_src");
+        LlvmValueHandle dstSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_dst");
         LlvmApi.BuildStore(builder, LlvmApi.BuildAdd(builder, endPos, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_src0"), srcSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), dstSlot);
         LlvmBasicBlockHandle cl = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cl");
@@ -677,10 +677,10 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle wsadataType = LlvmApi.ArrayType2(state.I8, 512);
-        LlvmValueHandle wsadata = LlvmApi.BuildAlloca(builder, wsadataType, prefix + "_wsadata");
+        LlvmValueHandle wsadata = EmitEntryScratchSlot(state, wsadataType, prefix + "_wsadata");
         EmitWindowsWsaStartup(state, GetArrayElementPointer(state, wsadataType, wsadata, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_wsadata_ptr"), prefix + "_wsastartup");
         LlvmValueHandle socketFd = EmitWindowsSocket(state, 2, 1, 6, prefix + "_socket");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_result");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)-1L), 1), resultSlot);
         LlvmBasicBlockHandle bindBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_bind");
         LlvmBasicBlockHandle listenBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_listen");
@@ -692,7 +692,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, bindBlock);
         LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, prefix + "_sockaddr");
+        LlvmValueHandle sockaddrStorage = EmitEntryScratchSlot(state, sockaddrType, prefix + "_sockaddr");
         LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_sockaddr_bytes");
         LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
         LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
@@ -748,8 +748,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitLinuxTcpConnect(LlvmCodegenState state, LlvmValueHandle hostRef, LlvmValueHandle port)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_connect_result");
-        LlvmValueHandle socketSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_connect_socket");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "tcp_connect_result");
+        LlvmValueHandle socketSlot = EmitEntryScratchSlot(state, state.I64, "tcp_connect_socket");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), socketSlot);
         LlvmValueHandle resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "tcp_connect_resolve");
@@ -821,7 +821,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, connectBlock);
         LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, "tcp_connect_sockaddr");
+        LlvmValueHandle sockaddrStorage = EmitEntryScratchSlot(state, sockaddrType, "tcp_connect_sockaddr");
         LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_sockaddr_bytes");
         LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
         LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
@@ -850,8 +850,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitWindowsTcpConnect(LlvmCodegenState state, LlvmValueHandle hostRef, LlvmValueHandle port)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_connect_win_result");
-        LlvmValueHandle socketSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_connect_win_socket");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "tcp_connect_win_result");
+        LlvmValueHandle socketSlot = EmitEntryScratchSlot(state, state.I64, "tcp_connect_win_socket");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, unchecked((ulong)(-1L)), 1), socketSlot);
         LlvmValueHandle resolveResult = EmitResolveHostIpv4OrLocalhost(state, hostRef, "tcp_connect_win_resolve");
@@ -911,7 +911,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, initWinsockBlock);
         LlvmTypeHandle wsadataType = LlvmApi.ArrayType2(state.I8, 512);
-        LlvmValueHandle wsadata = LlvmApi.BuildAlloca(builder, wsadataType, "tcp_connect_win_wsadata");
+        LlvmValueHandle wsadata = EmitEntryScratchSlot(state, wsadataType, "tcp_connect_win_wsadata");
         LlvmValueHandle winsockStarted = EmitWindowsWsaStartup(state, GetArrayElementPointer(state, wsadataType, wsadata, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_win_wsadata_ptr"), "tcp_connect_win_wsastartup");
         LlvmApi.BuildCondBr(builder, winsockStarted, openSocketBlock, connectFailBlock);
 
@@ -923,7 +923,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, connectBlock);
         LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, "tcp_connect_win_sockaddr");
+        LlvmValueHandle sockaddrStorage = EmitEntryScratchSlot(state, sockaddrType, "tcp_connect_win_sockaddr");
         LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), "tcp_connect_win_sockaddr_bytes");
         LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
         LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
@@ -945,9 +945,9 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitLinuxTcpSend(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle textRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_send_result");
-        LlvmValueHandle remainingSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_send_remaining");
-        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_send_cursor");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "tcp_send_result");
+        LlvmValueHandle remainingSlot = EmitEntryScratchSlot(state, state.I64, "tcp_send_remaining");
+        LlvmValueHandle cursorSlot = EmitEntryScratchSlot(state, state.I64, "tcp_send_cursor");
         LlvmValueHandle totalLen = LoadStringLength(state, textRef, "tcp_send_total_len");
         LlvmApi.BuildStore(builder, totalLen, remainingSlot);
         LlvmApi.BuildStore(builder, GetStringBytesAddress(state, textRef, "tcp_send_cursor_start"), cursorSlot);
@@ -990,9 +990,9 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitWindowsTcpSend(LlvmCodegenState state, LlvmValueHandle socket, LlvmValueHandle textRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_send_win_result");
-        LlvmValueHandle remainingSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_send_win_remaining");
-        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "tcp_send_win_cursor");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "tcp_send_win_result");
+        LlvmValueHandle remainingSlot = EmitEntryScratchSlot(state, state.I64, "tcp_send_win_remaining");
+        LlvmValueHandle cursorSlot = EmitEntryScratchSlot(state, state.I64, "tcp_send_win_cursor");
         LlvmValueHandle totalLen = LoadStringLength(state, textRef, "tcp_send_win_total_len");
         LlvmApi.BuildStore(builder, totalLen, remainingSlot);
         LlvmApi.BuildStore(builder, GetStringBytesAddress(state, textRef, "tcp_send_win_cursor_start"), cursorSlot);
@@ -1056,7 +1056,7 @@ internal static partial class LlvmCodegen
         Func<LlvmCodegenState, LlvmValueHandle, LlvmValueHandle, LlvmValueHandle, string, LlvmValueHandle> emitRead)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_result");
         var invalidMaxBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_invalid_max");
         var readBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_read");
         var handleReadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_handle_read");
@@ -1137,12 +1137,12 @@ internal static partial class LlvmCodegen
         LlvmCodegenState state, LlvmValueHandle hostRef, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
-        LlvmValueHandle partSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_part");
-        LlvmValueHandle currentSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_current");
-        LlvmValueHandle seenDigitSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_seen_digit");
-        LlvmValueHandle addressSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_address");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_result");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_index");
+        LlvmValueHandle partSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_part");
+        LlvmValueHandle currentSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_current");
+        LlvmValueHandle seenDigitSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_seen_digit");
+        LlvmValueHandle addressSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_address");
         LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, TcpResolveFailedMessage)), resultSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), partSlot);

@@ -32,10 +32,10 @@ function __rcdrop_record_3  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (tco_owned_child_record_accumulator.ash:11:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_13   (tco_owned_child_record_accumulator.ash:11:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_14   (tco_owned_child_record_accumulator.ash:11:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (tco_owned_child_record_accumulator.ash:11:1)
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-  rc_drop_shared_13:
+  rc_drop_shared_14:
     RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
     Return                Source=3   (tco_owned_child_record_accumulator.ash:11:1)
@@ -58,7 +58,7 @@ function __deepcopy_4  [AdtDeepCopier]
     Return                Source=0   (tco_owned_child_record_accumulator.ash:11:1)
 
 function lambda_1  [ClosureHelper from step]
-  locals=20 temps=72
+  locals=20 temps=81
     LoadEnv               Target=0 Index=0   (tco_owned_child_record_accumulator.ash:11:1)
     StoreLocal            Slot=2 Source=0   (tco_owned_child_record_accumulator.ash:11:1)
     LoadLocal             Target=22 Slot=1   (tco_owned_child_record_accumulator.ash:11:1)
@@ -120,44 +120,44 @@ function lambda_1  [ClosureHelper from step]
     LoadLocal             Target=19 Slot=1   (tco_owned_child_record_accumulator.ash:14:10)
     StoreLocal            Slot=2 Source=8   (tco_owned_child_record_accumulator.ash:14:10)
     StoreLocal            Slot=1 Source=17   (tco_owned_child_record_accumulator.ash:14:10)
-    IsReferenceCounted    Target=55 SourceTemp=17
-    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_17
-    RcDup                 Target=56 SourceTemp=17 RuntimeManaged=true
-    StoreLocal            Slot=18 Source=56
-    Jump                  Target=rc_representation_done_18
-  rc_representation_copy_17:
-    CopyOutArena          DestTemp=59 SrcTemp=17 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
-    GetAdtField           Target=60 Ptr=17 FieldIndex=0 Tagless=true
-    IsReferenceCounted    Target=61 SourceTemp=60
-    JumpIfFalse           CondTemp=61 Target=rc_representation_copy_19
-    RcDup                 Target=62 SourceTemp=60 RuntimeManaged=true
-    StoreLocal            Slot=19 Source=62
-    Jump                  Target=rc_representation_done_20
-  rc_representation_copy_19:
-    CopyOutArena          DestTemp=63 SrcTemp=60 RuntimeManaged=true Purpose=RcNormalization
-    StoreLocal            Slot=19 Source=63
-  rc_representation_done_20:
-    LoadLocal             Target=64 Slot=19
-    SetAdtField           Ptr=59 FieldIndex=0 Source=64 Tagless=true
-    IsReferenceCounted    Target=65 SourceTemp=60
-    JumpIfFalse           CondTemp=65 Target=rc_source_child_in_arena_21
-    RcDrop                SourceTemp=60 TypeName=String RuntimeManaged=true
-  rc_source_child_in_arena_21:
-    StoreLocal            Slot=18 Source=59
-  rc_representation_done_18:
-    LoadLocal             Target=66 Slot=18
-    LoadLocal             Target=67 Slot=8
-    JumpIfFalse           CondTemp=67 Target=rc_tco_drop_inactive_22
-    LoadConstInt          Target=68 Value=0
-    CallKnown             Target=69 FuncLabel=__rcdrop_record_3 EnvTemp=68 ArgTemp=19
-  rc_tco_drop_inactive_22:
+    IsReferenceCounted    Target=64 SourceTemp=17
+    JumpIfFalse           CondTemp=64 Target=rc_representation_copy_18
+    RcDup                 Target=65 SourceTemp=17 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=65
+    Jump                  Target=rc_representation_done_19
+  rc_representation_copy_18:
+    CopyOutArena          DestTemp=68 SrcTemp=17 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=69 Ptr=17 FieldIndex=0 Tagless=true
+    IsReferenceCounted    Target=70 SourceTemp=69
+    JumpIfFalse           CondTemp=70 Target=rc_representation_copy_20
+    RcDup                 Target=71 SourceTemp=69 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=71
+    Jump                  Target=rc_representation_done_21
+  rc_representation_copy_20:
+    CopyOutArena          DestTemp=72 SrcTemp=69 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=19 Source=72
+  rc_representation_done_21:
+    LoadLocal             Target=73 Slot=19
+    SetAdtField           Ptr=68 FieldIndex=0 Source=73 Tagless=true
+    IsReferenceCounted    Target=74 SourceTemp=69
+    JumpIfFalse           CondTemp=74 Target=rc_source_child_in_arena_22
+    RcDrop                SourceTemp=69 TypeName=String RuntimeManaged=true
+  rc_source_child_in_arena_22:
+    StoreLocal            Slot=18 Source=68
+  rc_representation_done_19:
+    LoadLocal             Target=75 Slot=18
+    LoadLocal             Target=76 Slot=8
+    JumpIfFalse           CondTemp=76 Target=rc_tco_drop_inactive_23
+    LoadConstInt          Target=77 Value=0
+    CallKnown             Target=78 FuncLabel=__rcdrop_record_3 EnvTemp=77 ArgTemp=19
+  rc_tco_drop_inactive_23:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=17
-    LoadConstInt          Target=70 Value=0
-    StoreLocal            Slot=6 Source=70
-    StoreLocal            Slot=7 Source=70
-    StoreLocal            Slot=1 Source=66
-    LoadConstInt          Target=71 Value=1
-    StoreLocal            Slot=8 Source=71
+    LoadConstInt          Target=79 Value=0
+    StoreLocal            Slot=6 Source=79
+    StoreLocal            Slot=7 Source=79
+    StoreLocal            Slot=1 Source=75
+    LoadConstInt          Target=80 Value=1
+    StoreLocal            Slot=8 Source=80
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=17
     RestoreStackPointer   Slot=11   (tco_owned_child_record_accumulator.ash:14:10)
     Jump                  Target=lambda_1_body   (tco_owned_child_record_accumulator.ash:14:10)
@@ -176,30 +176,42 @@ function lambda_1  [ClosureHelper from step]
     StoreLocal            Slot=15 Source=39   (tco_owned_child_record_accumulator.ash:11:1)
   rc_representation_done_11:
     LoadLocal             Target=40 Slot=15   (tco_owned_child_record_accumulator.ash:11:1)
-    LoadLocal             Target=41 Slot=1   (tco_owned_child_record_accumulator.ash:11:1)
-    LoadLocal             Target=42 Slot=8   (tco_owned_child_record_accumulator.ash:11:1)
-    JumpIfFalse           CondTemp=42 Target=rc_tco_exit_drop_inactive_12   (tco_owned_child_record_accumulator.ash:11:1)
-    LoadConstInt          Target=43 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
-    CallKnown             Target=44 FuncLabel=__rcdrop_record_3 EnvTemp=43 ArgTemp=41   (tco_owned_child_record_accumulator.ash:11:1)
-  rc_tco_exit_drop_inactive_12:
-    LoadArgumentOwnership Target=45   (tco_owned_child_record_accumulator.ash:11:1)
-    LoadConstInt          Target=46 Value=1   (tco_owned_child_record_accumulator.ash:11:1)
-    ShrInt                Target=47 Left=45 Right=46   (tco_owned_child_record_accumulator.ash:11:1)
-    AndInt                Target=48 Left=47 Right=46   (tco_owned_child_record_accumulator.ash:11:1)
-    JumpIfFalse           CondTemp=48 Target=rc_result_owned_14   (tco_owned_child_record_accumulator.ash:11:1)
-    Alloc                 Target=49 SizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
-    MakeClosure           Target=50 FuncLabel=__deepcopy_4 EnvPtrTemp=49 EnvSizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
-    StoreMemOffset        BasePtr=49 OffsetBytes=0 Source=50   (tco_owned_child_record_accumulator.ash:11:1)
-    CallClosure           Target=51 ClosureTemp=50 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadArgumentOwnership Target=41   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=42 Value=2   (tco_owned_child_record_accumulator.ash:11:1)
+    ShrInt                Target=43 Left=41 Right=42   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=44 Value=1   (tco_owned_child_record_accumulator.ash:11:1)
+    AndInt                Target=45 Left=43 Right=44   (tco_owned_child_record_accumulator.ash:11:1)
+    JumpIfFalse           CondTemp=45 Target=independent_result_not_requested_12   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadArgumentOwnership Target=46   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=47 Value=-8   (tco_owned_child_record_accumulator.ash:11:1)
+    AndInt                Target=48 Left=46 Right=47   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=49 Value=2305843009213693952   (tco_owned_child_record_accumulator.ash:11:1)
+    StoreMemOffset        BasePtr=48 OffsetBytes=0 Source=49   (tco_owned_child_record_accumulator.ash:11:1)
+  independent_result_not_requested_12:
+    LoadLocal             Target=50 Slot=1   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadLocal             Target=51 Slot=8   (tco_owned_child_record_accumulator.ash:11:1)
+    JumpIfFalse           CondTemp=51 Target=rc_tco_exit_drop_inactive_13   (tco_owned_child_record_accumulator.ash:11:1)
     LoadConstInt          Target=52 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
-    CallKnown             Target=53 FuncLabel=__rcdrop_record_3 EnvTemp=52 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
-    StoreLocal            Slot=16 Source=51   (tco_owned_child_record_accumulator.ash:11:1)
-    Jump                  Target=rc_result_done_15   (tco_owned_child_record_accumulator.ash:11:1)
-  rc_result_owned_14:
+    CallKnown             Target=53 FuncLabel=__rcdrop_record_3 EnvTemp=52 ArgTemp=50   (tco_owned_child_record_accumulator.ash:11:1)
+  rc_tco_exit_drop_inactive_13:
+    LoadArgumentOwnership Target=54   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=55 Value=1   (tco_owned_child_record_accumulator.ash:11:1)
+    ShrInt                Target=56 Left=54 Right=55   (tco_owned_child_record_accumulator.ash:11:1)
+    AndInt                Target=57 Left=56 Right=55   (tco_owned_child_record_accumulator.ash:11:1)
+    JumpIfFalse           CondTemp=57 Target=rc_result_owned_15   (tco_owned_child_record_accumulator.ash:11:1)
+    Alloc                 Target=58 SizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
+    MakeClosure           Target=59 FuncLabel=__deepcopy_4 EnvPtrTemp=58 EnvSizeBytes=8   (tco_owned_child_record_accumulator.ash:11:1)
+    StoreMemOffset        BasePtr=58 OffsetBytes=0 Source=59   (tco_owned_child_record_accumulator.ash:11:1)
+    CallClosure           Target=60 ClosureTemp=59 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
+    LoadConstInt          Target=61 Value=0   (tco_owned_child_record_accumulator.ash:11:1)
+    CallKnown             Target=62 FuncLabel=__rcdrop_record_3 EnvTemp=61 ArgTemp=40   (tco_owned_child_record_accumulator.ash:11:1)
+    StoreLocal            Slot=16 Source=60   (tco_owned_child_record_accumulator.ash:11:1)
+    Jump                  Target=rc_result_done_16   (tco_owned_child_record_accumulator.ash:11:1)
+  rc_result_owned_15:
     StoreLocal            Slot=16 Source=40   (tco_owned_child_record_accumulator.ash:11:1)
-  rc_result_done_15:
-    LoadLocal             Target=54 Slot=16   (tco_owned_child_record_accumulator.ash:11:1)
-    Return                Source=54   (tco_owned_child_record_accumulator.ash:11:1)
+  rc_result_done_16:
+    LoadLocal             Target=63 Slot=16   (tco_owned_child_record_accumulator.ash:11:1)
+    Return                Source=63   (tco_owned_child_record_accumulator.ash:11:1)
 
 function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from step]
   locals=2 temps=4
@@ -257,12 +269,12 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=21 Slot=6
     LoadConstInt          Target=22 Value=0
     CmpIntNe              Target=23 Left=21 Right=22
-    JumpIfFalse           CondTemp=23 Target=general_rc_owned_absent_16
+    JumpIfFalse           CondTemp=23 Target=general_rc_owned_absent_17
     IsReferenceCounted    Target=24 SourceTemp=21
-    JumpIfFalse           CondTemp=24 Target=general_rc_owned_absent_16
+    JumpIfFalse           CondTemp=24 Target=general_rc_owned_absent_17
     LoadConstInt          Target=25 Value=0
     CallKnown             Target=26 FuncLabel=__rcdrop_record_3 EnvTemp=25 ArgTemp=21
     StoreLocal            Slot=6 Source=22
-  general_rc_owned_absent_16:
+  general_rc_owned_absent_17:
     Return                Source=20
 

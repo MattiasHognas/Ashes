@@ -36,6 +36,7 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Rc.emitRuntimeRcDrop
+import AshesCompiler.Backend.IrCodegen.Rc.emitRuntimeRcDup
 import Ashes.Number.UInt
 export (
     type ArenaRuntime(..),
@@ -820,10 +821,10 @@ let emitAddToSlot builder i64 slot amount name =
     buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(slot)(name + "_old"))(amount)(name + "_new"))(slot)
 
 // A cons-chain walk: the head block loads the current cell from `currentSlot` and exits to
-// `doneBlock` on nil; otherwise `body(cell)` runs (it may branch internally as long as it leaves
-// the builder in an open block), the tail word replaces the current cell, and the walk loops.
-// Leaves the builder at the end of `doneBlock`.
-let emitListWalk context function_ builder i64 i8 ptrType currentSlot doneBlock prefix body =
+// `doneBlock` where `atEnd(cell)` holds; otherwise `body(cell)` runs (it may branch internally as
+// long as it leaves the builder in an open block), the tail word replaces the current cell, and the
+// walk loops. Leaves the builder at the end of `doneBlock`.
+let emitListWalk context function_ builder i64 i8 ptrType currentSlot doneBlock prefix atEnd body =
     match (appendBasicBlock(context)(function_)(prefix + "_head"), appendBasicBlock(context)(function_)(prefix + "_body")) with
         | (headBlock, bodyBlock) ->
             Unit
@@ -833,7 +834,7 @@ let emitListWalk context function_ builder i64 i8 ptrType currentSlot doneBlock 
             |> (given (cell) ->
                 Unit
                 |> (given (_) ->
-                    buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(cell)(arenaConst(i64)(0))(prefix + "_nil"))(doneBlock)(bodyBlock))
+                    buildCondBr(builder)(atEnd(cell)(prefix))(doneBlock)(bodyBlock))
                 |> (given (_) -> positionBuilderAtEnd(builder)(bodyBlock))
                 |> (given (_) -> body(cell))
                 |> (given (_) ->
@@ -841,15 +842,23 @@ let emitListWalk context function_ builder i64 i8 ptrType currentSlot doneBlock 
                 |> (given (_) -> buildBr(builder)(headBlock)))
             |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
 
-// Count phase: walks the source chain, leaving the cell count in `listCountSlot` and returning it.
-let emitCopyOutListCount context function_ builder i64 i8 ptrType (state: CopyOutListState) =
+// Where a walk over the source chain stops: the empty list, or, for a reference-counted copy, the
+// first reference-counted cell. A reference-counted cell never points into the arena, so the chain
+// from there on is already owned by reference counts and is shared rather than copied again, which
+// would make a loop that conses onto such a list quadratic (stage 0's `EmitCopyOutListWalkEnd`).
+let copyOutListWalkEnd builder i64 isReferenceCounted (state: CopyOutListState) cell prefix =
+    buildOr(builder)(buildICmp(builder)(intPredicateEq)(cell)(arenaConst(i64)(0))(prefix + "_nil"))(buildAnd(builder)(buildICmp(builder)(intPredicateNe)(state.listManaged)(arenaConst(i64)(0))(prefix + "_managed"))(buildICmp(builder)(intPredicateNe)(isReferenceCounted(prefix + "_rc")(cell))(arenaConst(i64)(0))(prefix + "_rc_flag"))(prefix + "_shared"))(prefix + "_end")
+
+// Count phase: walks the source chain up to its end (`copyOutListWalkEnd`), leaving the cell count
+// in `listCountSlot` and `listCurrentSlot` at the cell the walk stopped at, and returning the count.
+let emitCopyOutListCount context function_ builder i64 i8 ptrType atEnd (state: CopyOutListState) =
     "copy_list_count_done"
     |> appendBasicBlock(context)(function_)
     |> (given (doneBlock) ->
         Unit
         |> (given (_) -> buildStore(builder)(state.listSrc)(state.listCurrentSlot))
         |> (given (_) ->
-            emitListWalk(context)(function_)(builder)(i64)(i8)(ptrType)(state.listCurrentSlot)(doneBlock)("copy_list_count")(given (_cell) ->
+            emitListWalk(context)(function_)(builder)(i64)(i8)(ptrType)(state.listCurrentSlot)(doneBlock)("copy_list_count")(atEnd)(given (_cell) ->
                 emitAddToSlot(builder)(i64)(state.listCountSlot)(arenaConst(i64)(1))("copy_list_count")))
         |> (given (_) -> buildLoad(builder)(i64)(state.listCountSlot)("copy_list_total_cells")))
 
@@ -858,7 +867,7 @@ let emitCopyOutListCount context function_ builder i64 i8 ptrType (state: CopyOu
 // each string completely into that scratch space before any destination allocation could
 // overwrite it; caching only the pointers would not survive an earlier destination cell landing
 // on a later source string.
-let emitCopyOutListStringBytes context function_ builder i64 i8 ptrType (state: CopyOutListState) =
+let emitCopyOutListStringBytes context function_ builder i64 i8 ptrType atEnd (state: CopyOutListState) =
     match (appendBasicBlock(context)(function_)("copy_list_string_sum"), appendBasicBlock(context)(function_)("copy_list_string_sum_done")) with
         | (sumBlock, doneBlock) ->
             Unit
@@ -867,7 +876,7 @@ let emitCopyOutListStringBytes context function_ builder i64 i8 ptrType (state: 
             |> (given (_) -> positionBuilderAtEnd(builder)(sumBlock))
             |> (given (_) -> buildStore(builder)(state.listSrc)(state.listCurrentSlot))
             |> (given (_) ->
-                emitListWalk(context)(function_)(builder)(i64)(i8)(ptrType)(state.listCurrentSlot)(doneBlock)("copy_list_string_sum")(given (cell) ->
+                emitListWalk(context)(function_)(builder)(i64)(i8)(ptrType)(state.listCurrentSlot)(doneBlock)("copy_list_string_sum")(atEnd)(given (cell) ->
                     "copy_list_string_head"
                     |> loadWordAt(builder)(i64)(i8)(ptrType)(cell)(0)
                     |> (given (head) -> emitStringLengthValue(builder)(i64)(ptrType)(head)("copy_list_string_len"))
@@ -924,7 +933,7 @@ let emitCopyOutListCacheCell context function_ builder i64 i8 ptrType memcpyFn m
 // Cache phase: `malloc`s `8 * cells + stringBytes` scratch bytes and walks the source chain once
 // more, caching every head (see `emitCopyOutListCacheCell`). Returns the scratch buffer; nothing
 // reads a source cell after this phase.
-let emitCopyOutListCache context function_ builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType (state: CopyOutListState) totalCells =
+let emitCopyOutListCache context function_ builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType atEnd (state: CopyOutListState) totalCells =
     "copy_list_head_words"
     |> buildMul(builder)(totalCells)(arenaConst(i64)(8))
     |> (given (headWords) ->
@@ -941,7 +950,7 @@ let emitCopyOutListCache context function_ builder i64 i8 ptrType mallocFn mallo
                     buildStore(builder)(arenaConst(i64)(0))(state.listIndexSlot))
                 |> (given (_) -> buildStore(builder)(headWords)(state.listOffsetSlot))
                 |> (given (_) ->
-                    emitListWalk(context)(function_)(builder)(i64)(i8)(ptrType)(state.listCurrentSlot)(doneBlock)("copy_list_cache")(given (cell) -> emitCopyOutListCacheCell(context)(function_)(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(state)(headBuf)(cell)))
+                    emitListWalk(context)(function_)(builder)(i64)(i8)(ptrType)(state.listCurrentSlot)(doneBlock)("copy_list_cache")(atEnd)(given (cell) -> emitCopyOutListCacheCell(context)(function_)(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(state)(headBuf)(cell)))
                 |> (given (_) -> headBuf))))
 
 // A destination cell for cached head `index`: the head copied per the head kind first, then a
@@ -994,9 +1003,26 @@ let emitCopyOutListBuild context function_ builder i64 i8 ptrType (copyOut: Copy
                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                 |> (given (_) -> firstCell))
 
+// The copied prefix's last cell (left in `listPrevSlot` by the build phase) takes a reference to the
+// shared reference-counted suffix the count walk stopped at, when there is one.
+let emitCopyOutListLinkSharedSuffix context function_ builder i64 i8 ptrType (state: CopyOutListState) stopCell =
+    match (appendBasicBlock(context)(function_)("copy_list_link_shared"), appendBasicBlock(context)(function_)("copy_list_linked_shared")) with
+        | (linkBlock, linkedBlock) ->
+            Unit
+            |> (given (_) ->
+                buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(stopCell)(arenaConst(i64)(0))("copy_list_has_shared"))(linkBlock)(linkedBlock))
+            |> (given (_) -> positionBuilderAtEnd(builder)(linkBlock))
+            |> (given (_) ->
+                storeWordAt(builder)(i64)(i8)(ptrType)(buildLoad(builder)(i64)(state.listPrevSlot)("copy_list_last_cell"))(8)(emitRuntimeRcDup(context)(function_)(i64)(i8)(ptrType)(builder)(stopCell))("copy_list_store_shared_tail"))
+            |> (given (_) -> buildBr(builder)(linkedBlock))
+            |> (given (_) -> positionBuilderAtEnd(builder)(linkedBlock))
+
 // `i64 __ashes_copy_out_list(i64 src, i64 kind, i64 managed)`: a nil list returns nil; otherwise
-// the count, cache, and build phases above run in order and the scratch buffer is freed.
-let emitCopyOutListBody context builder i64 i8 ptrType (copyOut: CopyOutRuntime) mallocFn mallocType freeFn freeType memcpyFn memcpyType =
+// the count, cache, and build phases above run in order and the scratch buffer is freed. A
+// reference-counted copy copies only the cells before the first reference-counted one and links
+// the copy to that shared suffix; a chain that is reference-counted from its first cell is
+// retained and returned as it is.
+let emitCopyOutListBody context builder i64 i8 ptrType (copyOut: CopyOutRuntime) mallocFn mallocType freeFn freeType memcpyFn memcpyType isReferenceCounted =
     ((given (function_) ->
         Unit
         |> (given (_) ->
@@ -1005,33 +1031,47 @@ let emitCopyOutListBody context builder i64 i8 ptrType (copyOut: CopyOutRuntime)
             |> positionBuilderAtEnd(builder))
         |> (given (_) -> createCopyOutListState(builder)(i64)(function_))
         |> (given (state) ->
-            match (appendBasicBlock(context)(function_)("copy_list_nil"), appendBasicBlock(context)(function_)("copy_list_count")) with
-                | (nilBlock, countBlock) ->
-                    Unit
-                    |> (given (_) ->
-                        buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(state.listSrc)(arenaConst(i64)(0))("copy_list_src_nil"))(nilBlock)(countBlock))
-                    |> (given (_) -> positionBuilderAtEnd(builder)(nilBlock))
-                    |> (given (_) ->
-                        0
-                        |> arenaConst(i64)
-                        |> buildRet(builder))
-                    |> (given (_) -> positionBuilderAtEnd(builder)(countBlock))
-                    |> (given (_) -> emitCopyOutListCount(context)(function_)(builder)(i64)(i8)(ptrType)(state))
-                    |> (given (totalCells) ->
+            let atEnd = copyOutListWalkEnd(builder)(i64)(isReferenceCounted)(state)
+            in
+                match (appendBasicBlock(context)(function_)("copy_list_nil"), appendBasicBlock(context)(function_)("copy_list_count"), appendBasicBlock(context)(function_)("copy_list_share_whole"), appendBasicBlock(context)(function_)("copy_list_copy_prefix")) with
+                    | (nilBlock, countBlock, shareBlock, copyBlock) ->
                         Unit
-                        |> (given (_) -> emitCopyOutListStringBytes(context)(function_)(builder)(i64)(i8)(ptrType)(state))
-                        |> (given (_) -> emitCopyOutListCache(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(state)(totalCells))
-                        |> (given (headBuf) ->
-                            totalCells
-                            |> emitCopyOutListBuild(context)(function_)(builder)(i64)(i8)(ptrType)(copyOut)(state)(headBuf)
-                            |> (given (firstCell) ->
+                        |> (given (_) ->
+                            buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(state.listSrc)(arenaConst(i64)(0))("copy_list_src_nil"))(nilBlock)(countBlock))
+                        |> (given (_) -> positionBuilderAtEnd(builder)(nilBlock))
+                        |> (given (_) ->
+                            0
+                            |> arenaConst(i64)
+                            |> buildRet(builder))
+                        |> (given (_) -> positionBuilderAtEnd(builder)(countBlock))
+                        |> (given (_) -> emitCopyOutListCount(context)(function_)(builder)(i64)(i8)(ptrType)(atEnd)(state))
+                        |> (given (totalCells) ->
+                            "copy_list_stop_cell"
+                            |> buildLoad(builder)(i64)(state.listCurrentSlot)
+                            |> (given (stopCell) ->
                                 Unit
-                                |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headBuf])(1u32)(""))
-                                |> (given (_) -> buildRet(builder)(firstCell))))))))(copyOut.copyOutListFn)
+                                |> (given (_) ->
+                                    buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(totalCells)(arenaConst(i64)(0))("copy_list_nothing_to_copy"))(shareBlock)(copyBlock))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(shareBlock))
+                                |> (given (_) ->
+                                    state.listSrc
+                                    |> emitRuntimeRcDup(context)(function_)(i64)(i8)(ptrType)(builder)
+                                    |> buildRet(builder))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(copyBlock))
+                                |> (given (_) -> emitCopyOutListStringBytes(context)(function_)(builder)(i64)(i8)(ptrType)(atEnd)(state))
+                                |> (given (_) -> emitCopyOutListCache(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(atEnd)(state)(totalCells))
+                                |> (given (headBuf) ->
+                                    totalCells
+                                    |> emitCopyOutListBuild(context)(function_)(builder)(i64)(i8)(ptrType)(copyOut)(state)(headBuf)
+                                    |> (given (firstCell) ->
+                                        Unit
+                                        |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headBuf])(1u32)(""))
+                                        |> (given (_) -> emitCopyOutListLinkSharedSuffix(context)(function_)(builder)(i64)(i8)(ptrType)(state)(stopCell))
+                                        |> (given (_) -> buildRet(builder)(firstCell)))))))))(copyOut.copyOutListFn)
 
 // Declares the copy-out helper functions in `module_` and emits their bodies against `arena`;
 // they reach libc's `malloc`/`free`/`memcpy` through the handles passed in.
-let defineCopyOutRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType freeFn freeType memcpyFn memcpyType =
+let defineCopyOutRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntime) mallocFn mallocType freeFn freeType memcpyFn memcpyType isReferenceCounted =
     match (functionType(voidType(context))([ptrType, ptrType, i64])(3u32)(false), functionType(i64)([i64])(1u32)(false), functionType(i64)([i64, i64])(2u32)(false), functionType(i64)([i64, i64, i64])(3u32)(false)) with
         | (moveType, oneWordType, twoWordType, threeWordType) ->
             ((given (copyOut) ->
@@ -1042,7 +1082,7 @@ let defineCopyOutRuntime module_ context builder i64 i8 ptrType (arena: ArenaRun
                 |> (given (_) -> emitCopyOutBigIntBody(context)(builder)(i64)(i8)(ptrType)(arena)(copyOut)(mallocFn)(mallocType))
                 |> (given (_) -> emitCopyOutCellBody(context)(builder)(i64)(i8)(arena)(copyOut)(mallocFn)(mallocType))
                 |> (given (_) -> emitCopyOutListHeadBody(context)(builder)(i64)(copyOut))
-                |> (given (_) -> emitCopyOutListBody(context)(builder)(i64)(i8)(ptrType)(copyOut)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType))
+                |> (given (_) -> emitCopyOutListBody(context)(builder)(i64)(i8)(ptrType)(copyOut)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(isReferenceCounted))
                 |> (given (_) -> copyOut)))(CopyOutRuntime(
                 moveBytesFn = addInternalFunction(module_)("__ashes_move_bytes")(moveType),
                 moveBytesType = moveType,
@@ -1065,7 +1105,7 @@ let withCopyOutRuntime (arena: ArenaRuntime) copyOut = arena with arenaCopyOut =
 // Creates the two arena globals, the failure message, and the grow/reclaim helpers in `module_`,
 // emitting the helper bodies with `builder` (repositioned by the caller afterwards); the copy-out
 // helpers join them only when `usesCopyOut` says the program's IR needs them.
-let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut mallocFn mallocType freeFn freeType memcpyFn memcpyType =
+let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut mallocFn mallocType freeFn freeType memcpyFn memcpyType isReferenceCounted =
     match (functionType(voidType(context))([i64])(1u32)(false), functionType(voidType(context))([i64, i64])(2u32)(false), functionType(ptrType)([])(0u32)(false), functionType(voidType(context))([ptrType])(1u32)(false)) with
         | (growType, reclaimType, stackSaveType, stackRestoreType) ->
             ((given (arena) ->
@@ -1075,8 +1115,8 @@ let defineArenaRuntime module_ context builder i64 i8 ptrType usesCopyOut malloc
                 |> (given (_) ->
                     if usesCopyOut
                     then
-                        memcpyType
-                        |> defineCopyOutRuntime(module_)(context)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)
+                        isReferenceCounted
+                        |> defineCopyOutRuntime(module_)(context)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)
                         |> withCopyOutRuntime(arena)
                     else arena)))(ArenaRuntime(
                 arenaCursorGlobal = addZeroWordGlobal(module_)(i64)("__ashes_heap_cursor"),

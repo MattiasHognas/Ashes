@@ -136,7 +136,8 @@ public sealed partial class Lowering
     // Branches names the match arms and if branches the slot was stored inside, outermost first.
     // Binders are the source names bound to the value or to its parts (the let it is bound by, the
     // pattern bindings of a match on it), shared between the slot and its predecessor slot.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null);
+    // Origin, on a predecessor, is the owned slot whose earlier value it holds.
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -249,11 +250,11 @@ public sealed partial class Lowering
         return predecessorSlot;
     }
 
-    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type, HashSet<string>? binders = null)
+    private void RegisterGeneralRcOwnedPredecessor(int predecessorSlot, TypeRef type, HashSet<string>? binders = null, int origin = -1)
     {
         if (predecessorSlot >= 0)
         {
-            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches], Binders: binders));
+            _generalRcOwnedSlots.Add(new GeneralRcOwnedSlot(predecessorSlot, type, _tcoCtx ?? _generalRcBackEdgeLoop, Predecessor: true, Branches: [.. _generalRcBranches], Binders: binders, Origin: origin));
         }
     }
 
@@ -368,6 +369,21 @@ public sealed partial class Lowering
     // loop's exit that follows releases its parameters instead of transferring one as the result.
     private int _generalRcIndependentResultTemp = -1;
 
+    // The result temp of the function being finished that reads its entry-normalized parameter: the
+    // entry adopted or copied that value, so the function owns it and its return hands it over as it
+    // is, where a borrowed parameter's read would be retained.
+    private int _generalRcOwnedParameterResultTemp = -1;
+
+    private static bool OwnedParameterResultRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_OWNEDPARAMRESULT") is null;
+
+    private int TakeOwnedParameterResultTemp()
+    {
+        int temp = _generalRcOwnedParameterResultTemp;
+        _generalRcOwnedParameterResultTemp = -1;
+        return temp;
+    }
+
     /// <summary>
     /// Marks every closure over a function that normalizes its result at its return, once the whole
     /// program is lowered (a recursive function's own closure is built before its body is done), so
@@ -462,6 +478,77 @@ public sealed partial class Lowering
         _generalRcBackEdgeArgumentPartSlots[pendingId] = argumentTemps
             .Select(temp => OwnedSlotReadInto(temp, loopSlots, parts: true))
             .ToArray();
+        _generalRcBackEdgeHandedOnPredecessors[pendingId] = loopSlots
+            .Where(owned => owned.Predecessor && OnlyHandedToOwnedResults(owned, loopSlots))
+            .Select(owned => owned.Slot)
+            .ToHashSet();
+    }
+
+    // Per back edge, the earlier iteration's values whose only use is to be handed to calls.
+    private readonly Dictionary<int, HashSet<int>> _generalRcBackEdgeHandedOnPredecessors = [];
+
+    // Whether the value an earlier iteration left in a predecessor's slot was never bound to a name
+    // and every read of it is the argument of a call whose result is kept in an owned slot (a step
+    // of a pipeline): no successor can hold a part of it but through such a result, which holds
+    // references of its own. Reads by the slot's own release and by the save into its predecessor
+    // are no uses.
+    private bool OnlyHandedToOwnedResults(GeneralRcOwnedSlot predecessor, List<GeneralRcOwnedSlot> loopSlots)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_HANDEDONPREDECESSOR") is not null
+            || predecessor.Origin < 0
+            || predecessor.Binders is not { Count: 0 })
+        {
+            return false;
+        }
+
+        HashSet<int> ownedResultSlots = loopSlots.Where(owned => !owned.Predecessor).Select(owned => owned.Slot).ToHashSet();
+        HashSet<int> savedInto = loopSlots.Where(owned => owned.Predecessor && owned.Origin == predecessor.Origin).Select(owned => owned.Slot).ToHashSet();
+        if (HandedOnCallTargets(predecessor.Origin, savedInto) is not { Count: > 0 } callTargets)
+        {
+            return false;
+        }
+
+        foreach (IrInst inst in _inst)
+        {
+            if (inst is IrInst.StoreLocal store && callTargets.Contains(store.Source) && ownedResultSlots.Contains(store.Slot))
+            {
+                callTargets.Remove(store.Source);
+            }
+        }
+
+        return callTargets.Count == 0;
+    }
+
+    // The results of the calls an owned slot's value is the argument of, or null when it is read
+    // any other way.
+    private HashSet<int>? HandedOnCallTargets(int slot, HashSet<int> savedInto)
+    {
+        HashSet<int> reads = _inst.OfType<IrInst.LoadLocal>().Where(load => load.Slot == slot).Select(load => load.Target).ToHashSet();
+        HashSet<int> callTargets = [];
+        foreach (IrInst inst in _inst)
+        {
+            foreach (int used in StateMachineTransform.GetUsedTemps(inst).Where(reads.Contains))
+            {
+                switch (inst)
+                {
+                    case IrInst.StoreLocal store when savedInto.Contains(store.Slot):
+                    case IrInst.CmpIntNe:
+                    case IrInst.IsReferenceCounted:
+                    case IrInst.CallKnown dropCall when dropCall.FuncLabel.StartsWith("__rcdrop", StringComparison.Ordinal):
+                        break;
+                    case IrInst.CallClosure call when call.ArgTemp == used && call.ClosureTemp != used && call.RuntimeManagedArgumentFlagTemp != used:
+                        callTargets.Add(call.Target);
+                        break;
+                    case IrInst.CallKnown call when call.ArgTemp == used && call.EnvTemp != used && call.RuntimeManagedArgumentFlagTemp != used:
+                        callTargets.Add(call.Target);
+                        break;
+                    default:
+                        return null;
+                }
+            }
+        }
+
+        return callTargets;
     }
 
     // Per back edge, the owned slot each successor argument is a plain read of, or -1; and the owned
@@ -601,26 +688,103 @@ public sealed partial class Lowering
             return false;
         }
 
-        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 256; i--)
+        int index = DefinitionIndexOf(temp);
+        return index >= 0 && _inst[index] switch
         {
-            switch (_inst[i])
+            IrInst.LoadLocal load => tco.ParamSlots.Contains(load.Slot) || IsLoopParameterPartSlot(load.Slot),
+            IrInst.LoadMemOffset field => IsLoopParameterDerivedTemp(
+                tco,
+                TryGetLocalAggregateFieldSource(field.BasePtr, field.OffsetBytes, index, out int storedTemp) ? storedTemp : field.BasePtr,
+                depth + 1),
+            IrInst.GetAdtField field => IsLoopParameterDerivedTemp(tco, field.Ptr, depth + 1),
+            IrInst.Borrow borrow => IsLoopParameterDerivedTemp(tco, borrow.SourceTemp, depth + 1),
+            _ => false,
+        };
+    }
+
+    // The instruction defining each temp of a function body that a derivation follows (a local
+    // load, a field read, a borrow, an allocation), recorded as the body grows, so a binding is
+    // traced to its parameter however far back the read lies: a window of recent instructions lost
+    // it behind a long earlier match arm, and the back edge then kept an iteration's owned value
+    // that it could release.
+    private sealed class TempDefinitions
+    {
+        public Dictionary<int, IrInst> Definitions { get; } = [];
+        public Dictionary<int, int> Positions { get; } = [];
+        public int Scanned { get; set; }
+    }
+
+    private readonly Dictionary<List<IrInst>, TempDefinitions> _tempDefinitionsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private static bool TempDefinitionsAreTracked
+        => Environment.GetEnvironmentVariable("GRC_NO_FULLDERIVATION") is null;
+
+    // The current position of the instruction defining `temp`, or -1. An instruction spliced in
+    // earlier only moves a definition later, so a recorded position is where the search starts.
+    private int DefinitionIndexOf(int temp)
+    {
+        if (!TempDefinitionsAreTracked)
+        {
+            return DefinitionIndexInWindow(temp);
+        }
+
+        if (!_tempDefinitionsByBody.TryGetValue(_inst, out TempDefinitions? definitions))
+        {
+            definitions = new TempDefinitions();
+            _tempDefinitionsByBody[_inst] = definitions;
+        }
+
+        for (int i = Math.Min(definitions.Scanned, _inst.Count); i < _inst.Count; i++)
+        {
+            if (DerivationTarget(_inst[i]) is int target)
             {
-                case IrInst.LoadLocal load when load.Target == temp:
-                    return tco.ParamSlots.Contains(load.Slot) || IsLoopParameterPartSlot(load.Slot);
-                case IrInst.LoadMemOffset field when field.Target == temp:
-                    return IsLoopParameterDerivedTemp(
-                        tco,
-                        TryGetLocalAggregateFieldSource(field.BasePtr, field.OffsetBytes, i, out int storedTemp) ? storedTemp : field.BasePtr,
-                        depth + 1);
-                case IrInst.GetAdtField field when field.Target == temp:
-                    return IsLoopParameterDerivedTemp(tco, field.Ptr, depth + 1);
-                case IrInst.Borrow borrow when borrow.Target == temp:
-                    return IsLoopParameterDerivedTemp(tco, borrow.SourceTemp, depth + 1);
+                definitions.Definitions[target] = _inst[i];
+                definitions.Positions[target] = i;
             }
         }
 
-        return false;
+        definitions.Scanned = _inst.Count;
+        if (!definitions.Definitions.TryGetValue(temp, out IrInst? definition))
+        {
+            return -1;
+        }
+
+        for (int i = definitions.Positions[temp]; i < _inst.Count; i++)
+        {
+            if (ReferenceEquals(_inst[i], definition))
+            {
+                definitions.Positions[temp] = i;
+                return i;
+            }
+        }
+
+        return -1;
     }
+
+    private int DefinitionIndexInWindow(int temp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 256; i--)
+        {
+            if (DerivationTarget(_inst[i]) == temp)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int? DerivationTarget(IrInst instruction)
+        => instruction switch
+        {
+            IrInst.LoadLocal load => load.Target,
+            IrInst.LoadMemOffset field => field.Target,
+            IrInst.GetAdtField field => field.Target,
+            IrInst.Borrow borrow => borrow.Target,
+            IrInst.Alloc alloc => alloc.Target,
+            _ => null,
+        };
 
     // A read of a field of an aggregate this function built itself (the tuple a `match (a, b) with`
     // scrutinizes) is the value stored into that field: the read stands for the stored temp, so a
@@ -631,6 +795,23 @@ public sealed partial class Lowering
         if (Environment.GetEnvironmentVariable("GRC_NO_TUPLEPARTS") is not null)
         {
             return false;
+        }
+
+        // The aggregate's stores follow its allocation, which may lie far behind the read.
+        if (TempDefinitionsAreTracked
+            && DefinitionIndexOf(aggregateTemp) is var allocation and >= 0
+            && allocation < beforeIndex
+            && _inst[allocation] is IrInst.Alloc)
+        {
+            for (int i = allocation + 1; i < beforeIndex && i <= allocation + 256; i++)
+            {
+                if (_inst[i] is IrInst.StoreMemOffset store && store.BasePtr == aggregateTemp && store.OffsetBytes == offsetBytes)
+                {
+                    storedTemp = store.Source;
+                }
+            }
+
+            return storedTemp >= 0;
         }
 
         for (int i = beforeIndex - 1; i >= 0 && i >= beforeIndex - 256; i--)
@@ -833,15 +1014,17 @@ public sealed partial class Lowering
             }
 
             (int MaskTemp, int[] PartTemps) partTemps = LoadHandedOverTupleParts(currentTemp, handedParts);
+            EmitJumpIfWholeResultHandedOver(partTemps.MaskTemp, ownedLabel);
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
             ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
+            ReleaseHandedOverListHeads(callResultType, partTemps.MaskTemp, currentTemp);
 
             Emit(new IrInst.Label(ownedLabel));
         }
 
         Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
         GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
-        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders);
+        RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders, ownedSlot);
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -858,12 +1041,13 @@ public sealed partial class Lowering
     {
         LeaveGeneralRcFunction(label);
         _generalRcIndependentResultTemp = -1;
+        int ownedParameterTemp = TakeOwnedParameterResultTemp();
         if (_generalRcCommittedResultTypes.Remove(label, out TypeRef? committed))
         {
             Unify(bodyType, committed);
         }
 
-        TypeRef pruned = ResolvePhantomResultLayout(label, bodyType);
+        TypeRef pruned = ResolvePhantomNormalizedResultLayout(label, ResolvePhantomResultLayout(label, bodyType));
         _enclosingScopesByLabel.Remove(label);
         if (!GeneralRcEnabled)
         {
@@ -892,7 +1076,7 @@ public sealed partial class Lowering
         // join of a recursive producer's arms carries it while an arm's cells stay in the arena.
         else if (contractResult || (normalizesOwnedResult && !IsRuntimeManagedResultTemp(bodyTemp)))
         {
-            resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain, loopTco);
+            resultTemp = EmitGeneralRcOwnedFunctionResult(bodyTemp, pruned, contractResult, closesProducerChain || bodyTemp == ownedParameterTemp, loopTco);
             _generalRcIndependentResultTemp = resultTemp;
         }
         else if (MovesOwnedPartsIntoTupleResult(bodyTemp, pruned))
@@ -904,31 +1088,42 @@ public sealed partial class Lowering
 
         if (contractResult)
         {
-            _generalRcOwnedResultLabels.Add(label);
+            NoteOwnedContractResult(label);
         }
 
         bool resultIndependent = contractResult || normalizesOwnedResult || CanArenaReset(pruned) || IsRuntimeManagedResultTemp(resultTemp);
         if (resultIndependent || !TryReleaseOwnedSlotsHandingOverTupleParts(label, resultTemp, pruned, loopTco is not null))
         {
-            ReleaseOwnedSlotsBehindResult(resultTemp, resultIndependent);
+            resultTemp = ReleaseOwnedSlotsBehindResult(label, resultTemp, pruned, resultIndependent, loopTco is not null);
         }
 
-        return resultTemp;
+        return HandOverListBuilderHeads(label, resultTemp, pruned);
     }
 
     // A result that holds its own references releases every owned slot behind it. Any other result
     // (a closure, a tuple) may still point into the owned values: only the ones no value flowing
-    // into the result is read from are released, the rest are left to leak. The slots stay
-    // registered: loop back edges are emitted later.
-    private void ReleaseOwnedSlotsBehindResult(int resultTemp, bool resultIndependent)
+    // into the result is read from, or whose type the result's cannot hold, are released, the rest
+    // are left to leak, unless the result is one of them, or a cell wrapping one, and the caller asks
+    // for it. The slots stay registered: loop back edges are emitted later. Returns the temp to
+    // return.
+    private int ReleaseOwnedSlotsBehindResult(string label, int resultTemp, TypeRef resultType, bool resultIndependent, bool inLoop)
     {
         if (resultIndependent)
         {
             EmitGeneralRcOwnedSlotDrops(_generalRcOwnedSlots);
-            return;
+            return resultTemp;
         }
 
-        EmitGeneralRcOwnedSlotDrops(OwnedSlotsOutOfResultReach(resultTemp, _generalRcOwnedSlots));
+        List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
+        ReleaseOwnedSlotsBehindIndependentForwardedResult(resultTemp, resultType, releasable, inLoop);
+        int handedTemp = TryHandOverOwnedResultWhole(label, resultTemp, resultType, releasable, inLoop);
+        if (handedTemp >= 0)
+        {
+            return handedTemp;
+        }
+
+        EmitGeneralRcOwnedSlotDrops(releasable);
+        return resultTemp;
     }
 
     // A type variable of a function's result that is quantified by the function's scheme and occurs
@@ -1009,15 +1204,47 @@ public sealed partial class Lowering
             return pruned;
         }
 
+        TypeRef? substituted = SubstitutePhantomResultVariables(label, pruned);
+        return substituted is null ? pruned : ContractLayoutOrSelf(substituted, pruned);
+    }
+
+    private static bool PhantomNormalizedResultRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_PHANTOMNORMALIZED") is null;
+
+    // A result outside the contract's types whose phantoms, read as `Never`, leave a type the
+    // reference-counted heap can own outright or the arena can copy out (a `Result(e, List(Int))`
+    // only `Ok` builds) is normalized as that type, so the owned values its cells were read out of
+    // are released behind it. The reading is taken at the return, where it also decides whether the
+    // function returns a reference-counted result, which its callers take as such.
+    private TypeRef ResolvePhantomNormalizedResultLayout(string label, TypeRef layout)
+    {
+        if (!PhantomNormalizedResultRuleEnabled
+            || layout is TypeRef.TFun
+            || !_letBoundFunctionLabels.Contains(label)
+            || !ContainsUnresolvedLayoutType(layout, [])
+            || SubstitutePhantomResultVariables(label, layout) is not TypeRef substituted
+            || ContainsUnresolvedLayoutType(substituted, []))
+        {
+            return layout;
+        }
+
+        return !CanArenaReset(substituted) && (CanNormalizeIntoOwnedRuntimeValue(substituted) || HasFixedArenaCopyOut(substituted))
+            ? substituted
+            : layout;
+    }
+
+    // The result type with its phantoms read as `Never`; null when it has none.
+    private TypeRef? SubstitutePhantomResultVariables(string label, TypeRef pruned)
+    {
         HashSet<int> phantoms = [];
         FtvType(pruned, phantoms);
         if (phantoms.Count == 0)
         {
-            return pruned;
+            return null;
         }
 
         phantoms.ExceptWith(VariablesHeldBesideFunction(label));
-        return phantoms.Count == 0 ? pruned : ContractLayoutOrSelf(SubstitutePhantomVariables(pruned, phantoms), pruned);
+        return phantoms.Count == 0 ? null : SubstitutePhantomVariables(pruned, phantoms);
     }
 
     private HashSet<int> VariablesHeldBesideFunction(string label)
@@ -1400,15 +1627,17 @@ public sealed partial class Lowering
     // self call (it holds nothing newer than the loop's entry), an expression naming neither the
     // value's binders nor a parameter that may hold a part of it, or of a type that cannot hold its
     // parts. A parameter handed on unchanged at this edge alone may be that very value, so it counts
-    // only by its type.
+    // only by its type. A value no name was bound to and only ever handed to calls whose results are
+    // owned is out of every successor's reach.
     private void EmitGeneralRcPredecessorDrops(PendingTcoReset info, List<GeneralRcOwnedSlot> predecessors, bool successorsNormalized)
     {
         int[] argumentSlots = _generalRcBackEdgeArgumentPartSlots.GetValueOrDefault(_generalRcBackEdgeId, []);
         foreach (GeneralRcOwnedSlot predecessor in predecessors)
         {
             List<TypeRef> parts = PredecessorPartTypes(predecessor.Type);
+            HashSet<int> handedOn = _generalRcBackEdgeHandedOnPredecessors.GetValueOrDefault(_generalRcBackEdgeId, []);
             bool[] unnamed = SuccessorsNamingNoPartOf(info, predecessor, successorsNormalized);
-            bool unreachable = Enumerable.Range(0, info.ArgTypes.Length).All(index =>
+            bool unreachable = handedOn.Contains(predecessor.Slot) || Enumerable.Range(0, info.ArgTypes.Length).All(index =>
                 CanArenaReset(Prune(info.ArgTypes[index]))
                 || (index < argumentSlots.Length && argumentSlots[index] >= 0)
                 || SuccessorPredatesTheLoop(info, index)

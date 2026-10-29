@@ -685,7 +685,7 @@ let expectInferredConstraintCanonicalization unit =
         let value =
             ExprLambda("left")(ExprLambda("right")(body)(None))(None)
         in
-            let binding = LetBindingSyntax(name = "ordered", value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
+            let binding = LetBindingSyntax(name = "ordered", value = value, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
             in
                 match inferProgram(
                     ProgramSyntax(items = [TopLevelTrait(ordDeclaration), TopLevelTrait(eqDeclaration), TopLevelLet(
@@ -728,7 +728,7 @@ let expectValidWrittenBindingRequirement unit =
     (let binding =
         LetBindingSyntax(name = "same", value = sameValue, sugarParameters = [], typeAnnotation = Some(
             sameAnnotation
-        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])], declarationStart = -1)
     in
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
@@ -746,7 +746,7 @@ let rejectsMissingWrittenBindingRequirement unit =
     (let binding =
         LetBindingSyntax(name = "bad", value = sameValue, sugarParameters = [], typeAnnotation = Some(
             sameAnnotation
-        ), requirements = [TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])])
+        ), requirements = [TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])], declarationStart = -1)
     in
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelTrait(
@@ -762,7 +762,7 @@ let rejectsUnjustifiedWrittenBindingRequirement unit =
         let binding =
             LetBindingSyntax(name = "identity", value = identity, sugarParameters = [], typeAnnotation = None
             |> TypeArrow(TypeNamed("a"))(TypeNamed("a"))([])
-            |> Some, requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+            |> Some, requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])], declarationStart = -1)
         in
             match inferProgram(
                 ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
@@ -774,7 +774,7 @@ let rejectsAmbiguousWrittenBindingRequirement unit =
     (let binding =
         LetBindingSyntax(name = "ambiguous", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(
             TypeNamed("Int")
-        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])], declarationStart = -1)
     in
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)
@@ -786,7 +786,7 @@ let rejectsInvalidWrittenBindingRequirements unit =
     (let unknown =
         LetBindingSyntax(name = "unknown", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(
             TypeNamed("Int")
-        ), requirements = [TraitConstraintSyntax(traitName = "Missing", typeArguments = [TypeNamed("Int")])])
+        ), requirements = [TraitConstraintSyntax(traitName = "Missing", typeArguments = [TypeNamed("Int")])], declarationStart = -1)
     in
         let unknownChecked =
             match inferProgram(ProgramSyntax(items = [TopLevelLet(unknown)(false)], body = None)) with
@@ -798,7 +798,7 @@ let rejectsInvalidWrittenBindingRequirements unit =
                     1
                 ), sugarParameters = [], typeAnnotation = Some(
                     TypeNamed("Int")
-                ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [])])
+                ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [])], declarationStart = -1)
             in
                 match inferProgram(
                     ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(wrongArity)(false)], body = None)
@@ -827,7 +827,7 @@ let acceptsRecursiveWrittenBindingRequirement unit =
     (let binding =
         LetBindingSyntax(name = "same", value = sameValue, sugarParameters = [], typeAnnotation = Some(
             sameAnnotation
-        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])], declarationStart = -1)
     in
         match inferProgram(
             ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(true)], body = None)
@@ -842,12 +842,12 @@ let rejectsInvalidRequirementInRecursiveGroup unit =
     (let valid =
         LetBindingSyntax(name = "first", value = sameValue, sugarParameters = [], typeAnnotation = Some(
             sameAnnotation
-        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+        ), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])], declarationStart = -1)
     in
         let invalid =
             LetBindingSyntax(name = "second", value = sameValue, sugarParameters = [], typeAnnotation = Some(
                 sameAnnotation
-            ), requirements = [TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])])
+            ), requirements = [TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])], declarationStart = -1)
         in
             match inferProgram(
                 ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelTrait(

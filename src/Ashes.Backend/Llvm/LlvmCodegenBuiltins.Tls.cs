@@ -258,7 +258,7 @@ internal static partial class LlvmCodegen
         StoreMemory(state, connectionHandle, MbedTlsConnectionVerifyFlagsOffset, LlvmApi.BuildZExt(state.Target.Builder, verifyFlags, state.I64, name + "_verify_flags_i64"), name + "_store_verify_flags");
         LlvmBasicBlockHandle successBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_success");
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_done");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(state.Target.Builder, state.I32, name + "_result_slot");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I32, name + "_result_slot");
         LlvmApi.BuildStore(state.Target.Builder, NormalizeMbedTlsStatus(state, rc, name + "_normalized"), resultSlot);
         LlvmApi.BuildCondBr(state.Target.Builder, EmitMbedTlsResultIsOk(state, rc, name + "_ok"), successBlock, doneBlock);
         LlvmApi.PositionBuilderAtEnd(state.Target.Builder, successBlock);
@@ -365,7 +365,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 256);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
+        LlvmValueHandle buffer = EmitEntryScratchSlot(state, bufferType, prefix + "_buffer");
         LlvmValueHandle bufferPtr = GetArrayElementPointer(state, bufferType, buffer, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_buffer_ptr");
         EmitMbedTlsVoidCall(state, "mbedtls_strerror", LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I32, state.I8Ptr, state.I64]), [resultCode, bufferPtr, LlvmApi.ConstInt(state.I64, 256, 0)], prefix);
 
@@ -519,7 +519,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         var (runtime, ctrDrbgPtr, rootsPtr, clientConfigPtr, rngCallback, seedStatus, defaultsStatus) = setup;
-        LlvmValueHandle parseRootsStatusSlot = LlvmApi.BuildAlloca(builder, state.I32, prefix + "_parse_roots_status_slot");
+        LlvmValueHandle parseRootsStatusSlot = EmitEntryScratchSlot(state, state.I32, prefix + "_parse_roots_status_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), parseRootsStatusSlot);
         LlvmValueHandle certFile = EmitLinuxGetEnv(state, "SSL_CERT_FILE", prefix + "_ssl_cert_file");
         LlvmBasicBlockHandle parseRootsBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_parse_roots");

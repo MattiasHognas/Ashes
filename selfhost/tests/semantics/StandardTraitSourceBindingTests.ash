@@ -64,7 +64,7 @@ let sourceBindingEnvironment unit =
         [placeholderMethod("Eq")("equal")(resultHead)(resultEqualType)]
     )
 
-let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
+let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
 
 let equalDeclaration =
     TraitDecl(name = "Eq", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "equal", signature = TypeArrow(

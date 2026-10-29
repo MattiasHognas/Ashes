@@ -158,7 +158,8 @@ public sealed partial class Lowering
         int RootParameterSlot,
         int InsertIndex,
         TypeRef Type,
-        PatternBindingOwnershipFact Ownership);
+        PatternBindingOwnershipFact Ownership,
+        bool HeldByReferenceCountedTuple);
 
     // Stable ownership facts are joined to emitted binder slots as soon as a pattern is lowered.
     // The semantic owner is therefore available to ordinary scope cleanup and move handling even
@@ -583,6 +584,9 @@ public sealed partial class Lowering
     // The cons cells at the arms of a choice argument whose successor the back edge copies.
     private readonly HashSet<Expr> _backEdgeCopiedArmCells = new(ReferenceEqualityComparer.Instance);
 
+    // The inner cells of a chain consed onto a loop's list parameter while the chain is being lowered.
+    private readonly HashSet<Expr> _loopChainTailCells = new(ReferenceEqualityComparer.Instance);
+
     // The tuples written as the heads of those cells: the back edge copies an arena head with the
     // cell, its parts taking references of their own, so the tuple borrows them as the cell does.
     private readonly HashSet<Expr> _backEdgeCopiedHeadTuples = new(ReferenceEqualityComparer.Instance);
@@ -591,6 +595,17 @@ public sealed partial class Lowering
     // the reference-counted heap only once the self call's argument types resolve. Such a tuple
     // is lowered as one the back edge keeps, so a pattern owner stored in it takes a duplicate.
     private readonly HashSet<Expr> _backEdgeLateCopiedHeadTuples = new(ReferenceEqualityComparer.Instance);
+
+    // The cells of a successor not yet known to be copied, whose heads' duplicates are released
+    // after the back edge's copy when it does copy them (see NoteLateCopiedHeadTuples).
+    private readonly HashSet<Expr> _backEdgeLateCopiedCells = new(ReferenceEqualityComparer.Instance);
+
+    // The slot of a binder matched out of a reference-counted tuple scrutinee at a loop parameter's
+    // own position (`match (items, kept) with | (_, same)`), mapped to that parameter's slot.
+    private readonly Dictionary<(TcoContext Loop, int Slot), int> _tupleBinderParameterSlots = [];
+
+    // The cons cells written as field values of the record successor being lowered.
+    private readonly HashSet<Expr> _backEdgeRecordFieldCells = new(ReferenceEqualityComparer.Instance);
 
     // The duplicates those tuples took, by loop and argument position: released after the back
     // edge has copied the successor, when the parameter did end up on the reference-counted heap.
@@ -686,6 +701,10 @@ public sealed partial class Lowering
     // the result.
     private bool _normalizedParameterMovedIntoAggregate;
     private readonly HashSet<string> _normalizedParameterMovedLabels = new(StringComparer.Ordinal);
+    // Whether an escaping arena tuple of the function being lowered stored an independent copy of its
+    // entry-normalized string parameter, and the functions whose tuples did.
+    private bool _normalizedParameterClonedIntoArenaTuple;
+    private readonly HashSet<string> _normalizedParameterClonedLabels = new(StringComparer.Ordinal);
     private Dictionary<int, int> _pendingRuntimeArgumentFlags = [];
     // Curried functions return the next lambda as a closure. Preserve that statically known label chain
     // so a saturated direct call can reach the innermost function's result provenance without treating
@@ -1905,6 +1924,14 @@ public sealed partial class Lowering
             WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
             heldPastCopy = RetainsHeldPastTheCopy(info.ArgTemps[index], (TypeRef.TNamedType)argType, BackEdgeLoopParameters(info));
         }
+        else if (BackEdgeCopyBorrowsLiteralElements(info, index, argType))
+        {
+            WithdrawLoopParameterRetainsOfCopiedCells(info.ArgTemps[index], BackEdgeLoopParameters(info));
+        }
+        else if (BackEdgeCopyBorrowsConsHead(info, index, argType))
+        {
+            WithdrawLoopParameterRetainsOfCopiedConsHead(info.ArgTemps[index], BackEdgeLoopParameters(info));
+        }
 
         int normalizedTemp = TcoBackEdgeNormalizeRuntimeManagedArg(
             info.ArgTemps[index], argType, info.RuntimeManagedArgResults[index],
@@ -1930,6 +1957,25 @@ public sealed partial class Lowering
             && !CanArenaReset(named)
             && !CanCopyOutAdt(named, out _)
             && !SuccessorOwnsItsChildren(named, info.ArgExpressions[index]);
+
+    // A list literal successor whose arena cells the back edge copies (see
+    // BackEdgeCopiesLiteralSuccessor): the copy takes its own reference to every element, and a
+    // normalizer copies an arena element's children the same way, so the retains an arena element
+    // was built with for loop-parameter reads are withdrawn as a copied record's are.
+    private static bool BackEdgeCopyBorrowsLiteralElements(PendingTcoReset info, int index, TypeRef argType)
+        => !info.RuntimeManagedArgResults[index]
+            && argType is TypeRef.TList
+            && info.ArgExpressions[index] is Expr.ListLit { Elements.Count: > 0 }
+            && Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALSUCCESSOR") is null;
+
+    // A successor consing a freshly built cell onto a list (`Site(...) :: sites`): the back edge
+    // copies the arena head the same way, so the retains it was built with for loop-parameter reads
+    // are withdrawn; the tail is left to the list copy's own rules.
+    private static bool BackEdgeCopyBorrowsConsHead(PendingTcoReset info, int index, TypeRef argType)
+        => !info.RuntimeManagedArgResults[index]
+            && argType is TypeRef.TList
+            && info.ArgExpressions[index] is Expr.Cons
+            && Environment.GetEnvironmentVariable("GRC_NO_COPIEDCONSHEAD") is null;
 
     private int TcoBackEdgeNormalizeRuntimeManagedArgByCopy(
         int sourceTemp,
@@ -4329,16 +4375,22 @@ public sealed partial class Lowering
         }
 
         request = LoopSuccessorLetRequest(let, request);
-
-        if (TryLowerRuntimeManagedLetValue(
-                let,
-                request,
-                out (int Temp, TypeRef Type) lowered))
+        TcoContext? outerSuccessorLetLoop = _arenaSuccessorLetLoop;
+        if (IsArenaLoopSuccessorLet(let))
         {
-            return lowered;
+            _arenaSuccessorLetLoop = _tcoCtx;
         }
 
-        return LowerRemainingLetValue(let, request);
+        try
+        {
+            return TryLowerRuntimeManagedLetValue(let, request, out (int Temp, TypeRef Type) lowered)
+                ? lowered
+                : LowerRemainingLetValue(let, request);
+        }
+        finally
+        {
+            _arenaSuccessorLetLoop = outerSuccessorLetLoop;
+        }
     }
 
     // A binding the loop's self-call passes on becomes the next iteration's parameter exactly like
@@ -4347,13 +4399,18 @@ public sealed partial class Lowering
     // the back edge. A parameter on the reference-counted heap needs none of it: its back edge
     // copies the successor with references of its own before those owners are released.
     private LoweredValueRequest LoopSuccessorLetRequest(Expr.Let let, LoweredValueRequest request)
+        => IsArenaLoopSuccessorLet(let) ? request with { TransfersRuntimeManagedChildren = true } : request;
+
+    private bool IsArenaLoopSuccessorLet(Expr.Let let)
         => _tcoCtx is { } tco
             && Environment.GetEnvironmentVariable("GRC_NO_LETSUCCESSOR") is null
             && SelfCallOrdinalPassing(let.Body, let.Name, tco.SelfName) is { } ordinal
             && ordinal < tco.ParamSlots.Count
-            && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal])
-                ? request with { TransfersRuntimeManagedChildren = true }
-                : request;
+            && !tco.IsRuntimeManagedSlot(tco.ParamSlots[ordinal]);
+
+    // The loop whose arena successor a `let` value being lowered becomes: its back edge balances the
+    // retains the cells it builds hold.
+    private TcoContext? _arenaSuccessorLetLoop;
 
     // The position at which a self-call in the expression passes the name, or null.
     private static int? SelfCallOrdinalPassing(Expr expression, string name, string selfName)
@@ -7202,7 +7259,7 @@ public sealed partial class Lowering
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
         bodyTemp = savedTcoCtx is { TmcActivated: true } tmc ? LowerLambdaCoreCloseTmcChain(tmc, bodyTemp) : bodyTemp;
-        bodyTemp = FinishGeneralRcFunctionResult(label, ReleaseNormalizedParameterBehindResult(lam, label, argSlot, paramTy, KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType), bodyType, savedTcoCtx is null && !isChainLambda), bodyType, savedTcoCtx is { TmcActivated: true }, savedTcoCtx);
+        bodyTemp = FinishLoopFunctionResult(label, ReleaseNormalizedParameterBehindResult(lam, label, argSlot, paramTy, KeepPredictedRuntimeManagedResult(label, FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy), bodyType), bodyType, savedTcoCtx is null && !isChainLambda), bodyType, savedTcoCtx is { TmcActivated: true }, savedTcoCtx);
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
         // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
@@ -7562,11 +7619,19 @@ public sealed partial class Lowering
         bool plainFunction)
     {
         TypeRef resultType = Prune(bodyType);
+        if (plainFunction
+            && !_inCoroutineBody
+            && OwnedParameterResultRuleEnabled
+            && ReturnsNormalizedAlwaysReturnedParameter(label, argumentSlot, bodyTemp))
+        {
+            _generalRcOwnedParameterResultTemp = bodyTemp;
+        }
+
         if (!plainFunction
             || _inCoroutineBody
             || !_runtimeNormalizedFunctionArgumentLabels.Contains(label)
             || ReturnsNormalizedAlwaysReturnedParameter(label, argumentSlot, bodyTemp)
-            || Prune(parameterType) is not TypeRef.TNamedType)
+            || !ReleasesNormalizedParameterOfType(Prune(parameterType)))
         {
             return bodyTemp;
         }
@@ -7577,11 +7642,13 @@ public sealed partial class Lowering
         // exception: a reference-counted join with such an arm retained the parameter there (see
         // NormalizeMixedJoinArms), so the release below hands that reference to the result. A tuple
         // element or record field reading the parameter retains it too, unless the aggregate took the
-        // owned parameter over as it is.
+        // owned parameter over as it is, which a reference-counted aggregate always does with a string
+        // parameter (IsNormalizedAlwaysReturnedStringParameterRead).
         if (IsRuntimeManagedResultTemp(bodyTemp))
         {
             bool aggregatesRetain = !_normalizedParameterMovedLabels.Contains(label);
-            if (!ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true, aggregatesRetain))
+            if (Prune(parameterType) is TypeRef.TStr
+                || !ParameterReadOnlyThroughFieldsOrCalls(lambda.Body, lambda.ParamName, 0, returned: true, aggregatesRetain))
             {
                 return bodyTemp;
             }
@@ -7590,8 +7657,15 @@ public sealed partial class Lowering
             return bodyTemp;
         }
 
+        if (ReachesResultOnlyAsClonedTupleElement(lambda, label, parameterType))
+        {
+            EmitNormalizedParameterRelease(argumentSlot, parameterType);
+            return bodyTemp;
+        }
+
         if (!CanOwnResultBehindNormalizedParameter(resultType))
         {
+            ReleaseNormalizedParameterAfterContractResult(argumentSlot, parameterType, ResolvePhantomResultLayout(label, resultType));
             return bodyTemp;
         }
 
@@ -7599,6 +7673,59 @@ public sealed partial class Lowering
         EmitNormalizedParameterRelease(argumentSlot, parameterType);
         MarkRuntimeManagedTemp(ownedTemp);
         return ownedTemp;
+    }
+
+    // A string parameter is released behind the result like a record parameter: a result that
+    // copies it out holds references of its own.
+    private static bool ReleasesNormalizedParameterOfType(TypeRef parameterType)
+        => parameterType is TypeRef.TNamedType
+            || (parameterType is TypeRef.TStr && StringParameterBehindResultEnabled);
+
+    private static bool StringParameterBehindResultEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_STRPARAMBEHINDRESULT") is null;
+
+    // An arena tuple the function returns stores an independent copy of a string parameter read as
+    // one of its elements (MaterializeEscapingArenaTupleElements), so the owned parameter the entry
+    // normalization made is referenced by nothing once the tuple is built. Only a body that is that
+    // tuple, with every other element and every let value before it not mentioning the parameter,
+    // qualifies: any other path could store the parameter itself.
+    private bool ReachesResultOnlyAsClonedTupleElement(Expr.Lambda lambda, string label, TypeRef parameterType)
+    {
+        if (!StringParameterBehindResultEnabled
+            || Prune(parameterType) is not TypeRef.TStr
+            || !_normalizedParameterClonedLabels.Contains(label))
+        {
+            return false;
+        }
+
+        string name = lambda.ParamName;
+        Expr body = lambda.Body;
+        while (body is Expr.Let let)
+        {
+            if (string.Equals(let.Name, name, StringComparison.Ordinal) || ExprMentionsName(let.Value, name, 0))
+            {
+                return false;
+            }
+
+            body = let.Body;
+        }
+
+        return body is Expr.TupleLit tuple
+            && tuple.Elements.All(element => IsVariableNamed(element, name) || !ExprMentionsName(element, name, 0));
+    }
+
+    // A result of the contract's types the copy above does not express (a generic wrapper such as
+    // `Ok(state with ...)`) is still normalized into an owned value at the function's return, which
+    // retains whatever it keeps of the parameter: the parameter becomes an owned slot released
+    // there, after that normalization.
+    private void ReleaseNormalizedParameterAfterContractResult(int argumentSlot, TypeRef parameterType, TypeRef resultType)
+    {
+        if (GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_CONTRACTPARAMRESULT") is null
+            && IsGeneralRcValueType(resultType))
+        {
+            RegisterGeneralRcOwnedSlot(argumentSlot, Prune(parameterType));
+        }
     }
 
     private void EmitNormalizedParameterRelease(int argumentSlot, TypeRef parameterType)
@@ -7753,13 +7880,21 @@ public sealed partial class Lowering
         BeginCurryStage(label, lam);
         bool outerParameterMoved = _normalizedParameterMovedIntoAggregate;
         _normalizedParameterMovedIntoAggregate = false;
+        bool outerParameterCloned = _normalizedParameterClonedIntoArenaTuple;
+        _normalizedParameterClonedIntoArenaTuple = false;
         (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
         if (_normalizedParameterMovedIntoAggregate)
         {
             _normalizedParameterMovedLabels.Add(label);
         }
 
+        if (_normalizedParameterClonedIntoArenaTuple)
+        {
+            _normalizedParameterClonedLabels.Add(label);
+        }
+
         _normalizedParameterMovedIntoAggregate = outerParameterMoved;
+        _normalizedParameterClonedIntoArenaTuple = outerParameterCloned;
         _normalizedAlwaysReturnedParameter = outerNormalizedParameter;
         _passthroughParameter = outerPassthroughParameter;
         return body;
@@ -8235,7 +8370,7 @@ public sealed partial class Lowering
 
         bool widenedProtectionSafeHere = IsUnconditionallyRcManagedType(prunedType)
             && AllowsParallelWorkerIndependentRcPlacement;
-        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || widenedProtectionSafeHere
+        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || widenedProtectionSafeHere || site.HeldByReferenceCountedTuple
             ? PatternBindingPlacementOutcome.ProtectiveOwnerPlaced
             : PatternBindingPlacementOutcome.RootNotRuntimeManaged;
     }
@@ -8272,6 +8407,9 @@ public sealed partial class Lowering
                             _inst[i] = duplicate with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty || duplicate.MayBeEmpty };
                         }
                         changed |= aliases.Add(duplicate.Target);
+                        break;
+                    case IrInst.RcDrop { RuntimeManaged: false } release when _releasedPatternOwnerDuplicates.Contains(release.SourceTemp) && aliases.Contains(release.SourceTemp):
+                        _inst[i] = release with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty, StructuralDropperLabel = structuralDropperLabel };
                         break;
                     case IrInst.RcDrop drop when drop.OwnerSlot == site.LocalSlot:
                         _inst[i] = drop with
@@ -8380,6 +8518,7 @@ public sealed partial class Lowering
             {
                 IrInst.AndInt { Target: var target } => target == flagTemp,
                 IrInst.LoadConstInt { Target: var target } => target == flagTemp,
+                IrInst.CmpIntNe { Target: var target } => target == flagTemp,
                 _ => false,
             });
             if (definitionIndex >= 0)
@@ -8463,7 +8602,7 @@ public sealed partial class Lowering
         HashSet<int> loopBound = TempsFlowingToLoopParameters(tco, reachableInstructions, bodyTemp);
         PromoteRuntimeManagedStringConcats(
             managedTemps,
-            temp => loopBound.Contains(temp) && !mixedJoinSources.Contains(temp));
+            temp => loopBound.Contains(temp) && !mixedJoinSources.Contains(temp) && !IsJoinNormalizedArmSource(temp));
 
         if (managedTemps.Contains(bodyTemp))
         {
@@ -10343,15 +10482,20 @@ public sealed partial class Lowering
     // A heap result may still be one of the parameters the syntactic walk cannot see through (a
     // mutual-recursion group's dispatcher body, say), so the exit compares at run time before
     // releasing each parameter: releasing the returned one would hand out freed memory. A result
-    // the general contract normalized holds its own reference, so every parameter goes.
+    // the general contract normalized, one just produced, or a join every arm of which hands over
+    // a reference of its own holds its own reference, so every parameter goes.
     private bool TcoExitResultMayBeParameter(Expr.Lambda lam, TcoContext tco, int bodyTemp)
         => bodyTemp != _generalRcIndependentResultTemp
             && !IsNormalizedJoinTemp(bodyTemp)
+            && !(ExitResultOwnsItsReference && (IsNewlyProducedRcTemp(bodyTemp) || IsOwnedScopeJoinTemp(bodyTemp)))
             && (IsRuntimeManagedResultTemp(bodyTemp)
                 || ResultReachesRuntimeManagedLoopParameter(lam, tco)
                 || (tco.ResultType is { } resultType
                     && !CanArenaReset(Prune(resultType))
                     && tco.RuntimeManagedSlotsInOrder.Any(slot => tco.TryGetRuntimeManagedActiveSlot(slot, out _))));
+
+    private static bool ExitResultOwnsItsReference
+        => Environment.GetEnvironmentVariable("GRC_NO_FRESHEXITRESULT") is null;
 
     private void LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(Expr.Lambda lam, TcoContext? tco, int bodyTemp)
     {
@@ -10942,8 +11086,63 @@ public sealed partial class Lowering
         return _tcoCtx is { InTailPosition: true } tco
             && IsTcoSelfCallRoot(rootExpression, tco)
             && arguments.Count == tco.ParamCount
-                ? LowerCallTcoSelfCall(tco, rootExpression, arguments)
+                ? LowerCallTcoSelfCall(tco, rootExpression, HandTupleBindersBackAsParameters(tco, arguments))
                 : null;
+    }
+
+    // A binder matched out of a reference-counted tuple scrutinee at a parameter's own position and
+    // handed back to that position is the parameter's value: it is passed as the parameter itself.
+    // Passed as the binder, the successor is the tuple's reference-counted copy of the parameter,
+    // retained for a slot that, left in the arena, never releases it.
+    private List<Expr> HandTupleBindersBackAsParameters(TcoContext tco, List<Expr> arguments)
+    {
+        if (_tupleBinderParameterSlots.Count == 0
+            || Environment.GetEnvironmentVariable("GRC_NO_TUPLEBINDERPASSTHROUGH") is not null)
+        {
+            return arguments;
+        }
+
+        List<Expr>? rewritten = null;
+        for (int i = 0; i < arguments.Count && i < tco.ParamSlots.Count && i < tco.ParamNames.Count; i++)
+        {
+            if (arguments[i] is Expr.Var binder
+                && Lookup(binder.Name) is Binding.Local binderLocal
+                && _tupleBinderParameterSlots.TryGetValue((tco, binderLocal.Slot), out int parameterSlot)
+                && parameterSlot == tco.ParamSlots[i]
+                && Lookup(tco.ParamNames[i]) is Binding.Local parameterLocal
+                && parameterLocal.Slot == parameterSlot)
+            {
+                rewritten ??= [.. arguments];
+                rewritten[i] = new Expr.Var(tco.ParamNames[i]);
+            }
+        }
+
+        return rewritten ?? arguments;
+    }
+
+    // Records the binders of a tuple-scrutinee arm that stand at a loop parameter's own position.
+    private void NoteTupleBinderParameterSlots(Expr matchValue, Pattern armPattern, bool referenceCountedTuple)
+    {
+        if (!referenceCountedTuple
+            || _tcoCtx is not { } tco
+            || matchValue is not Expr.TupleLit tuple
+            || armPattern is not Pattern.Tuple parts
+            || tuple.Elements.Count != parts.Elements.Count)
+        {
+            return;
+        }
+
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (tuple.Elements[i] is Expr.Var source
+                && parts.Elements[i] is Pattern.Var binder
+                && Lookup(source.Name) is Binding.Local sourceLocal
+                && tco.ParamSlots.Contains(sourceLocal.Slot)
+                && Lookup(binder.Name) is Binding.Local binderLocal)
+            {
+                _tupleBinderParameterSlots[(tco, binderLocal.Slot)] = sourceLocal.Slot;
+            }
+        }
     }
 
     // Ordinary curried recursion must resolve back to the outermost generated label. A synthesized
@@ -11730,7 +11929,7 @@ public sealed partial class Lowering
             // of this iteration exactly like a function result escapes its callee: a runtime-managed
             // owned binding stored inside it (a `let` call result placed in a constructor field) must
             // be retained, because the binding's own release still fires at the back edge.
-            bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index);
+            bool copiedSuccessor = BackEdgeCopiesListSuccessor(tco, index) || BackEdgeCopiesLiteralSuccessor(tco, index, argument);
             request = request with { TransfersRuntimeManagedChildren = !copiedSuccessor };
             NoteBackEdgeCopiedCells(tco, index, argument, copiedSuccessor);
             request = request
@@ -11768,6 +11967,8 @@ public sealed partial class Lowering
         _backEdgeCopiedArmCells.Clear();
         _backEdgeCopiedHeadTuples.Clear();
         _backEdgeLateCopiedHeadTuples.Clear();
+        _backEdgeLateCopiedCells.Clear();
+        _backEdgeRecordFieldCells.Clear();
         _backEdgeArgumentPosition = null;
     }
 
@@ -11776,7 +11977,7 @@ public sealed partial class Lowering
     private void NoteBackEdgeCopiedCells(TcoContext tco, int index, Expr argument, bool copiedSuccessor)
     {
         _backEdgeCopiedCell = CopiedCellBorrowsEnabled
-            && (copiedSuccessor && argument is Expr.Cons || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
+            && (copiedSuccessor && IsCopiedCellShape(argument) || argument is Expr.TupleLit && BackEdgeCopiesTupleSuccessor(tco, index))
             ? argument
             : null;
         if (CopiedCellBorrowsEnabled && copiedSuccessor && Environment.GetEnvironmentVariable("GRC_NO_COPIEDARMCELLS") is null)
@@ -11784,6 +11985,7 @@ public sealed partial class Lowering
             CollectChoiceArmCells(argument, _backEdgeCopiedArmCells);
         }
 
+        CollectCopiedInnerListCells(tco, index);
         if (Environment.GetEnvironmentVariable("GRC_NO_COPIEDHEADTUPLE") is null)
         {
             CollectCopiedHeadTuple(_backEdgeCopiedCell, _backEdgeCopiedHeadTuples);
@@ -11794,6 +11996,39 @@ public sealed partial class Lowering
         }
 
         NoteLateCopiedHeadTuples(tco, index, argument, copiedSuccessor);
+    }
+
+    // The inner cells of a copied successor of a list of lists of copy-type values
+    // (`walk((x - 1 :: xs) :: rest)`): the back edge copies an arena inner list with the outer cell
+    // and shares its reference-counted suffix with a reference of its own, so an arena inner cell
+    // borrows its tail like the outer cell borrows its parts.
+    private void CollectCopiedInnerListCells(TcoContext tco, int index)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_COPIEDINNERCELL") is not null
+            || !tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            || Prune(type) is not TypeRef.TList { Element: var element }
+            || Prune(element) is not TypeRef.TList { Element: var innerElement }
+            || !CanArenaReset(Prune(innerElement)))
+        {
+            return;
+        }
+
+        List<Expr> outerCells = [.. _backEdgeCopiedArmCells];
+        if (_backEdgeCopiedCell is not null)
+        {
+            outerCells.Add(_backEdgeCopiedCell);
+        }
+
+        foreach (Expr cell in outerCells)
+        {
+            if (cell is Expr.Cons { Head: Expr.Cons inner } && GrownConsChainTail(inner) is Expr.Var)
+            {
+                for (Expr link = inner; link is Expr.Cons innerCell; link = innerCell.Tail)
+                {
+                    _backEdgeCopiedArmCells.Add(innerCell);
+                }
+            }
+        }
     }
 
     // A successor not yet known to be copied (its parameter's type resolves with this argument)
@@ -11813,9 +12048,47 @@ public sealed partial class Lowering
         CollectCopiedHeadTuple(argument, _backEdgeLateCopiedHeadTuples);
         var armCells = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
         CollectChoiceArmCells(argument, armCells);
+        if (Environment.GetEnvironmentVariable("GRC_NO_LATECOPIEDCELLHEAD") is null)
+        {
+            if (argument is Expr.Cons)
+            {
+                _backEdgeLateCopiedCells.Add(argument);
+            }
+
+            _backEdgeLateCopiedCells.UnionWith(armCells);
+        }
+
         foreach (Expr cell in armCells)
         {
             CollectCopiedHeadTuple(cell, _backEdgeLateCopiedHeadTuples);
+        }
+
+        CollectRecordFieldCells(argument);
+    }
+
+    // The cons cells written as field values of a record successor (`state with labels = name ::
+    // state.labels`): a record parameter on the reference-counted heap normalizes the arena record
+    // at the back edge by copying it, its lists copied with references of their own (string heads
+    // copied outright), so the duplicates the cells took are released after that copy.
+    private void CollectRecordFieldCells(Expr argument)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_RECORDFIELDCELL") is not null)
+        {
+            return;
+        }
+
+        IReadOnlyList<(string Name, Expr Value)> fields = argument switch
+        {
+            Expr.RecordUpdate update => update.Updates,
+            Expr.RecordLit literal when Environment.GetEnvironmentVariable("GRC_NO_LITERALFIELDCELL") is null => literal.Fields,
+            _ => [],
+        };
+        foreach ((string _, Expr value) in fields)
+        {
+            if (value is Expr.Cons)
+            {
+                _backEdgeRecordFieldCells.Add(value);
+            }
         }
     }
 
@@ -11824,6 +12097,25 @@ public sealed partial class Lowering
         if (cell is Expr.Cons { Head: Expr.TupleLit head })
         {
             tuples.Add(head);
+            CollectNestedCopiedTuples(head, tuples);
+        }
+    }
+
+    // A tuple written inside a copied head tuple (`((label, index), value) :: known`) is copied
+    // with it, so it borrows its parts like the head tuple does.
+    private static void CollectNestedCopiedTuples(Expr.TupleLit tuple, HashSet<Expr> tuples)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_NESTEDHEADTUPLE") is not null)
+        {
+            return;
+        }
+
+        foreach (Expr element in tuple.Elements)
+        {
+            if (element is Expr.TupleLit nested && tuples.Add(nested))
+            {
+                CollectNestedCopiedTuples(nested, tuples);
+            }
         }
     }
 
@@ -11854,6 +12146,31 @@ public sealed partial class Lowering
         }
 
         return taken;
+    }
+
+    // A cell of a successor the back edge may still copy keeps its head's and its tail's duplicates
+    // only until that copy: once the parameter is placed on the reference-counted heap the copy takes a
+    // reference of its own to the head and to a reference-counted tail it shares, and the duplicate is
+    // released after it like a head tuple's. A reference-counted cell owns the duplicate and keeps it.
+    private void RecordLateCopiedCellDuplicates(Expr.Cons cons, int cellTemp, (int Temp, TypeRef Type) head, (int Temp, TypeRef Type) tail)
+    {
+        RecordLateCopiedCellHeadDuplicate(cons, cellTemp, head.Temp, head.Type);
+        if (Environment.GetEnvironmentVariable("GRC_NO_LATECOPIEDCELLTAIL") is null)
+        {
+            RecordLateCopiedCellHeadDuplicate(cons, cellTemp, tail.Temp, tail.Type);
+        }
+    }
+
+    private void RecordLateCopiedCellHeadDuplicate(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
+    {
+        if (duplicateTemp >= 0
+            && !IsRuntimeManagedResultTemp(cellTemp)
+            && _backEdgeArgumentPosition is (TcoContext loop, int index)
+            && (_backEdgeLateCopiedCells.Contains(cons) || _backEdgeRecordFieldCells.Contains(cons)))
+        {
+            bool recordField = _backEdgeRecordFieldCells.Contains(cons);
+            _lateCopiedHeadTupleDuplicates.Add(new LateCopiedHeadTupleDuplicate(loop, index, duplicateTemp, headType) { CellHead = !recordField, RecordFieldCell = recordField });
+        }
     }
 
     // A duplicate is a marker until the loop's pattern owners are placed: it retains only where
@@ -11892,12 +12209,27 @@ public sealed partial class Lowering
     {
         foreach (LateCopiedHeadTupleDuplicate duplicate in info.LateCopiedHeadTupleDuplicates)
         {
-            if (duplicate.Retains && BackEdgeCopiesListSuccessor(info.Tco, duplicate.Index))
+            if (duplicate.Retains
+                && (BackEdgeCopiesListSuccessor(info.Tco, duplicate.Index)
+                    || (duplicate.CellHead && BackEdgeNormalizesListParameter(info.Tco, duplicate.Index))
+                    || (duplicate.RecordFieldCell
+                        && BackEdgeNormalizesRecordParameter(info.Tco, duplicate.Index)
+                        && !LiteralSuccessorReleasesItsCells(info, duplicate.Index))))
             {
                 EmitRuntimeManagedResultDrop(duplicate.Temp, duplicate.Type);
             }
         }
     }
+
+    // A record literal successor the back edge copies inline releases its children after the copy
+    // (SuccessorOwnsItsChildren), its field cells' parts among them; only one copied by the type's
+    // normalizer leaves them to the duplicates' release.
+    private bool LiteralSuccessorReleasesItsCells(PendingTcoReset info, int index)
+        => index < info.ArgExpressions.Length
+            && info.ArgExpressions[index] is Expr.RecordLit literal
+            && info.Tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TNamedType named
+            && SuccessorOwnsItsChildren(named, literal);
 
     private sealed class LateCopiedHeadTupleDuplicate(TcoContext loop, int index, int temp, TypeRef type)
     {
@@ -11912,6 +12244,14 @@ public sealed partial class Lowering
         public bool Taken { get; set; }
 
         public bool Retains { get; set; }
+
+        // A cons cell's head or tail rather than a head tuple's element: the cell is copied whenever its
+        // parameter is a list on the reference-counted heap.
+        public bool CellHead { get; init; }
+
+        // A part of a cons cell written as a record successor's field value: the cell is copied whenever
+        // its parameter is a record on the reference-counted heap.
+        public bool RecordFieldCell { get; init; }
     }
 
     // The cons cells a choice argument builds at its arms (`go(match acc with | [] -> [first]
@@ -11938,9 +12278,16 @@ public sealed partial class Lowering
         }
     }
 
+    // A successor's own cells: a cons, or a list literal with elements (`[first]`), whose cells the
+    // back edge copies like a cons cell.
+    private static bool IsCopiedCellShape(Expr expression)
+        => expression is Expr.Cons
+            || (expression is Expr.ListLit { Elements.Count: > 0 }
+                && Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALCELL") is null);
+
     private static void CollectChoiceArmCell(Expr arm, HashSet<Expr> cells)
     {
-        if (arm is Expr.Cons)
+        if (IsCopiedCellShape(arm))
         {
             cells.Add(arm);
             return;
@@ -11992,6 +12339,22 @@ public sealed partial class Lowering
             && Prune(type) is TypeRef.TTuple tuple
             && !tuple.Elements.All(element => CanArenaReset(Prune(element)));
 
+    // A list parameter on the reference-counted heap normalizes an arena successor at the back edge
+    // by copying it, every head retained by the copy.
+    private bool BackEdgeNormalizesListParameter(TcoContext tco, int index)
+        => index < tco.ParamSlots.Count
+            && tco.IsRuntimeManagedSlot(tco.ParamSlots[index])
+            && tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TList;
+
+    // A record parameter on the reference-counted heap normalizes an arena successor at the back edge
+    // by copying it, every child retained or copied by the copy.
+    private bool BackEdgeNormalizesRecordParameter(TcoContext tco, int index)
+        => index < tco.ParamSlots.Count
+            && tco.IsRuntimeManagedSlot(tco.ParamSlots[index])
+            && tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TNamedType;
+
     private bool BackEdgeCopiesListSuccessor(TcoContext tco, int index)
         => Environment.GetEnvironmentVariable("GRC_NO_BORROWEDSUCCESSOR") is null
             && index < tco.ParamSlots.Count
@@ -12000,6 +12363,19 @@ public sealed partial class Lowering
             && Prune(type) is TypeRef.TList list
             && !tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
             && IsGeneralRcAccumulatorList(tco, tco.ParamFacts[tco.ParamSlots[index]], list);
+
+    // A list literal of heap elements written as the successor of a list parameter on the
+    // reference-counted heap (`go([(other, [k])])`): the back edge copies its arena cells, and the
+    // copy takes a reference of its own to each element, so the cells are copied cells too.
+    private bool BackEdgeCopiesLiteralSuccessor(TcoContext tco, int index, Expr argument)
+        => Environment.GetEnvironmentVariable("GRC_NO_COPIEDLITERALSUCCESSOR") is null
+            && argument is Expr.ListLit { Elements.Count: > 0 }
+            && index < tco.ParamSlots.Count
+            && BackEdgeNormalizesListParameter(tco, index)
+            && !tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
+            && tco.ParamTypes.TryGetValue(index, out TypeRef? type)
+            && Prune(type) is TypeRef.TList { Element: var element }
+            && !CanArenaReset(Prune(element));
 
     private Dictionary<string, bool> LowerCallTcoAdtChildBindings(IReadOnlyList<Expr> arguments)
     {
@@ -12994,7 +13370,7 @@ public sealed partial class Lowering
     {
         if (resultAlreadySettled
             || _inCoroutineBody
-            || !CanNormalizeIntoOwnedRuntimeValue(resultType)
+            || !CanOwnResultBeforeArgumentRelease(resultType)
             || !consumedRuntimeArguments.Exists(argument =>
                 argument is { PreserveEscapedChildren: true, AdoptionFlagTemp: < 0 }
                 && !CanArenaReset(Prune(argument.Type))))
@@ -13014,6 +13390,15 @@ public sealed partial class Lowering
 
         return (ownedResultTemp, true);
     }
+
+    // A tuple result is copied into an owned tuple when every element is a scalar or a value that
+    // normalizes into an owned one: the copy retains each reference-counted element it keeps.
+    private bool CanOwnResultBeforeArgumentRelease(TypeRef resultType)
+        => Prune(resultType) is TypeRef.TTuple tuple
+            ? Environment.GetEnvironmentVariable("GRC_NO_TUPLEOWNRESULT") is null
+                && tuple.Elements.Any(element => !CanArenaReset(Prune(element)))
+                && tuple.Elements.All(element => CanArenaReset(Prune(element)) || CanNormalizeIntoOwnedRuntimeValue(element))
+            : CanNormalizeIntoOwnedRuntimeValue(resultType);
 
     /// <summary>
     /// Whether this call's result, once it reaches the caller, holds no reference to a consumed
@@ -16045,6 +16430,10 @@ public sealed partial class Lowering
                 list.Elements[i],
                 elementRequest,
                 elemType);
+            if (IsBackEdgeCopiedCell(list))
+            {
+                KeepCopiedCellFreshHeadOwned(list.Elements[i], head);
+            }
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
                 Unify(head.Type, elemType);
@@ -16325,7 +16714,7 @@ public sealed partial class Lowering
         List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor, duplicates);
 
         int tupleTemp = NewTemp();
-        bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request);
+        bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request, out bool[] normalized);
         RecordLateCopiedHeadTupleDuplicates(tuple, duplicates, runtimeManaged);
         if (copiedSuccessor && runtimeManaged)
         {
@@ -16337,7 +16726,7 @@ public sealed partial class Lowering
             elements,
             request,
             runtimeManaged);
-        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted);
+        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted, normalized);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)
         {
@@ -16411,7 +16800,8 @@ public sealed partial class Lowering
         List<LoweredValue> elements,
         LoweredValueRequest request,
         bool runtimeManaged,
-        bool[] demoted)
+        bool[] demoted,
+        bool[] normalized)
     {
         if (!runtimeManaged && !request.TransfersRuntimeManagedChildren)
         {
@@ -16420,7 +16810,7 @@ public sealed partial class Lowering
 
         for (int i = 0; i < elements.Count; i++)
         {
-            if (demoted[i])
+            if (demoted[i] || normalized[i])
             {
                 continue;
             }
@@ -16433,6 +16823,7 @@ public sealed partial class Lowering
                 && !RecordCallArgumentArenaRetain(elements[i].Temp, retainedTemp, elements[i].Type))
             {
                 HandArenaAggregateRetainToOwnedSlot(elements[i].Temp, retainedTemp, elements[i].Type);
+                DeferArenaCopyOfUnresolvedParameter(tuple.Elements[i], elements[i].Temp, retainedTemp, elements[i].Type);
             }
 
             elements[i] = CreateLoweredValue(retainedTemp, elements[i].Type);
@@ -16463,6 +16854,7 @@ public sealed partial class Lowering
         {
             if (EscapingTupleElementNeedsOwnedCopy(tuple.Elements[i], elements[i].Type))
             {
+                _normalizedParameterClonedIntoArenaTuple |= IsNormalizedAlwaysReturnedParameterRead(tuple.Elements[i]);
                 int copiedTemp = EmitDeepCopy(elements[i].Temp, elements[i].Type);
                 elements[i] = CreateLoweredValue(copiedTemp, elements[i].Type);
             }
@@ -16732,6 +17124,7 @@ public sealed partial class Lowering
             expectedElementType);
         TypeRef listType = new TypeRef.TList(head.Type);
         head = OwnContractHeadForTmcCell(tmcCandidate && cons.Head is Expr.Call, request, head);
+        head = OwnBorrowedHeadForProducerCell(tmcCandidate || IsRecursiveProducerTail(cons.Tail), request, head);
         if (tmcCandidate && CanBuildRuntimeManagedCell(request, head))
         {
             return LowerConsTmc(cons, head, listType, savedTailPos, request);
@@ -16820,6 +17213,27 @@ public sealed partial class Lowering
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
 
+    // A successor cell the back edge copies borrows its parts: the copy takes references of its own
+    // before the iteration's owners are released, and a duplicate stored in the cell would never be
+    // released. Any other cell takes its pattern owners' duplicates; the head's and the tail's are
+    // returned (-1 when none was taken) for a cell the back edge may still copy.
+    private (int Head, int Tail) DuplicateConsCellPatternOwners(Expr.Cons cons, ref LoweredValue head, ref int tailTemp)
+    {
+        if (IsBackEdgeCopiedCell(cons))
+        {
+            KeepCopiedCellFreshHeadOwned(cons.Head, head);
+            return (-1, -1);
+        }
+
+        int headDuplicate = DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp);
+        int lateHeadDuplicate = headDuplicate != head.Temp ? headDuplicate : -1;
+        head = CreateLoweredValue(headDuplicate, head.Type);
+        int tailDuplicate = DuplicatePerceusPatternOwnerForAggregate(cons.Tail, tailTemp);
+        int lateTailDuplicate = tailDuplicate != tailTemp ? tailDuplicate : -1;
+        tailTemp = tailDuplicate;
+        return (lateHeadDuplicate, lateTailDuplicate);
+    }
+
     private (int, TypeRef) LowerConsTail(
         Expr.Cons cons,
         LoweredValue head,
@@ -16833,22 +17247,15 @@ public sealed partial class Lowering
         LoweredValueRequest tailRequest = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null
             ? request.WithExpectedType(listType)
             : LoweredValueRequest.None.WithExpectedType(listType);
+        bool chainTail = cons.Tail is Expr.Cons && request.RuntimeTcoListTailSlot is not null && _loopChainTailCells.Add(cons.Tail);
         var (tailTemp, tailType) = LowerConsTailValue(cons, tailRequest, ref head, ref request);
+        if (chainTail)
+        {
+            _loopChainTailCells.Remove(cons.Tail);
+        }
 
-        // A successor cell the back edge copies borrows its parts: the copy takes references of
-        // its own before the iteration's owners are released, and a duplicate stored in the cell
-        // would never be released.
-        if (!IsBackEdgeCopiedCell(cons))
-        {
-            head = CreateLoweredValue(
-                DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp),
-                head.Type);
-            tailTemp = DuplicatePerceusPatternOwnerForAggregate(cons.Tail, tailTemp);
-        }
-        else
-        {
-            KeepCopiedCellFreshHeadOwned(cons.Head, head);
-        }
+        head = OwnChainHeadOverReferenceCountedTail(cons, head, tailTemp, request);
+        (int lateHeadDuplicate, int lateTailDuplicate) = DuplicateConsCellPatternOwners(cons, ref head, ref tailTemp);
 
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
             && IsRuntimeManageableListElement(head.Type, head.Temp))
@@ -16880,14 +17287,57 @@ public sealed partial class Lowering
             };
         }
 
-        return LowerConsCell(
+        (int cellTemp, TypeRef cellType) = LowerConsCell(
             head.Temp,
             tailTemp,
             head.Type,
             tailType,
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
+        RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
+        NoteListHeadCell(cons, head, tailTemp, cellTemp);
+        return (cellTemp, cellType);
     }
+
+    // A cell of a chain consed onto a loop's list parameter over a reference-counted cell is
+    // reference-counted too. An arena cell there would be the only holder of the cells after it: the
+    // next iteration copies the arena cell's spine onto the heap as the parameter, and nothing
+    // releases the reference-counted cells it copied, one whole spine per iteration. A head the arena
+    // would keep (a pattern-bound or borrowed value) takes a reference of its own when it is
+    // reference-counted and a copy when it is not, which lets its cell follow. The innermost cell, whose
+    // tail is the parameter itself, is one too: kept in the arena, it would keep every cell before it
+    // there, and the reference its named head took would go with the arena.
+    private LoweredValue OwnChainHeadOverReferenceCountedTail(
+        Expr.Cons cons,
+        LoweredValue head,
+        int tailTemp,
+        LoweredValueRequest request)
+    {
+        TypeRef headType = Prune(head.Type);
+        if (Environment.GetEnvironmentVariable("GRC_NO_CHAINRCTAILHEAD") is not null
+            || !CanTestRepresentation
+            || !(cons.Tail is Expr.Cons || IsInnermostLoopChainCell(cons))
+            || request.RuntimeTcoListTailSlot is null
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || IsBackEdgeCopiedCell(cons)
+            || !IsRuntimeManagedResultTemp(tailTemp)
+            || IsRuntimeManageableListElement(headType, head.Temp)
+            || headType is not (TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
+                or TypeRef.TList or TypeRef.TNamedType))
+        {
+            return head;
+        }
+
+        int headTemp = head.Temp;
+        int ownedTemp = EmitReferenceOrCopy(headTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(headTemp, headType));
+        MarkRuntimeManagedTemp(ownedTemp, type: headType);
+        _patternOwnerNormalizedTemps.Add(ownedTemp);
+        return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    private bool IsInnermostLoopChainCell(Expr.Cons cons)
+        => _loopChainTailCells.Contains(cons)
+            && Environment.GetEnvironmentVariable("GRC_NO_CHAININNERHEAD") is null;
 
     // The tail of a reference-counted cell: a recursive producer's result is retained, and an
     // unplaced let-bound one takes a reference when it is reference-counted or a copy when it is not.
@@ -16959,6 +17409,69 @@ public sealed partial class Lowering
         int ownedTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, Prune(head.Type));
         MarkRuntimeManagedTemp(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    // The tail of a recursive producer's cell, a recursive call's result or a tail-modulo-cons link,
+    // is reference-counted. A tuple or string head the cell cannot count (a borrowed read out of an
+    // arena-placed parameter, a string literal) would put that cell in the arena, where nothing releases the
+    // reference-counted tail stored in it. An owned reference-counted copy of the head lets the cell
+    // be reference-counted too, so it owns both its children.
+    private LoweredValue OwnBorrowedHeadForProducerCell(bool producerCell, LoweredValueRequest request, LoweredValue head)
+    {
+        TypeRef headType = Prune(head.Type);
+        if (!producerCell
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_PRODUCERHEADCOPY") is not null
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+            || !(headType is TypeRef.TTuple
+                || (headType is TypeRef.TStr && Environment.GetEnvironmentVariable("GRC_NO_PRODUCERSTRINGHEAD") is null))
+            || IsRuntimeManageableListElement(headType, head.Temp)
+            || !CanEmitRuntimeManagedListElementDeepCopy(headType))
+        {
+            return head;
+        }
+
+        int ownedTemp = IsClosureCallResult(head.Temp)
+            && Environment.GetEnvironmentVariable("GRC_NO_PRODUCERCALLHEAD") is null
+                ? EmitClosureResultOrCopy(head.Temp, headType)
+                : EmitRuntimeManagedTcoDeepCopy(head.Temp, headType);
+        MarkRuntimeManagedTemp(ownedTemp);
+        return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    // Whether a temp is the result of a closure application emitted just now.
+    private bool IsClosureCallResult(int temp)
+    {
+        for (int i = _inst.Count - 1; i >= 0 && i >= _inst.Count - 64; i--)
+        {
+            if (_inst[i] is IrInst.CallClosure call && call.Target == temp)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // A closure's reference-counted result of a type with a fixed copy-out is handed over owned, as a
+    // direct call's is taken over behind its window: it moves into the producer's cell as it is, and
+    // only an arena result is copied onto the reference-counted heap.
+    private int EmitClosureResultOrCopy(int resultTemp, TypeRef type)
+    {
+        int resultSlot = NewLocal();
+        string copyLabel = NewLabel("producer_head_copy");
+        string doneLabel = NewLabel("producer_head_done");
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, resultTemp));
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, resultTemp));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(copyLabel));
+        Emit(new IrInst.StoreLocal(resultSlot, EmitRuntimeManagedTcoDeepCopy(resultTemp, type)));
+        Emit(new IrInst.Label(doneLabel));
+        int ownedTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(ownedTemp, resultSlot));
+        return ownedTemp;
     }
 
     private bool CanBuildRuntimeManagedCell(LoweredValueRequest request, LoweredValue head)
@@ -17101,6 +17614,16 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
     }
 
+    // A borrowed base-case list joined with the spine would report the whole result as arena, and a
+    // caller copying it out would strand the spine, so it holds its own reference too and both
+    // branches of the close-out leave an owned reference-counted list.
+    private bool OwnsBorrowedTmcListBase(TcoContext tco, bool bodyRuntimeManaged)
+        => !bodyRuntimeManaged
+            && tco.ResultType is { } closedType
+            && Prune(closedType) is TypeRef.TList closedList
+            && CanEmitRuntimeManagedListElementDeepCopy(closedList.Element)
+            && Environment.GetEnvironmentVariable("GRC_NO_TMCLISTBASE") is null;
+
     /// <summary>
     /// Closes a tail-modulo-constructor spine at the function's single return: the value the body
     /// produced is what the innermost recursive call would have returned, so it fills the last cell's
@@ -17143,13 +17666,19 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(emptyLabel));
         // The contract takes a reference-counted result as owned, so a base-case value it did not
         // produce (a borrowed parameter) holds its own reference here, as the last cell's tail does.
-        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !IsGeneralRcValueType(Prune(tco.ResultType))
+        bool ownsBorrowedListBase = OwnsBorrowedTmcListBase(tco, bodyRuntimeManaged);
+        int emptyResultTemp = bodyRuntimeManaged || tco.ResultType is null || !(IsGeneralRcValueType(Prune(tco.ResultType)) || ownsBorrowedListBase)
             ? bodyTemp
             : EmitRuntimeManagedTcoParamCopy(bodyTemp, Prune(tco.ResultType));
         Emit(new IrInst.StoreLocal(resultSlot, emptyResultTemp));
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        if (ownsBorrowedListBase)
+        {
+            MarkRuntimeManagedTemp(resultTemp);
+            return resultTemp;
+        }
         // The closed result joins two branches — the spine, whose cells are reference-counted by the
         // transform's own eligibility gate and whose last tail is the body value, and the body value
         // alone — so it carries the body value's own representation. Leaving the slot read without a

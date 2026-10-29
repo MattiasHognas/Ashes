@@ -64,16 +64,17 @@ public sealed partial class Lowering
         }
 
         int[] candidates = ContractElementParts(resultType);
+        bool listHeads = IsListHeadHandOverType(resultType);
         if (!TryResolveKnownFunctionLabel(rootExpr, out string label))
         {
-            return UnknownCalleeTupleResultParts(candidates);
+            return UnknownCalleeTupleResultParts(candidates, listHeads);
         }
 
         for (int i = 1; i < argumentCount; i++)
         {
             if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
             {
-                return UnknownCalleeTupleResultParts(candidates);
+                return UnknownCalleeTupleResultParts(candidates, listHeads);
             }
 
             label = nextLabel;
@@ -85,11 +86,15 @@ public sealed partial class Lowering
         }
 
         int[] parts = candidates.Length > 0 ? candidates : calleeParts;
-        return parts.Length > 0 ? parts : null;
+        return parts.Length > 0
+            || (_wholeResultHandOverLabels.Contains(label) && IsGeneralRcValueType(resultType))
+            || (listHeads && _listHeadHandOverLabels.Contains(label))
+            ? parts
+            : null;
     }
 
-    private static int[]? UnknownCalleeTupleResultParts(int[] candidates)
-        => TupleResultPartsSignalEnabled && candidates.Length > 0 ? candidates : null;
+    private static int[]? UnknownCalleeTupleResultParts(int[] candidates, bool listHeads)
+        => TupleResultPartsSignalEnabled && (candidates.Length > 0 || listHeads) ? candidates : null;
 
     // The contract elements of a tuple type, by index.
     private int[] ContractElementParts(TypeRef type)
@@ -260,7 +265,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        List<GeneralRcOwnedSlot> kept = OwnedSlotsOutOfResultReach(resultTemp, _generalRcOwnedSlots);
+        List<GeneralRcOwnedSlot> kept = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
         if (TryForwardTupleResultPartsRequest(resultTemp, parts))
         {
             EmitGeneralRcOwnedSlotDrops(kept);
@@ -281,12 +286,16 @@ public sealed partial class Lowering
         EmitJumpUnlessTuplePartsRequested(resultTemp, keepLabel);
         if (cells is not { Count: > 0 })
         {
+            List<int> partTemps = [];
             foreach (int part in parts)
             {
                 int childTemp = NewTemp();
                 Emit(new IrInst.LoadMemOffset(childTemp, resultTemp, part * 8));
                 EmitRetainIfReferenceCounted(childTemp);
+                partTemps.Add(childTemp);
             }
+
+            EmitOwnedSlotDropsBehindRetainedParts([.. _generalRcOwnedSlots.Except(kept)], partTemps);
         }
 
         EmitTupleResultPartsMask(parts);
@@ -297,6 +306,43 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(doneLabel));
         _tupleResultPartLabels[label] = parts;
         return true;
+    }
+
+    // A part retained at the return that is the very value an owned slot holds: the slot's reference
+    // is released behind it, so the retain hands that reference over rather than adding one the
+    // function never releases. An owned value a part only reads out of keeps its reference.
+    private void EmitOwnedSlotDropsBehindRetainedParts(List<GeneralRcOwnedSlot> ownedSlots, List<int> partTemps)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_PARTOWNERMOVE") is not null)
+        {
+            return;
+        }
+
+        foreach (GeneralRcOwnedSlot owned in ownedSlots)
+        {
+            string nextLabel = NewLabel("tuple_part_owner_kept");
+            int valueTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(valueTemp, owned.Slot));
+            EmitSkipUnlessReferenceCounted(valueTemp, nextLabel);
+            string dropLabel = NewLabel("tuple_part_owner_moved");
+            foreach (int partTemp in partTemps)
+            {
+                string otherLabel = NewLabel("tuple_part_owner_other");
+                int sameTemp = NewTemp();
+                Emit(new IrInst.CmpIntEq(sameTemp, valueTemp, partTemp));
+                Emit(new IrInst.JumpIfFalse(sameTemp, otherLabel));
+                Emit(new IrInst.Jump(dropLabel));
+                Emit(new IrInst.Label(otherLabel));
+            }
+
+            Emit(new IrInst.Jump(nextLabel));
+            Emit(new IrInst.Label(dropLabel));
+            EmitRuntimeManagedChildDrop(valueTemp, owned.Type);
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            Emit(new IrInst.StoreLocal(owned.Slot, zeroTemp));
+            Emit(new IrInst.Label(nextLabel));
+        }
     }
 
     private static bool ForwardedTupleResultPartsEnabled =>
@@ -355,22 +401,44 @@ public sealed partial class Lowering
     /// </summary>
     private void ForwardTupleResultPartsRequestThroughGenericResult(string label, int resultTemp, TypeRef resultType)
     {
+        _forwardedResultCallTemp = -1;
         if (!TupleResultPartsEnabled
             || !TupleResultPartsSignalEnabled
             || !GeneralRcEnabled
             || _inCoroutineBody
-            || Prune(resultType) is not TypeRef.TVar
+            || !IsGenericResultForwardedAsIs(resultType)
             || SoleCallThroughLocals(resultTemp) is not { } call
-            || _tupleResultPartsRequests.ContainsKey(call)
-            || _withdrawnTupleResultPartsRequests.ContainsKey(call))
+            || _tupleResultPartsRequests.ContainsKey(call))
         {
             return;
         }
 
+        if (_withdrawnTupleResultPartsRequests.TryGetValue(call, out TupleResultPartsRequest? withdrawn))
+        {
+            if (WholeResultHandOverEnabled && TryForwardTupleResultPartsRequest(resultTemp, withdrawn.Parts))
+            {
+                NoteResultRequestForwarder(label);
+                _forwardedResultCallTemp = call.Target;
+            }
+
+            return;
+        }
+
+        if (ForwardCallerRequestIntoCall(call))
+        {
+            NoteResultRequestForwarder(label);
+            _forwardedResultCallTemp = call.Target;
+        }
+    }
+
+    // This function's own caller's request and mask address joined to whatever the call's word
+    // already passes, so the callee answers that caller. False when the call is no longer emitted.
+    private bool ForwardCallerRequestIntoCall(IrInst.CallClosure call)
+    {
         int callIndex = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, call));
         if (callIndex < 0)
         {
-            return;
+            return false;
         }
 
         int requestTemp = NewTemp();
@@ -396,7 +464,26 @@ public sealed partial class Lowering
 
         _inst.InsertRange(callIndex, forwarded);
         ShiftRecordedInstructionIndices(callIndex - 1, forwarded.Count);
+        return true;
+    }
+
+    // A result of unresolved type, or of a generic named type outside the contract's types (a
+    // `Result(e, T)` with `e` unresolved), whose caller may know a concrete type to ask for.
+    private bool IsGenericResultForwardedAsIs(TypeRef resultType)
+        => Prune(resultType) is TypeRef.TVar
+            || (WholeResultHandOverEnabled
+                && Prune(resultType) is TypeRef.TNamedType named
+                && ContainsUnresolvedLayoutType(named, [])
+                && !IsGeneralRcValueType(named));
+
+    // A function forwarding its caller's request: callers ask it as they ask the function it calls.
+    private void NoteResultRequestForwarder(string label)
+    {
         _tupleResultPartLabels.TryAdd(label, []);
+        if (WholeResultHandOverEnabled)
+        {
+            _wholeResultHandOverLabels.Add(label);
+        }
     }
 
     // On the hand-over path: the mask of the parts handed over, written into the caller's word.
@@ -408,6 +495,12 @@ public sealed partial class Lowering
             mask |= 1L << part;
         }
 
+        EmitResultHandOverMask(mask);
+    }
+
+    // The mask of what was handed over, written into the word the caller's request addresses.
+    private void EmitResultHandOverMask(long mask)
+    {
         int wordTemp = NewTemp();
         Emit(new IrInst.LoadArgumentOwnership(wordTemp));
         int addressBitsTemp = NewTemp();
@@ -419,8 +512,8 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreMemOffset(addressTemp, 0, maskTemp));
     }
 
-    // The call whose result a temp is, through locals stored once and borrows; null when it may be
-    // another value.
+    // The call whose result a temp is, through locals stored once and borrows (a match's fallback
+    // storing no value aside); null when it may be another value.
     private IrInst.CallClosure? SoleCallThroughLocals(int temp)
     {
         for (int depth = 0; depth < 16; depth++)
@@ -434,6 +527,11 @@ public sealed partial class Lowering
                     break;
                 case IrInst.LoadLocal load:
                     List<int> sources = [.. _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == load.Slot).Select(store => store.Source)];
+                    if (IndependentResultSignalEnabled && sources.Count > 1)
+                    {
+                        sources.RemoveAll(source => DefinitionOf(source) is IrInst.LoadConstInt { Value: 0 });
+                    }
+
                     if (sources.Count != 1)
                     {
                         return null;

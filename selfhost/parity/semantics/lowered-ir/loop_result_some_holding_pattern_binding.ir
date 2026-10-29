@@ -1,0 +1,879 @@
+IR (lowered)
+============
+
+function __rcdrop_structural_2  [StructuralOwnerDropper]
+  locals=3 temps=7
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_18:
+    LoadLocal             Target=1 Slot=2   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CmpIntNe              Target=3 Left=1 Right=2   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=3 Target=rcdrop_list_end_20   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcIsUnique            Target=4 SourceTemp=1
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_shared_19   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=5 BasePtr=1 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDrop                SourceTemp=1 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=5   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rcdrop_list_18   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_shared_19:
+    RcDrop                SourceTemp=1 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_20   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_end_20:
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=6   (loop_result_some_holding_pattern_binding.ash:4:1)
+
+function __deepcopy_3  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_3_default   (loop_result_some_holding_pattern_binding.ash:4:1)
+  __deepcopy_3_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=3   (loop_result_some_holding_pattern_binding.ash:4:1)
+  __deepcopy_3_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CopyOutList           DestTemp=6 SrcTemp=5 HeadCopy=Inline Purpose=IndependentClone   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=4   (loop_result_some_holding_pattern_binding.ash:4:1)
+  __deepcopy_3_default:
+    Return                Source=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+
+function __rcdrop_4  [RuntimeManagedAdtDropper]
+  locals=3 temps=10
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_43   (loop_result_some_holding_pattern_binding.ash:4:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_43   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_ctor_44:
+    Jump                  Target=rcdrop_shared_43   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_ctor_45:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=2 Source=3   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_46:
+    LoadLocal             Target=4 Slot=2   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=5 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CmpIntNe              Target=6 Left=4 Right=5   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_48   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcIsUnique            Target=7 SourceTemp=4
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_47   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rcdrop_list_46   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_shared_47:
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_48   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_end_48:
+    Jump                  Target=rcdrop_shared_43   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_shared_43:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=9   (loop_result_some_holding_pattern_binding.ash:4:1)
+
+function lambda_1  [ClosureHelper from lookup]
+  locals=43 temps=137
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=54 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadArgumentOwnership Target=55   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=56 Value=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    AndInt                Target=57 Left=55 Right=56   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=57 Target=rc_arg_normalize_copy_21   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=28 Source=54   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_arg_normalize_done_22   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_arg_normalize_copy_21:
+    IsReferenceCounted    Target=58 SourceTemp=54
+    JumpIfFalse           CondTemp=58 Target=rc_representation_copy_23   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDup                 Target=59 SourceTemp=54 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=59   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_representation_done_24   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_representation_copy_23:
+    LoadConstInt          Target=61 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=30 Source=54   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=31 Source=61   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=32 Source=61   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_normalize_list_25:
+    LoadLocal             Target=62 Slot=30   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CmpIntNe              Target=63 Left=62 Right=61   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=63 Target=rc_normalize_list_end_26   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=64 BasePtr=62 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=65 BasePtr=62 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    IsReferenceCounted    Target=66 SourceTemp=64
+    JumpIfFalse           CondTemp=66 Target=rc_representation_copy_27   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDup                 Target=67 SourceTemp=64 RuntimeManaged=true
+    StoreLocal            Slot=33 Source=67   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_representation_done_28   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_representation_copy_27:
+    Alloc                 Target=68 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=69 BasePtr=64 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=68 OffsetBytes=0 Source=69   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=70 BasePtr=64 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    IsReferenceCounted    Target=71 SourceTemp=70
+    JumpIfFalse           CondTemp=71 Target=rc_representation_copy_29   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDup                 Target=72 SourceTemp=70 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=72   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_representation_done_30   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_representation_copy_29:
+    CopyOutList           DestTemp=73 SrcTemp=70 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=34 Source=73   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_representation_done_30:
+    LoadLocal             Target=74 Slot=34   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=68 OffsetBytes=8 Source=74   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=33 Source=68   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_representation_done_28:
+    LoadLocal             Target=75 Slot=33   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Alloc                 Target=76 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=76 OffsetBytes=0 Source=75   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=76 OffsetBytes=8 Source=61   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=77 Slot=31   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CmpIntNe              Target=78 Left=77 Right=61   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=78 Target=rc_normalize_list_first_31   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=79 Slot=32   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=79 OffsetBytes=8 Source=76   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_normalize_list_linked_32   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_normalize_list_first_31:
+    StoreLocal            Slot=31 Source=76   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_normalize_list_linked_32:
+    StoreLocal            Slot=32 Source=76   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=30 Source=65   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_normalize_list_25   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_normalize_list_end_26:
+    LoadLocal             Target=80 Slot=31   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=29 Source=80   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_representation_done_24:
+    LoadLocal             Target=81 Slot=29   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=28 Source=81   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_arg_normalize_done_22:
+    LoadLocal             Target=82 Slot=28   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=1 Source=82   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=83 Value=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=6 Source=83   (loop_result_some_holding_pattern_binding.ash:4:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=5 Source=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_pattern_binding.ash:5:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_pattern_binding.ash:5:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (loop_result_some_holding_pattern_binding.ash:5:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (loop_result_some_holding_pattern_binding.ash:5:5)
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (loop_result_some_holding_pattern_binding.ash:6:17)
+    StoreLocal            Slot=24 Source=5   (loop_result_some_holding_pattern_binding.ash:5:5)
+    IsReferenceCounted    Target=37 SourceTemp=5
+    JumpIfFalse           CondTemp=37 Target=general_rc_result_arena_copy_9   (loop_result_some_holding_pattern_binding.ash:5:5)
+    Jump                  Target=general_rc_result_already_owned_10   (loop_result_some_holding_pattern_binding.ash:5:5)
+  general_rc_result_arena_copy_9:
+    IsReferenceCounted    Target=38 SourceTemp=5
+    JumpIfFalse           CondTemp=38 Target=rc_representation_copy_11   (loop_result_some_holding_pattern_binding.ash:5:5)
+    RcDup                 Target=39 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=25 Source=39   (loop_result_some_holding_pattern_binding.ash:5:5)
+    Jump                  Target=rc_representation_done_12   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_representation_copy_11:
+    GetAdtTag             Target=41 Ptr=5   (loop_result_some_holding_pattern_binding.ash:5:5)
+    SwitchTag             TagTemp=41 Cases=[2] DefaultLabel=rc_normalize_adt_13   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_normalize_adt_13:
+    CopyOutArena          DestTemp=42 SrcTemp=5 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=26 Source=42   (loop_result_some_holding_pattern_binding.ash:5:5)
+    Jump                  Target=rc_normalize_adt_end_15   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_normalize_adt_14:
+    CopyOutArena          DestTemp=43 SrcTemp=5 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=44 Ptr=5 FieldIndex=0   (loop_result_some_holding_pattern_binding.ash:5:5)
+    IsReferenceCounted    Target=45 SourceTemp=44
+    JumpIfFalse           CondTemp=45 Target=rc_representation_copy_16   (loop_result_some_holding_pattern_binding.ash:5:5)
+    RcDup                 Target=46 SourceTemp=44 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=46   (loop_result_some_holding_pattern_binding.ash:5:5)
+    Jump                  Target=rc_representation_done_17   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_representation_copy_16:
+    CopyOutList           DestTemp=47 SrcTemp=44 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=27 Source=47   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_representation_done_17:
+    LoadLocal             Target=48 Slot=27   (loop_result_some_holding_pattern_binding.ash:5:5)
+    SetAdtField           Ptr=43 FieldIndex=0 Source=48   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=26 Source=43   (loop_result_some_holding_pattern_binding.ash:5:5)
+    Jump                  Target=rc_normalize_adt_end_15   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_normalize_adt_end_15:
+    LoadLocal             Target=49 Slot=26   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=25 Source=49   (loop_result_some_holding_pattern_binding.ash:5:5)
+  rc_representation_done_12:
+    LoadLocal             Target=50 Slot=25   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=24 Source=50   (loop_result_some_holding_pattern_binding.ash:5:5)
+  general_rc_result_already_owned_10:
+    LoadLocal             Target=51 Slot=24   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=10 Source=51   (loop_result_some_holding_pattern_binding.ash:5:5)
+    Jump                  Target=match_end_0   (loop_result_some_holding_pattern_binding.ash:5:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_2   (loop_result_some_holding_pattern_binding.ash:5:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_pattern_binding.ash:5:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (loop_result_some_holding_pattern_binding.ash:5:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (loop_result_some_holding_pattern_binding.ash:5:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:5:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:5:5)
+    LoadMemOffset         Target=10 BasePtr=8 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=17 Source=10   (loop_result_some_holding_pattern_binding.ash:5:5)
+    LoadMemOffset         Target=11 BasePtr=8 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=18 Source=11   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=19 Source=9   (loop_result_some_holding_pattern_binding.ash:5:5)
+    LoadLocal             Target=52 Slot=18   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDup                 Target=53 SourceTemp=52 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=18 Source=53   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=12 Slot=17   (loop_result_some_holding_pattern_binding.ash:8:16)
+    LoadLocal             Target=13 Slot=2   (loop_result_some_holding_pattern_binding.ash:8:24)
+    CmpIntEq              Target=14 Left=12 Right=13   (loop_result_some_holding_pattern_binding.ash:8:16)
+    JumpIfFalse           CondTemp=14 Target=else_5   (loop_result_some_holding_pattern_binding.ash:8:13)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    LoadLocal             Target=15 Slot=18   (loop_result_some_holding_pattern_binding.ash:9:23)
+    Borrow                Target=16 SourceTemp=15
+    Borrow                Target=17 SourceTemp=16
+    IsReferenceCounted    Target=18 SourceTemp=16
+    JumpIfFalse           CondTemp=18 Target=rc_representation_copy_7   (loop_result_some_holding_pattern_binding.ash:9:18)
+    RcDup                 Target=19 SourceTemp=16 RuntimeManaged=true
+    RcDrop                SourceTemp=11 TypeName=List OwnerSlot=18 RuntimeManaged=true MayBeEmpty=true StructuralDropperLabel=__rcdrop_structural_2
+    StoreLocal            Slot=21 Source=19   (loop_result_some_holding_pattern_binding.ash:9:18)
+    Jump                  Target=rc_representation_done_8   (loop_result_some_holding_pattern_binding.ash:9:18)
+  rc_representation_copy_7:
+    CopyOutList           DestTemp=20 SrcTemp=16 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (loop_result_some_holding_pattern_binding.ash:9:18)
+    RcDrop                SourceTemp=11 TypeName=List OwnerSlot=18 RuntimeManaged=true MayBeEmpty=true StructuralDropperLabel=__rcdrop_structural_2
+    StoreLocal            Slot=21 Source=20   (loop_result_some_holding_pattern_binding.ash:9:18)
+  rc_representation_done_8:
+    LoadLocal             Target=21 Slot=21   (loop_result_some_holding_pattern_binding.ash:9:18)
+    AllocAdt              Target=22 Tag=1 FieldCount=1 RuntimeManaged=true   (loop_result_some_holding_pattern_binding.ash:9:18)
+    SetAdtField           Ptr=22 FieldIndex=0 Source=21   (loop_result_some_holding_pattern_binding.ash:9:18)
+    StoreLocal            Slot=20 Source=22   (loop_result_some_holding_pattern_binding.ash:8:13)
+    Jump                  Target=endif_6   (loop_result_some_holding_pattern_binding.ash:8:13)
+  else_5:
+    RcDrop                SourceTemp=11 TypeName=List OwnerSlot=18 RuntimeManaged=true MayBeEmpty=true StructuralDropperLabel=__rcdrop_structural_2
+    LoadLocal             Target=23 Slot=2   (loop_result_some_holding_pattern_binding.ash:10:25)
+    LoadLocal             Target=24 Slot=19   (loop_result_some_holding_pattern_binding.ash:10:30)
+    Borrow                Target=25 SourceTemp=24
+    RcDup                 Target=26 SourceTemp=25 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    LoadLocal             Target=27 Slot=1   (loop_result_some_holding_pattern_binding.ash:10:18)
+    LoadConstInt          Target=28 Value=0   (loop_result_some_holding_pattern_binding.ash:10:18)
+    StoreLocal            Slot=6 Source=28   (loop_result_some_holding_pattern_binding.ash:10:18)
+    LoadLocal             Target=29 Slot=2   (loop_result_some_holding_pattern_binding.ash:10:18)
+    LoadLocal             Target=30 Slot=1   (loop_result_some_holding_pattern_binding.ash:10:18)
+    StoreLocal            Slot=2 Source=23   (loop_result_some_holding_pattern_binding.ash:10:18)
+    StoreLocal            Slot=1 Source=26   (loop_result_some_holding_pattern_binding.ash:10:18)
+    LoadLocal             Target=109 Slot=6
+    JumpIfFalse           CondTemp=109 Target=rc_tco_drop_inactive_87
+    StoreLocal            Slot=39 Source=30
+  rcdrop_list_88:
+    LoadLocal             Target=110 Slot=39
+    LoadConstInt          Target=111 Value=0
+    CmpIntNe              Target=112 Left=110 Right=111
+    JumpIfFalse           CondTemp=112 Target=rcdrop_list_end_90
+    RcIsUnique            Target=113 SourceTemp=110
+    JumpIfFalse           CondTemp=113 Target=rcdrop_list_shared_89
+    LoadMemOffset         Target=114 BasePtr=110 OffsetBytes=0
+    RcIsUnique            Target=115 SourceTemp=114
+    JumpIfFalse           CondTemp=115 Target=rc_drop_tuple_shared_91
+    LoadMemOffset         Target=116 BasePtr=114 OffsetBytes=8
+    StoreLocal            Slot=40 Source=116
+  rcdrop_list_92:
+    LoadLocal             Target=117 Slot=40
+    LoadConstInt          Target=118 Value=0
+    CmpIntNe              Target=119 Left=117 Right=118
+    JumpIfFalse           CondTemp=119 Target=rcdrop_list_end_94
+    RcIsUnique            Target=120 SourceTemp=117
+    JumpIfFalse           CondTemp=120 Target=rcdrop_list_shared_93
+    LoadMemOffset         Target=121 BasePtr=117 OffsetBytes=8
+    RcDrop                SourceTemp=117 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=40 Source=121
+    Jump                  Target=rcdrop_list_92
+  rcdrop_list_shared_93:
+    RcDrop                SourceTemp=117 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_94
+  rcdrop_list_end_94:
+  rc_drop_tuple_shared_91:
+    RcDrop                SourceTemp=114 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=122 BasePtr=110 OffsetBytes=8
+    RcDrop                SourceTemp=110 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=39 Source=122
+    Jump                  Target=rcdrop_list_88
+  rcdrop_list_shared_89:
+    RcDrop                SourceTemp=110 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_90
+  rcdrop_list_end_90:
+  rc_tco_drop_inactive_87:
+    StoreLocal            Slot=41 Source=27
+  rcdrop_list_95:
+    LoadLocal             Target=123 Slot=41
+    LoadConstInt          Target=124 Value=0
+    CmpIntNe              Target=125 Left=123 Right=124
+    JumpIfFalse           CondTemp=125 Target=rcdrop_list_end_97
+    RcIsUnique            Target=126 SourceTemp=123
+    JumpIfFalse           CondTemp=126 Target=rcdrop_list_shared_96
+    LoadMemOffset         Target=127 BasePtr=123 OffsetBytes=0
+    RcIsUnique            Target=128 SourceTemp=127
+    JumpIfFalse           CondTemp=128 Target=rc_drop_tuple_shared_98
+    LoadMemOffset         Target=129 BasePtr=127 OffsetBytes=8
+    StoreLocal            Slot=42 Source=129
+  rcdrop_list_99:
+    LoadLocal             Target=130 Slot=42
+    LoadConstInt          Target=131 Value=0
+    CmpIntNe              Target=132 Left=130 Right=131
+    JumpIfFalse           CondTemp=132 Target=rcdrop_list_end_101
+    RcIsUnique            Target=133 SourceTemp=130
+    JumpIfFalse           CondTemp=133 Target=rcdrop_list_shared_100
+    LoadMemOffset         Target=134 BasePtr=130 OffsetBytes=8
+    RcDrop                SourceTemp=130 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=42 Source=134
+    Jump                  Target=rcdrop_list_99
+  rcdrop_list_shared_100:
+    RcDrop                SourceTemp=130 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_101
+  rcdrop_list_end_101:
+  rc_drop_tuple_shared_98:
+    RcDrop                SourceTemp=127 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=135 BasePtr=123 OffsetBytes=8
+    RcDrop                SourceTemp=123 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=41 Source=135
+    Jump                  Target=rcdrop_list_95
+  rcdrop_list_shared_96:
+    RcDrop                SourceTemp=123 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_97
+  rcdrop_list_end_97:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=38
+    StoreLocal            Slot=1 Source=26
+    LoadConstInt          Target=136 Value=1
+    StoreLocal            Slot=6 Source=136
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=38
+    RestoreStackPointer   Slot=9   (loop_result_some_holding_pattern_binding.ash:10:18)
+    Jump                  Target=lambda_1_body   (loop_result_some_holding_pattern_binding.ash:10:18)
+    LoadConstInt          Target=31 Value=0   (loop_result_some_holding_pattern_binding.ash:10:18)
+    StoreLocal            Slot=20 Source=31   (loop_result_some_holding_pattern_binding.ash:8:13)
+  endif_6:
+    LoadLocal             Target=32 Slot=20   (loop_result_some_holding_pattern_binding.ash:8:13)
+    StoreLocal            Slot=10 Source=32   (loop_result_some_holding_pattern_binding.ash:5:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=22
+    Jump                  Target=match_end_0   (loop_result_some_holding_pattern_binding.ash:5:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=23
+    Jump                  Target=match_none_1   (loop_result_some_holding_pattern_binding.ash:5:5)
+  match_none_1:
+    LoadConstInt          Target=35 Value=0   (loop_result_some_holding_pattern_binding.ash:5:5)
+    StoreLocal            Slot=10 Source=35   (loop_result_some_holding_pattern_binding.ash:5:5)
+  match_end_0:
+    LoadLocal             Target=36 Slot=10   (loop_result_some_holding_pattern_binding.ash:5:5)
+    LoadLocal             Target=84 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=85 Slot=6   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=85 Target=rc_tco_exit_drop_inactive_33   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=35 Source=84   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_34:
+    LoadLocal             Target=86 Slot=35   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=87 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CmpIntNe              Target=88 Left=86 Right=87   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=88 Target=rcdrop_list_end_36   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcIsUnique            Target=89 SourceTemp=86
+    JumpIfFalse           CondTemp=89 Target=rcdrop_list_shared_35   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=90 BasePtr=86 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcIsUnique            Target=91 SourceTemp=90
+    JumpIfFalse           CondTemp=91 Target=rc_drop_tuple_shared_37   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=92 BasePtr=90 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=36 Source=92   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_38:
+    LoadLocal             Target=93 Slot=36   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=94 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CmpIntNe              Target=95 Left=93 Right=94   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=95 Target=rcdrop_list_end_40   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcIsUnique            Target=96 SourceTemp=93
+    JumpIfFalse           CondTemp=96 Target=rcdrop_list_shared_39   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=97 BasePtr=93 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=36 Source=97   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rcdrop_list_38   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_shared_39:
+    RcDrop                SourceTemp=93 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_40   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_end_40:
+  rc_drop_tuple_shared_37:
+    RcDrop                SourceTemp=90 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=98 BasePtr=86 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    RcDrop                SourceTemp=86 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=35 Source=98   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rcdrop_list_34   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_shared_35:
+    RcDrop                SourceTemp=86 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_36   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rcdrop_list_end_36:
+  rc_tco_exit_drop_inactive_33:
+    LoadArgumentOwnership Target=99   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=100 Value=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    ShrInt                Target=101 Left=99 Right=100   (loop_result_some_holding_pattern_binding.ash:4:1)
+    AndInt                Target=102 Left=101 Right=100   (loop_result_some_holding_pattern_binding.ash:4:1)
+    JumpIfFalse           CondTemp=102 Target=rc_result_owned_41   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Alloc                 Target=103 SizeBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    MakeClosure           Target=104 FuncLabel=__deepcopy_3 EnvPtrTemp=103 EnvSizeBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=103 OffsetBytes=0 Source=104   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CallClosure           Target=105 ClosureTemp=104 ArgTemp=36   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=106 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    CallKnown             Target=107 FuncLabel=__rcdrop_4 EnvTemp=106 ArgTemp=36   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=37 Source=105   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Jump                  Target=rc_result_done_42   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_result_owned_41:
+    StoreLocal            Slot=37 Source=36   (loop_result_some_holding_pattern_binding.ash:4:1)
+  rc_result_done_42:
+    LoadLocal             Target=108 Slot=37   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=108   (loop_result_some_holding_pattern_binding.ash:4:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from lookup]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=3   (loop_result_some_holding_pattern_binding.ash:4:1)
+
+function lambda_0  [SourceFunction from lookup]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (loop_result_some_holding_pattern_binding.ash:4:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (loop_result_some_holding_pattern_binding.ash:4:1)
+    Return                Source=4   (loop_result_some_holding_pattern_binding.ash:4:1)
+
+function lambda_6  [ClosureHelper from handOff]
+  locals=23 temps=58
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_pattern_binding.ash:13:11)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_pattern_binding.ash:13:18)
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (loop_result_some_holding_pattern_binding.ash:13:11)
+    LoadEnv               Target=3 Index=1   (loop_result_some_holding_pattern_binding.ash:13:23)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (loop_result_some_holding_pattern_binding.ash:13:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=5 Value=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    CmpIntNe              Target=6 Left=4 Right=5   (loop_result_some_holding_pattern_binding.ash:13:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_52   (loop_result_some_holding_pattern_binding.ash:13:5)
+    GetAdtTag             Target=7 Ptr=4   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadConstInt          Target=9 Value=1   (loop_result_some_holding_pattern_binding.ash:13:5)
+    CmpIntEq              Target=8 Left=7 Right=9   (loop_result_some_holding_pattern_binding.ash:13:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_52   (loop_result_some_holding_pattern_binding.ash:13:5)
+    GetAdtField           Target=10 Ptr=4 FieldIndex=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=8 Source=10   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=9 Source=4   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadLocal             Target=11 Slot=8   (loop_result_some_holding_pattern_binding.ash:14:31)
+    Borrow                Target=12 SourceTemp=11
+    RcDup                 Target=13 SourceTemp=12 RuntimeManaged=true MayBeEmpty=true
+    AllocAdt              Target=14 Tag=1 FieldCount=1 RuntimeManaged=true   (loop_result_some_holding_pattern_binding.ash:14:26)
+    SetAdtField           Ptr=14 FieldIndex=0 Source=13   (loop_result_some_holding_pattern_binding.ash:14:26)
+    StoreLocal            Slot=5 Source=14   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadLocal             Target=15 Slot=8   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=10 Source=15   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rcdrop_list_53:
+    LoadLocal             Target=16 Slot=10   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadConstInt          Target=17 Value=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    CmpIntNe              Target=18 Left=16 Right=17   (loop_result_some_holding_pattern_binding.ash:13:5)
+    JumpIfFalse           CondTemp=18 Target=rcdrop_list_end_55   (loop_result_some_holding_pattern_binding.ash:13:5)
+    RcIsUnique            Target=19 SourceTemp=16
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_shared_54   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadMemOffset         Target=20 BasePtr=16 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:13:5)
+    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=10 Source=20   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=rcdrop_list_53   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rcdrop_list_shared_54:
+    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_55   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rcdrop_list_end_55:
+    LoadLocal             Target=21 Slot=9   (loop_result_some_holding_pattern_binding.ash:13:5)
+    RcDrop                SourceTemp=21 TypeName=Maybe RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=11
+    Jump                  Target=match_end_49   (loop_result_some_holding_pattern_binding.ash:13:5)
+  match_arm_cleanup_52:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=12
+    Jump                  Target=match_next_51   (loop_result_some_holding_pattern_binding.ash:13:5)
+  match_next_51:
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=22 Value=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    CmpIntNe              Target=23 Left=4 Right=22   (loop_result_some_holding_pattern_binding.ash:13:5)
+    JumpIfFalse           CondTemp=23 Target=match_arm_cleanup_56   (loop_result_some_holding_pattern_binding.ash:13:5)
+    GetAdtTag             Target=24 Ptr=4   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadConstInt          Target=26 Value=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    CmpIntEq              Target=25 Left=24 Right=26   (loop_result_some_holding_pattern_binding.ash:13:5)
+    JumpIfFalse           CondTemp=25 Target=match_arm_cleanup_56   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=15 Source=4   (loop_result_some_holding_pattern_binding.ash:13:5)
+    AllocAdt              Target=27 Tag=0 FieldCount=0   (loop_result_some_holding_pattern_binding.ash:15:19)
+    StoreLocal            Slot=18 Source=27   (loop_result_some_holding_pattern_binding.ash:13:5)
+    IsReferenceCounted    Target=33 SourceTemp=27
+    JumpIfFalse           CondTemp=33 Target=general_rc_result_arena_copy_57   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=general_rc_result_already_owned_58   (loop_result_some_holding_pattern_binding.ash:13:5)
+  general_rc_result_arena_copy_57:
+    IsReferenceCounted    Target=34 SourceTemp=27
+    JumpIfFalse           CondTemp=34 Target=rc_representation_copy_59   (loop_result_some_holding_pattern_binding.ash:13:5)
+    RcDup                 Target=35 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=35   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=rc_representation_done_60   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_representation_copy_59:
+    GetAdtTag             Target=37 Ptr=27   (loop_result_some_holding_pattern_binding.ash:13:5)
+    SwitchTag             TagTemp=37 Cases=[2] DefaultLabel=rc_normalize_adt_61   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_normalize_adt_61:
+    CopyOutArena          DestTemp=38 SrcTemp=27 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=20 Source=38   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=rc_normalize_adt_end_63   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_normalize_adt_62:
+    CopyOutArena          DestTemp=39 SrcTemp=27 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=40 Ptr=27 FieldIndex=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    IsReferenceCounted    Target=41 SourceTemp=40
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_64   (loop_result_some_holding_pattern_binding.ash:13:5)
+    RcDup                 Target=42 SourceTemp=40 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=42   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=rc_representation_done_65   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_representation_copy_64:
+    CopyOutList           DestTemp=43 SrcTemp=40 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=21 Source=43   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_representation_done_65:
+    LoadLocal             Target=44 Slot=21   (loop_result_some_holding_pattern_binding.ash:13:5)
+    SetAdtField           Ptr=39 FieldIndex=0 Source=44   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=20 Source=39   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=rc_normalize_adt_end_63   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_normalize_adt_end_63:
+    LoadLocal             Target=45 Slot=20   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=19 Source=45   (loop_result_some_holding_pattern_binding.ash:13:5)
+  rc_representation_done_60:
+    LoadLocal             Target=46 Slot=19   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=18 Source=46   (loop_result_some_holding_pattern_binding.ash:13:5)
+  general_rc_result_already_owned_58:
+    LoadLocal             Target=47 Slot=18   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=5 Source=47   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadLocal             Target=28 Slot=15   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadConstInt          Target=29 Value=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    CallKnown             Target=30 FuncLabel=__rcdrop_4 EnvTemp=29 ArgTemp=28   (loop_result_some_holding_pattern_binding.ash:13:5)
+    Jump                  Target=match_end_49   (loop_result_some_holding_pattern_binding.ash:13:5)
+  match_arm_cleanup_56:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=17
+    Jump                  Target=match_none_50   (loop_result_some_holding_pattern_binding.ash:13:5)
+  match_none_50:
+    LoadConstInt          Target=31 Value=0   (loop_result_some_holding_pattern_binding.ash:13:5)
+    StoreLocal            Slot=5 Source=31   (loop_result_some_holding_pattern_binding.ash:13:5)
+  match_end_49:
+    LoadLocal             Target=32 Slot=5   (loop_result_some_holding_pattern_binding.ash:13:5)
+    LoadArgumentOwnership Target=48   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadConstInt          Target=49 Value=1   (loop_result_some_holding_pattern_binding.ash:12:1)
+    ShrInt                Target=50 Left=48 Right=49   (loop_result_some_holding_pattern_binding.ash:12:1)
+    AndInt                Target=51 Left=50 Right=49   (loop_result_some_holding_pattern_binding.ash:12:1)
+    JumpIfFalse           CondTemp=51 Target=rc_result_owned_66   (loop_result_some_holding_pattern_binding.ash:12:1)
+    Alloc                 Target=52 SizeBytes=8   (loop_result_some_holding_pattern_binding.ash:12:1)
+    MakeClosure           Target=53 FuncLabel=__deepcopy_3 EnvPtrTemp=52 EnvSizeBytes=8   (loop_result_some_holding_pattern_binding.ash:12:1)
+    StoreMemOffset        BasePtr=52 OffsetBytes=0 Source=53   (loop_result_some_holding_pattern_binding.ash:12:1)
+    CallClosure           Target=54 ClosureTemp=53 ArgTemp=32   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadConstInt          Target=55 Value=0   (loop_result_some_holding_pattern_binding.ash:12:1)
+    CallKnown             Target=56 FuncLabel=__rcdrop_4 EnvTemp=55 ArgTemp=32   (loop_result_some_holding_pattern_binding.ash:12:1)
+    StoreLocal            Slot=22 Source=54   (loop_result_some_holding_pattern_binding.ash:12:1)
+    Jump                  Target=rc_result_done_67   (loop_result_some_holding_pattern_binding.ash:12:1)
+  rc_result_owned_66:
+    StoreLocal            Slot=22 Source=32   (loop_result_some_holding_pattern_binding.ash:12:1)
+  rc_result_done_67:
+    LoadLocal             Target=57 Slot=22   (loop_result_some_holding_pattern_binding.ash:12:1)
+    Return                Source=57   (loop_result_some_holding_pattern_binding.ash:12:1)
+
+function lambda_5  [SourceFunction from handOff]
+  locals=2 temps=4
+    Alloc                 Target=0 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_pattern_binding.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_pattern_binding.ash:12:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_pattern_binding.ash:12:1)
+    MakeClosure           Target=3 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true   (loop_result_some_holding_pattern_binding.ash:12:1)
+    Return                Source=3   (loop_result_some_holding_pattern_binding.ash:12:1)
+
+function lambda_8  [ClosureHelper from count]
+  locals=22 temps=21
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=5 Source=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=6 Source=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=7 Source=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+  lambda_8_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadLocal             Target=2 Slot=2   (loop_result_some_holding_pattern_binding.ash:18:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_pattern_binding.ash:18:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (loop_result_some_holding_pattern_binding.ash:18:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_71   (loop_result_some_holding_pattern_binding.ash:18:5)
+    LoadLocal             Target=5 Slot=1   (loop_result_some_holding_pattern_binding.ash:19:17)
+    StoreLocal            Slot=11 Source=5   (loop_result_some_holding_pattern_binding.ash:18:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_68   (loop_result_some_holding_pattern_binding.ash:18:5)
+  match_arm_cleanup_71:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_70   (loop_result_some_holding_pattern_binding.ash:18:5)
+  match_next_70:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_pattern_binding.ash:18:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (loop_result_some_holding_pattern_binding.ash:18:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_72   (loop_result_some_holding_pattern_binding.ash:18:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:18:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:18:5)
+    StoreLocal            Slot=18 Source=9   (loop_result_some_holding_pattern_binding.ash:18:5)
+    LoadLocal             Target=10 Slot=18   (loop_result_some_holding_pattern_binding.ash:20:30)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (loop_result_some_holding_pattern_binding.ash:20:36)
+    LoadConstInt          Target=13 Value=1   (loop_result_some_holding_pattern_binding.ash:20:40)
+    AddInt                Target=14 Left=12 Right=13   (loop_result_some_holding_pattern_binding.ash:20:36)
+    LoadLocal             Target=15 Slot=2   (loop_result_some_holding_pattern_binding.ash:20:24)
+    LoadLocal             Target=16 Slot=1   (loop_result_some_holding_pattern_binding.ash:20:24)
+    StoreLocal            Slot=2 Source=11   (loop_result_some_holding_pattern_binding.ash:20:24)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    StoreLocal            Slot=1 Source=14   (loop_result_some_holding_pattern_binding.ash:20:24)
+    RestoreStackPointer   Slot=10   (loop_result_some_holding_pattern_binding.ash:20:24)
+    Jump                  Target=lambda_8_body   (loop_result_some_holding_pattern_binding.ash:20:24)
+    LoadConstInt          Target=17 Value=0   (loop_result_some_holding_pattern_binding.ash:20:24)
+    StoreLocal            Slot=11 Source=17   (loop_result_some_holding_pattern_binding.ash:18:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_68   (loop_result_some_holding_pattern_binding.ash:18:5)
+  match_arm_cleanup_72:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_69   (loop_result_some_holding_pattern_binding.ash:18:5)
+  match_none_69:
+    LoadConstInt          Target=19 Value=0   (loop_result_some_holding_pattern_binding.ash:18:5)
+    StoreLocal            Slot=11 Source=19   (loop_result_some_holding_pattern_binding.ash:18:5)
+  match_end_68:
+    LoadLocal             Target=20 Slot=11   (loop_result_some_holding_pattern_binding.ash:18:5)
+    Return                Source=20   (loop_result_some_holding_pattern_binding.ash:17:1)
+
+function __rc_cdrop_9  [RuntimeManagedClosureDropper]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=2 Source=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+  rcdrop_list_73:
+    LoadLocal             Target=2 Slot=2   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    CmpIntNe              Target=4 Left=2 Right=3   (loop_result_some_holding_pattern_binding.ash:17:1)
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_75   (loop_result_some_holding_pattern_binding.ash:17:1)
+    RcIsUnique            Target=5 SourceTemp=2
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_74   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadMemOffset         Target=6 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:17:1)
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=6   (loop_result_some_holding_pattern_binding.ash:17:1)
+    Jump                  Target=rcdrop_list_73   (loop_result_some_holding_pattern_binding.ash:17:1)
+  rcdrop_list_shared_74:
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_75   (loop_result_some_holding_pattern_binding.ash:17:1)
+  rcdrop_list_end_75:
+    LoadConstInt          Target=7 Value=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    Return                Source=7   (loop_result_some_holding_pattern_binding.ash:17:1)
+
+function lambda_8$env_normalize  [ClosureEnvironmentNormalizer from count]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_76   (loop_result_some_holding_pattern_binding.ash:17:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (loop_result_some_holding_pattern_binding.ash:17:1)
+    Jump                  Target=rc_representation_done_77   (loop_result_some_holding_pattern_binding.ash:17:1)
+  rc_representation_copy_76:
+    CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=2 Source=5   (loop_result_some_holding_pattern_binding.ash:17:1)
+  rc_representation_done_77:
+    LoadLocal             Target=6 Slot=2   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_9   (loop_result_some_holding_pattern_binding.ash:17:1)
+    Return                Source=7   (loop_result_some_holding_pattern_binding.ash:17:1)
+
+function lambda_7  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (loop_result_some_holding_pattern_binding.ash:17:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_pattern_binding.ash:17:1)
+    MakeClosure           Target=4 FuncLabel=lambda_8 EnvPtrTemp=0 EnvSizeBytes=8   (loop_result_some_holding_pattern_binding.ash:17:1)
+    Return                Source=4   (loop_result_some_holding_pattern_binding.ash:17:1)
+
+function lambda_10  [SourceFunction from found]
+  locals=22 temps=43
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_pattern_binding.ash:23:11)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_pattern_binding.ash:23:19)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (loop_result_some_holding_pattern_binding.ash:23:11)
+    LoadConstInt          Target=4 Value=2   (loop_result_some_holding_pattern_binding.ash:23:26)
+    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (loop_result_some_holding_pattern_binding.ash:23:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    CmpIntNe              Target=7 Left=5 Right=6   (loop_result_some_holding_pattern_binding.ash:23:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_81   (loop_result_some_holding_pattern_binding.ash:23:5)
+    GetAdtTag             Target=8 Ptr=5   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadConstInt          Target=10 Value=1   (loop_result_some_holding_pattern_binding.ash:23:5)
+    CmpIntEq              Target=9 Left=8 Right=10   (loop_result_some_holding_pattern_binding.ash:23:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_81   (loop_result_some_holding_pattern_binding.ash:23:5)
+    GetAdtField           Target=11 Ptr=5 FieldIndex=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    StoreLocal            Slot=8 Source=11   (loop_result_some_holding_pattern_binding.ash:23:5)
+    StoreLocal            Slot=9 Source=5   (loop_result_some_holding_pattern_binding.ash:23:5)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadEnv               Target=12 Index=1   (loop_result_some_holding_pattern_binding.ash:24:26)
+    LoadLocal             Target=13 Slot=8   (loop_result_some_holding_pattern_binding.ash:24:32)
+    Borrow                Target=14 SourceTemp=13
+    LoadMemOffset         Target=15 BasePtr=12 OffsetBytes=16   (loop_result_some_holding_pattern_binding.ash:24:26)
+    LoadConstInt          Target=16 Value=62   (loop_result_some_holding_pattern_binding.ash:24:26)
+    ShrInt                Target=17 Left=15 Right=16   (loop_result_some_holding_pattern_binding.ash:24:26)
+    LoadConstInt          Target=18 Value=1   (loop_result_some_holding_pattern_binding.ash:24:26)
+    AndInt                Target=19 Left=17 Right=18   (loop_result_some_holding_pattern_binding.ash:24:26)
+    StoreLocal            Slot=12 Source=14   (loop_result_some_holding_pattern_binding.ash:24:26)
+    JumpIfFalse           CondTemp=19 Target=rc_call_argument_not_retained_82   (loop_result_some_holding_pattern_binding.ash:24:26)
+    RcDup                 Target=20 SourceTemp=14 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=12 Source=20   (loop_result_some_holding_pattern_binding.ash:24:26)
+  rc_call_argument_not_retained_82:
+    LoadLocal             Target=21 Slot=12   (loop_result_some_holding_pattern_binding.ash:24:26)
+    CallClosure           Target=22 ClosureTemp=12 ArgTemp=21 RuntimeManagedArgumentFlagTemp=19   (loop_result_some_holding_pattern_binding.ash:24:26)
+    LoadConstInt          Target=23 Value=0   (loop_result_some_holding_pattern_binding.ash:24:39)
+    CallClosure           Target=24 ClosureTemp=22 ArgTemp=23   (loop_result_some_holding_pattern_binding.ash:24:26)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
+    StoreLocal            Slot=5 Source=24   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadLocal             Target=25 Slot=8   (loop_result_some_holding_pattern_binding.ash:23:5)
+    StoreLocal            Slot=14 Source=25   (loop_result_some_holding_pattern_binding.ash:23:5)
+  rcdrop_list_83:
+    LoadLocal             Target=26 Slot=14   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadConstInt          Target=27 Value=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    CmpIntNe              Target=28 Left=26 Right=27   (loop_result_some_holding_pattern_binding.ash:23:5)
+    JumpIfFalse           CondTemp=28 Target=rcdrop_list_end_85   (loop_result_some_holding_pattern_binding.ash:23:5)
+    RcIsUnique            Target=29 SourceTemp=26
+    JumpIfFalse           CondTemp=29 Target=rcdrop_list_shared_84   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadMemOffset         Target=30 BasePtr=26 OffsetBytes=8   (loop_result_some_holding_pattern_binding.ash:23:5)
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=14 Source=30   (loop_result_some_holding_pattern_binding.ash:23:5)
+    Jump                  Target=rcdrop_list_83   (loop_result_some_holding_pattern_binding.ash:23:5)
+  rcdrop_list_shared_84:
+    RcDrop                SourceTemp=26 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_85   (loop_result_some_holding_pattern_binding.ash:23:5)
+  rcdrop_list_end_85:
+    LoadLocal             Target=31 Slot=9   (loop_result_some_holding_pattern_binding.ash:23:5)
+    RcDrop                SourceTemp=31 TypeName=Maybe RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=15
+    Jump                  Target=match_end_78   (loop_result_some_holding_pattern_binding.ash:23:5)
+  match_arm_cleanup_81:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=16
+    Jump                  Target=match_next_80   (loop_result_some_holding_pattern_binding.ash:23:5)
+  match_next_80:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=32 Value=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    CmpIntNe              Target=33 Left=5 Right=32   (loop_result_some_holding_pattern_binding.ash:23:5)
+    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_86   (loop_result_some_holding_pattern_binding.ash:23:5)
+    GetAdtTag             Target=34 Ptr=5   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadConstInt          Target=36 Value=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    CmpIntEq              Target=35 Left=34 Right=36   (loop_result_some_holding_pattern_binding.ash:23:5)
+    JumpIfFalse           CondTemp=35 Target=match_arm_cleanup_86   (loop_result_some_holding_pattern_binding.ash:23:5)
+    StoreLocal            Slot=19 Source=5   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadConstInt          Target=37 Value=0   (loop_result_some_holding_pattern_binding.ash:25:19)
+    StoreLocal            Slot=5 Source=37   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadLocal             Target=38 Slot=19   (loop_result_some_holding_pattern_binding.ash:23:5)
+    LoadConstInt          Target=39 Value=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    CallKnown             Target=40 FuncLabel=__rcdrop_4 EnvTemp=39 ArgTemp=38   (loop_result_some_holding_pattern_binding.ash:23:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
+    Jump                  Target=match_end_78   (loop_result_some_holding_pattern_binding.ash:23:5)
+  match_arm_cleanup_86:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    Jump                  Target=match_none_79   (loop_result_some_holding_pattern_binding.ash:23:5)
+  match_none_79:
+    LoadConstInt          Target=41 Value=0   (loop_result_some_holding_pattern_binding.ash:23:5)
+    StoreLocal            Slot=5 Source=41   (loop_result_some_holding_pattern_binding.ash:23:5)
+  match_end_78:
+    LoadLocal             Target=42 Slot=5   (loop_result_some_holding_pattern_binding.ash:23:5)
+    Return                Source=42   (loop_result_some_holding_pattern_binding.ash:22:1)
+
+function _start_main  [ProgramEntry]
+  locals=15 temps=35
+    LoadConstInt          Target=0 Value=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (loop_result_some_holding_pattern_binding.ash:4:1)
+    StoreLocal            Slot=0 Source=1   (loop_result_some_holding_pattern_binding.ash:4:1)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    AllocStack            Target=2 SizeBytes=8   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadLocal             Target=3 Slot=0   (loop_result_some_holding_pattern_binding.ash:12:1)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=3   (loop_result_some_holding_pattern_binding.ash:12:1)
+    MakeClosureStack      Target=4 FuncLabel=lambda_5 EnvPtrTemp=2 EnvSizeBytes=8   (loop_result_some_holding_pattern_binding.ash:12:1)
+    StoreLocal            Slot=3 Source=4   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadConstInt          Target=5 Value=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    MakeClosure           Target=6 FuncLabel=lambda_7 EnvPtrTemp=5 EnvSizeBytes=0   (loop_result_some_holding_pattern_binding.ash:17:1)
+    StoreLocal            Slot=4 Source=6   (loop_result_some_holding_pattern_binding.ash:17:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    AllocStack            Target=7 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:22:1)
+    LoadLocal             Target=8 Slot=3   (loop_result_some_holding_pattern_binding.ash:22:1)
+    Borrow                Target=9 SourceTemp=8
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=9   (loop_result_some_holding_pattern_binding.ash:22:1)
+    LoadLocal             Target=10 Slot=4   (loop_result_some_holding_pattern_binding.ash:22:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=10   (loop_result_some_holding_pattern_binding.ash:22:1)
+    MakeClosureStack      Target=11 FuncLabel=lambda_10 EnvPtrTemp=7 EnvSizeBytes=16   (loop_result_some_holding_pattern_binding.ash:22:1)
+    StoreLocal            Slot=7 Source=11   (loop_result_some_holding_pattern_binding.ash:22:1)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=12 Slot=7   (loop_result_some_holding_pattern_binding.ash:28:4)
+    Borrow                Target=13 SourceTemp=12
+    LoadConstInt          Target=14 Value=0   (loop_result_some_holding_pattern_binding.ash:27:1)
+    LoadConstInt          Target=15 Value=2   (loop_result_some_holding_pattern_binding.ash:27:13)
+    LoadConstInt          Target=16 Value=0   (loop_result_some_holding_pattern_binding.ash:27:16)
+    LoadConstInt          Target=17 Value=3   (loop_result_some_holding_pattern_binding.ash:27:20)
+    Alloc                 Target=18 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:16)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=17   (loop_result_some_holding_pattern_binding.ash:27:16)
+    StoreMemOffset        BasePtr=18 OffsetBytes=8 Source=16   (loop_result_some_holding_pattern_binding.ash:27:16)
+    LoadConstInt          Target=19 Value=2   (loop_result_some_holding_pattern_binding.ash:27:17)
+    Alloc                 Target=20 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:16)
+    StoreMemOffset        BasePtr=20 OffsetBytes=0 Source=19   (loop_result_some_holding_pattern_binding.ash:27:16)
+    StoreMemOffset        BasePtr=20 OffsetBytes=8 Source=18   (loop_result_some_holding_pattern_binding.ash:27:16)
+    Alloc                 Target=21 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:12)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=15   (loop_result_some_holding_pattern_binding.ash:27:12)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=20   (loop_result_some_holding_pattern_binding.ash:27:12)
+    Alloc                 Target=22 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:1)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=21   (loop_result_some_holding_pattern_binding.ash:27:1)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=14   (loop_result_some_holding_pattern_binding.ash:27:1)
+    LoadConstInt          Target=23 Value=1   (loop_result_some_holding_pattern_binding.ash:27:3)
+    LoadConstInt          Target=24 Value=0   (loop_result_some_holding_pattern_binding.ash:27:6)
+    LoadConstInt          Target=25 Value=1   (loop_result_some_holding_pattern_binding.ash:27:7)
+    Alloc                 Target=26 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:6)
+    StoreMemOffset        BasePtr=26 OffsetBytes=0 Source=25   (loop_result_some_holding_pattern_binding.ash:27:6)
+    StoreMemOffset        BasePtr=26 OffsetBytes=8 Source=24   (loop_result_some_holding_pattern_binding.ash:27:6)
+    Alloc                 Target=27 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:2)
+    StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=23   (loop_result_some_holding_pattern_binding.ash:27:2)
+    StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=26   (loop_result_some_holding_pattern_binding.ash:27:2)
+    Alloc                 Target=28 SizeBytes=16   (loop_result_some_holding_pattern_binding.ash:27:1)
+    StoreMemOffset        BasePtr=28 OffsetBytes=0 Source=27   (loop_result_some_holding_pattern_binding.ash:27:1)
+    StoreMemOffset        BasePtr=28 OffsetBytes=8 Source=22   (loop_result_some_holding_pattern_binding.ash:27:1)
+    CallClosure           Target=29 ClosureTemp=13 ArgTemp=28   (loop_result_some_holding_pattern_binding.ash:27:1)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
+    PrintInt              Source=29   (loop_result_some_holding_pattern_binding.ash:27:1)
+    AllocAdt              Target=30 Tag=0 FieldCount=0   (loop_result_some_holding_pattern_binding.ash:27:1)
+    StoreLocal            Slot=11 Source=30   (loop_result_some_holding_pattern_binding.ash:22:1)
+    LoadLocal             Target=31 Slot=7   (loop_result_some_holding_pattern_binding.ash:22:1)
+    CleanupResource       SourceTemp=31 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=12
+    CopyOutArena          DestTemp=32 SrcTemp=30 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=12
+    StoreLocal            Slot=13 Source=32   (loop_result_some_holding_pattern_binding.ash:12:1)
+    LoadLocal             Target=33 Slot=3   (loop_result_some_holding_pattern_binding.ash:12:1)
+    CleanupResource       SourceTemp=33 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=14
+    LoadLocal             Target=34 Slot=13   (loop_result_some_holding_pattern_binding.ash:12:1)
+    Return                Source=34
+

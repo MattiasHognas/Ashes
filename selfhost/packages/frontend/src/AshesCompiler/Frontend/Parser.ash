@@ -3596,7 +3596,7 @@ and parserParseTopLevelBinding sourceBytes declarationColumn state =
                                                 let binding =
                                                     LetBindingSyntax(name = name.text, value = value, sugarParameters = parserParameterNames(
                                                         parameters
-                                                    ), typeAnnotation = annotation, requirements = requirements)
+                                                    ), typeAnnotation = annotation, requirements = requirements, declarationStart = -1)
                                                     // The end comes from the raw value rather than the
                                                     // sugar-wrapped one: parserBuildSugarLambdas
                                                     // synthesizes its lambdas without spans, so a sugar
@@ -3619,7 +3619,7 @@ and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings r
                     afterAnd
                 ) with
                     | (binding, valueEnd, _valueLeadsWithLet, afterBinding) ->
-                        let bindings = binding :: reversedBindings
+                        let bindings = (binding with declarationStart = andToken.position) :: reversedBindings
                         in
                             if parserCurrentKind(afterBinding) == And
                             then

@@ -204,7 +204,26 @@ public sealed partial class Lowering
         // root parameter's final placement is runtime-managed; otherwise it remains an identity.
         bool fieldMayBeEmpty = argument is Expr.QualifiedVar && TempMayBeEmptyList(argumentTemp);
         Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, MayBeEmpty: fieldMayBeEmpty));
+        _patternOwnerAggregateDuplicates.Add(duplicatedTemp);
         return duplicatedTemp;
+    }
+
+    // The pattern-owner duplicates taken for an aggregate's elements, and those of them an owning
+    // aggregate then normalized: the normalization takes the element's reference itself (a retain of
+    // the owner's value, or a copy of an arena one), so the duplicate is released right after it by a
+    // marker promoted together with the duplicate (FinalizePerceusPatternBindingOwners).
+    private readonly HashSet<int> _patternOwnerAggregateDuplicates = [];
+
+    private readonly HashSet<int> _releasedPatternOwnerDuplicates = [];
+
+    private void ReleaseNormalizedPatternOwnerDuplicate(int elementTemp, TypeRef elementType)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_SUPERSEDEDOWNERDUP") is null
+            && _patternOwnerAggregateDuplicates.Contains(elementTemp)
+            && _releasedPatternOwnerDuplicates.Add(elementTemp))
+        {
+            Emit(new IrInst.RcDrop(elementTemp, GetOwnedTypeName(Prune(elementType)) ?? "PatternBinding"));
+        }
     }
 
     private bool IsHeapTemp(int temp)
@@ -519,8 +538,102 @@ public sealed partial class Lowering
         }
 
         int retainedTemp = DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
-        _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType);
+        _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType, targetParameter.Slot);
         return retainedTemp;
+    }
+
+    /// <summary>
+    /// A loop-parameter child of unresolved layout retained into an arena aggregate: the parameter's
+    /// type is only known once its body is lowered, so the arena copy that
+    /// <see cref="DemoteElementsBesideAbstractSibling"/> makes of a resolved reference-counted element
+    /// waits for TCO finalization, where it replaces the retain once the retain is a real one.
+    /// </summary>
+    private readonly record struct PendingArenaParameterCopy(TcoContext Tco, int DupTemp, int SourceTemp, TypeRef Type);
+
+    private readonly List<PendingArenaParameterCopy> _pendingArenaParameterCopies = [];
+
+    // An arena aggregate never releases what it holds, so a retain of a loop parameter it stores
+    // (taken for the exit or back edge that releases the parameter) would never be balanced.
+    private void DeferArenaCopyOfUnresolvedParameter(Expr element, int elementTemp, int retainedTemp, TypeRef elementType)
+    {
+        if (retainedTemp == elementTemp
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENAPARAMCOPY") is not null
+            || _tcoCtx is not { } tco
+            || !ContainsUnresolvedLayoutType(Prune(elementType), [])
+            || _inst.Count == 0
+            || _inst[^1] is not IrInst.RcDup retain
+            || retain.Target != retainedTemp
+            || TryResolveTcoParameterRead(element, elementType, out bool isFieldRead) is null
+            || isFieldRead)
+        {
+            return;
+        }
+
+        _pendingArenaParameterCopies.Add(new PendingArenaParameterCopy(tco, retainedTemp, retain.SourceTemp, elementType));
+    }
+
+    // The retain becomes an arena copy of the parameter once the parameter is placed on the
+    // reference-counted heap and its type allows the copy; a parameter left in the arena keeps the
+    // erased marker.
+    private void FinalizeArenaParameterCopies(TcoContext? tco)
+    {
+        for (int index = _pendingArenaParameterCopies.Count - 1; index >= 0; index--)
+        {
+            PendingArenaParameterCopy pending = _pendingArenaParameterCopies[index];
+            if (tco is null || !ReferenceEquals(pending.Tco, tco))
+            {
+                continue;
+            }
+
+            _pendingArenaParameterCopies.RemoveAt(index);
+            TypeRef type = Prune(pending.Type);
+            int instIndex = _inst.FindIndex(instruction => instruction is IrInst.RcDup { RuntimeManaged: true } duplicate
+                && duplicate.Target == pending.DupTemp);
+            if (instIndex < 0
+                || CanArenaReset(type)
+                || type is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(type, [])
+                || !IsGeneralRcAdmissible(type))
+            {
+                continue;
+            }
+
+            ReplaceRetainWithArenaCopy(instIndex, pending, type);
+        }
+    }
+
+    // The arena copies are settled once the function's result is: a contract result copied out of
+    // the arena withdraws the retains its cells were built with, and a withdrawn retain needs no
+    // copy.
+    private int FinishLoopFunctionResult(string label, int bodyTemp, TypeRef bodyType, bool closesProducerChain, TcoContext? loopTco)
+    {
+        int resultTemp = FinishGeneralRcFunctionResult(label, bodyTemp, bodyType, closesProducerChain, loopTco);
+        FinalizeArenaParameterCopies(loopTco);
+        return resultTemp;
+    }
+
+    private void ReplaceRetainWithArenaCopy(int instIndex, PendingArenaParameterCopy pending, TypeRef type)
+    {
+        List<IrInst> function = _inst;
+        List<IrInst> buffer = [];
+        _inst = buffer;
+        try
+        {
+            int copiedTemp = EmitArenaCopyOfReferenceCounted(pending.SourceTemp, type, releasesSource: false);
+            int copiedSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(copiedSlot, copiedTemp));
+            Emit(new IrInst.LoadLocal(pending.DupTemp, copiedSlot));
+        }
+        finally
+        {
+            _inst = function;
+        }
+
+        _inst.RemoveAt(instIndex);
+        _inst.InsertRange(instIndex, buffer);
+        ShiftRecordedInstructionIndices(instIndex, buffer.Count - 1);
+        _tempOwnershipFacts.Remove(pending.DupTemp);
     }
 
     private void FinalizeTcoParameterAggregateRetains(TcoContext? tco)
@@ -2881,9 +2994,18 @@ public sealed partial class Lowering
                 && !_capabilitySymbols.ContainsKey(qualified.Module),
             Expr.Var variable => Lookup(variable.Name) is null or Binding.Local
                 && !IsNormalizedAlwaysReturnedStringParameterRead(expression)
-                && LookupOwnedValue(variable.Name) is null or { RuntimeManaged: false, PerceusPatternOwner: false },
+                && LookupOwnedValue(variable.Name) is null or { RuntimeManaged: false, PerceusPatternOwner: false }
+                    || IsReferenceCountedOwnerPartRead(variable.Name),
             _ => false,
         };
+
+    // A pattern binding aliased to the reference-counted scrutinee it was taken from (a tuple
+    // element): the owner releases the string with itself at the end of the arm, so a parent that
+    // outlives the arm keeps a string of its own rather than the borrowed one.
+    private bool IsReferenceCountedOwnerPartRead(string name)
+        => Environment.GetEnvironmentVariable("GRC_NO_OWNERPARTCHILD") is null
+            && !string.Equals(ResolveOwnershipAlias(name), name, StringComparison.Ordinal)
+            && LookupOwnedValue(name) is { RuntimeManaged: true, PerceusPatternOwner: false, IsDropped: false };
 
     /// <summary>
     /// A field read out of a local binding — `lexed.diagnostics`, the record-field spelling of the
@@ -4494,8 +4616,22 @@ public sealed partial class Lowering
             return resultTemp;
         }
 
-        return EmitDeepCopy(resultTemp, Prune(resultType), IrInst.CopyOutPurpose.ArenaResultBoundary);
+        int copyTemp = EmitDeepCopy(resultTemp, Prune(resultType), IrInst.CopyOutPurpose.ArenaResultBoundary);
+        if (OwnsReferenceCountedScopeResult(resultTemp))
+        {
+            EmitRuntimeManagedResultDrop(resultTemp, resultType);
+        }
+
+        return copyTemp;
     }
+
+    // A scope result holding a reference of its own (a join normalized onto the reference-counted
+    // heap, or a value just produced there) is replaced by its arena copy, so the copy's source is
+    // released once it is copied.
+    private bool OwnsReferenceCountedScopeResult(int resultTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_VIEWCOPYRELEASE") is null
+            && IsRuntimeManagedResultTemp(resultTemp)
+            && (IsNormalizedJoinTemp(resultTemp) || IsOwnedScopeJoinTemp(resultTemp) || IsNewlyProducedRcTemp(resultTemp));
 
     private void KeepViewedBackingsAlive()
     {

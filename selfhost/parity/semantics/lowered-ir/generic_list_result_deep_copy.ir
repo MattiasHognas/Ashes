@@ -116,16 +116,16 @@ function __rcdrop_record_5  [RuntimeManagedAdtDropper]
   locals=2 temps=4
     LoadLocal             Target=0 Slot=1   (generic_list_result_deep_copy.ash:12:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_15   (generic_list_result_deep_copy.ash:12:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_16   (generic_list_result_deep_copy.ash:12:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (generic_list_result_deep_copy.ash:12:1)
     RcDrop                SourceTemp=2 TypeName=String RuntimeManaged=true
-  rc_drop_shared_15:
+  rc_drop_shared_16:
     RcDrop                SourceTemp=0 TypeName=Item RuntimeManaged=true
     LoadConstInt          Target=3 Value=0   (generic_list_result_deep_copy.ash:12:1)
     Return                Source=3   (generic_list_result_deep_copy.ash:12:1)
 
 function lambda_2  [SourceFunction from toItem]
-  locals=5 temps=22
+  locals=5 temps=31
     LoadLocal             Target=0 Slot=1   (generic_list_result_deep_copy.ash:12:54)
     TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (generic_list_result_deep_copy.ash:12:35)
     LoadConstBool         Target=2 Value=true   (generic_list_result_deep_copy.ash:12:65)
@@ -152,23 +152,35 @@ function lambda_2  [SourceFunction from toItem]
   general_rc_result_already_owned_6:
     LoadLocal             Target=11 Slot=2   (generic_list_result_deep_copy.ash:12:1)
     LoadArgumentOwnership Target=12   (generic_list_result_deep_copy.ash:12:1)
-    LoadConstInt          Target=13 Value=1   (generic_list_result_deep_copy.ash:12:1)
+    LoadConstInt          Target=13 Value=2   (generic_list_result_deep_copy.ash:12:1)
     ShrInt                Target=14 Left=12 Right=13   (generic_list_result_deep_copy.ash:12:1)
-    AndInt                Target=15 Left=14 Right=13   (generic_list_result_deep_copy.ash:12:1)
-    JumpIfFalse           CondTemp=15 Target=rc_result_owned_13   (generic_list_result_deep_copy.ash:12:1)
-    Alloc                 Target=16 SizeBytes=8   (generic_list_result_deep_copy.ash:12:1)
-    MakeClosure           Target=17 FuncLabel=__deepcopy_4 EnvPtrTemp=16 EnvSizeBytes=8   (generic_list_result_deep_copy.ash:12:1)
-    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=17   (generic_list_result_deep_copy.ash:12:1)
-    CallClosure           Target=18 ClosureTemp=17 ArgTemp=11   (generic_list_result_deep_copy.ash:12:1)
-    LoadConstInt          Target=19 Value=0   (generic_list_result_deep_copy.ash:12:1)
-    CallKnown             Target=20 FuncLabel=__rcdrop_record_5 EnvTemp=19 ArgTemp=11   (generic_list_result_deep_copy.ash:12:1)
-    StoreLocal            Slot=4 Source=18   (generic_list_result_deep_copy.ash:12:1)
-    Jump                  Target=rc_result_done_14   (generic_list_result_deep_copy.ash:12:1)
-  rc_result_owned_13:
+    LoadConstInt          Target=15 Value=1   (generic_list_result_deep_copy.ash:12:1)
+    AndInt                Target=16 Left=14 Right=15   (generic_list_result_deep_copy.ash:12:1)
+    JumpIfFalse           CondTemp=16 Target=independent_result_not_requested_13   (generic_list_result_deep_copy.ash:12:1)
+    LoadArgumentOwnership Target=17   (generic_list_result_deep_copy.ash:12:1)
+    LoadConstInt          Target=18 Value=-8   (generic_list_result_deep_copy.ash:12:1)
+    AndInt                Target=19 Left=17 Right=18   (generic_list_result_deep_copy.ash:12:1)
+    LoadConstInt          Target=20 Value=2305843009213693952   (generic_list_result_deep_copy.ash:12:1)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=20   (generic_list_result_deep_copy.ash:12:1)
+  independent_result_not_requested_13:
+    LoadArgumentOwnership Target=21   (generic_list_result_deep_copy.ash:12:1)
+    LoadConstInt          Target=22 Value=1   (generic_list_result_deep_copy.ash:12:1)
+    ShrInt                Target=23 Left=21 Right=22   (generic_list_result_deep_copy.ash:12:1)
+    AndInt                Target=24 Left=23 Right=22   (generic_list_result_deep_copy.ash:12:1)
+    JumpIfFalse           CondTemp=24 Target=rc_result_owned_14   (generic_list_result_deep_copy.ash:12:1)
+    Alloc                 Target=25 SizeBytes=8   (generic_list_result_deep_copy.ash:12:1)
+    MakeClosure           Target=26 FuncLabel=__deepcopy_4 EnvPtrTemp=25 EnvSizeBytes=8   (generic_list_result_deep_copy.ash:12:1)
+    StoreMemOffset        BasePtr=25 OffsetBytes=0 Source=26   (generic_list_result_deep_copy.ash:12:1)
+    CallClosure           Target=27 ClosureTemp=26 ArgTemp=11   (generic_list_result_deep_copy.ash:12:1)
+    LoadConstInt          Target=28 Value=0   (generic_list_result_deep_copy.ash:12:1)
+    CallKnown             Target=29 FuncLabel=__rcdrop_record_5 EnvTemp=28 ArgTemp=11   (generic_list_result_deep_copy.ash:12:1)
+    StoreLocal            Slot=4 Source=27   (generic_list_result_deep_copy.ash:12:1)
+    Jump                  Target=rc_result_done_15   (generic_list_result_deep_copy.ash:12:1)
+  rc_result_owned_14:
     StoreLocal            Slot=4 Source=11   (generic_list_result_deep_copy.ash:12:1)
-  rc_result_done_14:
-    LoadLocal             Target=21 Slot=4   (generic_list_result_deep_copy.ash:12:1)
-    Return                Source=21   (generic_list_result_deep_copy.ash:12:1)
+  rc_result_done_15:
+    LoadLocal             Target=30 Slot=4   (generic_list_result_deep_copy.ash:12:1)
+    Return                Source=30   (generic_list_result_deep_copy.ash:12:1)
 
 function lambda_6  [SourceFunction from firstName]
   locals=14 temps=27
@@ -176,34 +188,34 @@ function lambda_6  [SourceFunction from firstName]
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
     LoadConstInt          Target=1 Value=0   (generic_list_result_deep_copy.ash:15:5)
     CmpIntEq              Target=2 Left=0 Right=1   (generic_list_result_deep_copy.ash:15:5)
-    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_19   (generic_list_result_deep_copy.ash:15:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_20   (generic_list_result_deep_copy.ash:15:5)
     LoadConstStr          Target=3 StrLabel=str_0   (generic_list_result_deep_copy.ash:16:17)
     IsReferenceCounted    Target=17 SourceTemp=3
-    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_21   (generic_list_result_deep_copy.ash:15:5)
+    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_22   (generic_list_result_deep_copy.ash:15:5)
     RcDup                 Target=18 SourceTemp=3 RuntimeManaged=true
     StoreLocal            Slot=12 Source=18   (generic_list_result_deep_copy.ash:15:5)
-    Jump                  Target=rc_representation_done_22   (generic_list_result_deep_copy.ash:15:5)
-  rc_representation_copy_21:
+    Jump                  Target=rc_representation_done_23   (generic_list_result_deep_copy.ash:15:5)
+  rc_representation_copy_22:
     CopyOutArena          DestTemp=19 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=12 Source=19   (generic_list_result_deep_copy.ash:15:5)
-  rc_representation_done_22:
+  rc_representation_done_23:
     LoadLocal             Target=20 Slot=12   (generic_list_result_deep_copy.ash:15:5)
     StoreLocal            Slot=2 Source=20   (generic_list_result_deep_copy.ash:15:5)
-    Jump                  Target=match_end_16   (generic_list_result_deep_copy.ash:15:5)
-  match_arm_cleanup_19:
+    Jump                  Target=match_end_17   (generic_list_result_deep_copy.ash:15:5)
+  match_arm_cleanup_20:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
-    Jump                  Target=match_next_18   (generic_list_result_deep_copy.ash:15:5)
-  match_next_18:
+    Jump                  Target=match_next_19   (generic_list_result_deep_copy.ash:15:5)
+  match_next_19:
     SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
     LoadConstInt          Target=4 Value=0   (generic_list_result_deep_copy.ash:15:5)
     CmpIntNe              Target=5 Left=0 Right=4   (generic_list_result_deep_copy.ash:15:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_20   (generic_list_result_deep_copy.ash:15:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_21   (generic_list_result_deep_copy.ash:15:5)
     LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (generic_list_result_deep_copy.ash:15:5)
     LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (generic_list_result_deep_copy.ash:15:5)
     LoadConstInt          Target=8 Value=0   (generic_list_result_deep_copy.ash:15:5)
     CmpIntNe              Target=9 Left=6 Right=8   (generic_list_result_deep_copy.ash:15:5)
-    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_20   (generic_list_result_deep_copy.ash:15:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_21   (generic_list_result_deep_copy.ash:15:5)
     GetAdtField           Target=10 Ptr=6 FieldIndex=0 Tagless=true   (generic_list_result_deep_copy.ash:15:5)
     StoreLocal            Slot=9 Source=10   (generic_list_result_deep_copy.ash:15:5)
     LoadLocal             Target=11 Slot=9   (generic_list_result_deep_copy.ash:17:37)
@@ -214,28 +226,28 @@ function lambda_6  [SourceFunction from firstName]
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
     RcDrop                SourceTemp=10 TypeName=String OwnerSlot=9
     StoreLocal            Slot=2 Source=14   (generic_list_result_deep_copy.ash:15:5)
-    Jump                  Target=match_end_16   (generic_list_result_deep_copy.ash:15:5)
-  match_arm_cleanup_20:
+    Jump                  Target=match_end_17   (generic_list_result_deep_copy.ash:15:5)
+  match_arm_cleanup_21:
     RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=11
-    Jump                  Target=match_none_17   (generic_list_result_deep_copy.ash:15:5)
-  match_none_17:
+    Jump                  Target=match_none_18   (generic_list_result_deep_copy.ash:15:5)
+  match_none_18:
     LoadConstInt          Target=15 Value=0   (generic_list_result_deep_copy.ash:15:5)
     StoreLocal            Slot=2 Source=15   (generic_list_result_deep_copy.ash:15:5)
-  match_end_16:
+  match_end_17:
     LoadLocal             Target=16 Slot=2   (generic_list_result_deep_copy.ash:15:5)
     LoadArgumentOwnership Target=21   (generic_list_result_deep_copy.ash:14:1)
     LoadConstInt          Target=22 Value=1   (generic_list_result_deep_copy.ash:14:1)
     ShrInt                Target=23 Left=21 Right=22   (generic_list_result_deep_copy.ash:14:1)
     AndInt                Target=24 Left=23 Right=22   (generic_list_result_deep_copy.ash:14:1)
-    JumpIfFalse           CondTemp=24 Target=rc_result_owned_23   (generic_list_result_deep_copy.ash:14:1)
+    JumpIfFalse           CondTemp=24 Target=rc_result_owned_24   (generic_list_result_deep_copy.ash:14:1)
     CopyOutArena          DestTemp=25 SrcTemp=16 Purpose=ArenaResultBoundary
     RcDrop                SourceTemp=16 TypeName=String RuntimeManaged=true
     StoreLocal            Slot=13 Source=25   (generic_list_result_deep_copy.ash:14:1)
-    Jump                  Target=rc_result_done_24   (generic_list_result_deep_copy.ash:14:1)
-  rc_result_owned_23:
+    Jump                  Target=rc_result_done_25   (generic_list_result_deep_copy.ash:14:1)
+  rc_result_owned_24:
     StoreLocal            Slot=13 Source=16   (generic_list_result_deep_copy.ash:14:1)
-  rc_result_done_24:
+  rc_result_done_25:
     LoadLocal             Target=26 Slot=13   (generic_list_result_deep_copy.ash:14:1)
     Return                Source=26   (generic_list_result_deep_copy.ash:14:1)
 
@@ -281,82 +293,82 @@ function _start_main  [ProgramEntry]
     AndInt                Target=24 Left=22 Right=23   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=12 Source=19   (generic_list_result_deep_copy.ash:19:26)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
-    JumpIfFalse           CondTemp=24 Target=general_rc_result_normalize_26   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=general_rc_result_owned_25   (generic_list_result_deep_copy.ash:19:26)
-  general_rc_result_normalize_26:
+    JumpIfFalse           CondTemp=24 Target=general_rc_result_normalize_27   (generic_list_result_deep_copy.ash:19:26)
+    Jump                  Target=general_rc_result_owned_26   (generic_list_result_deep_copy.ash:19:26)
+  general_rc_result_normalize_27:
     IsReferenceCounted    Target=25 SourceTemp=19
-    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_27   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_28   (generic_list_result_deep_copy.ash:19:26)
     RcDup                 Target=26 SourceTemp=19 RuntimeManaged=true
     StoreLocal            Slot=13 Source=26   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_representation_done_28   (generic_list_result_deep_copy.ash:19:26)
-  rc_representation_copy_27:
+    Jump                  Target=rc_representation_done_29   (generic_list_result_deep_copy.ash:19:26)
+  rc_representation_copy_28:
     IsReferenceCounted    Target=28 SourceTemp=19
-    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_29   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_30   (generic_list_result_deep_copy.ash:19:26)
     RcDup                 Target=29 SourceTemp=19 RuntimeManaged=true
     StoreLocal            Slot=14 Source=29   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_representation_done_30   (generic_list_result_deep_copy.ash:19:26)
-  rc_representation_copy_29:
+    Jump                  Target=rc_representation_done_31   (generic_list_result_deep_copy.ash:19:26)
+  rc_representation_copy_30:
     LoadConstInt          Target=30 Value=0   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=15 Source=19   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=16 Source=30   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=17 Source=30   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_31:
+  rc_normalize_list_32:
     LoadLocal             Target=31 Slot=15   (generic_list_result_deep_copy.ash:19:26)
     CmpIntNe              Target=32 Left=31 Right=30   (generic_list_result_deep_copy.ash:19:26)
-    JumpIfFalse           CondTemp=32 Target=rc_normalize_list_end_32   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=32 Target=rc_normalize_list_end_33   (generic_list_result_deep_copy.ash:19:26)
     IsReferenceCounted    Target=33 SourceTemp=31
-    JumpIfFalse           CondTemp=33 Target=rc_normalize_list_cell_33   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=33 Target=rc_normalize_list_cell_34   (generic_list_result_deep_copy.ash:19:26)
     RcDup                 Target=34 SourceTemp=31 RuntimeManaged=true
     LoadLocal             Target=35 Slot=16   (generic_list_result_deep_copy.ash:19:26)
     CmpIntNe              Target=36 Left=35 Right=30   (generic_list_result_deep_copy.ash:19:26)
-    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_first_34   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_first_35   (generic_list_result_deep_copy.ash:19:26)
     LoadLocal             Target=37 Slot=17   (generic_list_result_deep_copy.ash:19:26)
     StoreMemOffset        BasePtr=37 OffsetBytes=8 Source=34   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_normalize_list_linked_35   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_first_34:
+    Jump                  Target=rc_normalize_list_linked_36   (generic_list_result_deep_copy.ash:19:26)
+  rc_normalize_list_first_35:
     StoreLocal            Slot=16 Source=34   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_linked_35:
+  rc_normalize_list_linked_36:
     StoreLocal            Slot=17 Source=34   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_normalize_list_end_32   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_cell_33:
+    Jump                  Target=rc_normalize_list_end_33   (generic_list_result_deep_copy.ash:19:26)
+  rc_normalize_list_cell_34:
     LoadMemOffset         Target=38 BasePtr=31 OffsetBytes=0   (generic_list_result_deep_copy.ash:19:26)
     LoadMemOffset         Target=39 BasePtr=31 OffsetBytes=8   (generic_list_result_deep_copy.ash:19:26)
     IsReferenceCounted    Target=40 SourceTemp=38
-    JumpIfFalse           CondTemp=40 Target=rc_representation_copy_36   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=40 Target=rc_representation_copy_37   (generic_list_result_deep_copy.ash:19:26)
     RcDup                 Target=41 SourceTemp=38 RuntimeManaged=true
     StoreLocal            Slot=18 Source=41   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_representation_done_37   (generic_list_result_deep_copy.ash:19:26)
-  rc_representation_copy_36:
+    Jump                  Target=rc_representation_done_38   (generic_list_result_deep_copy.ash:19:26)
+  rc_representation_copy_37:
     LoadConstInt          Target=43 Value=0   (generic_list_result_deep_copy.ash:19:26)
     CallKnown             Target=44 FuncLabel=__rcnorm_3 EnvTemp=43 ArgTemp=38   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=18 Source=44   (generic_list_result_deep_copy.ash:19:26)
-  rc_representation_done_37:
+  rc_representation_done_38:
     LoadLocal             Target=45 Slot=18   (generic_list_result_deep_copy.ash:19:26)
     Alloc                 Target=46 SizeBytes=16 RuntimeManaged=true   (generic_list_result_deep_copy.ash:19:26)
     StoreMemOffset        BasePtr=46 OffsetBytes=0 Source=45   (generic_list_result_deep_copy.ash:19:26)
     StoreMemOffset        BasePtr=46 OffsetBytes=8 Source=30   (generic_list_result_deep_copy.ash:19:26)
     LoadLocal             Target=47 Slot=16   (generic_list_result_deep_copy.ash:19:26)
     CmpIntNe              Target=48 Left=47 Right=30   (generic_list_result_deep_copy.ash:19:26)
-    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_38   (generic_list_result_deep_copy.ash:19:26)
+    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_39   (generic_list_result_deep_copy.ash:19:26)
     LoadLocal             Target=49 Slot=17   (generic_list_result_deep_copy.ash:19:26)
     StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=46   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_normalize_list_linked_39   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_first_38:
+    Jump                  Target=rc_normalize_list_linked_40   (generic_list_result_deep_copy.ash:19:26)
+  rc_normalize_list_first_39:
     StoreLocal            Slot=16 Source=46   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_linked_39:
+  rc_normalize_list_linked_40:
     StoreLocal            Slot=17 Source=46   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=15 Source=39   (generic_list_result_deep_copy.ash:19:26)
-    Jump                  Target=rc_normalize_list_31   (generic_list_result_deep_copy.ash:19:26)
-  rc_normalize_list_end_32:
+    Jump                  Target=rc_normalize_list_32   (generic_list_result_deep_copy.ash:19:26)
+  rc_normalize_list_end_33:
     LoadLocal             Target=50 Slot=16   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=14 Source=50   (generic_list_result_deep_copy.ash:19:26)
-  rc_representation_done_30:
+  rc_representation_done_31:
     LoadLocal             Target=51 Slot=14   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=13 Source=51   (generic_list_result_deep_copy.ash:19:26)
-  rc_representation_done_28:
+  rc_representation_done_29:
     LoadLocal             Target=52 Slot=13   (generic_list_result_deep_copy.ash:19:26)
     StoreLocal            Slot=12 Source=52   (generic_list_result_deep_copy.ash:19:26)
-  general_rc_result_owned_25:
+  general_rc_result_owned_26:
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
     LoadLocal             Target=53 Slot=12   (generic_list_result_deep_copy.ash:19:26)
     LoadMemOffset         Target=54 BasePtr=7 OffsetBytes=16   (generic_list_result_deep_copy.ash:19:16)
@@ -383,29 +395,29 @@ function _start_main  [ProgramEntry]
     LoadLocal             Target=63 Slot=12
     LoadConstInt          Target=64 Value=0
     CmpIntNe              Target=65 Left=63 Right=64
-    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_40
+    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_41
     IsReferenceCounted    Target=66 SourceTemp=63
-    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_40
+    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_41
     StoreLocal            Slot=24 Source=63
-  rcdrop_list_41:
+  rcdrop_list_42:
     LoadLocal             Target=67 Slot=24
     LoadConstInt          Target=68 Value=0
     CmpIntNe              Target=69 Left=67 Right=68
-    JumpIfFalse           CondTemp=69 Target=rcdrop_list_end_43
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_end_44
     RcIsUnique            Target=70 SourceTemp=67
-    JumpIfFalse           CondTemp=70 Target=rcdrop_list_shared_42
+    JumpIfFalse           CondTemp=70 Target=rcdrop_list_shared_43
     LoadMemOffset         Target=71 BasePtr=67 OffsetBytes=0
     LoadConstInt          Target=72 Value=0
     CallKnown             Target=73 FuncLabel=__rcdrop_record_5 EnvTemp=72 ArgTemp=71
     LoadMemOffset         Target=74 BasePtr=67 OffsetBytes=8
     RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=24 Source=74
-    Jump                  Target=rcdrop_list_41
-  rcdrop_list_shared_42:
+    Jump                  Target=rcdrop_list_42
+  rcdrop_list_shared_43:
     RcDrop                SourceTemp=67 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_43
-  rcdrop_list_end_43:
+    Jump                  Target=rcdrop_list_end_44
+  rcdrop_list_end_44:
     StoreLocal            Slot=12 Source=64
-  general_rc_owned_absent_40:
+  general_rc_owned_absent_41:
     Return                Source=62
 

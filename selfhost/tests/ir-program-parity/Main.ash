@@ -251,6 +251,31 @@ let recursive printEach (lines: List(Str)) =
 // tco_list_refilled_only_from_helper hands its back queue, placed at the loop entry, to the helper
 // that refills it before any back edge: the read is a reference-counted owner, retained for the
 // callee outright rather than kept pending until the loop is finalized.
+// tco_list_top_cell_compacted_at_back_edge conses onto its list accumulator at one back edge and
+// hands it on unchanged at another: the cons is copied up, the arena reset to the per-iteration
+// watermark, and the cell copied down again, its tail left below the watermark.
+// call_argument_cell_releases_loop_parameter_field_retain hands a helper a cons over a field of its record parameter inside the
+// record update it threads: the cell's retain of the field is collected for the call and released
+// once the helper's result holds its own references.
+// tco_unchanged_bytes_parameter_consed_onto_accumulator conses an unchanged Bytes parameter onto a
+// list of Bytes and walks another by its tail: under the general contract both lists and the
+// unchanged parameter are placed on the reference-counted heap whatever their heads' provenance,
+// as is the list a loop builds by consing fresh buffers.
+// tco_bytes_view_head_copied_into_counted_cell pushes a fresh buffer over a view of a string
+// literal onto its accumulator: the view is copied onto the reference-counted heap, so both cells
+// and the list are counted.
+// tco_bytes_matched_head_consed_beside_unchanged_parameter conses a buffer matched out of one list
+// onto another beside an unchanged Bytes parameter: the cell over a head of unknown origin stays in
+// the arena, the back edge copies it onto the reference-counted heap and releases the duplicate its
+// head took. tco_bytes_matched_head_under_fresh_head_chain pushes a fresh buffer over a matched one:
+// the innermost cell takes its head over, so both cells are counted.
+// mutual_recursion_later_sibling_call_requests_arena_result calls a later member of its recursive
+// group, whose result is still open when the body is lowered: the call asks for an arena result,
+// also when the body is lowered again against the result the first lowering resolved.
+// mutual_recursion_later_sibling_result_beside_fresh_tuple_arm calls a later member whose result, a
+// tuple of the contract's types, the group settles only once that member is lowered: the group is
+// lowered again with the call's result type pinned, so the call takes it as a contract result, and
+// the join beside a fresh tuple normalizes the call's arm with the contract's copy.
 let fixtures =
     [
         "simple_arith",
@@ -338,7 +363,16 @@ let fixtures =
         "choice_accumulator_call_head_reads_parameter",
         "inline_annotation_type_variable_generic_loop",
         "phantom_result_variable_recursive_loop_exit",
-        "tco_list_refilled_only_from_helper"
+        "tco_list_refilled_only_from_helper",
+        "constructor_owning_fresh_list_child",
+        "tco_list_top_cell_compacted_at_back_edge",
+        "call_argument_cell_releases_loop_parameter_field_retain",
+        "tco_unchanged_bytes_parameter_consed_onto_accumulator",
+        "tco_bytes_view_head_copied_into_counted_cell",
+        "tco_bytes_matched_head_consed_beside_unchanged_parameter",
+        "tco_bytes_matched_head_under_fresh_head_chain",
+        "mutual_recursion_later_sibling_call_requests_arena_result",
+        "mutual_recursion_later_sibling_result_beside_fresh_tuple_arm"
     ]
 
 // `mutual_recursion` is last and stands apart: it is not among the compared fixtures at all, because

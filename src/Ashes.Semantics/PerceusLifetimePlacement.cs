@@ -164,9 +164,9 @@ internal static class PerceusLifetimePlacement
             return;
         }
 
-        dominators ??= IrControlFlowGraph.ComputeImmediateDominators(blocks);
+        dominators = CurrentDominators(blocks, dominators);
         HashSet<int> region = ReachableBeforeBoundary(
-            blocks, dominators, definitionBlock, boundaryBlock);
+            instructions, blocks, dominators, definitionBlock, boundaryBlock, functionLabel);
         if (region.Count == 0)
         {
             return;
@@ -210,6 +210,13 @@ internal static class PerceusLifetimePlacement
             instructions.InsertRange(index, added);
         }
     }
+
+    // The immediate dominators, computed once per function and again only after an earlier owner's
+    // split edges have appended blocks, so the region can take those blocks in.
+    private static int[] CurrentDominators(List<Block> blocks, int[]? dominators)
+        => dominators is not null && dominators.Length == blocks.Count
+            ? dominators
+            : IrControlFlowGraph.ComputeImmediateDominators(blocks);
 
     private static bool TryRemoveLexicalAnchor(
         List<IrInst> instructions,
@@ -710,10 +717,12 @@ internal static class PerceusLifetimePlacement
     }
 
     private static HashSet<int> ReachableBeforeBoundary(
+        List<IrInst> instructions,
         List<Block> blocks,
         int[] dominators,
         int start,
-        int boundary)
+        int boundary,
+        string functionLabel)
     {
         var reachable = new HashSet<int>();
         var pending = new Stack<int>();
@@ -726,7 +735,7 @@ internal static class PerceusLifetimePlacement
             // paths entering those blocks from the function entry. Restrict placement to blocks
             // dominated by the definition so a drop never references the arm-local definition
             // temp on an unrelated path.
-            if (current > boundary
+            if ((current > boundary && !IsSplitEdgeWithin(instructions, blocks, current, boundary, functionLabel))
                 || !IrControlFlowGraph.Dominates(dominators, start, current)
                 || !reachable.Add(current)
                 || current == boundary)
@@ -741,6 +750,20 @@ internal static class PerceusLifetimePlacement
         }
 
         return reachable;
+    }
+
+    // An earlier owner's split edge (`<function>_rc_edge_<slot>_<block>`) sits after the function's
+    // last block but stands on an edge between two blocks; one that rejoins a block before the
+    // boundary is part of the region, so the owner is released on that edge too.
+    private static bool IsSplitEdgeWithin(List<IrInst> instructions, List<Block> blocks, int blockIndex, int boundary, string functionLabel)
+    {
+        Block block = blocks[blockIndex];
+        return block.Start < instructions.Count
+            && instructions[block.Start] is IrInst.Label label
+            && label.Name.StartsWith(functionLabel + "_rc_edge_", StringComparison.Ordinal)
+            && block.Successors.Count == 1
+            && block.Successors[0] <= boundary
+            && Environment.GetEnvironmentVariable("GRC_NO_SPLITEDGEREGION") is null;
     }
 
     // Block graph construction and dominators are shared infrastructure (IrControlFlowGraph) —

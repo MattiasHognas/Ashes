@@ -8,18 +8,31 @@ public sealed partial class Lowering
     /// <summary>
     /// The owned slots of <paramref name="ownedSlots"/> a function's result cannot point into: no
     /// value that can flow into the result is read from them. A result outside the contract's types
-    /// that holds no part of an owned value leaves that value to be released at the return.
+    /// that holds no part of an owned value leaves that value to be released at the return. A value
+    /// whose type no part of an owned value's type occurs in cannot hold it either, whatever flowed
+    /// into it (an owned name handed to a call returning an opaque handle, say).
     /// </summary>
-    private List<GeneralRcOwnedSlot> OwnedSlotsOutOfResultReach(int resultTemp, List<GeneralRcOwnedSlot> ownedSlots)
+    private List<GeneralRcOwnedSlot> OwnedSlotsOutOfResultReach(int resultTemp, TypeRef resultType, List<GeneralRcOwnedSlot> ownedSlots, HashSet<int>? independentTemps = null)
     {
         if (!ResultReachedOwnedSlotsEnabled || ownedSlots.Count == 0)
         {
             return [];
         }
 
-        HashSet<int> reached = LocalSlotsReachingTemp(resultTemp);
-        return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot))];
+        HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots), independentTemps);
+        return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot) || !ResultTypeMayHoldPartOf(resultType, owned.Type))];
     }
+
+    private static bool IndependentOwnedSlotsEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_INDEPENDENTOWNEDSLOTS") is null;
+
+    // The owned slots holding a call result of the contract's types: the value holds references of
+    // its own, so what reaches the result through it ends there, and the arguments its call
+    // borrowed are not reached through it.
+    private HashSet<int> IndependentOwnedSlots(List<GeneralRcOwnedSlot> ownedSlots)
+        => IndependentOwnedSlotsEnabled
+            ? [.. ownedSlots.Where(owned => !owned.Predecessor && IsGeneralRcValueType(owned.Type)).Select(owned => owned.Slot)]
+            : [];
 
     private static bool OwnedTupleResultEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_OWNEDTUPLERESULT") is null;
@@ -39,7 +52,7 @@ public sealed partial class Lowering
             && !IsRuntimeManagedResultTemp(bodyTemp)
             && !ContainsUnresolvedLayoutType(tuple, [])
             && CanRuntimeManageOwnedTupleType(tuple)
-            && OwnedSlotsOutOfResultReach(bodyTemp, _generalRcOwnedSlots).Count < _generalRcOwnedSlots.Count;
+            && OwnedSlotsOutOfResultReach(bodyTemp, resultType, _generalRcOwnedSlots).Count < _generalRcOwnedSlots.Count;
 
     private static bool ArenaTupleChildMoveEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_ARENATUPLECHILDMOVE") is null;
@@ -147,7 +160,7 @@ public sealed partial class Lowering
     /// </summary>
     private HashSet<int> LocalSlotsReachingTemp(int temp) => LocalSlotsReachingTemps([temp]);
 
-    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps)
+    private HashSet<int> LocalSlotsReachingTemps(IEnumerable<int> temps, HashSet<int>? independentSlots = null, HashSet<int>? independentTemps = null)
     {
         var definitions = new Dictionary<int, List<IrInst>>();
         var slotStores = new Dictionary<int, List<int>>();
@@ -169,14 +182,14 @@ public sealed partial class Lowering
         while (pending.Count > 0)
         {
             int current = pending.Pop();
-            if (!visited.Add(current) || !definitions.TryGetValue(current, out List<IrInst>? defining))
+            if (!visited.Add(current) || !definitions.TryGetValue(current, out List<IrInst>? defining) || independentTemps?.Contains(current) == true)
             {
                 continue;
             }
 
             foreach (IrInst definition in defining)
             {
-                foreach (int source in ValueFlowSources(definition, current, slots, slotStores, cellStores))
+                foreach (int source in ValueFlowSources(definition, current, slots, slotStores, cellStores, independentSlots))
                 {
                     pending.Push(source);
                 }
@@ -276,12 +289,18 @@ public sealed partial class Lowering
         int temp,
         HashSet<int> slots,
         Dictionary<int, List<int>> slotStores,
-        Dictionary<int, List<int>> cellStores)
+        Dictionary<int, List<int>> cellStores,
+        HashSet<int>? independentSlots)
     {
         switch (definition)
         {
             case IrInst.LoadLocal load:
                 slots.Add(load.Slot);
+                if (independentSlots?.Contains(load.Slot) == true)
+                {
+                    return [];
+                }
+
                 return slotStores.GetValueOrDefault(load.Slot) ?? [];
             case IrInst.Alloc or IrInst.AllocAdt or IrInst.AllocAdtStack or IrInst.AllocStack:
                 return cellStores.GetValueOrDefault(temp) ?? [];

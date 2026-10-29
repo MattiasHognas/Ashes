@@ -365,7 +365,56 @@ let recursive solveRcEligibilityFixpoint (comps: List(ProvenanceComponent)) (eli
             then solveRcEligibilityFixpoint(comps)(newEligible)
             else newEligible
 
-let recursive resolveNodeProvenancesInto (names: List(Str)) (ids: MapTree(Str, Int)) (eligible: MapTree(Int, Bool)) (facts: MapTree(Str, NodeFacts)) (unambiguousMap: MapTree(Str, Maybe(Str))) (resolved: List((Str, FunctionResultProvenance))) =
+let bytesResultOf (compId: Int) (resolved: MapTree(Int, BytesOwnershipProvenance)) = Ashes.Collection.Map.getInt(compId)(resolved)
+
+let recursive dependencyBytesResults (deps: List(Int)) (resolved: MapTree(Int, BytesOwnershipProvenance)) (results: List(BytesOwnershipProvenance)) =
+    match deps with
+        | [] -> Some(results)
+        | depId :: rest ->
+            match bytesResultOf(depId)(resolved) with
+                | Some(result) ->
+                    [result]
+                    |> unionBytesProvenances(results)
+                    |> dependencyBytesResults(rest)(resolved)
+                | None -> None
+
+// A component's Bytes provenance once every component it forwards to has one: unknown when one of
+// its own arms or one of those components is unknown, otherwise the single provenance its direct
+// arms and dependencies agree on (stage 0's `ComputeBytesProvenanceComponents`).
+let componentBytesResult (comp: ProvenanceComponent) (resolved: MapTree(Int, BytesOwnershipProvenance)) =
+    if comp.hasUnknownBytesResult
+    then Some(BytesProvenanceUnknown)
+    else
+        match dependencyBytesResults(comp.dependencies)(resolved)([]) with
+            | None -> None
+            | Some(results) ->
+                if listContainsBytes(results)(BytesProvenanceUnknown)
+                then Some(BytesProvenanceUnknown)
+                else
+                    match unionBytesProvenances(comp.directBytesProvenances)(results) with
+                        | single :: [] -> Some(single)
+                        | _ -> Some(BytesProvenanceUnknown)
+
+let recursive solveBytesProvenanceStep (comps: List(ProvenanceComponent)) (resolved: MapTree(Int, BytesOwnershipProvenance)) (changed: Bool) =
+    match comps with
+        | [] -> (resolved, changed)
+        | comp :: rest ->
+            match bytesResultOf(comp.componentId)(resolved) with
+                | Some(_result) -> solveBytesProvenanceStep(rest)(resolved)(changed)
+                | None ->
+                    match componentBytesResult(comp)(resolved) with
+                        | Some(result) ->
+                            solveBytesProvenanceStep(rest)(Ashes.Collection.Map.setInt(comp.componentId)(result)(resolved))(true)
+                        | None -> solveBytesProvenanceStep(rest)(resolved)(changed)
+
+let recursive solveBytesProvenanceFixpoint (comps: List(ProvenanceComponent)) (resolved: MapTree(Int, BytesOwnershipProvenance)) =
+    match solveBytesProvenanceStep(comps)(resolved)(false) with
+        | (next, changed) ->
+            if changed
+            then solveBytesProvenanceFixpoint(comps)(next)
+            else next
+
+let recursive resolveNodeProvenancesInto (names: List(Str)) (ids: MapTree(Str, Int)) (eligible: MapTree(Int, Bool)) (bytes: MapTree(Int, BytesOwnershipProvenance)) (unambiguousMap: MapTree(Str, Maybe(Str))) (resolved: List((Str, FunctionResultProvenance))) =
     match names with
         | [] -> reverse(resolved)
         | name :: tail ->
@@ -375,9 +424,9 @@ let recursive resolveNodeProvenancesInto (names: List(Str)) (ids: MapTree(Str, I
                     | None -> None
             in
                 let bProv =
-                    match factOf(facts)(name) with
-                        | NodeFacts { factBytes = single :: [] } -> single
-                        | _ -> BytesProvenanceUnknown
+                    match bytesResultOf(componentIdOf(ids)(name))(bytes) with
+                        | Some(result) -> result
+                        | None -> BytesProvenanceUnknown
                 in
                     let prov =
                         FunctionResultProvenance(
@@ -385,9 +434,9 @@ let recursive resolveNodeProvenancesInto (names: List(Str)) (ids: MapTree(Str, I
                             forwardsTo = unambiguous,
                             bytesProvenance = bProv
                         )
-                    in resolveNodeProvenancesInto(tail)(ids)(eligible)(facts)(unambiguousMap)((name, prov) :: resolved)
+                    in resolveNodeProvenancesInto(tail)(ids)(eligible)(bytes)(unambiguousMap)((name, prov) :: resolved)
 
-let resolveNodeProvenances (names: List(Str)) (ids: MapTree(Str, Int)) (eligible: MapTree(Int, Bool)) (facts: MapTree(Str, NodeFacts)) (unambiguousMap: MapTree(Str, Maybe(Str))) = resolveNodeProvenancesInto(names)(ids)(eligible)(facts)(unambiguousMap)([])
+let resolveNodeProvenances (names: List(Str)) (ids: MapTree(Str, Int)) (eligible: MapTree(Int, Bool)) (bytes: MapTree(Int, BytesOwnershipProvenance)) (unambiguousMap: MapTree(Str, Maybe(Str))) = resolveNodeProvenancesInto(names)(ids)(eligible)(bytes)(unambiguousMap)([])
 
 let resolveResultProvenances (nodes: List(ProvenanceFunctionNode)) =
     (let adj = adjacencyOf(nodes)(Ashes.Collection.Map.empty)
@@ -404,4 +453,4 @@ let resolveResultProvenances (nodes: List(ProvenanceFunctionNode)) =
                         in
                             Ashes.Collection.Map.empty
                             |> unambiguousOf(nodes)
-                            |> resolveNodeProvenances(getNodeNames(nodes))(ids)(eligibleComps)(facts))
+                            |> resolveNodeProvenances(getNodeNames(nodes))(ids)(eligibleComps)(solveBytesProvenanceFixpoint(comps)(Ashes.Collection.Map.empty)))

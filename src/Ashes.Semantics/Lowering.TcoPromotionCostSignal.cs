@@ -1,3 +1,5 @@
+using Ashes.Frontend;
+
 namespace Ashes.Semantics;
 
 internal enum TcoPromotionVerdict
@@ -409,7 +411,7 @@ public sealed partial class Lowering
                 || generalAccumulator)
             && IsBytesProvenanceEligibleTcoListElement(facts, list.Element);
         bool consumedTail = facts.ConsumedListTail
-            && !CanArenaReset(Prune(list.Element))
+            && (!CanArenaReset(Prune(list.Element)) || IsTupleScrutineeTailBesideHeapParameter(tco, facts.ParameterOrdinal))
             && !IsBorrowableInspectOnlyList(tco, facts.ParameterOrdinal, list);
         bool freshRebuiltList = facts.FreshRebuiltList || IsHandedOnFreshScalarList(tco, facts, list);
         TcoRcEligibilityReason reason = freshRebuiltList
@@ -483,6 +485,73 @@ public sealed partial class Lowering
             && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.FreshOrHandedOnListRebuild)
                 .Contains(facts.ParameterOrdinal);
 
+    // A list of inline elements walked by its tail stays in the arena while its scrutinee does. A
+    // tuple scrutinee that also holds a parameter owning heap parts (`match (pending, state)`) is
+    // built on the reference-counted heap: the list is normalized into it and the tail bound out of
+    // it is retained for the next iteration, so the list takes the consumed-tail placement, whose
+    // back edge releases the list each iteration was given.
+    private bool IsTupleScrutineeTailBesideHeapParameter(TcoContext tco, int ordinal)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_INLINETUPLETAIL") is not null
+            || tco.Body is not { } body
+            || ordinal >= tco.ParamNames.Count)
+        {
+            return false;
+        }
+
+        foreach (Expr? node in EnumerateFlowNodes(body))
+        {
+            if (node is null)
+            {
+                return false;
+            }
+
+            if (node is Expr.Match { Value: Expr.TupleLit tuple } match
+                && TupleScrutineeTailPosition(match, tuple, tco.ParamNames[ordinal]) is { } position
+                && TupleHoldsHeapParameterBeside(tco, tuple, position))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // The position at which the tuple holds the parameter and some arm binds that position's cons tail.
+    private static int? TupleScrutineeTailPosition(Expr.Match match, Expr.TupleLit tuple, string parameter)
+    {
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (tuple.Elements[i] is Expr.Var { Name: var name }
+                && string.Equals(name, parameter, StringComparison.Ordinal)
+                && match.Cases.Any(matchCase => matchCase.Pattern is Pattern.Tuple parts
+                    && parts.Elements.Count == tuple.Elements.Count
+                    && TupleScrutineeTailBinder(parts.Elements[i]) is not null))
+            {
+                return i;
+            }
+        }
+
+        return null;
+    }
+
+    private bool TupleHoldsHeapParameterBeside(TcoContext tco, Expr.TupleLit tuple, int position)
+    {
+        for (int i = 0; i < tuple.Elements.Count; i++)
+        {
+            if (i != position
+                && tuple.Elements[i] is Expr.Var { Name: var name }
+                && tco.ParamNames.IndexOf(name) is var partner and >= 0
+                && tco.ParamTypes.TryGetValue(partner, out TypeRef? type)
+                && !CanArenaReset(Prune(type)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private bool IsWalkedOrRefilledElement(TypeRef element)
         => element is TypeRef.TStr
             || (Environment.GetEnvironmentVariable("GRC_NO_WALKREFILLPATHS") is null
@@ -506,11 +575,16 @@ public sealed partial class Lowering
             && (IsGeneralRcValueType(element)
                 || (!CanArenaReset(Prune(element)) && CanRuntimeManageTcoListElement(element)));
 
+    // Under the general contract the cells of a list holding Bytes are reference-counted whatever its
+    // placement (a view is materialized or stays uncounted inside the cell), so a list kept in the
+    // arena because one of its heads has no proven provenance would hold counted cells that nothing
+    // releases: the loop's exit retains its result and leaves the parameter's list to the arena.
     private bool IsBytesProvenanceEligibleTcoListElement(
         TcoParamStaticFacts facts,
         TypeRef elementType)
     {
-        return !ContainsBytesLayout(elementType, new HashSet<TypeSymbol>())
+        return (GeneralRcEnabled && Environment.GetEnvironmentVariable("GRC_NO_UNGATEDBYTESLIST") is null)
+            || !ContainsBytesLayout(elementType, new HashSet<TypeSymbol>())
             || facts.BytesProvenanceSafeListRebuild;
     }
 

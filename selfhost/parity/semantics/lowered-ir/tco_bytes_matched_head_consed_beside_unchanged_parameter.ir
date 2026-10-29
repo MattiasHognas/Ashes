@@ -1,0 +1,832 @@
+IR (lowered)
+============
+
+function __deepcopy_list_3  [ListDeepCopier]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadEnv               Target=1 Index=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=2 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_3_copy   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=4 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  __deepcopy_list_3_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CopyOutArena          DestTemp=7 SrcTemp=5 Purpose=IndependentClone
+    CallClosure           Target=8 ClosureTemp=1 ArgTemp=6   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Alloc                 Target=9 SizeBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=7   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=9   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+
+function lambda_2  [ClosureHelper from pieces]
+  locals=57 temps=183
+    LoadEnv               Target=0 Index=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadEnv               Target=1 Index=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=3 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=53 Slot=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    IsReferenceCounted    Target=54 SourceTemp=53
+    JumpIfFalse           CondTemp=54 Target=rc_representation_copy_13   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=55 SourceTemp=53 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=55   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_14   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_copy_13:
+    CopyOutArena          DestTemp=56 SrcTemp=53 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=31 Source=56   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_done_14:
+    LoadLocal             Target=57 Slot=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=3 Source=57   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=58 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=9 Source=58   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=59 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    IsReferenceCounted    Target=60 SourceTemp=59
+    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_15   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=61 SourceTemp=59 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=61   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_copy_15:
+    LoadConstInt          Target=63 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=33 Source=59   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=34 Source=63   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=35 Source=63   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_17:
+    LoadLocal             Target=64 Slot=33   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=65 Left=64 Right=63   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=65 Target=rc_normalize_list_end_18   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=66 BasePtr=64 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=67 BasePtr=64 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    IsReferenceCounted    Target=68 SourceTemp=66
+    JumpIfFalse           CondTemp=68 Target=rc_representation_copy_19   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=69 SourceTemp=66 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=69   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_20   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_copy_19:
+    CopyOutArena          DestTemp=70 SrcTemp=66 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=36 Source=70   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_done_20:
+    LoadLocal             Target=71 Slot=36   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Alloc                 Target=72 SizeBytes=16 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=72 OffsetBytes=0 Source=71   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=72 OffsetBytes=8 Source=63   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=73 Slot=34   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=74 Left=73 Right=63   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=74 Target=rc_normalize_list_first_21   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=75 Slot=35   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=75 OffsetBytes=8 Source=72   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_normalize_list_linked_22   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_first_21:
+    StoreLocal            Slot=34 Source=72   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_linked_22:
+    StoreLocal            Slot=35 Source=72   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=33 Source=67   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_normalize_list_17   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_end_18:
+    LoadLocal             Target=76 Slot=34   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=32 Source=76   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_done_16:
+    LoadLocal             Target=77 Slot=32   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=2 Source=77   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=78 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=10 Source=78   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=79 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadArgumentOwnership Target=80   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=81 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    AndInt                Target=82 Left=80 Right=81   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=82 Target=rc_arg_normalize_copy_23   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=37 Source=79   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_arg_normalize_done_24   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_arg_normalize_copy_23:
+    IsReferenceCounted    Target=83 SourceTemp=79
+    JumpIfFalse           CondTemp=83 Target=rc_representation_copy_25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=84 SourceTemp=79 RuntimeManaged=true
+    StoreLocal            Slot=38 Source=84   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_26   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_copy_25:
+    LoadConstInt          Target=86 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=39 Source=79   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=40 Source=86   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=41 Source=86   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_27:
+    LoadLocal             Target=87 Slot=39   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=88 Left=87 Right=86   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=88 Target=rc_normalize_list_end_28   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=89 BasePtr=87 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=90 BasePtr=87 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    IsReferenceCounted    Target=91 SourceTemp=89
+    JumpIfFalse           CondTemp=91 Target=rc_representation_copy_29   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=92 SourceTemp=89 RuntimeManaged=true
+    StoreLocal            Slot=42 Source=92   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_30   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_copy_29:
+    CopyOutArena          DestTemp=93 SrcTemp=89 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=42 Source=93   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_done_30:
+    LoadLocal             Target=94 Slot=42   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Alloc                 Target=95 SizeBytes=16 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=95 OffsetBytes=0 Source=94   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=95 OffsetBytes=8 Source=86   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=96 Slot=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=97 Left=96 Right=86   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=97 Target=rc_normalize_list_first_31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=98 Slot=41   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=98 OffsetBytes=8 Source=95   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_normalize_list_linked_32   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_first_31:
+    StoreLocal            Slot=40 Source=95   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_linked_32:
+    StoreLocal            Slot=41 Source=95   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=39 Source=90   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_normalize_list_27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_normalize_list_end_28:
+    LoadLocal             Target=99 Slot=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=38 Source=99   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_done_26:
+    LoadLocal             Target=100 Slot=38   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=37 Source=100   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_arg_normalize_done_24:
+    LoadLocal             Target=101 Slot=37   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=1 Source=101   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=102 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=11 Source=102   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=6 Source=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=7 Source=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=8 Source=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    SaveStackPointer      Slot=14   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=3 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:11)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=4 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    LoadLocal             Target=6 Slot=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    RcDup                 Target=7 SourceTemp=6 RuntimeManaged=true
+    LoadLocal             Target=8 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:27)
+    IsReferenceCounted    Target=9 SourceTemp=8
+    JumpIfFalse           CondTemp=9 Target=rc_representation_copy_4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    RcDup                 Target=10 SourceTemp=8 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=10   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    Jump                  Target=rc_representation_done_5   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_representation_copy_4:
+    LoadConstInt          Target=12 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreLocal            Slot=19 Source=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreLocal            Slot=20 Source=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreLocal            Slot=21 Source=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_normalize_list_6:
+    LoadLocal             Target=13 Slot=19   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    CmpIntNe              Target=14 Left=13 Right=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    JumpIfFalse           CondTemp=14 Target=rc_normalize_list_end_7   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    LoadMemOffset         Target=15 BasePtr=13 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    LoadMemOffset         Target=16 BasePtr=13 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    IsReferenceCounted    Target=17 SourceTemp=15
+    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    RcDup                 Target=18 SourceTemp=15 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=18   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    Jump                  Target=rc_representation_done_9   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_representation_copy_8:
+    CopyOutArena          DestTemp=19 SrcTemp=15 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=22 Source=19   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_representation_done_9:
+    LoadLocal             Target=20 Slot=22   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    Alloc                 Target=21 SizeBytes=16 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=20   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    LoadLocal             Target=22 Slot=20   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    CmpIntNe              Target=23 Left=22 Right=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    JumpIfFalse           CondTemp=23 Target=rc_normalize_list_first_10   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    LoadLocal             Target=24 Slot=21   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreMemOffset        BasePtr=24 OffsetBytes=8 Source=21   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    Jump                  Target=rc_normalize_list_linked_11   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_normalize_list_first_10:
+    StoreLocal            Slot=20 Source=21   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_normalize_list_linked_11:
+    StoreLocal            Slot=21 Source=21   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreLocal            Slot=19 Source=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    Jump                  Target=rc_normalize_list_6   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_normalize_list_end_7:
+    LoadLocal             Target=25 Slot=20   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreLocal            Slot=18 Source=25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+  rc_representation_done_5:
+    LoadLocal             Target=26 Slot=18   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    Alloc                 Target=27 SizeBytes=16 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=7   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=26   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:3:17)
+    StoreLocal            Slot=15 Source=27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=23
+    Jump                  Target=match_end_0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=24
+    Jump                  Target=match_next_2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
+    LoadConstInt          Target=28 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    CmpIntNe              Target=29 Left=3 Right=28   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    JumpIfFalse           CondTemp=29 Target=match_arm_cleanup_12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    LoadMemOffset         Target=30 BasePtr=3 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    LoadMemOffset         Target=31 BasePtr=3 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    StoreLocal            Slot=27 Source=30   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    StoreLocal            Slot=28 Source=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    LoadLocal             Target=51 Slot=27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=52 SourceTemp=51 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=52   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=32 Slot=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:37)
+    LoadLocal             Target=33 Slot=28   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:45)
+    Borrow                Target=34 SourceTemp=33
+    LoadLocal             Target=35 Slot=27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:51)
+    Borrow                Target=36 SourceTemp=35
+    LoadLocal             Target=37 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:62)
+    RcDup                 Target=38 SourceTemp=36 RuntimeManaged=true
+    RcDrop                SourceTemp=30 TypeName=Bytes OwnerSlot=27 RuntimeManaged=true
+    Alloc                 Target=39 SizeBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:51)
+    StoreMemOffset        BasePtr=39 OffsetBytes=0 Source=38   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:51)
+    StoreMemOffset        BasePtr=39 OffsetBytes=8 Source=37   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:51)
+    RcDup                 Target=40 SourceTemp=34 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=31 TypeName=List OwnerSlot=28
+    LoadLocal             Target=41 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    LoadConstInt          Target=42 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    StoreLocal            Slot=10 Source=42   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    LoadLocal             Target=43 Slot=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    LoadLocal             Target=44 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    LoadLocal             Target=45 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    StoreLocal            Slot=3 Source=32   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    StoreLocal            Slot=2 Source=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    StoreLocal            Slot=1 Source=39   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    IsReferenceCounted    Target=135 SourceTemp=39
+    JumpIfFalse           CondTemp=135 Target=rc_representation_copy_72
+    RcDup                 Target=136 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=48 Source=136
+    Jump                  Target=rc_representation_done_73
+  rc_representation_copy_72:
+    IsReferenceCounted    Target=138 SourceTemp=39
+    JumpIfFalse           CondTemp=138 Target=rc_representation_copy_74
+    RcDup                 Target=139 SourceTemp=39 RuntimeManaged=true
+    StoreLocal            Slot=49 Source=139
+    Jump                  Target=rc_representation_done_75
+  rc_representation_copy_74:
+    LoadConstInt          Target=140 Value=0
+    StoreLocal            Slot=50 Source=39
+    StoreLocal            Slot=51 Source=140
+    StoreLocal            Slot=52 Source=140
+  rc_normalize_list_76:
+    LoadLocal             Target=141 Slot=50
+    CmpIntNe              Target=142 Left=141 Right=140
+    JumpIfFalse           CondTemp=142 Target=rc_normalize_list_end_77
+    IsReferenceCounted    Target=143 SourceTemp=141
+    JumpIfFalse           CondTemp=143 Target=rc_normalize_list_cell_78
+    RcDup                 Target=144 SourceTemp=141 RuntimeManaged=true
+    LoadLocal             Target=145 Slot=51
+    CmpIntNe              Target=146 Left=145 Right=140
+    JumpIfFalse           CondTemp=146 Target=rc_normalize_list_first_79
+    LoadLocal             Target=147 Slot=52
+    StoreMemOffset        BasePtr=147 OffsetBytes=8 Source=144
+    Jump                  Target=rc_normalize_list_linked_80
+  rc_normalize_list_first_79:
+    StoreLocal            Slot=51 Source=144
+  rc_normalize_list_linked_80:
+    StoreLocal            Slot=52 Source=144
+    Jump                  Target=rc_normalize_list_end_77
+  rc_normalize_list_cell_78:
+    LoadMemOffset         Target=148 BasePtr=141 OffsetBytes=0
+    LoadMemOffset         Target=149 BasePtr=141 OffsetBytes=8
+    IsReferenceCounted    Target=150 SourceTemp=148
+    JumpIfFalse           CondTemp=150 Target=rc_representation_copy_81
+    RcDup                 Target=151 SourceTemp=148 RuntimeManaged=true
+    StoreLocal            Slot=53 Source=151
+    Jump                  Target=rc_representation_done_82
+  rc_representation_copy_81:
+    CopyOutArena          DestTemp=152 SrcTemp=148 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=53 Source=152
+  rc_representation_done_82:
+    LoadLocal             Target=153 Slot=53
+    Alloc                 Target=154 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=154 OffsetBytes=0 Source=153
+    StoreMemOffset        BasePtr=154 OffsetBytes=8 Source=140
+    LoadLocal             Target=155 Slot=51
+    CmpIntNe              Target=156 Left=155 Right=140
+    JumpIfFalse           CondTemp=156 Target=rc_normalize_list_first_83
+    LoadLocal             Target=157 Slot=52
+    StoreMemOffset        BasePtr=157 OffsetBytes=8 Source=154
+    Jump                  Target=rc_normalize_list_linked_84
+  rc_normalize_list_first_83:
+    StoreLocal            Slot=51 Source=154
+  rc_normalize_list_linked_84:
+    StoreLocal            Slot=52 Source=154
+    StoreLocal            Slot=50 Source=149
+    Jump                  Target=rc_normalize_list_76
+  rc_normalize_list_end_77:
+    LoadLocal             Target=158 Slot=51
+    StoreLocal            Slot=49 Source=158
+  rc_representation_done_75:
+    LoadLocal             Target=159 Slot=49
+    StoreLocal            Slot=48 Source=159
+  rc_representation_done_73:
+    LoadLocal             Target=160 Slot=48
+    LoadLocal             Target=161 Slot=10
+    JumpIfFalse           CondTemp=161 Target=rc_tco_drop_inactive_85
+    StoreLocal            Slot=54 Source=44
+  rcdrop_list_86:
+    LoadLocal             Target=162 Slot=54
+    LoadConstInt          Target=163 Value=0
+    CmpIntNe              Target=164 Left=162 Right=163
+    JumpIfFalse           CondTemp=164 Target=rcdrop_list_end_88
+    RcIsUnique            Target=165 SourceTemp=162
+    JumpIfFalse           CondTemp=165 Target=rcdrop_list_shared_87
+    LoadMemOffset         Target=166 BasePtr=162 OffsetBytes=0
+    RcDrop                SourceTemp=166 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=167 BasePtr=162 OffsetBytes=8
+    RcDrop                SourceTemp=162 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=54 Source=167
+    Jump                  Target=rcdrop_list_86
+  rcdrop_list_shared_87:
+    RcDrop                SourceTemp=162 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_88
+  rcdrop_list_end_88:
+  rc_tco_drop_inactive_85:
+    LoadLocal             Target=168 Slot=11
+    JumpIfFalse           CondTemp=168 Target=rc_tco_drop_inactive_89
+    StoreLocal            Slot=55 Source=45
+  rcdrop_list_90:
+    LoadLocal             Target=169 Slot=55
+    LoadConstInt          Target=170 Value=0
+    CmpIntNe              Target=171 Left=169 Right=170
+    JumpIfFalse           CondTemp=171 Target=rcdrop_list_end_92
+    RcIsUnique            Target=172 SourceTemp=169
+    JumpIfFalse           CondTemp=172 Target=rcdrop_list_shared_91
+    LoadMemOffset         Target=173 BasePtr=169 OffsetBytes=0
+    RcDrop                SourceTemp=173 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=174 BasePtr=169 OffsetBytes=8
+    RcDrop                SourceTemp=169 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=55 Source=174
+    Jump                  Target=rcdrop_list_90
+  rcdrop_list_shared_91:
+    RcDrop                SourceTemp=169 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_92
+  rcdrop_list_end_92:
+  rc_tco_drop_inactive_89:
+    StoreLocal            Slot=56 Source=41
+  rcdrop_list_93:
+    LoadLocal             Target=175 Slot=56
+    LoadConstInt          Target=176 Value=0
+    CmpIntNe              Target=177 Left=175 Right=176
+    JumpIfFalse           CondTemp=177 Target=rcdrop_list_end_95
+    RcIsUnique            Target=178 SourceTemp=175
+    JumpIfFalse           CondTemp=178 Target=rcdrop_list_shared_94
+    LoadMemOffset         Target=179 BasePtr=175 OffsetBytes=0
+    RcDrop                SourceTemp=179 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=180 BasePtr=175 OffsetBytes=8
+    RcDrop                SourceTemp=175 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=56 Source=180
+    Jump                  Target=rcdrop_list_93
+  rcdrop_list_shared_94:
+    RcDrop                SourceTemp=175 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_95
+  rcdrop_list_end_95:
+    RcDrop                SourceTemp=38 TypeName=Bytes RuntimeManaged=true
+    StoreLocal            Slot=2 Source=40
+    LoadConstInt          Target=181 Value=1
+    StoreLocal            Slot=10 Source=181
+    StoreLocal            Slot=1 Source=160
+    LoadConstInt          Target=182 Value=1
+    StoreLocal            Slot=11 Source=182
+    RestoreStackPointer   Slot=14   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    Jump                  Target=lambda_2_body   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    LoadConstInt          Target=46 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:4:30)
+    StoreLocal            Slot=15 Source=46   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=29
+    Jump                  Target=match_end_0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=30
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=30
+    Jump                  Target=match_none_1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+  match_none_1:
+    LoadConstInt          Target=49 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    StoreLocal            Slot=15 Source=49   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+  match_end_0:
+    LoadLocal             Target=50 Slot=15   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:2:5)
+    LoadLocal             Target=103 Slot=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=104 Slot=9   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=104 Target=rc_tco_exit_drop_inactive_33   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=103 TypeName=Bytes RuntimeManaged=true
+  rc_tco_exit_drop_inactive_33:
+    LoadLocal             Target=105 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=106 Slot=10   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=106 Target=rc_tco_exit_drop_inactive_34   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=43 Source=105   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_35:
+    LoadLocal             Target=107 Slot=43   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=108 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=109 Left=107 Right=108   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=109 Target=rcdrop_list_end_37   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcIsUnique            Target=110 SourceTemp=107
+    JumpIfFalse           CondTemp=110 Target=rcdrop_list_shared_36   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=111 BasePtr=107 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=111 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=112 BasePtr=107 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=107 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=43 Source=112   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rcdrop_list_35   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_shared_36:
+    RcDrop                SourceTemp=107 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_37   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_end_37:
+  rc_tco_exit_drop_inactive_34:
+    LoadLocal             Target=113 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=114 Slot=11   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=114 Target=rc_tco_exit_drop_inactive_38   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=44 Source=113   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_39:
+    LoadLocal             Target=115 Slot=44   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=116 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=117 Left=115 Right=116   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=117 Target=rcdrop_list_end_41   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcIsUnique            Target=118 SourceTemp=115
+    JumpIfFalse           CondTemp=118 Target=rcdrop_list_shared_40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=119 BasePtr=115 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=119 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=120 BasePtr=115 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=115 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=44 Source=120   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rcdrop_list_39   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_shared_40:
+    RcDrop                SourceTemp=115 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_41   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_end_41:
+  rc_tco_exit_drop_inactive_38:
+    LoadArgumentOwnership Target=121   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=122 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    ShrInt                Target=123 Left=121 Right=122   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    AndInt                Target=124 Left=123 Right=122   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=124 Target=rc_result_owned_42   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Alloc                 Target=125 SizeBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    MakeClosure           Target=126 FuncLabel=__deepcopy_list_3 EnvPtrTemp=125 EnvSizeBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=125 OffsetBytes=0 Source=126   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CallClosure           Target=127 ClosureTemp=126 ArgTemp=50   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=46 Source=50   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_44:
+    LoadLocal             Target=128 Slot=46   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=129 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    CmpIntNe              Target=130 Left=128 Right=129   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=130 Target=rcdrop_list_end_46   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcIsUnique            Target=131 SourceTemp=128
+    JumpIfFalse           CondTemp=131 Target=rcdrop_list_shared_45   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=132 BasePtr=128 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=132 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=133 BasePtr=128 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=128 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=46 Source=133   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rcdrop_list_44   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_shared_45:
+    RcDrop                SourceTemp=128 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_46   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rcdrop_list_end_46:
+    StoreLocal            Slot=45 Source=127   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_result_done_43   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_result_owned_42:
+    StoreLocal            Slot=45 Source=50   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_result_done_43:
+    LoadLocal             Target=134 Slot=45   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=134   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+
+function lambda_1  [ClosureHelper from pieces]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadEnv               Target=2 Index=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+
+function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDrop                SourceTemp=1 TypeName=Bytes RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from pieces]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_47   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_48   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_copy_47:
+    CopyOutArena          DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=5   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+  rc_representation_done_48:
+    LoadLocal             Target=6 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=7   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+
+function lambda_0  [SourceFunction from pieces]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    Return                Source=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+
+function lambda_6  [ClosureHelper from count]
+  locals=32 temps=70
+    LoadEnv               Target=0 Index=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=2 Source=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadLocal             Target=27 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    IsReferenceCounted    Target=28 SourceTemp=27
+    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_54   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    RcDup                 Target=29 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=29   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Jump                  Target=rc_representation_done_55   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_representation_copy_54:
+    LoadConstInt          Target=31 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=24 Source=27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=25 Source=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=26 Source=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_normalize_list_56:
+    LoadLocal             Target=32 Slot=24   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    CmpIntNe              Target=33 Left=32 Right=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    JumpIfFalse           CondTemp=33 Target=rc_normalize_list_end_57   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadMemOffset         Target=34 BasePtr=32 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadMemOffset         Target=35 BasePtr=32 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    IsReferenceCounted    Target=36 SourceTemp=34
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_58   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    RcDup                 Target=37 SourceTemp=34 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=37   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Jump                  Target=rc_representation_done_59   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_representation_copy_58:
+    CopyOutArena          DestTemp=38 SrcTemp=34 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=27 Source=38   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_representation_done_59:
+    LoadLocal             Target=39 Slot=27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Alloc                 Target=40 SizeBytes=16 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreMemOffset        BasePtr=40 OffsetBytes=0 Source=39   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreMemOffset        BasePtr=40 OffsetBytes=8 Source=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadLocal             Target=41 Slot=25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    CmpIntNe              Target=42 Left=41 Right=31   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    JumpIfFalse           CondTemp=42 Target=rc_normalize_list_first_60   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadLocal             Target=43 Slot=26   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreMemOffset        BasePtr=43 OffsetBytes=8 Source=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Jump                  Target=rc_normalize_list_linked_61   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_normalize_list_first_60:
+    StoreLocal            Slot=25 Source=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_normalize_list_linked_61:
+    StoreLocal            Slot=26 Source=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=24 Source=35   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Jump                  Target=rc_normalize_list_56   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_normalize_list_end_57:
+    LoadLocal             Target=44 Slot=25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=23 Source=44   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rc_representation_done_55:
+    LoadLocal             Target=45 Slot=23   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=2 Source=45   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadConstInt          Target=46 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=8 Source=46   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=5 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=6 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=7 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  lambda_6_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadLocal             Target=2 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=3 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_52   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    LoadLocal             Target=5 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:8:17)
+    StoreLocal            Slot=12 Source=5   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_49   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+  match_arm_cleanup_52:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_51   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+  match_next_51:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=6 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_53   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    StoreLocal            Slot=19 Source=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    StoreLocal            Slot=20 Source=9   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    LoadLocal             Target=10 Slot=20   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:30)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:36)
+    LoadLocal             Target=13 Slot=19   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:62)
+    Borrow                Target=14 SourceTemp=13
+    BytesLength           Target=15 BytesTemp=14   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:44)
+    RcDrop                SourceTemp=8 TypeName=Bytes OwnerSlot=19
+    AddInt                Target=16 Left=12 Right=15   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:36)
+    RcDup                 Target=17 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=18 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    LoadConstInt          Target=19 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    StoreLocal            Slot=8 Source=19   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    LoadLocal             Target=20 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    LoadLocal             Target=21 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    StoreLocal            Slot=2 Source=17   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    StoreLocal            Slot=1 Source=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    LoadLocal             Target=55 Slot=8
+    JumpIfFalse           CondTemp=55 Target=rc_tco_drop_inactive_96
+    StoreLocal            Slot=30 Source=20
+  rcdrop_list_97:
+    LoadLocal             Target=56 Slot=30
+    LoadConstInt          Target=57 Value=0
+    CmpIntNe              Target=58 Left=56 Right=57
+    JumpIfFalse           CondTemp=58 Target=rcdrop_list_end_99
+    RcIsUnique            Target=59 SourceTemp=56
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_shared_98
+    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0
+    RcDrop                SourceTemp=60 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=61 BasePtr=56 OffsetBytes=8
+    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=61
+    Jump                  Target=rcdrop_list_97
+  rcdrop_list_shared_98:
+    RcDrop                SourceTemp=56 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_99
+  rcdrop_list_end_99:
+  rc_tco_drop_inactive_96:
+    StoreLocal            Slot=31 Source=18
+  rcdrop_list_100:
+    LoadLocal             Target=62 Slot=31
+    LoadConstInt          Target=63 Value=0
+    CmpIntNe              Target=64 Left=62 Right=63
+    JumpIfFalse           CondTemp=64 Target=rcdrop_list_end_102
+    RcIsUnique            Target=65 SourceTemp=62
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_shared_101
+    LoadMemOffset         Target=66 BasePtr=62 OffsetBytes=0
+    RcDrop                SourceTemp=66 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=67 BasePtr=62 OffsetBytes=8
+    RcDrop                SourceTemp=62 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=31 Source=67
+    Jump                  Target=rcdrop_list_100
+  rcdrop_list_shared_101:
+    RcDrop                SourceTemp=62 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_102
+  rcdrop_list_end_102:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=29
+    LoadConstInt          Target=68 Value=0
+    StoreLocal            Slot=6 Source=68
+    StoreLocal            Slot=7 Source=68
+    StoreLocal            Slot=2 Source=17
+    LoadConstInt          Target=69 Value=1
+    StoreLocal            Slot=8 Source=69
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=29
+    RestoreStackPointer   Slot=11   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    Jump                  Target=lambda_6_body   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    LoadConstInt          Target=22 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:9:24)
+    StoreLocal            Slot=12 Source=22   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    Jump                  Target=match_end_49   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+  match_arm_cleanup_53:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=22
+    Jump                  Target=match_none_50   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+  match_none_50:
+    LoadConstInt          Target=25 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    StoreLocal            Slot=12 Source=25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+  match_end_49:
+    LoadLocal             Target=26 Slot=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:7:5)
+    LoadLocal             Target=47 Slot=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadLocal             Target=48 Slot=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    JumpIfFalse           CondTemp=48 Target=rc_tco_exit_drop_inactive_62   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=28 Source=47   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rcdrop_list_63:
+    LoadLocal             Target=49 Slot=28   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadConstInt          Target=50 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    CmpIntNe              Target=51 Left=49 Right=50   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    JumpIfFalse           CondTemp=51 Target=rcdrop_list_end_65   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    RcIsUnique            Target=52 SourceTemp=49
+    JumpIfFalse           CondTemp=52 Target=rcdrop_list_shared_64   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadMemOffset         Target=53 BasePtr=49 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    RcDrop                SourceTemp=53 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=54 BasePtr=49 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=28 Source=54   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Jump                  Target=rcdrop_list_63   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rcdrop_list_shared_64:
+    RcDrop                SourceTemp=49 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_65   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+  rcdrop_list_end_65:
+  rc_tco_exit_drop_inactive_62:
+    Return                Source=26   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+
+function lambda_5  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    LoadLocal             Target=1 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    Return                Source=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+
+function _start_main  [ProgramEntry]
+  locals=15 temps=49
+    LoadConstInt          Target=0 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:1:1)
+    LoadConstInt          Target=2 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    MakeClosure           Target=3 FuncLabel=lambda_5 EnvPtrTemp=2 EnvSizeBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    StoreLocal            Slot=1 Source=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:6:1)
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadConstInt          Target=4 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    LoadConstInt          Target=5 Value=3   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:83)
+    BytesAllocate         Target=6 LengthTemp=5 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:63)
+    Alloc                 Target=7 SizeBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=6   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    LoadConstInt          Target=8 Value=2   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:59)
+    BytesAllocate         Target=9 LengthTemp=8 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:39)
+    Alloc                 Target=10 SizeBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=9   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=7   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    LoadConstInt          Target=11 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:35)
+    BytesAllocate         Target=12 LengthTemp=11 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:15)
+    Alloc                 Target=13 SizeBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreMemOffset        BasePtr=13 OffsetBytes=8 Source=10   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:14)
+    StoreLocal            Slot=4 Source=13   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=14 Slot=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:4)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=15 Slot=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    LoadConstInt          Target=16 Value=7   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:37)
+    BytesAllocate         Target=17 LengthTemp=16 RuntimeManaged=true   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:17)
+    LoadMemOffset         Target=18 BasePtr=15 OffsetBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    LoadConstInt          Target=19 Value=62   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    ShrInt                Target=20 Left=18 Right=19   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    LoadConstInt          Target=21 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    AndInt                Target=22 Left=20 Right=21   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    CallClosure           Target=23 ClosureTemp=15 ArgTemp=17 RuntimeManagedArgumentFlagTemp=22   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    LoadLocal             Target=24 Slot=4   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:41)
+    Borrow                Target=25 SourceTemp=24
+    RcDup                 Target=48 SourceTemp=25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    CallClosure           Target=26 ClosureTemp=23 ArgTemp=25   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    LoadConstInt          Target=27 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:49)
+    CallClosure           Target=28 ClosureTemp=26 ArgTemp=27   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
+    JumpIfFalse           CondTemp=22 Target=rc_handed_over_not_adopted_66   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+    Jump                  Target=rc_handed_over_done_67   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:14:10)
+  rc_handed_over_not_adopted_66:
+    RcDrop                SourceTemp=17 TypeName=Bytes RuntimeManaged=true
+  rc_handed_over_done_67:
+    LoadMemOffset         Target=29 BasePtr=14 OffsetBytes=16   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    LoadConstInt          Target=30 Value=62   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    ShrInt                Target=31 Left=29 Right=30   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    LoadConstInt          Target=32 Value=1   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    AndInt                Target=33 Left=31 Right=32   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    StoreLocal            Slot=10 Source=28   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    JumpIfFalse           CondTemp=33 Target=rc_call_argument_not_retained_68   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    RcDup                 Target=34 SourceTemp=28 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=10 Source=34   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+  rc_call_argument_not_retained_68:
+    LoadLocal             Target=35 Slot=10   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    CallClosure           Target=36 ClosureTemp=14 ArgTemp=35 RuntimeManagedArgumentFlagTemp=33   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    LoadConstInt          Target=37 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    CallClosure           Target=38 ClosureTemp=36 ArgTemp=37   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=11
+    StoreLocal            Slot=12 Source=28   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+  rcdrop_list_69:
+    LoadLocal             Target=39 Slot=12   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    LoadConstInt          Target=40 Value=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    CmpIntNe              Target=41 Left=39 Right=40   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_71   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    RcIsUnique            Target=42 SourceTemp=39
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_70   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    RcDrop                SourceTemp=43 TypeName=Bytes RuntimeManaged=true
+    LoadMemOffset         Target=44 BasePtr=39 OffsetBytes=8   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=12 Source=44   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    Jump                  Target=rcdrop_list_69   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+  rcdrop_list_shared_70:
+    RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_71   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+  rcdrop_list_end_71:
+    PrintInt              Source=38   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    RcDrop                SourceTemp=13 TypeName=List OwnerSlot=4
+    AllocAdt              Target=45 Tag=0 FieldCount=0   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:13:1)
+    StoreLocal            Slot=13 Source=45   (tco_bytes_matched_head_consed_beside_unchanged_parameter.ash:11:1)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=14
+    CopyOutArena          DestTemp=47 SrcTemp=45 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=14
+    Return                Source=47
+

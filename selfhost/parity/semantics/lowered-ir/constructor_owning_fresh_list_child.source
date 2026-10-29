@@ -1,0 +1,22 @@
+// A list literal's element is a constructor whose list field holds a string built at run time: the
+// constructor's cell is built on the reference-counted heap, owning that fresh list, and its static
+// string field is retained or copied into it.
+type Kind =
+    | SwitchTag(Int, List(Str), Str)
+    | Other(Int)
+
+let recursive count (instructions: List(Kind)) (n: Int) =
+    match instructions with
+        | [] -> n
+        | _ :: tail -> count(tail)(n + 1)
+
+let program n = [SwitchTag(1)(["b" + Ashes.Text.fromInt(n)])("c")]
+
+let recursive rounds n sum =
+    if n == 0
+    then sum
+    else rounds(n - 1)(sum + count(program(n))(0))
+
+0
+|> rounds(2)
+|> Ashes.IO.print

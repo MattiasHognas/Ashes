@@ -164,7 +164,7 @@ Function: addTraitImplementation
 Function: addImpl [lambda_18]
   Operations
     dup:                  2
-    drop:                 1
+    drop:                 2
     uniqueness checks:    0
     allocations:          3
     reused allocations:   0

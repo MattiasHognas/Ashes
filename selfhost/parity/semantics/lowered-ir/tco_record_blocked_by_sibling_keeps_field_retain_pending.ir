@@ -213,46 +213,46 @@ function lambda_1  [ClosureHelper from countCloses]
     StoreLocal            Slot=2 Source=15   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:21:24)
     StoreLocal            Slot=1 Source=14   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:21:24)
     LoadLocal             Target=56 Slot=8
-    JumpIfFalse           CondTemp=56 Target=rc_tco_drop_inactive_137
+    JumpIfFalse           CondTemp=56 Target=rc_tco_drop_inactive_138
     StoreLocal            Slot=29 Source=18
-  rcdrop_list_138:
+  rcdrop_list_139:
     LoadLocal             Target=57 Slot=29
     LoadConstInt          Target=58 Value=0
     CmpIntNe              Target=59 Left=57 Right=58
-    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_140
+    JumpIfFalse           CondTemp=59 Target=rcdrop_list_end_141
     RcIsUnique            Target=60 SourceTemp=57
-    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_139
+    JumpIfFalse           CondTemp=60 Target=rcdrop_list_shared_140
     LoadMemOffset         Target=61 BasePtr=57 OffsetBytes=0
     LoadConstInt          Target=62 Value=0
     CallKnown             Target=63 FuncLabel=__rcdrop_record_3 EnvTemp=62 ArgTemp=61
     LoadMemOffset         Target=64 BasePtr=57 OffsetBytes=8
     RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=29 Source=64
-    Jump                  Target=rcdrop_list_138
-  rcdrop_list_shared_139:
+    Jump                  Target=rcdrop_list_139
+  rcdrop_list_shared_140:
     RcDrop                SourceTemp=57 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_140
-  rcdrop_list_end_140:
-  rc_tco_drop_inactive_137:
+    Jump                  Target=rcdrop_list_end_141
+  rcdrop_list_end_141:
+  rc_tco_drop_inactive_138:
     StoreLocal            Slot=30 Source=16
-  rcdrop_list_141:
+  rcdrop_list_142:
     LoadLocal             Target=65 Slot=30
     LoadConstInt          Target=66 Value=0
     CmpIntNe              Target=67 Left=65 Right=66
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_143
+    JumpIfFalse           CondTemp=67 Target=rcdrop_list_end_144
     RcIsUnique            Target=68 SourceTemp=65
-    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_142
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_shared_143
     LoadMemOffset         Target=69 BasePtr=65 OffsetBytes=0
     LoadConstInt          Target=70 Value=0
     CallKnown             Target=71 FuncLabel=__rcdrop_record_3 EnvTemp=70 ArgTemp=69
     LoadMemOffset         Target=72 BasePtr=65 OffsetBytes=8
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=30 Source=72
-    Jump                  Target=rcdrop_list_141
-  rcdrop_list_shared_142:
+    Jump                  Target=rcdrop_list_142
+  rcdrop_list_shared_143:
     RcDrop                SourceTemp=65 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_143
-  rcdrop_list_end_143:
+    Jump                  Target=rcdrop_list_end_144
+  rcdrop_list_end_144:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
     LoadConstInt          Target=73 Value=0
     StoreLocal            Slot=6 Source=73
@@ -590,37 +590,37 @@ function __rcdrop_record_16  [RuntimeManagedAdtDropper]
   locals=3 temps=15
     LoadLocal             Target=0 Slot=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_74   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_75   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadConstInt          Target=3 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     CallKnown             Target=4 FuncLabel=__rcdrop_record_10 EnvTemp=3 ArgTemp=2   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     GetAdtField           Target=5 Ptr=0 FieldIndex=1 Tagless=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     StoreLocal            Slot=2 Source=5   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-  rcdrop_list_75:
+  rcdrop_list_76:
     LoadLocal             Target=6 Slot=2   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadConstInt          Target=7 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     CmpIntNe              Target=8 Left=6 Right=7   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    JumpIfFalse           CondTemp=8 Target=rcdrop_list_end_77   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    JumpIfFalse           CondTemp=8 Target=rcdrop_list_end_78   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     RcIsUnique            Target=9 SourceTemp=6
-    JumpIfFalse           CondTemp=9 Target=rcdrop_list_shared_76   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    JumpIfFalse           CondTemp=9 Target=rcdrop_list_shared_77   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadMemOffset         Target=10 BasePtr=6 OffsetBytes=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadConstInt          Target=11 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     CallKnown             Target=12 FuncLabel=__rcdrop_record_3 EnvTemp=11 ArgTemp=10   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadMemOffset         Target=13 BasePtr=6 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     RcDrop                SourceTemp=6 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=2 Source=13   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    Jump                  Target=rcdrop_list_75   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-  rcdrop_list_shared_76:
+    Jump                  Target=rcdrop_list_76   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+  rcdrop_list_shared_77:
     RcDrop                SourceTemp=6 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_77   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-  rcdrop_list_end_77:
-  rc_drop_shared_74:
+    Jump                  Target=rcdrop_list_end_78   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+  rcdrop_list_end_78:
+  rc_drop_shared_75:
     RcDrop                SourceTemp=0 TypeName=Opened RuntimeManaged=true
     LoadConstInt          Target=14 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     Return                Source=14   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
 
 function lambda_7  [ClosureHelper from open]
-  locals=8 temps=56
+  locals=8 temps=65
     LoadLocal             Target=16 Slot=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadArgumentOwnership Target=17   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadConstInt          Target=18 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
@@ -704,23 +704,35 @@ function lambda_7  [ClosureHelper from open]
   general_rc_result_already_owned_69:
     LoadLocal             Target=45 Slot=5   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     LoadArgumentOwnership Target=46   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    LoadConstInt          Target=47 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    LoadConstInt          Target=47 Value=2   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
     ShrInt                Target=48 Left=46 Right=47   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    AndInt                Target=49 Left=48 Right=47   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    JumpIfFalse           CondTemp=49 Target=rc_result_owned_72   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    Alloc                 Target=50 SizeBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    MakeClosure           Target=51 FuncLabel=__deepcopy_11 EnvPtrTemp=50 EnvSizeBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    StoreMemOffset        BasePtr=50 OffsetBytes=0 Source=51   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    CallClosure           Target=52 ClosureTemp=51 ArgTemp=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    LoadConstInt          Target=53 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    CallKnown             Target=54 FuncLabel=__rcdrop_record_16 EnvTemp=53 ArgTemp=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    StoreLocal            Slot=7 Source=52   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    Jump                  Target=rc_result_done_73   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-  rc_result_owned_72:
+    LoadConstInt          Target=49 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    AndInt                Target=50 Left=48 Right=49   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    JumpIfFalse           CondTemp=50 Target=independent_result_not_requested_72   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    LoadArgumentOwnership Target=51   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    LoadConstInt          Target=52 Value=-8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    AndInt                Target=53 Left=51 Right=52   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    LoadConstInt          Target=54 Value=2305843009213693952   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=54   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+  independent_result_not_requested_72:
+    LoadArgumentOwnership Target=55   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    LoadConstInt          Target=56 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    ShrInt                Target=57 Left=55 Right=56   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    AndInt                Target=58 Left=57 Right=56   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    JumpIfFalse           CondTemp=58 Target=rc_result_owned_73   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    Alloc                 Target=59 SizeBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    MakeClosure           Target=60 FuncLabel=__deepcopy_11 EnvPtrTemp=59 EnvSizeBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=0 Source=60   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    CallClosure           Target=61 ClosureTemp=60 ArgTemp=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    LoadConstInt          Target=62 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    CallKnown             Target=63 FuncLabel=__rcdrop_record_16 EnvTemp=62 ArgTemp=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    StoreLocal            Slot=7 Source=61   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    Jump                  Target=rc_result_done_74   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+  rc_result_owned_73:
     StoreLocal            Slot=7 Source=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-  rc_result_done_73:
-    LoadLocal             Target=55 Slot=7   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
-    Return                Source=55   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+  rc_result_done_74:
+    LoadLocal             Target=64 Slot=7   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
+    Return                Source=64   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)
 
 function lambda_6  [ClosureHelper from open]
   locals=2 temps=4
@@ -757,51 +769,51 @@ function lambda_19  [ClosureHelper from lowerItems]
     StoreLocal            Slot=3 Source=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadLocal             Target=96 Slot=3   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     IsReferenceCounted    Target=97 SourceTemp=96
-    JumpIfFalse           CondTemp=97 Target=rc_representation_copy_95   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=97 Target=rc_representation_copy_96   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     RcDup                 Target=98 SourceTemp=96 RuntimeManaged=true
     StoreLocal            Slot=41 Source=98   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rc_representation_done_96   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_representation_copy_95:
+    Jump                  Target=rc_representation_done_97   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rc_representation_copy_96:
     LoadConstInt          Target=100 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=42 Source=96   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=43 Source=100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=44 Source=100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_normalize_list_97:
+  rc_normalize_list_98:
     LoadLocal             Target=101 Slot=42   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CmpIntNe              Target=102 Left=101 Right=100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=102 Target=rc_normalize_list_end_98   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=102 Target=rc_normalize_list_end_99   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadMemOffset         Target=103 BasePtr=101 OffsetBytes=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadMemOffset         Target=104 BasePtr=101 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     IsReferenceCounted    Target=105 SourceTemp=103
-    JumpIfFalse           CondTemp=105 Target=rc_representation_copy_99   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=105 Target=rc_representation_copy_100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     RcDup                 Target=106 SourceTemp=103 RuntimeManaged=true
     StoreLocal            Slot=45 Source=106   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rc_representation_done_100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_representation_copy_99:
+    Jump                  Target=rc_representation_done_101   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rc_representation_copy_100:
     LoadConstInt          Target=108 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CallKnown             Target=109 FuncLabel=__rcnorm_2 EnvTemp=108 ArgTemp=103   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=45 Source=109   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_representation_done_100:
+  rc_representation_done_101:
     LoadLocal             Target=110 Slot=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     Alloc                 Target=111 SizeBytes=16 RuntimeManaged=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreMemOffset        BasePtr=111 OffsetBytes=0 Source=110   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreMemOffset        BasePtr=111 OffsetBytes=8 Source=100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadLocal             Target=112 Slot=43   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CmpIntNe              Target=113 Left=112 Right=100   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=113 Target=rc_normalize_list_first_101   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=113 Target=rc_normalize_list_first_102   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadLocal             Target=114 Slot=44   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreMemOffset        BasePtr=114 OffsetBytes=8 Source=111   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rc_normalize_list_linked_102   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_normalize_list_first_101:
+    Jump                  Target=rc_normalize_list_linked_103   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rc_normalize_list_first_102:
     StoreLocal            Slot=43 Source=111   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_normalize_list_linked_102:
+  rc_normalize_list_linked_103:
     StoreLocal            Slot=44 Source=111   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=42 Source=104   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rc_normalize_list_97   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_normalize_list_end_98:
+    Jump                  Target=rc_normalize_list_98   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rc_normalize_list_end_99:
     LoadLocal             Target=115 Slot=43   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=41 Source=115   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_representation_done_96:
+  rc_representation_done_97:
     LoadLocal             Target=116 Slot=41   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=3 Source=116   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=117 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
@@ -810,23 +822,23 @@ function lambda_19  [ClosureHelper from lowerItems]
     LoadArgumentOwnership Target=119   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=120 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     AndInt                Target=121 Left=119 Right=120   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=121 Target=rc_arg_normalize_copy_103   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=121 Target=rc_arg_normalize_copy_104   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=46 Source=118   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rc_arg_normalize_done_104   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_arg_normalize_copy_103:
+    Jump                  Target=rc_arg_normalize_done_105   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rc_arg_normalize_copy_104:
     IsReferenceCounted    Target=122 SourceTemp=118
-    JumpIfFalse           CondTemp=122 Target=rc_representation_copy_105   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=122 Target=rc_representation_copy_106   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     RcDup                 Target=123 SourceTemp=118 RuntimeManaged=true
     StoreLocal            Slot=47 Source=123   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rc_representation_done_106   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_representation_copy_105:
+    Jump                  Target=rc_representation_done_107   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rc_representation_copy_106:
     LoadConstInt          Target=126 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CallKnown             Target=127 FuncLabel=__rcnorm_8 EnvTemp=126 ArgTemp=118   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=47 Source=127   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_representation_done_106:
+  rc_representation_done_107:
     LoadLocal             Target=128 Slot=47   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=46 Source=128   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_arg_normalize_done_104:
+  rc_arg_normalize_done_105:
     LoadLocal             Target=129 Slot=46   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=1 Source=129   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=130 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
@@ -841,7 +853,7 @@ function lambda_19  [ClosureHelper from lowerItems]
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
     LoadConstInt          Target=4 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     CmpIntEq              Target=5 Left=3 Right=4   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_81   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_82   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     LoadLocal             Target=6 Slot=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:27:17)
     GetAdtField           Target=7 Ptr=6 FieldIndex=2 Tagless=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:27:17)
     SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
@@ -856,16 +868,16 @@ function lambda_19  [ClosureHelper from lowerItems]
     StoreLocal            Slot=12 Source=13   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=18
-    Jump                  Target=match_end_78   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-  match_arm_cleanup_81:
+    Jump                  Target=match_end_79   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
+  match_arm_cleanup_82:
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=19
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=19
-    Jump                  Target=match_next_80   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-  match_next_80:
+    Jump                  Target=match_next_81   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
+  match_next_81:
     SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
     LoadConstInt          Target=14 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     CmpIntNe              Target=15 Left=3 Right=14   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_82   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_83   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     LoadMemOffset         Target=16 BasePtr=3 OffsetBytes=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     LoadMemOffset         Target=17 BasePtr=3 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     StoreLocal            Slot=22 Source=16   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
@@ -877,7 +889,7 @@ function lambda_19  [ClosureHelper from lowerItems]
     SubInt                Target=22 Left=18 Right=21   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:16)
     LoadConstInt          Target=23 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:29)
     CmpIntEq              Target=24 Left=22 Right=23   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:16)
-    JumpIfFalse           CondTemp=24 Target=else_83   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
+    JumpIfFalse           CondTemp=24 Target=else_84   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
     LoadLocal             Target=25 Slot=23   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:30:29)
     Borrow                Target=26 SourceTemp=25
     AllocAdt              Target=27 Tag=0 FieldCount=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:30:53)
@@ -908,123 +920,123 @@ function lambda_19  [ClosureHelper from lowerItems]
     StoreLocal            Slot=3 Source=33   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:30:18)
     StoreLocal            Slot=1 Source=39   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:30:18)
     IsReferenceCounted    Target=157 SourceTemp=33
-    JumpIfFalse           CondTemp=157 Target=rc_representation_copy_144
+    JumpIfFalse           CondTemp=157 Target=rc_representation_copy_145
     RcDup                 Target=158 SourceTemp=33 RuntimeManaged=true
     StoreLocal            Slot=50 Source=158
-    Jump                  Target=rc_representation_done_145
-  rc_representation_copy_144:
+    Jump                  Target=rc_representation_done_146
+  rc_representation_copy_145:
     IsReferenceCounted    Target=160 SourceTemp=33
-    JumpIfFalse           CondTemp=160 Target=rc_representation_copy_146
+    JumpIfFalse           CondTemp=160 Target=rc_representation_copy_147
     RcDup                 Target=161 SourceTemp=33 RuntimeManaged=true
     StoreLocal            Slot=51 Source=161
-    Jump                  Target=rc_representation_done_147
-  rc_representation_copy_146:
+    Jump                  Target=rc_representation_done_148
+  rc_representation_copy_147:
     LoadConstInt          Target=162 Value=0
     StoreLocal            Slot=52 Source=33
     StoreLocal            Slot=53 Source=162
     StoreLocal            Slot=54 Source=162
-  rc_normalize_list_148:
+  rc_normalize_list_149:
     LoadLocal             Target=163 Slot=52
     CmpIntNe              Target=164 Left=163 Right=162
-    JumpIfFalse           CondTemp=164 Target=rc_normalize_list_end_149
+    JumpIfFalse           CondTemp=164 Target=rc_normalize_list_end_150
     IsReferenceCounted    Target=165 SourceTemp=163
-    JumpIfFalse           CondTemp=165 Target=rc_normalize_list_cell_150
+    JumpIfFalse           CondTemp=165 Target=rc_normalize_list_cell_151
     RcDup                 Target=166 SourceTemp=163 RuntimeManaged=true
     LoadLocal             Target=167 Slot=53
     CmpIntNe              Target=168 Left=167 Right=162
-    JumpIfFalse           CondTemp=168 Target=rc_normalize_list_first_151
+    JumpIfFalse           CondTemp=168 Target=rc_normalize_list_first_152
     LoadLocal             Target=169 Slot=54
     StoreMemOffset        BasePtr=169 OffsetBytes=8 Source=166
-    Jump                  Target=rc_normalize_list_linked_152
-  rc_normalize_list_first_151:
+    Jump                  Target=rc_normalize_list_linked_153
+  rc_normalize_list_first_152:
     StoreLocal            Slot=53 Source=166
-  rc_normalize_list_linked_152:
+  rc_normalize_list_linked_153:
     StoreLocal            Slot=54 Source=166
-    Jump                  Target=rc_normalize_list_end_149
-  rc_normalize_list_cell_150:
+    Jump                  Target=rc_normalize_list_end_150
+  rc_normalize_list_cell_151:
     LoadMemOffset         Target=170 BasePtr=163 OffsetBytes=0
     LoadMemOffset         Target=171 BasePtr=163 OffsetBytes=8
     IsReferenceCounted    Target=172 SourceTemp=170
-    JumpIfFalse           CondTemp=172 Target=rc_representation_copy_153
+    JumpIfFalse           CondTemp=172 Target=rc_representation_copy_154
     RcDup                 Target=173 SourceTemp=170 RuntimeManaged=true
     StoreLocal            Slot=55 Source=173
-    Jump                  Target=rc_representation_done_154
-  rc_representation_copy_153:
+    Jump                  Target=rc_representation_done_155
+  rc_representation_copy_154:
     LoadConstInt          Target=175 Value=0
     CallKnown             Target=176 FuncLabel=__rcnorm_2 EnvTemp=175 ArgTemp=170
     StoreLocal            Slot=55 Source=176
-  rc_representation_done_154:
+  rc_representation_done_155:
     LoadLocal             Target=177 Slot=55
     Alloc                 Target=178 SizeBytes=16 RuntimeManaged=true
     StoreMemOffset        BasePtr=178 OffsetBytes=0 Source=177
     StoreMemOffset        BasePtr=178 OffsetBytes=8 Source=162
     LoadLocal             Target=179 Slot=53
     CmpIntNe              Target=180 Left=179 Right=162
-    JumpIfFalse           CondTemp=180 Target=rc_normalize_list_first_155
+    JumpIfFalse           CondTemp=180 Target=rc_normalize_list_first_156
     LoadLocal             Target=181 Slot=54
     StoreMemOffset        BasePtr=181 OffsetBytes=8 Source=178
-    Jump                  Target=rc_normalize_list_linked_156
-  rc_normalize_list_first_155:
+    Jump                  Target=rc_normalize_list_linked_157
+  rc_normalize_list_first_156:
     StoreLocal            Slot=53 Source=178
-  rc_normalize_list_linked_156:
+  rc_normalize_list_linked_157:
     StoreLocal            Slot=54 Source=178
     StoreLocal            Slot=52 Source=171
-    Jump                  Target=rc_normalize_list_148
-  rc_normalize_list_end_149:
+    Jump                  Target=rc_normalize_list_149
+  rc_normalize_list_end_150:
     LoadLocal             Target=182 Slot=53
     StoreLocal            Slot=51 Source=182
-  rc_representation_done_147:
+  rc_representation_done_148:
     LoadLocal             Target=183 Slot=51
     StoreLocal            Slot=50 Source=183
-  rc_representation_done_145:
+  rc_representation_done_146:
     LoadLocal             Target=184 Slot=50
     IsReferenceCounted    Target=185 SourceTemp=39
-    JumpIfFalse           CondTemp=185 Target=rc_representation_copy_157
+    JumpIfFalse           CondTemp=185 Target=rc_representation_copy_158
     RcDup                 Target=186 SourceTemp=39 RuntimeManaged=true
     StoreLocal            Slot=56 Source=186
-    Jump                  Target=rc_representation_done_158
-  rc_representation_copy_157:
+    Jump                  Target=rc_representation_done_159
+  rc_representation_copy_158:
     IsReferenceCounted    Target=188 SourceTemp=39
-    JumpIfFalse           CondTemp=188 Target=rc_representation_copy_159
+    JumpIfFalse           CondTemp=188 Target=rc_representation_copy_160
     RcDup                 Target=189 SourceTemp=39 RuntimeManaged=true
     StoreLocal            Slot=57 Source=189
-    Jump                  Target=rc_representation_done_160
-  rc_representation_copy_159:
+    Jump                  Target=rc_representation_done_161
+  rc_representation_copy_160:
     LoadConstInt          Target=191 Value=0
     CallKnown             Target=192 FuncLabel=__rcnorm_8 EnvTemp=191 ArgTemp=39
     StoreLocal            Slot=57 Source=192
-  rc_representation_done_160:
+  rc_representation_done_161:
     LoadLocal             Target=193 Slot=57
     StoreLocal            Slot=56 Source=193
-  rc_representation_done_158:
+  rc_representation_done_159:
     LoadLocal             Target=194 Slot=56
     LoadLocal             Target=195 Slot=7
-    JumpIfFalse           CondTemp=195 Target=rc_tco_drop_inactive_161
+    JumpIfFalse           CondTemp=195 Target=rc_tco_drop_inactive_162
     StoreLocal            Slot=58 Source=41
-  rcdrop_list_162:
+  rcdrop_list_163:
     LoadLocal             Target=196 Slot=58
     LoadConstInt          Target=197 Value=0
     CmpIntNe              Target=198 Left=196 Right=197
-    JumpIfFalse           CondTemp=198 Target=rcdrop_list_end_164
+    JumpIfFalse           CondTemp=198 Target=rcdrop_list_end_165
     RcIsUnique            Target=199 SourceTemp=196
-    JumpIfFalse           CondTemp=199 Target=rcdrop_list_shared_163
+    JumpIfFalse           CondTemp=199 Target=rcdrop_list_shared_164
     LoadMemOffset         Target=200 BasePtr=196 OffsetBytes=0
     LoadConstInt          Target=201 Value=0
     CallKnown             Target=202 FuncLabel=__rcdrop_record_3 EnvTemp=201 ArgTemp=200
     LoadMemOffset         Target=203 BasePtr=196 OffsetBytes=8
     RcDrop                SourceTemp=196 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=58 Source=203
-    Jump                  Target=rcdrop_list_162
-  rcdrop_list_shared_163:
+    Jump                  Target=rcdrop_list_163
+  rcdrop_list_shared_164:
     RcDrop                SourceTemp=196 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_164
-  rcdrop_list_end_164:
-  rc_tco_drop_inactive_161:
+    Jump                  Target=rcdrop_list_end_165
+  rcdrop_list_end_165:
+  rc_tco_drop_inactive_162:
     LoadLocal             Target=204 Slot=8
-    JumpIfFalse           CondTemp=204 Target=rc_tco_drop_inactive_165
+    JumpIfFalse           CondTemp=204 Target=rc_tco_drop_inactive_166
     LoadConstInt          Target=205 Value=0
     CallKnown             Target=206 FuncLabel=__rcdrop_record_10 EnvTemp=205 ArgTemp=42
-  rc_tco_drop_inactive_165:
+  rc_tco_drop_inactive_166:
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=49
     StoreLocal            Slot=3 Source=184
     LoadConstInt          Target=207 Value=1
@@ -1037,8 +1049,8 @@ function lambda_19  [ClosureHelper from lowerItems]
     Jump                  Target=lambda_19_body   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:30:18)
     LoadConstInt          Target=43 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:30:18)
     StoreLocal            Slot=24 Source=43   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
-    Jump                  Target=endif_84   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
-  else_83:
+    Jump                  Target=endif_85   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
+  else_84:
     SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
     LoadEnv               Target=44 Index=3   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     Borrow                Target=45 SourceTemp=44
@@ -1065,39 +1077,39 @@ function lambda_19  [ClosureHelper from lowerItems]
     LoadConstInt          Target=62 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     StoreLocal            Slot=30 Source=62   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     LoadLocal             Target=63 Slot=28   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-    JumpIfFalse           CondTemp=55 Target=rc_handed_over_not_adopted_85   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-    Jump                  Target=rc_handed_over_done_86   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-  rc_handed_over_not_adopted_85:
+    JumpIfFalse           CondTemp=55 Target=rc_handed_over_not_adopted_86   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+    Jump                  Target=rc_handed_over_done_87   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+  rc_handed_over_not_adopted_86:
     StoreLocal            Slot=31 Source=54   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-  rcdrop_list_87:
+  rcdrop_list_88:
     LoadLocal             Target=64 Slot=31   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     LoadConstInt          Target=65 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     CmpIntNe              Target=66 Left=64 Right=65   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-    JumpIfFalse           CondTemp=66 Target=rcdrop_list_end_89   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+    JumpIfFalse           CondTemp=66 Target=rcdrop_list_end_90   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     RcIsUnique            Target=67 SourceTemp=64
-    JumpIfFalse           CondTemp=67 Target=rcdrop_list_shared_88   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+    JumpIfFalse           CondTemp=67 Target=rcdrop_list_shared_89   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     LoadMemOffset         Target=68 BasePtr=64 OffsetBytes=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     LoadConstInt          Target=69 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     CallKnown             Target=70 FuncLabel=__rcdrop_record_3 EnvTemp=69 ArgTemp=68   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     LoadMemOffset         Target=71 BasePtr=64 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     RcDrop                SourceTemp=64 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=31 Source=71   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-    Jump                  Target=rcdrop_list_87   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-  rcdrop_list_shared_88:
+    Jump                  Target=rcdrop_list_88   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+  rcdrop_list_shared_89:
     RcDrop                SourceTemp=64 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_89   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-  rcdrop_list_end_89:
-  rc_handed_over_done_86:
-    JumpIfFalse           CondTemp=59 Target=rc_handed_over_not_adopted_90   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-    Jump                  Target=rc_handed_over_done_91   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-  rc_handed_over_not_adopted_90:
+    Jump                  Target=rcdrop_list_end_90   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+  rcdrop_list_end_90:
+  rc_handed_over_done_87:
+    JumpIfFalse           CondTemp=59 Target=rc_handed_over_not_adopted_91   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+    Jump                  Target=rc_handed_over_done_92   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
+  rc_handed_over_not_adopted_91:
     LoadConstInt          Target=72 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
     CallKnown             Target=73 FuncLabel=__rcdrop_record_10 EnvTemp=72 ArgTemp=58   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:23)
-  rc_handed_over_done_91:
+  rc_handed_over_done_92:
     SaveArenaState        CursorLocalSlot=33 EndLocalSlot=34
     LoadConstInt          Target=74 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     CmpIntNe              Target=75 Left=63 Right=74   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
-    JumpIfFalse           CondTemp=75 Target=match_arm_cleanup_94   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
+    JumpIfFalse           CondTemp=75 Target=match_arm_cleanup_95   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     GetAdtField           Target=76 Ptr=63 FieldIndex=0 Tagless=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     StoreLocal            Slot=35 Source=76   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     GetAdtField           Target=77 Ptr=63 FieldIndex=1 Tagless=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
@@ -1116,146 +1128,146 @@ function lambda_19  [ClosureHelper from lowerItems]
     StoreLocal            Slot=3 Source=81   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:33:87)
     StoreLocal            Slot=1 Source=83   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:33:87)
     IsReferenceCounted    Target=209 SourceTemp=81
-    JumpIfFalse           CondTemp=209 Target=rc_representation_copy_166
+    JumpIfFalse           CondTemp=209 Target=rc_representation_copy_167
     RcDup                 Target=210 SourceTemp=81 RuntimeManaged=true
     RcDrop                SourceTemp=77 TypeName=List OwnerSlot=36
     StoreLocal            Slot=60 Source=210
-    Jump                  Target=rc_representation_done_167
-  rc_representation_copy_166:
+    Jump                  Target=rc_representation_done_168
+  rc_representation_copy_167:
     IsReferenceCounted    Target=212 SourceTemp=81
-    JumpIfFalse           CondTemp=212 Target=rc_representation_copy_168
+    JumpIfFalse           CondTemp=212 Target=rc_representation_copy_169
     RcDup                 Target=213 SourceTemp=81 RuntimeManaged=true
     RcDrop                SourceTemp=77 TypeName=List OwnerSlot=36
     StoreLocal            Slot=61 Source=213
-    Jump                  Target=rc_representation_done_169
-  rc_representation_copy_168:
+    Jump                  Target=rc_representation_done_170
+  rc_representation_copy_169:
     LoadConstInt          Target=214 Value=0
     StoreLocal            Slot=62 Source=81
     StoreLocal            Slot=63 Source=214
     StoreLocal            Slot=64 Source=214
-  rc_normalize_list_170:
+  rc_normalize_list_171:
     LoadLocal             Target=215 Slot=62
     CmpIntNe              Target=216 Left=215 Right=214
     JumpIfFalse           CondTemp=216 Target=lambda_19_rc_edge_36_78
     IsReferenceCounted    Target=217 SourceTemp=215
-    JumpIfFalse           CondTemp=217 Target=rc_normalize_list_cell_172
+    JumpIfFalse           CondTemp=217 Target=rc_normalize_list_cell_173
     RcDup                 Target=218 SourceTemp=215 RuntimeManaged=true
     RcDrop                SourceTemp=77 TypeName=List OwnerSlot=36
     LoadLocal             Target=219 Slot=63
     CmpIntNe              Target=220 Left=219 Right=214
-    JumpIfFalse           CondTemp=220 Target=rc_normalize_list_first_173
+    JumpIfFalse           CondTemp=220 Target=rc_normalize_list_first_174
     LoadLocal             Target=221 Slot=64
     StoreMemOffset        BasePtr=221 OffsetBytes=8 Source=218
-    Jump                  Target=rc_normalize_list_linked_174
-  rc_normalize_list_first_173:
+    Jump                  Target=rc_normalize_list_linked_175
+  rc_normalize_list_first_174:
     StoreLocal            Slot=63 Source=218
-  rc_normalize_list_linked_174:
+  rc_normalize_list_linked_175:
     StoreLocal            Slot=64 Source=218
-    Jump                  Target=rc_normalize_list_end_171
-  rc_normalize_list_cell_172:
+    Jump                  Target=rc_normalize_list_end_172
+  rc_normalize_list_cell_173:
     LoadMemOffset         Target=222 BasePtr=215 OffsetBytes=0
     LoadMemOffset         Target=223 BasePtr=215 OffsetBytes=8
     IsReferenceCounted    Target=224 SourceTemp=222
-    JumpIfFalse           CondTemp=224 Target=rc_representation_copy_175
+    JumpIfFalse           CondTemp=224 Target=rc_representation_copy_176
     RcDup                 Target=225 SourceTemp=222 RuntimeManaged=true
     StoreLocal            Slot=65 Source=225
-    Jump                  Target=rc_representation_done_176
-  rc_representation_copy_175:
+    Jump                  Target=rc_representation_done_177
+  rc_representation_copy_176:
     LoadConstInt          Target=227 Value=0
     CallKnown             Target=228 FuncLabel=__rcnorm_2 EnvTemp=227 ArgTemp=222
     StoreLocal            Slot=65 Source=228
-  rc_representation_done_176:
+  rc_representation_done_177:
     LoadLocal             Target=229 Slot=65
     Alloc                 Target=230 SizeBytes=16 RuntimeManaged=true
     StoreMemOffset        BasePtr=230 OffsetBytes=0 Source=229
     StoreMemOffset        BasePtr=230 OffsetBytes=8 Source=214
     LoadLocal             Target=231 Slot=63
     CmpIntNe              Target=232 Left=231 Right=214
-    JumpIfFalse           CondTemp=232 Target=rc_normalize_list_first_177
+    JumpIfFalse           CondTemp=232 Target=rc_normalize_list_first_178
     LoadLocal             Target=233 Slot=64
     StoreMemOffset        BasePtr=233 OffsetBytes=8 Source=230
-    Jump                  Target=rc_normalize_list_linked_178
-  rc_normalize_list_first_177:
+    Jump                  Target=rc_normalize_list_linked_179
+  rc_normalize_list_first_178:
     StoreLocal            Slot=63 Source=230
-  rc_normalize_list_linked_178:
+  rc_normalize_list_linked_179:
     StoreLocal            Slot=64 Source=230
     StoreLocal            Slot=62 Source=223
-    Jump                  Target=rc_normalize_list_170
-  rc_normalize_list_end_171:
+    Jump                  Target=rc_normalize_list_171
+  rc_normalize_list_end_172:
     LoadLocal             Target=234 Slot=63
     StoreLocal            Slot=61 Source=234
-  rc_representation_done_169:
+  rc_representation_done_170:
     LoadLocal             Target=235 Slot=61
     StoreLocal            Slot=60 Source=235
-  rc_representation_done_167:
+  rc_representation_done_168:
     LoadLocal             Target=236 Slot=60
     IsReferenceCounted    Target=237 SourceTemp=83
-    JumpIfFalse           CondTemp=237 Target=rc_representation_copy_179
+    JumpIfFalse           CondTemp=237 Target=rc_representation_copy_180
     RcDup                 Target=238 SourceTemp=83 RuntimeManaged=true
     StoreLocal            Slot=66 Source=238
-    Jump                  Target=rc_representation_done_180
-  rc_representation_copy_179:
+    Jump                  Target=rc_representation_done_181
+  rc_representation_copy_180:
     IsReferenceCounted    Target=240 SourceTemp=83
-    JumpIfFalse           CondTemp=240 Target=rc_representation_copy_181
+    JumpIfFalse           CondTemp=240 Target=rc_representation_copy_182
     RcDup                 Target=241 SourceTemp=83 RuntimeManaged=true
     StoreLocal            Slot=67 Source=241
-    Jump                  Target=rc_representation_done_182
-  rc_representation_copy_181:
+    Jump                  Target=rc_representation_done_183
+  rc_representation_copy_182:
     LoadConstInt          Target=243 Value=0
     CallKnown             Target=244 FuncLabel=__rcnorm_8 EnvTemp=243 ArgTemp=83
     StoreLocal            Slot=67 Source=244
-  rc_representation_done_182:
+  rc_representation_done_183:
     LoadLocal             Target=245 Slot=67
     StoreLocal            Slot=66 Source=245
-  rc_representation_done_180:
+  rc_representation_done_181:
     LoadLocal             Target=246 Slot=66
     LoadLocal             Target=247 Slot=7
-    JumpIfFalse           CondTemp=247 Target=rc_tco_drop_inactive_183
+    JumpIfFalse           CondTemp=247 Target=rc_tco_drop_inactive_184
     StoreLocal            Slot=68 Source=85
-  rcdrop_list_184:
+  rcdrop_list_185:
     LoadLocal             Target=248 Slot=68
     LoadConstInt          Target=249 Value=0
     CmpIntNe              Target=250 Left=248 Right=249
-    JumpIfFalse           CondTemp=250 Target=rcdrop_list_end_186
+    JumpIfFalse           CondTemp=250 Target=rcdrop_list_end_187
     RcIsUnique            Target=251 SourceTemp=248
-    JumpIfFalse           CondTemp=251 Target=rcdrop_list_shared_185
+    JumpIfFalse           CondTemp=251 Target=rcdrop_list_shared_186
     LoadMemOffset         Target=252 BasePtr=248 OffsetBytes=0
     LoadConstInt          Target=253 Value=0
     CallKnown             Target=254 FuncLabel=__rcdrop_record_3 EnvTemp=253 ArgTemp=252
     LoadMemOffset         Target=255 BasePtr=248 OffsetBytes=8
     RcDrop                SourceTemp=248 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=68 Source=255
-    Jump                  Target=rcdrop_list_184
-  rcdrop_list_shared_185:
+    Jump                  Target=rcdrop_list_185
+  rcdrop_list_shared_186:
     RcDrop                SourceTemp=248 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_186
-  rcdrop_list_end_186:
-  rc_tco_drop_inactive_183:
+    Jump                  Target=rcdrop_list_end_187
+  rcdrop_list_end_187:
+  rc_tco_drop_inactive_184:
     LoadLocal             Target=256 Slot=8
-    JumpIfFalse           CondTemp=256 Target=rc_tco_drop_inactive_187
+    JumpIfFalse           CondTemp=256 Target=rc_tco_drop_inactive_188
     LoadConstInt          Target=257 Value=0
     CallKnown             Target=258 FuncLabel=__rcdrop_record_10 EnvTemp=257 ArgTemp=86
-  rc_tco_drop_inactive_187:
+  rc_tco_drop_inactive_188:
     LoadLocal             Target=259 Slot=29
     LoadConstInt          Target=260 Value=0
     CmpIntNe              Target=261 Left=259 Right=260
-    JumpIfFalse           CondTemp=261 Target=general_rc_owned_absent_188
+    JumpIfFalse           CondTemp=261 Target=general_rc_owned_absent_189
     IsReferenceCounted    Target=262 SourceTemp=259
-    JumpIfFalse           CondTemp=262 Target=general_rc_owned_absent_188
+    JumpIfFalse           CondTemp=262 Target=general_rc_owned_absent_189
     LoadConstInt          Target=263 Value=0
     CallKnown             Target=264 FuncLabel=__rcdrop_record_16 EnvTemp=263 ArgTemp=259
     StoreLocal            Slot=29 Source=260
-  general_rc_owned_absent_188:
+  general_rc_owned_absent_189:
     LoadLocal             Target=265 Slot=28
     LoadConstInt          Target=266 Value=0
     CmpIntNe              Target=267 Left=265 Right=266
-    JumpIfFalse           CondTemp=267 Target=general_rc_owned_absent_189
+    JumpIfFalse           CondTemp=267 Target=general_rc_owned_absent_190
     IsReferenceCounted    Target=268 SourceTemp=265
-    JumpIfFalse           CondTemp=268 Target=general_rc_owned_absent_189
+    JumpIfFalse           CondTemp=268 Target=general_rc_owned_absent_190
     LoadConstInt          Target=269 Value=0
     CallKnown             Target=270 FuncLabel=__rcdrop_record_16 EnvTemp=269 ArgTemp=265
     StoreLocal            Slot=28 Source=266
-  general_rc_owned_absent_189:
+  general_rc_owned_absent_190:
     RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=59
     StoreLocal            Slot=3 Source=236
     LoadConstInt          Target=271 Value=1
@@ -1271,86 +1283,86 @@ function lambda_19  [ClosureHelper from lowerItems]
     StoreLocal            Slot=32 Source=87   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     RestoreArenaState     CursorLocalSlot=33 EndLocalSlot=34 PreRestoreEndSlot=37
     ReclaimArenaChunks    SavedEndSlot=34 PreRestoreEndSlot=37
-    Jump                  Target=match_end_92   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
-  match_arm_cleanup_94:
+    Jump                  Target=match_end_93   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
+  match_arm_cleanup_95:
     RcDrop                SourceTemp=17 TypeName=List OwnerSlot=23
     RestoreArenaState     CursorLocalSlot=33 EndLocalSlot=34 PreRestoreEndSlot=38
     ReclaimArenaChunks    SavedEndSlot=34 PreRestoreEndSlot=38
-    Jump                  Target=match_none_93   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
-  match_none_93:
+    Jump                  Target=match_none_94   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
+  match_none_94:
     LoadConstInt          Target=90 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     StoreLocal            Slot=32 Source=90   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
-  match_end_92:
+  match_end_93:
     LoadLocal             Target=91 Slot=32   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:32:17)
     StoreLocal            Slot=24 Source=91   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
-  endif_84:
+  endif_85:
     LoadLocal             Target=92 Slot=24   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:29:13)
     StoreLocal            Slot=12 Source=92   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=39
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=39
-    Jump                  Target=match_end_78   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-  match_arm_cleanup_82:
+    Jump                  Target=match_end_79   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
+  match_arm_cleanup_83:
     RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=40
     ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=40
-    Jump                  Target=match_none_79   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-  match_none_79:
+    Jump                  Target=match_none_80   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
+  match_none_80:
     LoadConstInt          Target=94 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     StoreLocal            Slot=12 Source=94   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
-  match_end_78:
+  match_end_79:
     LoadLocal             Target=95 Slot=12   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:26:5)
     LoadLocal             Target=131 Slot=28   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=132 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CmpIntNe              Target=133 Left=131 Right=132   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=133 Target=general_rc_owned_absent_107   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=133 Target=general_rc_owned_absent_108   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     IsReferenceCounted    Target=134 SourceTemp=131
-    JumpIfFalse           CondTemp=134 Target=general_rc_owned_absent_107   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=134 Target=general_rc_owned_absent_108   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=135 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CallKnown             Target=136 FuncLabel=__rcdrop_record_16 EnvTemp=135 ArgTemp=131   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=28 Source=132   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  general_rc_owned_absent_107:
+  general_rc_owned_absent_108:
     LoadLocal             Target=137 Slot=29   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=138 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CmpIntNe              Target=139 Left=137 Right=138   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=139 Target=general_rc_owned_absent_108   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=139 Target=general_rc_owned_absent_109   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     IsReferenceCounted    Target=140 SourceTemp=137
-    JumpIfFalse           CondTemp=140 Target=general_rc_owned_absent_108   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=140 Target=general_rc_owned_absent_109   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=141 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CallKnown             Target=142 FuncLabel=__rcdrop_record_16 EnvTemp=141 ArgTemp=137   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=29 Source=138   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  general_rc_owned_absent_108:
+  general_rc_owned_absent_109:
     LoadLocal             Target=143 Slot=3   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadLocal             Target=144 Slot=7   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=144 Target=rc_tco_exit_drop_inactive_109   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=144 Target=rc_tco_exit_drop_inactive_110   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     StoreLocal            Slot=48 Source=143   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rcdrop_list_110:
+  rcdrop_list_111:
     LoadLocal             Target=145 Slot=48   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=146 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CmpIntNe              Target=147 Left=145 Right=146   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=147 Target=rcdrop_list_end_112   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=147 Target=rcdrop_list_end_113   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     RcIsUnique            Target=148 SourceTemp=145
-    JumpIfFalse           CondTemp=148 Target=rcdrop_list_shared_111   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=148 Target=rcdrop_list_shared_112   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadMemOffset         Target=149 BasePtr=145 OffsetBytes=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=150 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CallKnown             Target=151 FuncLabel=__rcdrop_record_3 EnvTemp=150 ArgTemp=149   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadMemOffset         Target=152 BasePtr=145 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     RcDrop                SourceTemp=145 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=48 Source=152   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    Jump                  Target=rcdrop_list_110   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rcdrop_list_shared_111:
+    Jump                  Target=rcdrop_list_111   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rcdrop_list_shared_112:
     RcDrop                SourceTemp=145 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_112   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rcdrop_list_end_112:
-  rc_tco_exit_drop_inactive_109:
+    Jump                  Target=rcdrop_list_end_113   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+  rcdrop_list_end_113:
+  rc_tco_exit_drop_inactive_110:
     LoadLocal             Target=153 Slot=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadLocal             Target=154 Slot=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-    JumpIfFalse           CondTemp=154 Target=rc_tco_exit_drop_inactive_113   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
+    JumpIfFalse           CondTemp=154 Target=rc_tco_exit_drop_inactive_114   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     LoadConstInt          Target=155 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
     CallKnown             Target=156 FuncLabel=__rcdrop_record_10 EnvTemp=155 ArgTemp=153   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
-  rc_tco_exit_drop_inactive_113:
+  rc_tco_exit_drop_inactive_114:
     Return                Source=95   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:25:1)
   lambda_19_rc_edge_36_78:
     RcDrop                SourceTemp=77 TypeName=List OwnerSlot=36
-    Jump                  Target=rc_normalize_list_end_171
+    Jump                  Target=rc_normalize_list_end_172
 
 function lambda_18  [ClosureHelper from lowerItems]
   locals=2 temps=8
@@ -1388,22 +1400,22 @@ function lambda_21  [ClosureHelper from items]
     LoadArgumentOwnership Target=25   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadConstInt          Target=26 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     AndInt                Target=27 Left=25 Right=26   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    JumpIfFalse           CondTemp=27 Target=rc_arg_normalize_copy_118   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=27 Target=rc_arg_normalize_copy_119   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=12 Source=24   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    Jump                  Target=rc_arg_normalize_done_119   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_arg_normalize_copy_118:
+    Jump                  Target=rc_arg_normalize_done_120   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rc_arg_normalize_copy_119:
     IsReferenceCounted    Target=28 SourceTemp=24
-    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_120   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_121   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     RcDup                 Target=29 SourceTemp=24 RuntimeManaged=true
     StoreLocal            Slot=13 Source=29   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    Jump                  Target=rc_representation_done_121   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_representation_copy_120:
+    Jump                  Target=rc_representation_done_122   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rc_representation_copy_121:
     CopyOutList           DestTemp=30 SrcTemp=24 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=13 Source=30   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_representation_done_121:
+  rc_representation_done_122:
     LoadLocal             Target=31 Slot=13   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=12 Source=31   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_arg_normalize_done_119:
+  rc_arg_normalize_done_120:
     LoadLocal             Target=32 Slot=12   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=1 Source=32   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadConstInt          Target=33 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
@@ -1417,11 +1429,11 @@ function lambda_21  [ClosureHelper from items]
     LoadLocal             Target=2 Slot=2   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:8)
     LoadConstInt          Target=3 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:13)
     CmpIntEq              Target=4 Left=2 Right=3   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:8)
-    JumpIfFalse           CondTemp=4 Target=else_114   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
+    JumpIfFalse           CondTemp=4 Target=else_115   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
     LoadLocal             Target=5 Slot=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:37:10)
     StoreLocal            Slot=10 Source=5   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
-    Jump                  Target=endif_115   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
-  else_114:
+    Jump                  Target=endif_116   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
+  else_115:
     LoadLocal             Target=6 Slot=2   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:16)
     LoadConstInt          Target=7 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:20)
     SubInt                Target=8 Left=6 Right=7   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:16)
@@ -1433,12 +1445,12 @@ function lambda_21  [ClosureHelper from items]
     LoadConstInt          Target=14 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
     CmpIntEq              Target=15 Left=12 Right=14   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
     OrInt                 Target=16 Left=13 Right=15   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
-    JumpIfFalse           CondTemp=16 Target=rc_tail_copy_117   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
-    Jump                  Target=rc_tail_done_116   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
-  rc_tail_copy_117:
+    JumpIfFalse           CondTemp=16 Target=rc_tail_copy_118   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
+    Jump                  Target=rc_tail_done_117   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
+  rc_tail_copy_118:
     CopyOutList           DestTemp=17 SrcTemp=12 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
     StoreLocal            Slot=11 Source=17   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
-  rc_tail_done_116:
+  rc_tail_done_117:
     LoadLocal             Target=18 Slot=11   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
     Alloc                 Target=19 SizeBytes=16 RuntimeManaged=true   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
     StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=11   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:23)
@@ -1456,7 +1468,7 @@ function lambda_21  [ClosureHelper from items]
     Jump                  Target=lambda_21_body   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:10)
     LoadConstInt          Target=22 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:38:10)
     StoreLocal            Slot=10 Source=22   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
-  endif_115:
+  endif_116:
     LoadLocal             Target=23 Slot=10   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:36:5)
     LoadConstInt          Target=34 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=14 Source=34   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
@@ -1467,58 +1479,58 @@ function lambda_21  [ClosureHelper from items]
     CmpIntEq              Target=39 Left=38 Right=34   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     AndInt                Target=40 Left=36 Right=37   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     AndInt                Target=41 Left=40 Right=39   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    JumpIfFalse           CondTemp=41 Target=rc_tco_exit_transfer_not_selected_122   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=41 Target=rc_tco_exit_transfer_not_selected_123   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadConstInt          Target=42 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=14 Source=42   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    Jump                  Target=rc_tco_exit_transfer_done_123   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_tco_exit_transfer_not_selected_122:
+    Jump                  Target=rc_tco_exit_transfer_done_124   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rc_tco_exit_transfer_not_selected_123:
     LoadLocal             Target=43 Slot=6   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    JumpIfFalse           CondTemp=43 Target=rc_tco_exit_drop_inactive_124   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=43 Target=rc_tco_exit_drop_inactive_125   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=15 Source=35   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rcdrop_list_125:
+  rcdrop_list_126:
     LoadLocal             Target=44 Slot=15   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadConstInt          Target=45 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     CmpIntNe              Target=46 Left=44 Right=45   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    JumpIfFalse           CondTemp=46 Target=rcdrop_list_end_127   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_end_128   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     RcIsUnique            Target=47 SourceTemp=44
-    JumpIfFalse           CondTemp=47 Target=rcdrop_list_shared_126   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=47 Target=rcdrop_list_shared_127   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadMemOffset         Target=48 BasePtr=44 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     RcDrop                SourceTemp=44 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=15 Source=48   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    Jump                  Target=rcdrop_list_125   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rcdrop_list_shared_126:
+    Jump                  Target=rcdrop_list_126   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rcdrop_list_shared_127:
     RcDrop                SourceTemp=44 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_127   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rcdrop_list_end_127:
-  rc_tco_exit_drop_inactive_124:
-  rc_tco_exit_transfer_done_123:
+    Jump                  Target=rcdrop_list_end_128   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rcdrop_list_end_128:
+  rc_tco_exit_drop_inactive_125:
+  rc_tco_exit_transfer_done_124:
     LoadArgumentOwnership Target=49   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadConstInt          Target=50 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     ShrInt                Target=51 Left=49 Right=50   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     AndInt                Target=52 Left=51 Right=50   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    JumpIfFalse           CondTemp=52 Target=rc_result_owned_128   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=52 Target=rc_result_owned_129   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     CopyOutList           DestTemp=53 SrcTemp=23 HeadCopy=Inline Purpose=ArenaResultBoundary   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     StoreLocal            Slot=17 Source=23   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rcdrop_list_130:
+  rcdrop_list_131:
     LoadLocal             Target=54 Slot=17   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadConstInt          Target=55 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     CmpIntNe              Target=56 Left=54 Right=55   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    JumpIfFalse           CondTemp=56 Target=rcdrop_list_end_132   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=56 Target=rcdrop_list_end_133   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     RcIsUnique            Target=57 SourceTemp=54
-    JumpIfFalse           CondTemp=57 Target=rcdrop_list_shared_131   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+    JumpIfFalse           CondTemp=57 Target=rcdrop_list_shared_132   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     LoadMemOffset         Target=58 BasePtr=54 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=17 Source=58   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    Jump                  Target=rcdrop_list_130   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rcdrop_list_shared_131:
+    Jump                  Target=rcdrop_list_131   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rcdrop_list_shared_132:
     RcDrop                SourceTemp=54 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_132   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rcdrop_list_end_132:
+    Jump                  Target=rcdrop_list_end_133   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rcdrop_list_end_133:
     StoreLocal            Slot=16 Source=53   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-    Jump                  Target=rc_result_done_129   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_result_owned_128:
+    Jump                  Target=rc_result_done_130   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
+  rc_result_owned_129:
     StoreLocal            Slot=16 Source=23   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
-  rc_result_done_129:
+  rc_result_done_130:
     LoadLocal             Target=59 Slot=16   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
     Return                Source=59   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:35:1)
 
@@ -1578,10 +1590,10 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=23 Value=1   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     AndInt                Target=24 Left=22 Right=23   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     StoreLocal            Slot=11 Source=19   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-    JumpIfFalse           CondTemp=24 Target=rc_call_argument_not_retained_133   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
+    JumpIfFalse           CondTemp=24 Target=rc_call_argument_not_retained_134   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     RcDup                 Target=25 SourceTemp=19 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=11 Source=25   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-  rc_call_argument_not_retained_133:
+  rc_call_argument_not_retained_134:
     LoadLocal             Target=26 Slot=11   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     CallClosure           Target=27 ClosureTemp=11 ArgTemp=26 RuntimeManagedArgumentFlagTemp=24   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     LoadConstInt          Target=28 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:41)
@@ -1605,21 +1617,21 @@ function _start_main  [ProgramEntry]
     RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=12
     StoreLocal            Slot=13 Source=19   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-  rcdrop_list_134:
+  rcdrop_list_135:
     LoadLocal             Target=39 Slot=13   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     LoadConstInt          Target=40 Value=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     CmpIntNe              Target=41 Left=39 Right=40   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_136   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
+    JumpIfFalse           CondTemp=41 Target=rcdrop_list_end_137   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     RcIsUnique            Target=42 SourceTemp=39
-    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_135   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
+    JumpIfFalse           CondTemp=42 Target=rcdrop_list_shared_136   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     LoadMemOffset         Target=43 BasePtr=39 OffsetBytes=8   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
     RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=13 Source=43   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-    Jump                  Target=rcdrop_list_134   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-  rcdrop_list_shared_135:
+    Jump                  Target=rcdrop_list_135   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
+  rcdrop_list_shared_136:
     RcDrop                SourceTemp=39 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_136   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
-  rcdrop_list_end_136:
+    Jump                  Target=rcdrop_list_end_137   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:16)
+  rcdrop_list_end_137:
     PrintInt              Source=38   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:1)
     AllocAdt              Target=44 Tag=0 FieldCount=0   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:40:1)
     StoreLocal            Slot=14 Source=44   (tco_record_blocked_by_sibling_keeps_field_retain_pending.ash:23:1)

@@ -175,6 +175,32 @@ public sealed partial class Lowering
         }
     }
 
+    // The cons-cell counterpart of WithdrawLoopParameterRetainsOfCopiedCells: only the head of each
+    // arena cell carrying the successor is walked, never its tail. A retain left pending (one the
+    // frame's finalize settles) is left to it.
+    private void WithdrawLoopParameterRetainsOfCopiedConsHead(int valueTemp, IReadOnlyCollection<(int Slot, int ActiveSlot)> parameters)
+    {
+        if (parameters.Count == 0)
+        {
+            return;
+        }
+
+        HashSet<int> parameterSlots = [.. parameters.Select(parameter => parameter.Slot)];
+        HashSet<int> heldSlots = ParametersHeldToTheEnd(parameters);
+        var visited = new HashSet<int>();
+        int headOffset = HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex);
+        foreach (int cell in ArenaCellsCarrying(valueTemp, parameterSlots))
+        {
+            foreach (IrInst.StoreMemOffset store in _inst.OfType<IrInst.StoreMemOffset>().Where(store => store.BasePtr == cell && store.OffsetBytes == headOffset).ToList())
+            {
+                if (IsArenaCell(store.Source))
+                {
+                    WithdrawLoopParameterRetainsOfCell(store.Source, heldSlots, visited, keepPendingRetains: true);
+                }
+            }
+        }
+    }
+
     /// <summary>
     /// The parameter slots no path releases ahead of the loop's end: a parameter a self call hands
     /// on as the root of a pattern-bound successor is released there and its active flag cleared.
@@ -250,7 +276,7 @@ public sealed partial class Lowering
         return cells;
     }
 
-    private void WithdrawLoopParameterRetainsOfCell(int cellTemp, HashSet<int> heldSlots, HashSet<int> visited)
+    private void WithdrawLoopParameterRetainsOfCell(int cellTemp, HashSet<int> heldSlots, HashSet<int> visited, bool keepPendingRetains = false)
     {
         if (!visited.Add(cellTemp))
         {
@@ -273,9 +299,9 @@ public sealed partial class Lowering
 
         foreach (int value in stored)
         {
-            if (!WithdrawLoopParameterRetain(value, heldSlots) && IsArenaCell(value))
+            if (!WithdrawLoopParameterRetain(value, heldSlots, keepPendingRetains) && IsArenaCell(value))
             {
-                WithdrawLoopParameterRetainsOfCell(value, heldSlots, visited);
+                WithdrawLoopParameterRetainsOfCell(value, heldSlots, visited, keepPendingRetains);
             }
         }
     }
@@ -311,7 +337,7 @@ public sealed partial class Lowering
     /// an identity, a pending field retain's flag is zeroed. True when <paramref name="storedTemp"/>
     /// was a retain at all.
     /// </summary>
-    private bool WithdrawLoopParameterRetain(int storedTemp, HashSet<int> heldSlots)
+    private bool WithdrawLoopParameterRetain(int storedTemp, HashSet<int> heldSlots, bool keepPendingRetains = false)
     {
         int index = FindLastInstruction(instruction => instruction switch
         {
@@ -326,7 +352,7 @@ public sealed partial class Lowering
 
         if (_inst[index] is IrInst.RcDup duplicate)
         {
-            if (duplicate.RuntimeManaged && ReadsLoopParameter(duplicate.SourceTemp, heldSlots) && TempUseCount(storedTemp, index) == 1)
+            if (duplicate.RuntimeManaged && !(keepPendingRetains && duplicate.MayBeEmpty) && ReadsLoopParameter(duplicate.SourceTemp, heldSlots) && TempUseCount(storedTemp, index) == 1)
             {
                 _inst[index] = duplicate with { RuntimeManaged = false, MayBeEmpty = false };
             }
@@ -334,7 +360,7 @@ public sealed partial class Lowering
             return true;
         }
 
-        if (PendingFieldRetainFlagIndex(index) is not int flagIndex)
+        if (keepPendingRetains || PendingFieldRetainFlagIndex(index) is not int flagIndex)
         {
             return false;
         }

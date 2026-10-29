@@ -1,0 +1,15 @@
+let recursive pieces (marker: Bytes) (items: List(Bytes)) (acc: List(Bytes)) =
+    match items with
+        | [] -> marker :: acc
+        | payload :: rest -> pieces(marker)(rest)(payload :: acc)
+
+let recursive count (xs: List(Bytes)) (total: Int) =
+    match xs with
+        | [] -> total
+        | x :: rest -> count(rest)(total + Ashes.Byte.length(x))
+
+let source = [Ashes.Byte.allocate(1), Ashes.Byte.allocate(2), Ashes.Byte.allocate(3)]
+
+0
+|> count(pieces(Ashes.Byte.allocate(7))(source)([]))
+|> Ashes.IO.print

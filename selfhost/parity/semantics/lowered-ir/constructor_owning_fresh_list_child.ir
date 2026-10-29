@@ -1,0 +1,495 @@
+IR (lowered)
+============
+
+function __rcdrop_2  [RuntimeManagedAdtDropper]
+  locals=3 temps=12
+    LoadLocal             Target=0 Slot=1   (constructor_owning_fresh_list_child.ash:8:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_24   (constructor_owning_fresh_list_child.ash:8:1)
+    GetAdtTag             Target=2 Ptr=0   (constructor_owning_fresh_list_child.ash:8:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_24   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_ctor_25:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=2 Source=3   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_list_27:
+    LoadLocal             Target=4 Slot=2   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadConstInt          Target=5 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    CmpIntNe              Target=6 Left=4 Right=5   (constructor_owning_fresh_list_child.ash:8:1)
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_end_29   (constructor_owning_fresh_list_child.ash:8:1)
+    RcIsUnique            Target=7 SourceTemp=4
+    JumpIfFalse           CondTemp=7 Target=rcdrop_list_shared_28   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadMemOffset         Target=8 BasePtr=4 OffsetBytes=0   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDrop                SourceTemp=8 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=9 BasePtr=4 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=9   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rcdrop_list_27   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_list_shared_28:
+    RcDrop                SourceTemp=4 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_29   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_list_end_29:
+    GetAdtField           Target=10 Ptr=0 FieldIndex=2   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDrop                SourceTemp=10 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_24   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_ctor_26:
+    Jump                  Target=rcdrop_shared_24   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_shared_24:
+    RcDrop                SourceTemp=0 TypeName=Kind RuntimeManaged=true
+    LoadConstInt          Target=11 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    Return                Source=11   (constructor_owning_fresh_list_child.ash:8:1)
+
+function lambda_1  [ClosureHelper from count]
+  locals=34 temps=87
+    LoadEnv               Target=0 Index=0   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=2 Source=0   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadLocal             Target=24 Slot=2   (constructor_owning_fresh_list_child.ash:8:1)
+    IsReferenceCounted    Target=25 SourceTemp=24
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_5   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=26   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_representation_done_6   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_copy_5:
+    LoadConstInt          Target=28 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=23 Source=24   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=24 Source=28   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=25 Source=28   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_list_7:
+    LoadLocal             Target=29 Slot=23   (constructor_owning_fresh_list_child.ash:8:1)
+    CmpIntNe              Target=30 Left=29 Right=28   (constructor_owning_fresh_list_child.ash:8:1)
+    JumpIfFalse           CondTemp=30 Target=rc_normalize_list_end_8   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadMemOffset         Target=31 BasePtr=29 OffsetBytes=0   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadMemOffset         Target=32 BasePtr=29 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:8:1)
+    IsReferenceCounted    Target=33 SourceTemp=31
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_9   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDup                 Target=34 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=34   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_representation_done_10   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_copy_9:
+    GetAdtTag             Target=36 Ptr=31   (constructor_owning_fresh_list_child.ash:8:1)
+    SwitchTag             TagTemp=36 Cases=[2] DefaultLabel=rc_normalize_adt_11   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_adt_11:
+    CopyOutArena          DestTemp=37 SrcTemp=31 StaticSizeBytes=32 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=38 Ptr=31 FieldIndex=1   (constructor_owning_fresh_list_child.ash:8:1)
+    IsReferenceCounted    Target=39 SourceTemp=38
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_14   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDup                 Target=40 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=40   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_representation_done_15   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_copy_14:
+    CopyOutList           DestTemp=41 SrcTemp=38 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=28 Source=41   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_done_15:
+    LoadLocal             Target=42 Slot=28   (constructor_owning_fresh_list_child.ash:8:1)
+    SetAdtField           Ptr=37 FieldIndex=1 Source=42   (constructor_owning_fresh_list_child.ash:8:1)
+    GetAdtField           Target=43 Ptr=31 FieldIndex=2   (constructor_owning_fresh_list_child.ash:8:1)
+    IsReferenceCounted    Target=44 SourceTemp=43
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_16   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDup                 Target=45 SourceTemp=43 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=45   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_representation_done_17   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_copy_16:
+    CopyOutArena          DestTemp=46 SrcTemp=43 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=29 Source=46   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_done_17:
+    LoadLocal             Target=47 Slot=29   (constructor_owning_fresh_list_child.ash:8:1)
+    SetAdtField           Ptr=37 FieldIndex=2 Source=47   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=27 Source=37   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_normalize_adt_end_13   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_adt_12:
+    CopyOutArena          DestTemp=48 SrcTemp=31 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=27 Source=48   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_normalize_adt_end_13   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_adt_end_13:
+    LoadLocal             Target=49 Slot=27   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=26 Source=49   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_done_10:
+    LoadLocal             Target=50 Slot=26   (constructor_owning_fresh_list_child.ash:8:1)
+    Alloc                 Target=51 SizeBytes=16 RuntimeManaged=true   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreMemOffset        BasePtr=51 OffsetBytes=0 Source=50   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreMemOffset        BasePtr=51 OffsetBytes=8 Source=28   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadLocal             Target=52 Slot=24   (constructor_owning_fresh_list_child.ash:8:1)
+    CmpIntNe              Target=53 Left=52 Right=28   (constructor_owning_fresh_list_child.ash:8:1)
+    JumpIfFalse           CondTemp=53 Target=rc_normalize_list_first_18   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadLocal             Target=54 Slot=25   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreMemOffset        BasePtr=54 OffsetBytes=8 Source=51   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_normalize_list_linked_19   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_list_first_18:
+    StoreLocal            Slot=24 Source=51   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_list_linked_19:
+    StoreLocal            Slot=25 Source=51   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=23 Source=32   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rc_normalize_list_7   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_normalize_list_end_8:
+    LoadLocal             Target=55 Slot=24   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=22 Source=55   (constructor_owning_fresh_list_child.ash:8:1)
+  rc_representation_done_6:
+    LoadLocal             Target=56 Slot=22   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=2 Source=56   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadConstInt          Target=57 Value=1   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=8 Source=57   (constructor_owning_fresh_list_child.ash:8:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=5 Source=1   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=6 Source=1   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=7 Source=1   (constructor_owning_fresh_list_child.ash:8:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadLocal             Target=2 Slot=2   (constructor_owning_fresh_list_child.ash:9:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=3 Value=0   (constructor_owning_fresh_list_child.ash:9:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (constructor_owning_fresh_list_child.ash:9:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (constructor_owning_fresh_list_child.ash:9:5)
+    LoadLocal             Target=5 Slot=1   (constructor_owning_fresh_list_child.ash:10:17)
+    StoreLocal            Slot=12 Source=5   (constructor_owning_fresh_list_child.ash:9:5)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    Jump                  Target=match_end_0   (constructor_owning_fresh_list_child.ash:9:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    Jump                  Target=match_next_2   (constructor_owning_fresh_list_child.ash:9:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=6 Value=0   (constructor_owning_fresh_list_child.ash:9:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (constructor_owning_fresh_list_child.ash:9:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (constructor_owning_fresh_list_child.ash:9:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (constructor_owning_fresh_list_child.ash:9:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:9:5)
+    StoreLocal            Slot=19 Source=9   (constructor_owning_fresh_list_child.ash:9:5)
+    LoadLocal             Target=10 Slot=19   (constructor_owning_fresh_list_child.ash:11:30)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (constructor_owning_fresh_list_child.ash:11:36)
+    LoadConstInt          Target=13 Value=1   (constructor_owning_fresh_list_child.ash:11:40)
+    AddInt                Target=14 Left=12 Right=13   (constructor_owning_fresh_list_child.ash:11:36)
+    RcDup                 Target=15 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    LoadLocal             Target=16 Slot=2   (constructor_owning_fresh_list_child.ash:11:24)
+    LoadConstInt          Target=17 Value=0   (constructor_owning_fresh_list_child.ash:11:24)
+    StoreLocal            Slot=8 Source=17   (constructor_owning_fresh_list_child.ash:11:24)
+    LoadLocal             Target=18 Slot=2   (constructor_owning_fresh_list_child.ash:11:24)
+    LoadLocal             Target=19 Slot=1   (constructor_owning_fresh_list_child.ash:11:24)
+    StoreLocal            Slot=2 Source=15   (constructor_owning_fresh_list_child.ash:11:24)
+    StoreLocal            Slot=1 Source=14   (constructor_owning_fresh_list_child.ash:11:24)
+    LoadLocal             Target=68 Slot=8
+    JumpIfFalse           CondTemp=68 Target=rc_tco_drop_inactive_39
+    StoreLocal            Slot=32 Source=18
+  rcdrop_list_40:
+    LoadLocal             Target=69 Slot=32
+    LoadConstInt          Target=70 Value=0
+    CmpIntNe              Target=71 Left=69 Right=70
+    JumpIfFalse           CondTemp=71 Target=rcdrop_list_end_42
+    RcIsUnique            Target=72 SourceTemp=69
+    JumpIfFalse           CondTemp=72 Target=rcdrop_list_shared_41
+    LoadMemOffset         Target=73 BasePtr=69 OffsetBytes=0
+    LoadConstInt          Target=74 Value=0
+    CallKnown             Target=75 FuncLabel=__rcdrop_2 EnvTemp=74 ArgTemp=73
+    LoadMemOffset         Target=76 BasePtr=69 OffsetBytes=8
+    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=32 Source=76
+    Jump                  Target=rcdrop_list_40
+  rcdrop_list_shared_41:
+    RcDrop                SourceTemp=69 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_42
+  rcdrop_list_end_42:
+  rc_tco_drop_inactive_39:
+    StoreLocal            Slot=33 Source=16
+  rcdrop_list_43:
+    LoadLocal             Target=77 Slot=33
+    LoadConstInt          Target=78 Value=0
+    CmpIntNe              Target=79 Left=77 Right=78
+    JumpIfFalse           CondTemp=79 Target=rcdrop_list_end_45
+    RcIsUnique            Target=80 SourceTemp=77
+    JumpIfFalse           CondTemp=80 Target=rcdrop_list_shared_44
+    LoadMemOffset         Target=81 BasePtr=77 OffsetBytes=0
+    LoadConstInt          Target=82 Value=0
+    CallKnown             Target=83 FuncLabel=__rcdrop_2 EnvTemp=82 ArgTemp=81
+    LoadMemOffset         Target=84 BasePtr=77 OffsetBytes=8
+    RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=33 Source=84
+    Jump                  Target=rcdrop_list_43
+  rcdrop_list_shared_44:
+    RcDrop                SourceTemp=77 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_45
+  rcdrop_list_end_45:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=85 Value=0
+    StoreLocal            Slot=6 Source=85
+    StoreLocal            Slot=7 Source=85
+    StoreLocal            Slot=2 Source=15
+    LoadConstInt          Target=86 Value=1
+    StoreLocal            Slot=8 Source=86
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
+    RestoreStackPointer   Slot=11   (constructor_owning_fresh_list_child.ash:11:24)
+    Jump                  Target=lambda_1_body   (constructor_owning_fresh_list_child.ash:11:24)
+    LoadConstInt          Target=20 Value=0   (constructor_owning_fresh_list_child.ash:11:24)
+    StoreLocal            Slot=12 Source=20   (constructor_owning_fresh_list_child.ash:9:5)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
+    Jump                  Target=match_end_0   (constructor_owning_fresh_list_child.ash:9:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=21
+    Jump                  Target=match_none_1   (constructor_owning_fresh_list_child.ash:9:5)
+  match_none_1:
+    LoadConstInt          Target=22 Value=0   (constructor_owning_fresh_list_child.ash:9:5)
+    StoreLocal            Slot=12 Source=22   (constructor_owning_fresh_list_child.ash:9:5)
+  match_end_0:
+    LoadLocal             Target=23 Slot=12   (constructor_owning_fresh_list_child.ash:9:5)
+    LoadLocal             Target=58 Slot=2   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadLocal             Target=59 Slot=8   (constructor_owning_fresh_list_child.ash:8:1)
+    JumpIfFalse           CondTemp=59 Target=rc_tco_exit_drop_inactive_20   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=30 Source=58   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_list_21:
+    LoadLocal             Target=60 Slot=30   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadConstInt          Target=61 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    CmpIntNe              Target=62 Left=60 Right=61   (constructor_owning_fresh_list_child.ash:8:1)
+    JumpIfFalse           CondTemp=62 Target=rcdrop_list_end_23   (constructor_owning_fresh_list_child.ash:8:1)
+    RcIsUnique            Target=63 SourceTemp=60
+    JumpIfFalse           CondTemp=63 Target=rcdrop_list_shared_22   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadMemOffset         Target=64 BasePtr=60 OffsetBytes=0   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadConstInt          Target=65 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    CallKnown             Target=66 FuncLabel=__rcdrop_2 EnvTemp=65 ArgTemp=64   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadMemOffset         Target=67 BasePtr=60 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:8:1)
+    RcDrop                SourceTemp=60 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=67   (constructor_owning_fresh_list_child.ash:8:1)
+    Jump                  Target=rcdrop_list_21   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_list_shared_22:
+    RcDrop                SourceTemp=60 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_23   (constructor_owning_fresh_list_child.ash:8:1)
+  rcdrop_list_end_23:
+  rc_tco_exit_drop_inactive_20:
+    Return                Source=23   (constructor_owning_fresh_list_child.ash:8:1)
+
+function lambda_0  [SourceFunction from count]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (constructor_owning_fresh_list_child.ash:8:1)
+    LoadLocal             Target=1 Slot=1   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (constructor_owning_fresh_list_child.ash:8:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (constructor_owning_fresh_list_child.ash:8:1)
+    Return                Source=4   (constructor_owning_fresh_list_child.ash:8:1)
+
+function __deepcopy_5  [AdtDeepCopier]
+  locals=2 temps=11
+    LoadLocal             Target=0 Slot=1   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadEnv               Target=1 Index=0   (constructor_owning_fresh_list_child.ash:13:1)
+    GetAdtTag             Target=2 Ptr=0   (constructor_owning_fresh_list_child.ash:13:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_5_default   (constructor_owning_fresh_list_child.ash:13:1)
+  __deepcopy_5_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=3   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=4   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=16   (constructor_owning_fresh_list_child.ash:13:1)
+    CopyOutList           DestTemp=6 SrcTemp=5 HeadCopy=String Purpose=IndependentClone   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=6   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=24   (constructor_owning_fresh_list_child.ash:13:1)
+    CopyOutArena          DestTemp=8 SrcTemp=7 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=24 Source=8   (constructor_owning_fresh_list_child.ash:13:1)
+    Return                Source=3   (constructor_owning_fresh_list_child.ash:13:1)
+  __deepcopy_5_c1:
+    AllocAdt              Target=9 Tag=1 FieldCount=1   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=10 BasePtr=0 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=10   (constructor_owning_fresh_list_child.ash:13:1)
+    Return                Source=9   (constructor_owning_fresh_list_child.ash:13:1)
+  __deepcopy_5_default:
+    Return                Source=0   (constructor_owning_fresh_list_child.ash:13:1)
+
+function __deepcopy_list_4  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadEnv               Target=1 Index=0   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadConstInt          Target=2 Value=0   (constructor_owning_fresh_list_child.ash:13:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (constructor_owning_fresh_list_child.ash:13:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_4_copy   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadConstInt          Target=4 Value=0   (constructor_owning_fresh_list_child.ash:13:1)
+    Return                Source=4   (constructor_owning_fresh_list_child.ash:13:1)
+  __deepcopy_list_4_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    Alloc                 Target=7 SizeBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_5 EnvPtrTemp=7 EnvSizeBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (constructor_owning_fresh_list_child.ash:13:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (constructor_owning_fresh_list_child.ash:13:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (constructor_owning_fresh_list_child.ash:13:1)
+    Alloc                 Target=11 SizeBytes=16   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (constructor_owning_fresh_list_child.ash:13:1)
+    Return                Source=11   (constructor_owning_fresh_list_child.ash:13:1)
+
+function lambda_3  [SourceFunction from program]
+  locals=5 temps=31
+    LoadConstInt          Target=0 Value=0   (constructor_owning_fresh_list_child.ash:13:17)
+    LoadConstInt          Target=1 Value=1   (constructor_owning_fresh_list_child.ash:13:28)
+    LoadConstInt          Target=2 Value=0   (constructor_owning_fresh_list_child.ash:13:31)
+    LoadConstStr          Target=3 StrLabel=str_0   (constructor_owning_fresh_list_child.ash:13:32)
+    LoadLocal             Target=4 Slot=1   (constructor_owning_fresh_list_child.ash:13:57)
+    TextFromInt           Target=5 ValueTemp=4   (constructor_owning_fresh_list_child.ash:13:38)
+    ConcatStr             Target=6 Left=3 Right=5 RuntimeManaged=true   (constructor_owning_fresh_list_child.ash:13:32)
+    Alloc                 Target=7 SizeBytes=16 RuntimeManaged=true   (constructor_owning_fresh_list_child.ash:13:31)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=6   (constructor_owning_fresh_list_child.ash:13:31)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=2   (constructor_owning_fresh_list_child.ash:13:31)
+    LoadConstStr          Target=8 StrLabel=str_1   (constructor_owning_fresh_list_child.ash:13:62)
+    IsReferenceCounted    Target=9 SourceTemp=8
+    JumpIfFalse           CondTemp=9 Target=rc_representation_copy_30   (constructor_owning_fresh_list_child.ash:13:18)
+    RcDup                 Target=10 SourceTemp=8 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=10   (constructor_owning_fresh_list_child.ash:13:18)
+    Jump                  Target=rc_representation_done_31   (constructor_owning_fresh_list_child.ash:13:18)
+  rc_representation_copy_30:
+    CopyOutArena          DestTemp=11 SrcTemp=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=11   (constructor_owning_fresh_list_child.ash:13:18)
+  rc_representation_done_31:
+    LoadLocal             Target=12 Slot=2   (constructor_owning_fresh_list_child.ash:13:18)
+    AllocAdt              Target=13 Tag=0 FieldCount=3 RuntimeManaged=true   (constructor_owning_fresh_list_child.ash:13:18)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=1   (constructor_owning_fresh_list_child.ash:13:18)
+    SetAdtField           Ptr=13 FieldIndex=1 Source=7   (constructor_owning_fresh_list_child.ash:13:18)
+    SetAdtField           Ptr=13 FieldIndex=2 Source=12   (constructor_owning_fresh_list_child.ash:13:18)
+    Alloc                 Target=14 SizeBytes=16 RuntimeManaged=true   (constructor_owning_fresh_list_child.ash:13:17)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (constructor_owning_fresh_list_child.ash:13:17)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=0   (constructor_owning_fresh_list_child.ash:13:17)
+    LoadArgumentOwnership Target=15   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadConstInt          Target=16 Value=1   (constructor_owning_fresh_list_child.ash:13:1)
+    ShrInt                Target=17 Left=15 Right=16   (constructor_owning_fresh_list_child.ash:13:1)
+    AndInt                Target=18 Left=17 Right=16   (constructor_owning_fresh_list_child.ash:13:1)
+    JumpIfFalse           CondTemp=18 Target=rc_result_owned_32   (constructor_owning_fresh_list_child.ash:13:1)
+    Alloc                 Target=19 SizeBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    MakeClosure           Target=20 FuncLabel=__deepcopy_list_4 EnvPtrTemp=19 EnvSizeBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=20   (constructor_owning_fresh_list_child.ash:13:1)
+    CallClosure           Target=21 ClosureTemp=20 ArgTemp=14   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreLocal            Slot=4 Source=14   (constructor_owning_fresh_list_child.ash:13:1)
+  rcdrop_list_34:
+    LoadLocal             Target=22 Slot=4   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadConstInt          Target=23 Value=0   (constructor_owning_fresh_list_child.ash:13:1)
+    CmpIntNe              Target=24 Left=22 Right=23   (constructor_owning_fresh_list_child.ash:13:1)
+    JumpIfFalse           CondTemp=24 Target=rcdrop_list_end_36   (constructor_owning_fresh_list_child.ash:13:1)
+    RcIsUnique            Target=25 SourceTemp=22
+    JumpIfFalse           CondTemp=25 Target=rcdrop_list_shared_35   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=0   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadConstInt          Target=27 Value=0   (constructor_owning_fresh_list_child.ash:13:1)
+    CallKnown             Target=28 FuncLabel=__rcdrop_2 EnvTemp=27 ArgTemp=26   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadMemOffset         Target=29 BasePtr=22 OffsetBytes=8   (constructor_owning_fresh_list_child.ash:13:1)
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=4 Source=29   (constructor_owning_fresh_list_child.ash:13:1)
+    Jump                  Target=rcdrop_list_34   (constructor_owning_fresh_list_child.ash:13:1)
+  rcdrop_list_shared_35:
+    RcDrop                SourceTemp=22 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_36   (constructor_owning_fresh_list_child.ash:13:1)
+  rcdrop_list_end_36:
+    StoreLocal            Slot=3 Source=21   (constructor_owning_fresh_list_child.ash:13:1)
+    Jump                  Target=rc_result_done_33   (constructor_owning_fresh_list_child.ash:13:1)
+  rc_result_owned_32:
+    StoreLocal            Slot=3 Source=14   (constructor_owning_fresh_list_child.ash:13:1)
+  rc_result_done_33:
+    LoadLocal             Target=30 Slot=3   (constructor_owning_fresh_list_child.ash:13:1)
+    Return                Source=30   (constructor_owning_fresh_list_child.ash:13:1)
+
+function lambda_7  [ClosureHelper from rounds]
+  locals=17 temps=31
+    LoadEnv               Target=0 Index=0   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreLocal            Slot=2 Source=0   (constructor_owning_fresh_list_child.ash:15:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreLocal            Slot=5 Source=1   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreLocal            Slot=6 Source=1   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreLocal            Slot=7 Source=1   (constructor_owning_fresh_list_child.ash:15:1)
+  lambda_7_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (constructor_owning_fresh_list_child.ash:15:1)
+    LoadLocal             Target=2 Slot=2   (constructor_owning_fresh_list_child.ash:16:8)
+    LoadConstInt          Target=3 Value=0   (constructor_owning_fresh_list_child.ash:16:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (constructor_owning_fresh_list_child.ash:16:8)
+    JumpIfFalse           CondTemp=4 Target=else_37   (constructor_owning_fresh_list_child.ash:16:5)
+    LoadLocal             Target=5 Slot=1   (constructor_owning_fresh_list_child.ash:17:10)
+    StoreLocal            Slot=11 Source=5   (constructor_owning_fresh_list_child.ash:16:5)
+    Jump                  Target=endif_38   (constructor_owning_fresh_list_child.ash:16:5)
+  else_37:
+    LoadLocal             Target=6 Slot=2   (constructor_owning_fresh_list_child.ash:18:17)
+    LoadConstInt          Target=7 Value=1   (constructor_owning_fresh_list_child.ash:18:21)
+    SubInt                Target=8 Left=6 Right=7   (constructor_owning_fresh_list_child.ash:18:17)
+    LoadLocal             Target=9 Slot=1   (constructor_owning_fresh_list_child.ash:18:24)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (constructor_owning_fresh_list_child.ash:18:30)
+    LoadLocal             Target=11 Slot=2   (constructor_owning_fresh_list_child.ash:18:44)
+    StoreLocal            Slot=14 Source=11   (constructor_owning_fresh_list_child.ash:18:36)
+    LoadConstInt          Target=12 Value=0   (constructor_owning_fresh_list_child.ash:13:17)
+    LoadConstInt          Target=13 Value=1   (constructor_owning_fresh_list_child.ash:13:28)
+    LoadConstInt          Target=14 Value=0   (constructor_owning_fresh_list_child.ash:13:31)
+    LoadConstStr          Target=15 StrLabel=str_0   (constructor_owning_fresh_list_child.ash:13:32)
+    LoadLocal             Target=16 Slot=14   (constructor_owning_fresh_list_child.ash:13:57)
+    TextFromInt           Target=17 ValueTemp=16   (constructor_owning_fresh_list_child.ash:13:38)
+    ConcatStr             Target=18 Left=15 Right=17   (constructor_owning_fresh_list_child.ash:13:32)
+    Alloc                 Target=19 SizeBytes=16   (constructor_owning_fresh_list_child.ash:13:31)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=18   (constructor_owning_fresh_list_child.ash:13:31)
+    StoreMemOffset        BasePtr=19 OffsetBytes=8 Source=14   (constructor_owning_fresh_list_child.ash:13:31)
+    LoadConstStr          Target=20 StrLabel=str_1   (constructor_owning_fresh_list_child.ash:13:62)
+    AllocAdt              Target=21 Tag=0 FieldCount=3   (constructor_owning_fresh_list_child.ash:13:18)
+    SetAdtField           Ptr=21 FieldIndex=0 Source=13   (constructor_owning_fresh_list_child.ash:13:18)
+    SetAdtField           Ptr=21 FieldIndex=1 Source=19   (constructor_owning_fresh_list_child.ash:13:18)
+    SetAdtField           Ptr=21 FieldIndex=2 Source=20   (constructor_owning_fresh_list_child.ash:13:18)
+    Alloc                 Target=22 SizeBytes=16   (constructor_owning_fresh_list_child.ash:13:17)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=21   (constructor_owning_fresh_list_child.ash:13:17)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=12   (constructor_owning_fresh_list_child.ash:13:17)
+    CallClosure           Target=23 ClosureTemp=10 ArgTemp=22   (constructor_owning_fresh_list_child.ash:18:30)
+    LoadConstInt          Target=24 Value=0   (constructor_owning_fresh_list_child.ash:18:48)
+    CallClosure           Target=25 ClosureTemp=23 ArgTemp=24   (constructor_owning_fresh_list_child.ash:18:30)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    AddInt                Target=26 Left=9 Right=25   (constructor_owning_fresh_list_child.ash:18:24)
+    LoadLocal             Target=27 Slot=2   (constructor_owning_fresh_list_child.ash:18:10)
+    LoadLocal             Target=28 Slot=1   (constructor_owning_fresh_list_child.ash:18:10)
+    StoreLocal            Slot=2 Source=8   (constructor_owning_fresh_list_child.ash:18:10)
+    StoreLocal            Slot=1 Source=26   (constructor_owning_fresh_list_child.ash:18:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=16
+    RestoreStackPointer   Slot=10   (constructor_owning_fresh_list_child.ash:18:10)
+    Jump                  Target=lambda_7_body   (constructor_owning_fresh_list_child.ash:18:10)
+    LoadConstInt          Target=29 Value=0   (constructor_owning_fresh_list_child.ash:18:10)
+    StoreLocal            Slot=11 Source=29   (constructor_owning_fresh_list_child.ash:16:5)
+  endif_38:
+    LoadLocal             Target=30 Slot=11   (constructor_owning_fresh_list_child.ash:16:5)
+    Return                Source=30   (constructor_owning_fresh_list_child.ash:15:1)
+
+function lambda_6  [SourceFunction from rounds]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=16   (constructor_owning_fresh_list_child.ash:15:1)
+    LoadLocal             Target=1 Slot=1   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (constructor_owning_fresh_list_child.ash:15:1)
+    LoadEnv               Target=4 Index=0   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=4   (constructor_owning_fresh_list_child.ash:15:1)
+    MakeClosure           Target=7 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=16   (constructor_owning_fresh_list_child.ash:15:1)
+    Return                Source=7   (constructor_owning_fresh_list_child.ash:15:1)
+
+function _start_main  [ProgramEntry]
+  locals=10 temps=17
+    LoadConstInt          Target=0 Value=0   (constructor_owning_fresh_list_child.ash:8:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (constructor_owning_fresh_list_child.ash:8:1)
+    StoreLocal            Slot=0 Source=1   (constructor_owning_fresh_list_child.ash:8:1)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadConstInt          Target=2 Value=0   (constructor_owning_fresh_list_child.ash:13:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_3 EnvPtrTemp=2 EnvSizeBytes=0 ReturnsRuntimeManaged=true   (constructor_owning_fresh_list_child.ash:13:1)
+    StoreLocal            Slot=3 Source=3   (constructor_owning_fresh_list_child.ash:13:1)
+    Alloc                 Target=4 SizeBytes=16   (constructor_owning_fresh_list_child.ash:15:1)
+    LoadLocal             Target=5 Slot=0   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (constructor_owning_fresh_list_child.ash:15:1)
+    LoadLocal             Target=6 Slot=3   (constructor_owning_fresh_list_child.ash:15:1)
+    Borrow                Target=7 SourceTemp=6
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=7   (constructor_owning_fresh_list_child.ash:15:1)
+    MakeClosure           Target=8 FuncLabel=lambda_6 EnvPtrTemp=4 EnvSizeBytes=16   (constructor_owning_fresh_list_child.ash:15:1)
+    StoreLocal            Slot=4 Source=8   (constructor_owning_fresh_list_child.ash:15:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=9 Slot=4   (constructor_owning_fresh_list_child.ash:21:4)
+    LoadConstInt          Target=10 Value=2   (constructor_owning_fresh_list_child.ash:21:11)
+    CallClosure           Target=11 ClosureTemp=9 ArgTemp=10   (constructor_owning_fresh_list_child.ash:20:1)
+    LoadConstInt          Target=12 Value=0   (constructor_owning_fresh_list_child.ash:20:1)
+    CallClosure           Target=13 ClosureTemp=11 ArgTemp=12   (constructor_owning_fresh_list_child.ash:20:1)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=7
+    PrintInt              Source=13   (constructor_owning_fresh_list_child.ash:20:1)
+    AllocAdt              Target=14 Tag=0 FieldCount=0   (constructor_owning_fresh_list_child.ash:20:1)
+    StoreLocal            Slot=8 Source=14   (constructor_owning_fresh_list_child.ash:13:1)
+    LoadLocal             Target=15 Slot=3   (constructor_owning_fresh_list_child.ash:13:1)
+    CleanupResource       SourceTemp=15 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=9
+    CopyOutArena          DestTemp=16 SrcTemp=14 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=9
+    Return                Source=16
+

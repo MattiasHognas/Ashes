@@ -1,0 +1,20 @@
+// expect: 60
+type State =
+    | count: Int
+    | items: List(Str)
+
+let keep (items: List(Str)) = items
+
+let recursive walk (n: Int) (state: State) =
+    if n == 0
+    then state.count
+    else walk(n - 1)((state with items = keep("x" :: state.items), count = state.count + 1))
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + walk(20)(State(count = 0, items = ["b"])))
+
+0
+|> rounds(3)
+|> Ashes.IO.print

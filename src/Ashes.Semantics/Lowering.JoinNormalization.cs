@@ -34,7 +34,7 @@ public sealed partial class Lowering
             || reaching.Any(arm => arm.Store is null)
             || CanArenaReset(pruned)
             || ContainsUnresolvedLayoutType(pruned, [])
-            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned)))
+            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned) || IsNormalizableJoinTuple(pruned)))
         {
             return false;
         }
@@ -54,6 +54,14 @@ public sealed partial class Lowering
 
         return true;
     }
+
+    // A tuple join every element of which is a scalar or normalizes into an owned value: an arena
+    // arm is copied into an owned tuple that retains each reference-counted element it keeps.
+    private bool IsNormalizableJoinTuple(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_TUPLEJOIN") is null
+            && type is TypeRef.TTuple tuple
+            && tuple.Elements.Any(element => !CanArenaReset(Prune(element)))
+            && tuple.Elements.All(element => CanArenaReset(Prune(element)) || CanNormalizeIntoOwnedRuntimeValue(element));
 
     // An arm that builds its value itself (a cons, a literal, a constructor application): a
     // reference-counted value it hands on is fresh and its own, so it is kept rather than retained.
@@ -129,8 +137,8 @@ public sealed partial class Lowering
     private bool IsOwnedValueArm(JoinArm arm)
         => arm.Owned || IsRetainedPatternOwnerArm(arm) || (arm.Store is { } store && IsNormalizedJoinTemp(store.Source));
 
-    // A join every reaching arm of which hands over a reference of its own (a normalized join, a cell
-    // it built, nil) owns its value as the normalized joins do.
+    // A join every reaching arm of which hands over a reference of its own (a normalized join, a value
+    // it just produced, nil) owns its value as the normalized joins do.
     private void RecordOwnedUniformJoin(int resultTemp, IReadOnlyList<JoinArm> arms)
     {
         List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
@@ -138,11 +146,62 @@ public sealed partial class Lowering
             && reaching.Any(arm => arm.Store is { } owned && IsNormalizedJoinTemp(owned.Source))
             && reaching.All(arm =>
                 (arm.Body is { } nil && IsEmptyListLiteral(nil))
-                || (!BorrowsLoopParameter(arm) && arm.Store is { } store && IsNormalizedJoinTemp(store.Source))))
+                || (!BorrowsLoopParameter(arm) && arm.Store is { } store
+                    && (IsNormalizedJoinTemp(store.Source) || HandsOverNewlyProducedValue(arm, store)))))
         {
             RecordNormalizedJoinTemp(resultTemp);
         }
+
+        if (reaching.Count > 0 && reaching.All(IsOwnedScopeResultArm))
+        {
+            RecordOwnedScopeJoinTemp(resultTemp);
+        }
     }
+
+    private static bool FreshUniformJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_FRESHUNIFORMJOIN") is null;
+
+    // An owned arm whose value it just produced (a tuple it built) holds a reference no slot of the
+    // function owns, so the join takes it over as it takes a normalized join's.
+    private bool HandsOverNewlyProducedValue(JoinArm arm, IrInst.StoreLocal store)
+        => FreshUniformJoinRuleEnabled && arm.Owned && IsNewlyProducedRcTemp(store.Source);
+
+    // An arm handing the join a reference of its own without borrowing from a loop parameter: nil, a
+    // value it just produced on the reference-counted heap, a retain it took of a binding whose scope
+    // releases its own reference, or a join that owns its value itself.
+    private bool IsOwnedScopeResultArm(JoinArm arm)
+        => (arm.Body is { } nil && IsEmptyListLiteral(nil))
+            || (!BorrowsLoopParameter(arm)
+                && arm.Store is { } store
+                && (IsNormalizedJoinTemp(store.Source)
+                    || IsOwnedScopeJoinTemp(store.Source)
+                    || IsNewlyProducedRcTemp(store.Source)
+                    || IsRuntimeRetainTemp(store.Source)));
+
+    private bool IsRuntimeRetainTemp(int temp)
+        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc
+            && fact.Producer == LoweredTempProducerKind.RcDup;
+
+    // The joins whose every arm hands over a reference of its own: a scope replacing such a join
+    // with its arena copy releases the join (MaterializeScopeResultViews), and a loop exit returning
+    // one releases every parameter rather than transferring the one it equals.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _ownedScopeJoinTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordOwnedScopeJoinTemp(int temp)
+    {
+        if (!_ownedScopeJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _ownedScopeJoinTempsByBody[_inst] = temps;
+        }
+
+        temps.Add(temp);
+    }
+
+    private bool IsOwnedScopeJoinTemp(int temp)
+        => _ownedScopeJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps) && temps.Contains(temp);
 
     // The joins normalized in each function (temps are numbered per function): each holds its own
     // reference, so a loop exit returning one releases every parameter rather than transferring one.
@@ -313,8 +372,22 @@ public sealed partial class Lowering
         IReadOnlyList<TypeRef> argumentTypes,
         TypeRef.TNamedType resultType)
     {
-        if (!GeneralRcEnabled || Environment.GetEnvironmentVariable("GRC_NO_CTORFRESH") is not null || ContainsUnresolvedLayoutType(resultType, []))
+        if (!GeneralRcEnabled || Environment.GetEnvironmentVariable("GRC_NO_CTORFRESH") is not null)
         {
+            return false;
+        }
+
+        // A type argument no field of this cell mentions (the error type of an `Ok`) may be
+        // unresolved while the cell is built, though the cell's own layout is not: its fresh
+        // children go to owned slots, as the contract's types do, and the return decides whether
+        // the result is normalized and the slots released.
+        if (ContainsUnresolvedLayoutType(resultType, []))
+        {
+            if (OnlyFieldlessTypeArgumentsUnresolved(resultType, argumentTypes))
+            {
+                HandFreshConstructorChildrenToOwnedSlots(arguments, argumentTemps, argumentTypes);
+            }
+
             return false;
         }
 
@@ -340,7 +413,7 @@ public sealed partial class Lowering
             // A fresh value is handed over as it is and a prepared one keeps its own retain; every
             // other heap field is normalized into the cell and must be expressible there.
             bool fresh = IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]);
-            anyFresh |= fresh;
+            anyFresh |= fresh || HoldsReferenceTakenForCell(arguments[i], argumentTemps[i]);
             if (!fresh
                 && !IsPreparedConstructorArgument(arguments[i], fieldType)
                 && (ContainsUnresolvedLayoutType(fieldType, [])
@@ -350,28 +423,46 @@ public sealed partial class Lowering
             }
         }
 
-        if (!anyFresh)
+        if (anyFresh)
         {
-            return false;
+            NormalizePlacedConstructorFields(arguments, argumentTemps, argumentTypes);
         }
 
+        return anyFresh;
+    }
+
+    // The reference a cell placed on the reference-counted heap takes to each heap field that holds
+    // none of its own yet: a retain of a counted value, a copy of an arena one.
+    private void NormalizePlacedConstructorFields(
+        IReadOnlyList<Ashes.Frontend.Expr> arguments,
+        List<int> argumentTemps,
+        IReadOnlyList<TypeRef> argumentTypes)
+    {
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(argumentTypes[i]);
             if (CanArenaReset(fieldType)
                 || IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i])
-                || IsPreparedConstructorArgument(arguments[i], fieldType))
+                || IsPreparedConstructorArgument(arguments[i], fieldType)
+                || IsRetainTakenForCell(argumentTemps[i]))
             {
                 continue;
             }
 
-            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(argumentTemps[i], fieldType);
+            int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(WithdrawPatternOwnerMarker(argumentTemps[i]), fieldType);
             MarkRuntimeManagedTemp(normalizedTemp);
             argumentTemps[i] = normalizedTemp;
         }
-
-        return true;
     }
+
+    // Whether every unresolved type argument of a cell's type is a variable none of its fields'
+    // types mention.
+    private bool OnlyFieldlessTypeArgumentsUnresolved(TypeRef.TNamedType resultType, IReadOnlyList<TypeRef> argumentTypes)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORFIELDLESS") is null
+            && resultType.TypeArgs.All(argument =>
+                !ContainsUnresolvedLayoutType(argument, [])
+                || (Prune(argument) is TypeRef.TVar variable
+                    && !argumentTypes.Any(fieldType => Occurs(variable.Id, fieldType) || ContainsUnresolvedLayoutType(fieldType, []))));
 
     private void HandFreshConstructorChildrenToOwnedSlots(
         IReadOnlyList<Ashes.Frontend.Expr> arguments,
@@ -383,7 +474,7 @@ public sealed partial class Lowering
             TypeRef fieldType = Prune(argumentTypes[i]);
             if (CanArenaReset(fieldType)
                 || ContainsUnresolvedLayoutType(fieldType, [])
-                || !IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]))
+                || !(IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]) || IsArenaCellRetainHandedToSlot(argumentTemps[i])))
             {
                 continue;
             }
@@ -394,6 +485,11 @@ public sealed partial class Lowering
             _ownedSlotConstructorArguments.Add(arguments[i]);
         }
     }
+
+    // A real retain taken for the arena cell (a let-bound owned value the cell keeps) is the arena's
+    // to hold with nothing to release it, as a fresh value is: it goes to an owned slot the same way.
+    private bool IsArenaCellRetainHandedToSlot(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORRETAINSLOT") is null && IsRetainTakenForCell(temp);
 
     // The constructor arguments whose fresh value went to an owned slot rather than to the arena cell
     // storing it: the slot releases the value, so a release of the cell's children skips that field.
@@ -429,6 +525,53 @@ public sealed partial class Lowering
             && !IsOwnershipNeutralTemp(temp);
     }
 
+    // An argument holding a reference taken for the cell under construction.
+    private bool HoldsReferenceTakenForCell(Ashes.Frontend.Expr argument, int temp)
+        => IsRetainedTailPatternOwner(argument) || IsRetainTakenForCell(temp);
+
+    // A loop's result built in tail position around a binding matched out of a reference-counted
+    // loop parameter: the constructor retains the binding (the loop releases its parameters at the
+    // exit), and only a reference-counted cell releases that retain.
+    private bool IsRetainedTailPatternOwner(Ashes.Frontend.Expr argument)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORTAILOWNER") is null
+            && _tcoCtx is { InTailPosition: true } loop
+            && argument is Ashes.Frontend.Expr.Var variable
+            && LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true, IsDropped: false } owner
+            && loop.IsRuntimeManagedSlot(owner.PerceusRootParameterSlot);
+
+    // A reference the preparation of a constructor argument took for the cell (a real retain of an
+    // owned value the cell keeps), outside a loop's successor: an arena cell would hold it with
+    // nothing to release it. A successor's back edge, written in place or bound by a `let` the self
+    // call passes on, balances the retains its own cells hold.
+    private bool IsRetainTakenForCell(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORRETAIN") is null
+            && !(_tcoCtx is { } loop
+                && (_tcoArgumentDestination is { } destination && ReferenceEquals(destination.Loop, loop)
+                    || ReferenceEquals(_arenaSuccessorLetLoop, loop)))
+            && FindLastInstruction(instruction => instruction switch
+            {
+                IrInst.RcDup duplicate => duplicate.Target == temp,
+                IrInst.LoadLocal load => load.Target == temp,
+                _ => false,
+            }) is int index and >= 0
+            && _inst[index] is IrInst.RcDup { RuntimeManaged: true };
+
+    // The pattern-owner duplicate an argument took for an arena cell becomes a plain read when the
+    // cell is placed on the reference-counted heap instead: the normalization of the value the
+    // duplicate read takes the cell's reference, whatever the owner's root parameter is finally
+    // placed as. Answers the value to normalize.
+    private int WithdrawPatternOwnerMarker(int temp)
+    {
+        int index = FindLastInstruction(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == temp);
+        if (index < 0 || _inst[index] is not IrInst.RcDup { RuntimeManaged: false } marker)
+        {
+            return temp;
+        }
+
+        _inst[index] = new IrInst.Borrow(marker.Target, marker.SourceTemp) { Location = marker.Location };
+        return marker.SourceTemp;
+    }
+
     // An argument the constructor's preparation retains itself: an owned reference-counted binding,
     // or a read of a loop parameter.
     private bool IsPreparedConstructorArgument(Ashes.Frontend.Expr argument, TypeRef fieldType)
@@ -440,13 +583,22 @@ public sealed partial class Lowering
     // nothing releases what it holds. An arena tuple never holds the only reference to a
     // reference-counted value: such an element is copied into the arena beside it, a fresh one is
     // released after the copy, and none is retained for the tuple. Returns the elements copied.
+    // A tuple kept in the arena by a sibling the reference-counted heap cannot take (a borrowed
+    // tuple parameter) is in the same place beside a reference-counted element: that element alone
+    // is copied, so the sibling is not.
     private bool[] DemoteElementsBesideAbstractSibling(List<LoweredValue> elements, bool runtimeManaged)
     {
         bool[] demoted = new bool[elements.Count];
         if (runtimeManaged
             || !GeneralRcEnabled
-            || Environment.GetEnvironmentVariable("GRC_NO_DEMOTE") is not null
-            || !elements.Exists(element => ContainsUnresolvedLayoutType(Prune(element.Type), [])))
+            || Environment.GetEnvironmentVariable("GRC_NO_DEMOTE") is not null)
+        {
+            return demoted;
+        }
+
+        bool besideAbstract = elements.Exists(element => ContainsUnresolvedLayoutType(Prune(element.Type), []));
+        bool besideArenaOnly = !besideAbstract && DemotesBesideArenaOnlySibling && HoldsReferenceCountedElement(elements);
+        if (!besideAbstract && !besideArenaOnly)
         {
             return demoted;
         }
@@ -454,7 +606,8 @@ public sealed partial class Lowering
         for (int i = 0; i < elements.Count; i++)
         {
             TypeRef type = Prune(elements[i].Type);
-            if (CanArenaReset(type)
+            if ((besideArenaOnly && elements[i].Ownership.Representation != LoweredTempRepresentation.RuntimeRc)
+                || CanArenaReset(type)
                 || type is TypeRef.TFun
                 || ContainsUnresolvedLayoutType(type, [])
                 || !IsGeneralRcAdmissible(type)
@@ -471,6 +624,9 @@ public sealed partial class Lowering
 
         return demoted;
     }
+
+    private static bool DemotesBesideArenaOnlySibling
+        => Environment.GetEnvironmentVariable("GRC_NO_DEMOTEBESIDEARENA") is null;
 
     // The duplicate a pattern-owner read took for the aggregate is not needed once the aggregate
     // holds a copy; left as a marker, it could still be upgraded to a retain nothing releases.
@@ -511,8 +667,8 @@ public sealed partial class Lowering
 
     // Whether a tuple is a reference-counted one: it was requested, or it holds a reference-counted
     // element; and every element is manageable, one of the contract's types included, and those are
-    // made the tuple's own.
-    private bool PlaceRuntimeManagedTuple(List<LoweredValue> elements, LoweredValueRequest request)
+    // made the tuple's own. An element normalized here already holds the reference the tuple stores.
+    private bool PlaceRuntimeManagedTuple(List<LoweredValue> elements, LoweredValueRequest request, out bool[] normalized)
     {
         bool holdsReferenceCounted = HoldsReferenceCountedElement(elements);
         bool runtimeManaged = request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)
@@ -524,7 +680,7 @@ public sealed partial class Lowering
                 || (holdsReferenceCounted && IsNormalizableSiblingElement(elements[i]));
         }
 
-        NormalizeGeneralRcTupleElements(elements, runtimeManaged, holdsReferenceCounted);
+        normalized = NormalizeGeneralRcTupleElements(elements, runtimeManaged, holdsReferenceCounted);
         return runtimeManaged;
     }
 
@@ -553,11 +709,13 @@ public sealed partial class Lowering
 
     // A reference-counted tuple owns its children: an element of the contract's types (borrowed, or
     // held by an owned slot the function releases) is retained or copied into it.
-    private void NormalizeGeneralRcTupleElements(List<LoweredValue> elements, bool runtimeManaged, bool holdsReferenceCounted)
+    // Returns the elements normalized, which the tuple stores without a further retain.
+    private bool[] NormalizeGeneralRcTupleElements(List<LoweredValue> elements, bool runtimeManaged, bool holdsReferenceCounted)
     {
+        bool[] normalized = new bool[elements.Count];
         if (!runtimeManaged)
         {
-            return;
+            return normalized;
         }
 
         for (int i = 0; i < elements.Count; i++)
@@ -566,11 +724,18 @@ public sealed partial class Lowering
                 && (IsGeneralRcValueType(elements[i].Type) || (holdsReferenceCounted && IsNormalizableSiblingElement(elements[i]))))
             {
                 int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(elements[i].Temp, Prune(elements[i].Type));
+                ReleaseNormalizedPatternOwnerDuplicate(elements[i].Temp, elements[i].Type);
                 MarkRuntimeManagedTemp(normalizedTemp);
                 elements[i] = CreateLoweredValue(normalizedTemp, elements[i].Type);
+                normalized[i] = NormalizedElementOwnsItsReference;
             }
         }
+
+        return normalized;
     }
+
+    private static bool NormalizedElementOwnsItsReference
+        => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDELEMENTRETAIN") is null;
 
     // An if's join: owned when both branches are, or once a mixed pair is normalized.
     private void MarkIfJoinResult(
@@ -636,7 +801,25 @@ public sealed partial class Lowering
         _inst.RemoveAt(index);
         _inst.InsertRange(index, buffer);
         ShiftRecordedInstructionIndices(index, buffer.Count - 1);
+        if (!_joinNormalizedArmSourcesByBody.TryGetValue(_inst, out HashSet<int>? sources))
+        {
+            sources = [];
+            _joinNormalizedArmSourcesByBody[_inst] = sources;
+        }
+
+        sources.Add(store.Source);
     }
+
+    // The arm values each function's join normalization retained or copied: the normalization keeps
+    // its source alive as it found it, so a source the loop's string promotion later turned into a
+    // fresh reference-counted concatenation would be retained and never released.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _joinNormalizedArmSourcesByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private bool IsJoinNormalizedArmSource(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDARMCONCAT") is null
+            && _joinNormalizedArmSourcesByBody.TryGetValue(_inst, out HashSet<int>? sources)
+            && sources.Contains(temp);
 
     // Positions recorded for a later splice into the function being lowered move with the
     // instructions after the arm's store.

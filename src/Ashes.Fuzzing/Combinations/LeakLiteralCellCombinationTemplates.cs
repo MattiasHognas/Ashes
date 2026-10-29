@@ -91,3 +91,48 @@ internal sealed class CopiedSuccessorHeadTupleTemplate() : LeakCombinationTempla
             """;
     }
 }
+
+/// <summary>
+/// A list literal's element is a constructor one of whose fields is a list holding a string built at
+/// run time. The constructor's cell is built on the reference-counted heap, owning that fresh list:
+/// an arena cell would never release it. The list holds one built string, or a static one before it.
+/// </summary>
+internal sealed class ConstructorOwningFreshChildTemplate() : LeakCombinationTemplate(
+    "leak.constructor-owning-fresh-child", "ctorFreshChild", GeneratedFeature.TailCall, GeneratedFeature.Match, GeneratedFeature.List)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string kind = names.Of("JumpKind");
+        string target = names.Of("Target");
+        string other = names.Of("OtherJump");
+        string collect = names.Of("collectTargets");
+        string produce = names.Of("produceTargets");
+        string total = names.Of("totalCounts");
+        string word = names.Word();
+        string built = $$"""{{word}} + Ashes.Text.fromInt(seed)""";
+        string labels = names.Coin("static-first") ? $$"""[{{word}}, {{built}}]""" : $$"""[{{built}}]""";
+        string tail = names.Coin("more-elements") ? $$""", {{other}}(1), {{target}}(2)([])({{word}})""" : "";
+        return $$"""
+            type {{kind}} =
+                | {{target}}(Int, List(Str), Str)
+                | {{other}}(Int)
+
+            let recursive {{collect}} (instructions: List({{kind}})) (acc: List((Str, Int))) =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | {{target}}(_, _, label) -> {{collect}}(tail)((label, 1) :: acc)
+                            | _ -> {{collect}}(tail)(acc)
+
+            let recursive {{total}} (entries: List((Str, Int))) (sum: Int) =
+                match entries with
+                    | [] -> sum
+                    | (_, count) :: rest -> {{total}}(rest)(sum + count)
+
+            let {{produce}} (seed: Int) = [{{target}}(1)({{labels}})({{word}}){{tail}}]
+
+            let {{names.Entry}} (seed: Int) = {{total}}({{collect}}({{produce}}(seed))([]))(0) + seed
+            """;
+    }
+}

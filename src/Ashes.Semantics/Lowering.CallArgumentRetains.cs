@@ -15,7 +15,9 @@ public sealed partial class Lowering
     {
         public List<IrInst> Body { get; } = body;
 
-        public List<(int Temp, TypeRef Type)> Retains { get; } = [];
+        // A retain of a loop parameter whose placement is not known yet (a marker
+        // FinalizeTcoParameterAggregateRetains resolves) carries the parameter's slot; -1 otherwise.
+        public List<(int Temp, TypeRef Type, int PendingSlot)> Retains { get; } = [];
 
         public bool Collecting { get; set; }
 
@@ -55,17 +57,21 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Records a retain an arena aggregate child took while a call argument is lowered: a real
-    /// runtime retain emitted into the frame's own function, before any branch of the argument.
+    /// runtime retain emitted into the frame's own function, before any branch of the argument. A
+    /// loop parameter's retain marker (<paramref name="pendingSlot"/> its slot) is recorded too: it
+    /// becomes a real retain once the parameter is placed on the reference-counted heap, and its
+    /// release after the call is guarded by a flag zeroed where the parameter stays in the arena.
     /// </summary>
-    private bool RecordCallArgumentArenaRetain(int elementTemp, int retainedTemp, TypeRef elementType)
+    private bool RecordCallArgumentArenaRetain(int elementTemp, int retainedTemp, TypeRef elementType, int pendingSlot = -1)
     {
         if (retainedTemp == elementTemp
             || Environment.GetEnvironmentVariable("GRC_NO_ARGRET") is not null
             || _callArgumentRetainFrame is not { Collecting: true } frame
             || !ReferenceEquals(frame.Body, _inst)
             || _inst.Count == 0
-            || _inst[^1] is not IrInst.RcDup { RuntimeManaged: true } retain
-            || retain.Target != retainedTemp)
+            || _inst[^1] is not IrInst.RcDup retain
+            || retain.Target != retainedTemp
+            || !retain.RuntimeManaged && !RecordsPendingParameterRetain(pendingSlot))
         {
             return false;
         }
@@ -78,9 +84,12 @@ public sealed partial class Lowering
             }
         }
 
-        frame.Retains.Add((retainedTemp, Prune(elementType)));
+        frame.Retains.Add((retainedTemp, Prune(elementType), retain.RuntimeManaged ? -1 : pendingSlot));
         return true;
     }
+
+    private static bool RecordsPendingParameterRetain(int pendingSlot)
+        => pendingSlot >= 0 && Environment.GetEnvironmentVariable("GRC_NO_ARGRETMARKER") is null;
 
     /// <summary>
     /// An arena aggregate that retained a child of the contract's own types for the scopes it
@@ -288,12 +297,17 @@ public sealed partial class Lowering
             return;
         }
 
-        foreach ((int temp, TypeRef type) in frame.Retains)
+        foreach ((int temp, TypeRef type, int pendingSlot) in frame.Retains)
         {
             int zeroTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(zeroTemp, 0));
             int presentTemp = NewTemp();
             Emit(new IrInst.CmpIntNe(presentTemp, temp, zeroTemp));
+            if (pendingSlot >= 0)
+            {
+                _pendingRuntimeArgumentFlags[presentTemp] = pendingSlot;
+            }
+
             string skipLabel = NewLabel("call_argument_retain_absent");
             Emit(new IrInst.JumpIfFalse(presentTemp, skipLabel));
             EmitRuntimeManagedChildDrop(temp, type);

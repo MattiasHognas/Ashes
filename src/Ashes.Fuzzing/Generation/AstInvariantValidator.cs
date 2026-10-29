@@ -24,6 +24,10 @@ internal sealed class AstInvariantValidator
                     topLevel.Add(constructor.Name);
                 }
             }
+            if (item is TopLevelItem.External { Decl: ExternalDecl.Function external })
+            {
+                topLevel.Add(external.Name);
+            }
             if (item is TopLevelItem.LetDecl binding)
             {
                 Validate(binding.Value, binding.IsRecursive ? Add(topLevel, binding.Name) : topLevel, errors);

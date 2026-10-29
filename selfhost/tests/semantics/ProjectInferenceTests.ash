@@ -11,7 +11,7 @@ export (
     value runProjectInferenceTests,
 )
 
-let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
+let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [], declarationStart = -1)
 
 let interface name exports = ModuleImportInterface(name = name, exports = exports)
 

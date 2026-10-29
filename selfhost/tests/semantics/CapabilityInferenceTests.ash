@@ -272,7 +272,7 @@ let expectClosedRowAnnotations unit =
                 let acceptedBinding =
                     LetBindingSyntax(name = "readClock", value = bindingValue, sugarParameters = [], typeAnnotation = Some(
                         clockAnnotation
-                    ), requirements = [])
+                    ), requirements = [], declarationStart = -1)
                 in
                     let acceptedChecked =
                         match inferProgram(
@@ -301,7 +301,7 @@ let expectClosedRowAnnotations unit =
                             let rejectedBinding =
                                 LetBindingSyntax(name = "readClock", value = bindingValue, sugarParameters = [], typeAnnotation = Some(
                                     logAnnotation
-                                ), requirements = [])
+                                ), requirements = [], declarationStart = -1)
                             in
                                 match inferProgram(
                                     ProgramSyntax(items = [TopLevelCapability(

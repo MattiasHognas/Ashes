@@ -31,13 +31,13 @@ Function: makeFunction
     name: consumed, move-safe yes
     result fresh: no
   perceus [lambda_0]
-    dup:                  2
-    drop:                 0
+    dup:                  3
+    drop:                 1
     uniqueness checks:    0
   representation [lambda_0]
     conservative unknown: 5
     region:               11
-    runtime rc:           20
+    runtime rc:           24
 
 Function: mark
   ownership

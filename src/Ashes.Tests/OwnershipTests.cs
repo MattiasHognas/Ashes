@@ -206,8 +206,13 @@ public sealed class OwnershipTests
                     .ToList();
                 return stores.Count == 2 && stores.All(store => retained.Contains(store.Source));
             });
-        tupleStoresRetainedParameters.ShouldBeTrue(
-            "each loop parameter stored into the returned tuple must be a retained runtime-managed reference; loop:\n"
+        // An arena exit tuple holds independent arena copies of the parameters instead, which the
+        // loop's exit drops cannot free either.
+        bool tupleStoresArenaCopies = loop.Instructions
+            .OfType<IrInst.CopyOutList>()
+            .Count(copy => copy is { RuntimeManaged: false, Purpose: IrInst.CopyOutPurpose.IndependentClone }) == 2;
+        (tupleStoresRetainedParameters || tupleStoresArenaCopies).ShouldBeTrue(
+            "each loop parameter stored into the returned tuple must be a retained runtime-managed reference or an arena copy; loop:\n"
             + string.Join("\n", loop.Instructions.Select(inst => inst.ToString())));
     }
 

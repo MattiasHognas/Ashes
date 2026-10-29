@@ -9,7 +9,7 @@ Function: addImpl
     result fresh: no
   perceus [lambda_18]
     dup:                  2
-    drop:                 1
+    drop:                 2
     uniqueness checks:    0
   perceus [lambda_17]
     dup:                  0

@@ -1,0 +1,740 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from rev]
+  locals=29 temps=68
+    LoadEnv               Target=0 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=31 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadArgumentOwnership Target=32   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=33 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    AndInt                Target=34 Left=32 Right=33   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=34 Target=rc_arg_normalize_copy_7   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=22 Source=31   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rc_arg_normalize_done_8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_arg_normalize_copy_7:
+    IsReferenceCounted    Target=35 SourceTemp=31
+    JumpIfFalse           CondTemp=35 Target=rc_representation_copy_9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcDup                 Target=36 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=36   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rc_representation_done_10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_representation_copy_9:
+    CopyOutList           DestTemp=37 SrcTemp=31 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=23 Source=37   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_representation_done_10:
+    LoadLocal             Target=38 Slot=23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=22 Source=38   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_arg_normalize_done_8:
+    LoadLocal             Target=39 Slot=22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=1 Source=39   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=40 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=6 Source=40   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=5 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=2 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    LoadLocal             Target=5 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:3:17)
+    StoreLocal            Slot=10 Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    Jump                  Target=match_end_0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=6 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    StoreLocal            Slot=17 Source=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    StoreLocal            Slot=18 Source=9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    LoadLocal             Target=10 Slot=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:25)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=17   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=15 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:33)
+    RcDup                 Target=16 SourceTemp=13
+    RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=17
+    IsReferenceCounted    Target=17 SourceTemp=15
+    StoreLocal            Slot=19 Source=15   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    LoadConstInt          Target=18 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    CmpIntEq              Target=19 Left=15 Right=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    OrInt                 Target=20 Left=17 Right=19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    JumpIfFalse           CondTemp=20 Target=rc_tail_copy_6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    Jump                  Target=rc_tail_done_5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+  rc_tail_copy_6:
+    CopyOutList           DestTemp=21 SrcTemp=15 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    StoreLocal            Slot=19 Source=21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+  rc_tail_done_5:
+    LoadLocal             Target=22 Slot=19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    Alloc                 Target=23 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:28)
+    LoadLocal             Target=24 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    LoadLocal             Target=25 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    StoreLocal            Slot=2 Source=11   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=18
+    StoreLocal            Slot=1 Source=23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=28
+    StoreLocal            Slot=1 Source=23
+    LoadConstInt          Target=67 Value=1
+    StoreLocal            Slot=6 Source=67
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=28
+    RestoreStackPointer   Slot=9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    Jump                  Target=lambda_1_body   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    LoadConstInt          Target=26 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:4:21)
+    StoreLocal            Slot=10 Source=26   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_end_0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    Jump                  Target=match_none_1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+  match_none_1:
+    LoadConstInt          Target=29 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    StoreLocal            Slot=10 Source=29   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+  match_end_0:
+    LoadLocal             Target=30 Slot=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:2:5)
+    LoadConstInt          Target=41 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=24 Source=41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=42 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=43 Slot=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    CmpIntEq              Target=44 Left=42 Right=30   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=45 Slot=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    CmpIntEq              Target=46 Left=45 Right=41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    AndInt                Target=47 Left=43 Right=44   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    AndInt                Target=48 Left=47 Right=46   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=48 Target=rc_tco_exit_transfer_not_selected_11   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=49 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=24 Source=49   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rc_tco_exit_transfer_done_12   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_tco_exit_transfer_not_selected_11:
+    LoadLocal             Target=50 Slot=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=50 Target=rc_tco_exit_drop_inactive_13   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=25 Source=42   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_14:
+    LoadLocal             Target=51 Slot=25   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=52 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    CmpIntNe              Target=53 Left=51 Right=52   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=53 Target=rcdrop_list_end_16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcIsUnique            Target=54 SourceTemp=51
+    JumpIfFalse           CondTemp=54 Target=rcdrop_list_shared_15   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadMemOffset         Target=55 BasePtr=51 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcDrop                SourceTemp=51 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=55   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rcdrop_list_14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_shared_15:
+    RcDrop                SourceTemp=51 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_end_16:
+  rc_tco_exit_drop_inactive_13:
+  rc_tco_exit_transfer_done_12:
+    LoadArgumentOwnership Target=56   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=57 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    ShrInt                Target=58 Left=56 Right=57   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    AndInt                Target=59 Left=58 Right=57   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=59 Target=rc_result_owned_17   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    CopyOutList           DestTemp=60 SrcTemp=30 HeadCopy=Inline Purpose=ArenaResultBoundary   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=27 Source=30   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_19:
+    LoadLocal             Target=61 Slot=27   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=62 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    CmpIntNe              Target=63 Left=61 Right=62   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=63 Target=rcdrop_list_end_21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcIsUnique            Target=64 SourceTemp=61
+    JumpIfFalse           CondTemp=64 Target=rcdrop_list_shared_20   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadMemOffset         Target=65 BasePtr=61 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcDrop                SourceTemp=61 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=27 Source=65   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rcdrop_list_19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_shared_20:
+    RcDrop                SourceTemp=61 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_end_21:
+    StoreLocal            Slot=26 Source=60   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rc_result_done_18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_result_owned_17:
+    StoreLocal            Slot=26 Source=30   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_result_done_18:
+    LoadLocal             Target=66 Slot=26   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Return                Source=66   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+
+function __rc_cdrop_2  [RuntimeManagedClosureDropper]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_22:
+    LoadLocal             Target=2 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    CmpIntNe              Target=4 Left=2 Right=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcIsUnique            Target=5 SourceTemp=2
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadMemOffset         Target=6 BasePtr=2 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rcdrop_list_22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_shared_23:
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rcdrop_list_end_24:
+    LoadConstInt          Target=7 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Return                Source=7   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from rev]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_25   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Jump                  Target=rc_representation_done_26   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_representation_copy_25:
+    CopyOutList           DestTemp=5 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=2 Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+  rc_representation_done_26:
+    LoadLocal             Target=6 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Return                Source=7   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+
+function lambda_0  [SourceFunction from rev]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Return                Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+
+function lambda_5  [ClosureHelper from count]
+  locals=25 temps=65
+    LoadLocal             Target=0 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadConstInt          Target=2 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    CmpIntEq              Target=3 Left=1 Right=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_30   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=5 Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    RcDrop                SourceTemp=4 TypeName=String OwnerSlot=5
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadEnv               Target=5 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:29)
+    LoadEnv               Target=6 Index=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:33)
+    CallClosure           Target=7 ClosureTemp=5 ArgTemp=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:29)
+    LoadConstInt          Target=8 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:38)
+    LoadMemOffset         Target=9 BasePtr=7 OffsetBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:29)
+    LoadConstInt          Target=10 Value=63   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:29)
+    ShrInt                Target=11 Left=9 Right=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:29)
+    CallClosure           Target=12 ClosureTemp=7 ArgTemp=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:29)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8
+    LoadConstInt          Target=13 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:43)
+    Alloc                 Target=14 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:28)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=12   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:28)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=13   (mutual_recursion_later_sibling_call_requests_arena_result.ash:8:28)
+    StoreLocal            Slot=2 Source=14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=9
+    Jump                  Target=match_end_27   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  match_arm_cleanup_30:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=10
+    Jump                  Target=match_next_29   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  match_next_29:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadMemOffset         Target=16 BasePtr=0 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadConstInt          Target=17 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    CmpIntNe              Target=18 Left=16 Right=17   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    JumpIfFalse           CondTemp=18 Target=match_arm_cleanup_31   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadMemOffset         Target=19 BasePtr=16 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadMemOffset         Target=20 BasePtr=16 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=13 Source=19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=14 Source=20   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadMemOffset         Target=21 BasePtr=0 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=15 Source=21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadEnv               Target=22 Index=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:34)
+    LoadEnv               Target=23 Index=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:39)
+    CallClosure           Target=24 ClosureTemp=22 ArgTemp=23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:34)
+    LoadLocal             Target=25 Slot=14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:45)
+    Borrow                Target=26 SourceTemp=25
+    LoadLocal             Target=27 Slot=15   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:51)
+    Borrow                Target=28 SourceTemp=27
+    Alloc                 Target=29 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:44)
+    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=26   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:44)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=28   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:44)
+    CallClosure           Target=30 ClosureTemp=24 ArgTemp=29   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:34)
+    LoadLocal             Target=31 Slot=13   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:65)
+    AllocAdt              Target=32 Tag=1 FieldCount=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:60)
+    SetAdtField           Ptr=32 FieldIndex=0 Source=31   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:60)
+    LoadConstInt          Target=34 Value=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:34)
+    CallClosure           Target=33 ClosureTemp=30 ArgTemp=32 RuntimeManagedArgumentFlagTemp=34   (mutual_recursion_later_sibling_call_requests_arena_result.ash:9:34)
+    IsReferenceCounted    Target=39 SourceTemp=33
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_32   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    RcDup                 Target=40 SourceTemp=33 RuntimeManaged=true
+    RcDrop                SourceTemp=21 TypeName=String OwnerSlot=15
+    RcDrop                SourceTemp=20 TypeName=List OwnerSlot=14
+    StoreLocal            Slot=21 Source=40   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    Jump                  Target=rc_representation_done_33   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  rc_representation_copy_32:
+    Alloc                 Target=41 SizeBytes=16 RuntimeManaged=true   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadMemOffset         Target=42 BasePtr=33 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    IsReferenceCounted    Target=43 SourceTemp=42
+    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_34   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    RcDup                 Target=44 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=44   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    Jump                  Target=rc_representation_done_35   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  rc_representation_copy_34:
+    CopyOutList           DestTemp=45 SrcTemp=42 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=22 Source=45   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  rc_representation_done_35:
+    LoadLocal             Target=46 Slot=22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreMemOffset        BasePtr=41 OffsetBytes=0 Source=46   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadMemOffset         Target=47 BasePtr=33 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    RcDrop                SourceTemp=21 TypeName=String OwnerSlot=15
+    RcDrop                SourceTemp=20 TypeName=List OwnerSlot=14
+    StoreMemOffset        BasePtr=41 OffsetBytes=8 Source=47   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=21 Source=41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  rc_representation_done_33:
+    LoadLocal             Target=48 Slot=21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=2 Source=48   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    Jump                  Target=match_end_27   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  match_arm_cleanup_31:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=20
+    Jump                  Target=match_none_28   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  match_none_28:
+    LoadConstInt          Target=37 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    StoreLocal            Slot=2 Source=37   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+  match_end_27:
+    LoadLocal             Target=38 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:7:5)
+    LoadArgumentOwnership Target=49   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadConstInt          Target=50 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    ShrInt                Target=51 Left=49 Right=50   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    AndInt                Target=52 Left=51 Right=50   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    JumpIfFalse           CondTemp=52 Target=rc_result_owned_36   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    Alloc                 Target=53 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadMemOffset         Target=54 BasePtr=38 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    CopyOutList           DestTemp=55 SrcTemp=54 HeadCopy=Inline Purpose=ArenaResultBoundary   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=55   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadMemOffset         Target=56 BasePtr=38 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=8 Source=56   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    RcIsUnique            Target=57 SourceTemp=38
+    JumpIfFalse           CondTemp=57 Target=rc_drop_tuple_shared_38   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadMemOffset         Target=58 BasePtr=38 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreLocal            Slot=24 Source=58   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+  rcdrop_list_39:
+    LoadLocal             Target=59 Slot=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadConstInt          Target=60 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    CmpIntNe              Target=61 Left=59 Right=60   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    JumpIfFalse           CondTemp=61 Target=rcdrop_list_end_41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    RcIsUnique            Target=62 SourceTemp=59
+    JumpIfFalse           CondTemp=62 Target=rcdrop_list_shared_40   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadMemOffset         Target=63 BasePtr=59 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    RcDrop                SourceTemp=59 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=24 Source=63   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    Jump                  Target=rcdrop_list_39   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+  rcdrop_list_shared_40:
+    RcDrop                SourceTemp=59 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+  rcdrop_list_end_41:
+  rc_drop_tuple_shared_38:
+    RcDrop                SourceTemp=38 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=23 Source=53   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    Jump                  Target=rc_result_done_37   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+  rc_result_owned_36:
+    StoreLocal            Slot=23 Source=38   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+  rc_result_done_37:
+    LoadLocal             Target=64 Slot=23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    Return                Source=64   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+
+function recgroup_3_count  [SourceFunction from count]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadEnv               Target=1 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadLocal             Target=2 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadLocal             Target=4 Slot=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    MakeClosure           Target=3 FuncLabel=recgroup_4_step EnvPtrTemp=4 EnvSizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    MakeClosure           Target=5 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    Return                Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+
+function lambda_7  [ClosureHelper from step]
+  locals=20 temps=42
+    LoadLocal             Target=0 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    CmpIntNe              Target=2 Left=0 Right=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_45   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    GetAdtTag             Target=3 Ptr=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    LoadConstInt          Target=5 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    CmpIntEq              Target=4 Left=3 Right=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_45   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    GetAdtField           Target=6 Ptr=0 FieldIndex=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    StoreLocal            Slot=5 Source=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadEnv               Target=7 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:26)
+    LoadLocal             Target=8 Slot=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:32)
+    LoadEnv               Target=9 Index=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:41)
+    Alloc                 Target=10 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:32)
+    StoreMemOffset        BasePtr=10 OffsetBytes=0 Source=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:32)
+    StoreMemOffset        BasePtr=10 OffsetBytes=8 Source=9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:32)
+    CallClosure           Target=11 ClosureTemp=7 ArgTemp=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:26)
+    LoadEnv               Target=12 Index=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:46)
+    CallClosure           Target=13 ClosureTemp=11 ArgTemp=12   (mutual_recursion_later_sibling_call_requests_arena_result.ash:12:26)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8
+    StoreLocal            Slot=2 Source=13   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=9
+    Jump                  Target=match_end_42   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+  match_arm_cleanup_45:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=10
+    Jump                  Target=match_next_44   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+  match_next_44:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=14 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    CmpIntNe              Target=15 Left=0 Right=14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_46   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    GetAdtTag             Target=16 Ptr=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    LoadConstInt          Target=18 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    CmpIntEq              Target=17 Left=16 Right=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_46   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadEnv               Target=19 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:13:19)
+    LoadEnv               Target=20 Index=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:13:25)
+    CallClosure           Target=21 ClosureTemp=19 ArgTemp=20   (mutual_recursion_later_sibling_call_requests_arena_result.ash:13:19)
+    LoadEnv               Target=22 Index=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:13:30)
+    CallClosure           Target=23 ClosureTemp=21 ArgTemp=22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:13:19)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    StoreLocal            Slot=2 Source=23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=16
+    Jump                  Target=match_end_42   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+  match_arm_cleanup_46:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=17
+    Jump                  Target=match_none_43   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+  match_none_43:
+    LoadConstInt          Target=24 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    StoreLocal            Slot=2 Source=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+  match_end_42:
+    LoadLocal             Target=25 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:11:5)
+    LoadArgumentOwnership Target=26   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadConstInt          Target=27 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    ShrInt                Target=28 Left=26 Right=27   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    AndInt                Target=29 Left=28 Right=27   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    JumpIfFalse           CondTemp=29 Target=rc_result_owned_47   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    Alloc                 Target=30 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadMemOffset         Target=31 BasePtr=25 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    CopyOutList           DestTemp=32 SrcTemp=31 HeadCopy=Inline Purpose=ArenaResultBoundary   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=30 OffsetBytes=0 Source=32   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadMemOffset         Target=33 BasePtr=25 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=30 OffsetBytes=8 Source=33   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    RcIsUnique            Target=34 SourceTemp=25
+    JumpIfFalse           CondTemp=34 Target=rc_drop_tuple_shared_49   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadMemOffset         Target=35 BasePtr=25 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreLocal            Slot=19 Source=35   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+  rcdrop_list_50:
+    LoadLocal             Target=36 Slot=19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadConstInt          Target=37 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    CmpIntNe              Target=38 Left=36 Right=37   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_end_52   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    RcIsUnique            Target=39 SourceTemp=36
+    JumpIfFalse           CondTemp=39 Target=rcdrop_list_shared_51   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadMemOffset         Target=40 BasePtr=36 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=19 Source=40   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    Jump                  Target=rcdrop_list_50   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+  rcdrop_list_shared_51:
+    RcDrop                SourceTemp=36 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_52   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+  rcdrop_list_end_52:
+  rc_drop_tuple_shared_49:
+    RcDrop                SourceTemp=25 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=18 Source=30   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    Jump                  Target=rc_result_done_48   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+  rc_result_owned_47:
+    StoreLocal            Slot=18 Source=25   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+  rc_result_done_48:
+    LoadLocal             Target=41 Slot=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    Return                Source=41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+
+function lambda_6  [ClosureHelper from step]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadEnv               Target=1 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadEnv               Target=2 Index=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadLocal             Target=3 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    MakeClosure           Target=4 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    Return                Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+
+function recgroup_4_step  [SourceFunction from step]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadLocal             Target=2 Slot=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    MakeClosure           Target=1 FuncLabel=recgroup_3_count EnvPtrTemp=2 EnvSizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    LoadLocal             Target=3 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:10:1)
+    Return                Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+
+function lambda_8  [SourceFunction from run]
+  locals=24 temps=42
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:11)
+    LoadConstInt          Target=1 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:17)
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:11)
+    LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    LoadConstInt          Target=4 Value=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:32)
+    Alloc                 Target=5 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    LoadConstInt          Target=6 Value=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:29)
+    Alloc                 Target=7 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    LoadConstInt          Target=8 Value=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:26)
+    Alloc                 Target=9 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=7   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    LoadConstInt          Target=10 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:23)
+    Alloc                 Target=11 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:22)
+    LoadConstStr          Target=12 StrLabel=str_0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:36)
+    Alloc                 Target=13 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:21)
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=11   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:21)
+    StoreMemOffset        BasePtr=13 OffsetBytes=8 Source=12   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:21)
+    CallClosure           Target=14 ClosureTemp=2 ArgTemp=13   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadMemOffset         Target=15 BasePtr=14 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    StoreLocal            Slot=8 Source=15   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    LoadMemOffset         Target=16 BasePtr=14 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    StoreLocal            Slot=9 Source=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    StoreLocal            Slot=10 Source=14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    LoadLocal             Target=17 Slot=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:19)
+    Borrow                Target=18 SourceTemp=17
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=19 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    CmpIntEq              Target=20 Left=18 Right=19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    JumpIfFalse           CondTemp=20 Target=match_arm_cleanup_59   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=8
+    LoadLocal             Target=21 Slot=9   (mutual_recursion_later_sibling_call_requests_arena_result.ash:19:25)
+    StoreLocal            Slot=11 Source=21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_56   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+  match_arm_cleanup_59:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_58   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+  match_next_58:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=22 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    CmpIntNe              Target=23 Left=18 Right=22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    JumpIfFalse           CondTemp=23 Target=match_arm_cleanup_60   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    LoadMemOffset         Target=24 BasePtr=18 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    LoadMemOffset         Target=25 BasePtr=18 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=8
+    StoreLocal            Slot=18 Source=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    LoadLocal             Target=26 Slot=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:20:29)
+    LoadLocal             Target=27 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:20:33)
+    AddInt                Target=28 Left=26 Right=27   (mutual_recursion_later_sibling_call_requests_arena_result.ash:20:29)
+    StoreLocal            Slot=11 Source=28   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=19
+    Jump                  Target=match_end_56   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+  match_arm_cleanup_60:
+    RcDrop                SourceTemp=15 TypeName=List OwnerSlot=8
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_none_57   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+  match_none_57:
+    LoadConstInt          Target=29 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    StoreLocal            Slot=11 Source=29   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+  match_end_56:
+    LoadLocal             Target=30 Slot=11   (mutual_recursion_later_sibling_call_requests_arena_result.ash:18:13)
+    StoreLocal            Slot=5 Source=30   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    LoadLocal             Target=32 Slot=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    RcIsUnique            Target=33 SourceTemp=32
+    JumpIfFalse           CondTemp=33 Target=rc_drop_tuple_shared_61   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    LoadMemOffset         Target=34 BasePtr=32 OffsetBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    StoreLocal            Slot=21 Source=34   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+  rcdrop_list_62:
+    LoadLocal             Target=35 Slot=21   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    LoadConstInt          Target=36 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    CmpIntNe              Target=37 Left=35 Right=36   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    JumpIfFalse           CondTemp=37 Target=rcdrop_list_end_64   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    RcIsUnique            Target=38 SourceTemp=35
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_shared_63   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    LoadMemOffset         Target=39 BasePtr=35 OffsetBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=21 Source=39   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    Jump                  Target=rcdrop_list_62   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+  rcdrop_list_shared_63:
+    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_64   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+  rcdrop_list_end_64:
+  rc_drop_tuple_shared_61:
+    RcDrop                SourceTemp=32 TypeName=Tuple RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=22
+    Jump                  Target=match_end_53   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+  match_arm_cleanup_55:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=23
+    Jump                  Target=match_none_54   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+  match_none_54:
+    LoadConstInt          Target=40 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    StoreLocal            Slot=5 Source=40   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+  match_end_53:
+    LoadLocal             Target=41 Slot=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:16:5)
+    Return                Source=41   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+
+function lambda_10  [ClosureHelper from rounds]
+  locals=24 temps=25
+    LoadEnv               Target=0 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    StoreLocal            Slot=2 Source=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    StoreLocal            Slot=5 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    StoreLocal            Slot=6 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    StoreLocal            Slot=7 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+  lambda_10_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    LoadLocal             Target=2 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_68   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    LoadLocal             Target=5 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:24:16)
+    StoreLocal            Slot=11 Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_65   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+  match_arm_cleanup_68:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_67   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+  match_next_67:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadLocal             Target=6 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:23)
+    LoadConstInt          Target=7 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:27)
+    SubInt                Target=8 Left=6 Right=7   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:23)
+    LoadLocal             Target=9 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:30)
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadEnv               Target=10 Index=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:42)
+    LoadMemOffset         Target=13 BasePtr=11 OffsetBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    LoadConstInt          Target=14 Value=62   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    ShrInt                Target=15 Left=13 Right=14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    LoadConstInt          Target=16 Value=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    LoadConstInt          Target=17 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    CallClosure           Target=18 ClosureTemp=11 ArgTemp=12 RuntimeManagedArgumentFlagTemp=17   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:38)
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=20
+    AddInt                Target=19 Left=9 Right=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:30)
+    LoadLocal             Target=20 Slot=2   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    LoadLocal             Target=21 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    StoreLocal            Slot=2 Source=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    StoreLocal            Slot=1 Source=19   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=23
+    RestoreStackPointer   Slot=10   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    Jump                  Target=lambda_10_body   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    LoadConstInt          Target=22 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:25:16)
+    StoreLocal            Slot=11 Source=22   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_end_65   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+  match_arm_cleanup_69:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
+    Jump                  Target=match_none_66   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+  match_none_66:
+    LoadConstInt          Target=23 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    StoreLocal            Slot=11 Source=23   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+  match_end_65:
+    LoadLocal             Target=24 Slot=11   (mutual_recursion_later_sibling_call_requests_arena_result.ash:23:5)
+    Return                Source=24   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+
+function lambda_9  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    LoadLocal             Target=1 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    LoadEnv               Target=4 Index=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    MakeClosure           Target=6 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    Return                Source=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+
+function _start_main  [ProgramEntry]
+  locals=12 temps=21
+    LoadConstInt          Target=0 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:1:1)
+    Alloc                 Target=2 SizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    LoadLocal             Target=3 Slot=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    MakeClosure           Target=4 FuncLabel=recgroup_3_count EnvPtrTemp=2 EnvSizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreLocal            Slot=1 Source=4   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    MakeClosure           Target=5 FuncLabel=recgroup_4_step EnvPtrTemp=2 EnvSizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    StoreLocal            Slot=2 Source=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:6:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    AllocStack            Target=6 SizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    LoadLocal             Target=7 Slot=1   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=7   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    MakeClosureStack      Target=8 FuncLabel=lambda_8 EnvPtrTemp=6 EnvSizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    StoreLocal            Slot=5 Source=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    Alloc                 Target=9 SizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    LoadLocal             Target=10 Slot=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    Borrow                Target=11 SourceTemp=10
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=11   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    MakeClosure           Target=12 FuncLabel=lambda_9 EnvPtrTemp=9 EnvSizeBytes=8   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    StoreLocal            Slot=6 Source=12   (mutual_recursion_later_sibling_call_requests_arena_result.ash:22:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadLocal             Target=13 Slot=6   (mutual_recursion_later_sibling_call_requests_arena_result.ash:28:4)
+    LoadConstInt          Target=14 Value=3   (mutual_recursion_later_sibling_call_requests_arena_result.ash:28:11)
+    CallClosure           Target=15 ClosureTemp=13 ArgTemp=14   (mutual_recursion_later_sibling_call_requests_arena_result.ash:27:1)
+    LoadConstInt          Target=16 Value=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:27:1)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16   (mutual_recursion_later_sibling_call_requests_arena_result.ash:27:1)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=9
+    PrintInt              Source=17   (mutual_recursion_later_sibling_call_requests_arena_result.ash:27:1)
+    AllocAdt              Target=18 Tag=0 FieldCount=0   (mutual_recursion_later_sibling_call_requests_arena_result.ash:27:1)
+    StoreLocal            Slot=10 Source=18   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    LoadLocal             Target=19 Slot=5   (mutual_recursion_later_sibling_call_requests_arena_result.ash:15:1)
+    CleanupResource       SourceTemp=19 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=11
+    CopyOutArena          DestTemp=20 SrcTemp=18 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=11
+    Return                Source=20
+

@@ -285,7 +285,18 @@ one it names whose compiled body may hand the parts over or forward the request,
 it cannot name. A function that returns a call's result as it is (a generic forwarder applying a
 closure parameter, or a function returning another's generic tuple result) passes its own word's
 bit 2 and address (`word & -4`) on to that call, so the callee writes the mask into the word of
-the caller that asked.
+the caller that asked. Bit 62 of the mask says the whole result was handed over: a function whose
+reference-counted result is, at run time, the value one of its owned values holds leaves that
+value unreleased (one whose arena result is a cell wrapping such a value returns a
+reference-counted copy of the cell holding that reference), and the caller takes the result as its
+own owned value without copying it. Bit 61 says the result holds nothing of the values its call
+borrowed: a function of a contract result type that is asked writes it, and a function that
+forwarded its caller's request to the call whose result it returns reads the mask after that call
+and, when bit 61 or bit 62 is set, releases the owned values the result reached only through that
+call. A caller taking the result reads only bit 62. Bit 60 says a generic list builder handed its
+list's heads over: each reference-counted head of an arena cell of the result holds a reference of
+its own, which the caller releases after copying the list out (a builder forwards the request to its
+own recursive call, so every arena cell of the spine follows the same rule).
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

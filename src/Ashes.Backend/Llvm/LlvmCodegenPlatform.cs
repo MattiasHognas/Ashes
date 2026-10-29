@@ -261,7 +261,7 @@ internal static partial class LlvmCodegen
         {
             // struct timespec { i64 tv_sec; i64 tv_nsec; }
             LlvmTypeHandle timespecType = LlvmApi.ArrayType2(state.I64, 2);
-            LlvmValueHandle timespecStorage = LlvmApi.BuildAlloca(builder, timespecType, name + "_timespec");
+            LlvmValueHandle timespecStorage = EmitEntryScratchSlot(state, timespecType, name + "_timespec");
             LlvmValueHandle timespecPtr = LlvmApi.BuildPtrToInt(builder,
                 GetArrayElementPointer(state, timespecType, timespecStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_timespec_ptr"),
                 state.I64, name + "_timespec_addr");
@@ -383,7 +383,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitWindowsEnsureIocpPort(LlvmCodegenState state, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle portSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_port_slot");
+        LlvmValueHandle portSlot = EmitEntryScratchSlot(state, state.I64, name + "_port_slot");
         LlvmApi.BuildStore(builder, LoadMemory(state, state.WindowsIocpPortGlobal, 0, name + "_existing_port"), portSlot);
         LlvmValueHandle hasPort = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
             LlvmApi.BuildLoad2(builder, state.I64, portSlot, name + "_port_value"),
@@ -447,10 +447,10 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle guidType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle guidStorage = LlvmApi.BuildAlloca(builder, guidType, name + "_guid_storage");
+        LlvmValueHandle guidStorage = EmitEntryScratchSlot(state, guidType, name + "_guid_storage");
         LlvmValueHandle guidBytes = GetArrayElementPointer(state, guidType, guidStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_guid_bytes");
-        LlvmValueHandle functionPointerSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_function_ptr_slot");
-        LlvmValueHandle bytesReturnedSlot = LlvmApi.BuildAlloca(builder, state.I32, name + "_bytes_returned_slot");
+        LlvmValueHandle functionPointerSlot = EmitEntryScratchSlot(state, state.I64, name + "_function_ptr_slot");
+        LlvmValueHandle bytesReturnedSlot = EmitEntryScratchSlot(state, state.I32, name + "_bytes_returned_slot");
         LlvmApi.BuildStore(builder,
             LlvmApi.ConstInt(state.I64, 0x4660DDF325A207B9, 0),
             LlvmApi.BuildBitCast(builder, guidBytes, state.I64Ptr, name + "_guid_head_ptr"));
@@ -487,7 +487,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle sockaddrType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle sockaddrStorage = LlvmApi.BuildAlloca(builder, sockaddrType, name + "_sockaddr");
+        LlvmValueHandle sockaddrStorage = EmitEntryScratchSlot(state, sockaddrType, name + "_sockaddr");
         LlvmValueHandle sockaddrBytes = GetArrayElementPointer(state, sockaddrType, sockaddrStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_bytes");
         LlvmTypeHandle i16 = LlvmApi.Int16TypeInContext(state.Target.Context);
         LlvmTypeHandle i16Ptr = LlvmApi.PointerTypeInContext(state.Target.Context, 0);
@@ -537,7 +537,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle wsabufType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle wsabufStorage = LlvmApi.BuildAlloca(builder, wsabufType, name + "_wsabuf_storage");
+        LlvmValueHandle wsabufStorage = EmitEntryScratchSlot(state, wsabufType, name + "_wsabuf_storage");
         LlvmValueHandle wsabufPtr = GetArrayElementPointer(state, wsabufType, wsabufStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_wsabuf_ptr");
         LlvmTypeHandle wsaSendType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I32, state.I8Ptr, state.I8Ptr]);
         LlvmValueHandle wsaSendPtr = LlvmApi.BuildLoad2(builder,
@@ -569,9 +569,9 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle wsabufType = LlvmApi.ArrayType2(state.I8, 16);
-        LlvmValueHandle wsabufStorage = LlvmApi.BuildAlloca(builder, wsabufType, name + "_wsabuf_storage");
+        LlvmValueHandle wsabufStorage = EmitEntryScratchSlot(state, wsabufType, name + "_wsabuf_storage");
         LlvmValueHandle wsabufPtr = GetArrayElementPointer(state, wsabufType, wsabufStorage, LlvmApi.ConstInt(state.I64, 0, 0), name + "_wsabuf_ptr");
-        LlvmValueHandle flagsSlot = LlvmApi.BuildAlloca(builder, state.I32, name + "_flags_slot");
+        LlvmValueHandle flagsSlot = EmitEntryScratchSlot(state, state.I32, name + "_flags_slot");
         LlvmTypeHandle wsaRecvType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I32Ptr, state.I8Ptr, state.I8Ptr]);
         LlvmValueHandle wsaRecvPtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
@@ -603,10 +603,10 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle port = EmitWindowsEnsureIocpPort(state, name + "_ensure_port");
-        LlvmValueHandle operationContextSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_operation_context_slot");
-        LlvmValueHandle bytesSlot = LlvmApi.BuildAlloca(builder, state.I32, name + "_bytes_slot");
-        LlvmValueHandle completionKeySlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_completion_key_slot");
-        LlvmValueHandle overlappedSlot = LlvmApi.BuildAlloca(builder, state.I8Ptr, name + "_overlapped_slot");
+        LlvmValueHandle operationContextSlot = EmitEntryScratchSlot(state, state.I64, name + "_operation_context_slot");
+        LlvmValueHandle bytesSlot = EmitEntryScratchSlot(state, state.I32, name + "_bytes_slot");
+        LlvmValueHandle completionKeySlot = EmitEntryScratchSlot(state, state.I64, name + "_completion_key_slot");
+        LlvmValueHandle overlappedSlot = EmitEntryScratchSlot(state, state.I8Ptr, name + "_overlapped_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), operationContextSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), completionKeySlot);
@@ -820,13 +820,13 @@ internal static partial class LlvmCodegen
     private static (LlvmValueHandle IndexSlot, LlvmValueHandle WorkSlot, LlvmValueHandle NegativeSlot, LlvmValueHandle Buffer, LlvmTypeHandle BufferType, LlvmValueHandle AbsValue, LlvmValueHandle Zero) EmitPrintIntPrologue(LlvmCodegenState state, LlvmValueHandle value)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_idx");
-        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_work");
-        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, "print_negative");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, "print_idx");
+        LlvmValueHandle workSlot = EmitEntryScratchSlot(state, state.I64, "print_work");
+        LlvmValueHandle negativeSlot = EmitEntryScratchSlot(state, state.I64, "print_negative");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
 
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, "print_buf");
+        LlvmValueHandle buffer = EmitEntryScratchSlot(state, bufferType, "print_buf");
 
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, "is_negative");
@@ -966,7 +966,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle writeFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
         LlvmValueHandle outputHandle = EmitWindowsGetStdHandle(state, handleKind, prefix + "_handle");
-        LlvmValueHandle bytesWritten = LlvmApi.BuildAlloca(builder, state.I32, prefix + "_bytes_written");
+        LlvmValueHandle bytesWritten = EmitEntryScratchSlot(state, state.I32, prefix + "_bytes_written");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesWritten);
         LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),

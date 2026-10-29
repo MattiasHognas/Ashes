@@ -15,6 +15,7 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 | [Compiler Parity Fuzzing](COMPILER_PARITY_FUZZING.md) | Proposed | Differentially fuzz the stage-0 and self-hosted compilers against each other |
 | [Inferred Borrow Lifetimes for Ordinary Values](INFERRED_BORROW_LIFETIMES.md) | Research proposal | Investigate richer borrow-lifetime inference to remove provably unnecessary RC operations |
 | [Optimizer Pass Observability](OPTIMIZER_PASS_OBSERVABILITY.md) | Proposed | Optional per-pass instrumentation to see which optimizer pass changed what |
+| [Single Ownership Pass](SINGLE_OWNERSHIP_PASS.md) | Proposed, after the fixpoint | Move every ownership decision out of lowering into one Perceus pass after the optimizer |
 
 ---
 
