@@ -12768,12 +12768,13 @@ let tcoListCopyPlanOf (element: SemanticType) (state: CoreLoweringState) =
     else argumentCopyPlanOf(SemList(element))(state)
 
 // Stage 0's `IsWalkedOrRefilledElement`: a walked-or-refilled list of strings, or of lists of
-// strings (a worklist of paths), whose heads are protected wherever they escape.
+// strings (a worklist of paths), whose heads are protected wherever they escape, or of inline
+// values, whose heads need no protection.
 let isWalkedOrRefilledElement (element: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(element) with
         | SemString -> true
         | SemList(inner) -> resolveType(state)(inner) == SemString
-        | _ -> false
+        | resolved -> canArenaResetLayout(resolved)
 
 let recursive anyHeapTupleTailPartner (partners: List(Int)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match partners with
@@ -13078,10 +13079,17 @@ let flowMayPass (siblingOrdinal: Int) (accumulatorOrdinal: Int) (flow: Maybe(Lis
             |> containsInt(accumulatorOrdinal)
 
 // Stage 0's `AccumulatorFlowFor`: a list of strings reaches a sibling only through its spine, since a
-// string head matched out of it is retained wherever it is kept.
+// string head matched out of it is retained wherever it is kept, and so does a list of inline
+// values, whose heads are copies.
 let accumulatorFlowFor (accumulatorType: SemanticType) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (resolveType(state)(accumulatorType), loop.selfCallSpineFlow) with
         | (SemList(SemString), Some(spine)) -> Some(spine)
+        | (SemList(element), Some(spine)) ->
+            if element
+            |> resolveType(state)
+            |> canArenaResetLayout
+            then Some(spine)
+            else loop.selfCallParameterFlow
         | _ -> loop.selfCallParameterFlow
 
 // Stage 0's `SiblingMayReceiveAccumulator`: a sibling that could hold the accumulator, or a part of
@@ -27484,6 +27492,43 @@ let recursive generalRcParameterPositions (slots: List(Int)) (position: Int) (st
                     else generalRcParameterPositions(rest)(position + 1)(state)
                 | None -> generalRcParameterPositions(rest)(position + 1)(state)
 
+// Whether the frame's parameter at this position is a list of inline values.
+let isInlineElementListParameter (position: Int) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match slotAtOrdinal(position)(frame.parameterSlots) with
+        | Some(slot) ->
+            match slotResolvedType(slot)(state.bindings)(state) with
+                | Some(SemList(element)) ->
+                    element
+                    |> resolveType(state)
+                    |> canArenaResetLayout
+                | _ -> false
+        | None -> false
+
+let recursive inlineHeadsOmittedSources (sources: List(Int)) (spineSources: List(Int)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match sources with
+        | [] -> []
+        | source :: rest ->
+            if isInlineElementListParameter(source)(frame)(state) && containsInt(source)(spineSources) == false
+            then inlineHeadsOmittedSources(rest)(spineSources)(frame)(state)
+            else source :: inlineHeadsOmittedSources(rest)(spineSources)(frame)(state)
+
+let recursive inlineHeadsOmittedPositions (flow: List(List(Int))) (spine: List(List(Int))) (position: Int) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match flow with
+        | [] -> []
+        | sources :: rest ->
+            inlineHeadsOmittedSources(sources)(flowSourcesAt(position)(spine))(frame)(state) :: inlineHeadsOmittedPositions(rest)(spine)(position + 1)(frame)(state)
+
+// Stage 0's `FlowOmittingInlineHeads`: the body's parameter flow with the edges out of a list of
+// inline values kept only where they run through its spine, since a head matched out of such a
+// list is a copy and carries no part of it.
+let flowOmittingInlineHeads (loop: CoreTcoLoop) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match (loop.selfCallParameterFlow, loop.selfCallSpineFlow) with
+        | (Some(flow), Some(spine)) ->
+            state
+            |> inlineHeadsOmittedPositions(flow)(spine)(0)(frame)
+            |> Some
+        | (flow, _spine) -> flow
+
 let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match stateTcoLoop(state) with
         | None -> ([], [])
@@ -27497,9 +27542,9 @@ let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) 
                     |> stateConstructorLayouts
                     |> constructorNamesOf)(loop.body)
                 in
-                    (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(ownReferences)(frame.parameterSlots
+                    (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(flowOmittingInlineHeads(loop)(frame)(state))(binders)(ownReferences)(frame.parameterSlots
                     |> length
-                    |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(loop.selfCallParameterFlow)(binders)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+                    |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(flowOmittingInlineHeads(loop)(frame)(state))(binders)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
 
 let recursive withoutStringParts (parts: List(SemanticType)) =
     match parts with

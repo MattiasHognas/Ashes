@@ -1662,6 +1662,33 @@ public sealed partial class Lowering
             : parts;
     }
 
+    // The body's parameter flow with the edges out of a list of inline values kept only where they
+    // run through its spine: a head matched out of such a list is a copy and carries no part of it.
+    private Dictionary<int, HashSet<int>>? FlowOmittingInlineHeads(TcoContext tco)
+    {
+        if (tco.SelfCallParameterFlow is not { } flow
+            || Environment.GetEnvironmentVariable("GRC_NO_INLINESPINEFLOW") is not null
+            || tco.SelfCallSpineFlow is not { } spine)
+        {
+            return tco.SelfCallParameterFlow;
+        }
+
+        Dictionary<int, HashSet<int>> omitted = [];
+        foreach ((int position, HashSet<int> sources) in flow)
+        {
+            omitted[position] = sources
+                .Where(source => !IsInlineElementList(tco, source) || (spine.TryGetValue(position, out HashSet<int>? spineSources) && spineSources.Contains(source)))
+                .ToHashSet();
+        }
+
+        return omitted;
+    }
+
+    private bool IsInlineElementList(TcoContext tco, int position)
+        => tco.ParamTypes.TryGetValue(position, out TypeRef? type)
+            && Prune(type) is TypeRef.TList { Element: var element }
+            && CanArenaReset(Prune(element));
+
     // Per successor, whether its expression names nothing that can hold the predecessor's value or
     // a part of it: none of the names bound from the value (its binders and the names derived from
     // them), and none of the parameters a self call may hand such a name, or a part of one, whole
@@ -1672,7 +1699,7 @@ public sealed partial class Lowering
     {
         if (Environment.GetEnvironmentVariable("GRC_NO_PREDECESSORNAMES") is not null
             || predecessor.Binders is not { Count: > 0 } binders
-            || info.Tco.SelfCallParameterFlow is not { } flow
+            || FlowOmittingInlineHeads(info.Tco) is not { } flow
             || info.Tco.Body is not { } body)
         {
             return [];

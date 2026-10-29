@@ -3969,6 +3969,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_worklist_of_indices_walked_and_refilled_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A worklist of block indices walked by its tail in one arm and refilled from a call's result
+        // in another, the refill built from a list read out of a generic lookup's optional record,
+        // beside a list of visited indices consed from the worklist's heads. Placed on the
+        // reference-counted heap, the back edge releases the earlier queue and the lookup's result;
+        // left in the arena both stayed until the program ended.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildWorklistOfIndicesProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("worklist of indices walked and refilled", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_handed_on_pipeline_step_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15480,6 +15506,51 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildWorklistOfIndicesProgram(int rounds)
+        => $$"""
+            type Block =
+                | blockStart: Int
+                | blockEnd: Int
+                | blockSuccessors: List(Int)
+                | blockPredecessors: List(Int)
+
+            let recursive listAt items index =
+                match items with
+                    | [] -> None
+                    | head :: rest ->
+                        if index == 0
+                        then Some(head)
+                        else listAt(rest)(index - 1)
+
+            let recursive containsInt (item: Int) (items: List(Int)) =
+                match items with
+                    | [] -> false
+                    | head :: rest ->
+                        if head == item
+                        then true
+                        else containsInt(item)(rest)
+
+            let recursive reach (blocks: List(Block)) (dominated: List(Int)) (pending: List(Int)) (reachable: List(Int)) =
+                match pending with
+                    | [] -> Ashes.Collection.List.length(reachable)
+                    | current :: rest ->
+                        if containsInt(current)(dominated) == false || containsInt(current)(reachable)
+                        then reach(blocks)(dominated)(rest)(reachable)
+                        else
+                            match listAt(blocks)(current) with
+                                | Some(Block { blockSuccessors = successors }) -> reach(blocks)(dominated)(Ashes.Collection.List.append(successors)(rest))(current :: reachable)
+                                | None -> reach(blocks)(dominated)(rest)(current :: reachable)
+
+            let blocksFor (seed: Int) = [Block(blockStart = 0, blockEnd = 3, blockSuccessors = [1, 2], blockPredecessors = []), Block(blockStart = 3, blockEnd = 5, blockSuccessors = [2], blockPredecessors = [0]), Block(blockStart = 5, blockEnd = seed + 6, blockSuccessors = [], blockPredecessors = [0, 1])]
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + reach(blocksFor(n))([0, 1, 2])([0])([]))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

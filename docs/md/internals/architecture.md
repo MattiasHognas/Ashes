@@ -1735,7 +1735,14 @@ call's result, a worklist, is placed on the reference-counted heap. So is one us
 popped by its consumed tail (`| _top :: rest -> keep(tail)(rest)`) and pushed by a cons onto the
 parameter (`keep(tail)(head :: stack)`), with fresh lists of literals beside them, as a path
 normalizer does (`GRC_NO_WALKEDSTACK`). Left in the arena, each push retained its borrowed head for a
-cell nothing released; both stages place it so.
+cell nothing released; both stages place it so. A worklist of inline values (block indices) is
+placed the same way: its heads need no protection where they escape. A refill read out of a generic
+lookup's optional record (`match listAt(blocks)(current) with Some(Block { successors = next }) ->
+walk(append(next)(rest))`) otherwise left the earlier queue and the lookup's result unreleased, since
+an arena successor might still hold a part of either (`GRC_NO_WALKREFILLSCALARS`). A sibling consed
+from such a list's heads (`current :: reachable`) receives copies, not parts: the blocking-sibling
+check and the predecessor release follow a list of inline values only through its spine, as they
+do a list of strings (`GRC_NO_INLINESPINEFLOW`).
 
 ### Buffered standard output
 
