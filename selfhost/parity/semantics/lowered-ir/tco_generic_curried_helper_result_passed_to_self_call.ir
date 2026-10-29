@@ -1,0 +1,964 @@
+IR (lowered)
+============
+
+function __rcnorm_3  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=10
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_4   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_5   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_4:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_6:
+    CopyOutList           DestTemp=7 SrcTemp=4 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=3 Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_7:
+    LoadLocal             Target=8 Slot=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=8 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=2 Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_5:
+    LoadLocal             Target=9 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __rcnorm_4  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=12
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_10   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_11   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_10:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_12   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_13   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_12:
+    LoadConstInt          Target=8 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=9 FuncLabel=__rcnorm_3 EnvTemp=8 ArgTemp=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=3 Source=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_13:
+    LoadLocal             Target=10 Slot=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=10 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=2 Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_11:
+    LoadLocal             Target=11 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __rcdrop_record_5  [RuntimeManagedAdtDropper]
+  locals=3 temps=9
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_14   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=2 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rcdrop_list_15:
+    LoadLocal             Target=3 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=4 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CmpIntNe              Target=5 Left=3 Right=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_17   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcIsUnique            Target=6 SourceTemp=3
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_16   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rcdrop_list_15   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rcdrop_list_shared_16:
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_17   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rcdrop_list_end_17:
+  rc_drop_shared_14:
+    RcDrop                SourceTemp=0 TypeName=St RuntimeManaged=true
+    LoadConstInt          Target=8 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __deepcopy_7  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadEnv               Target=1 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=2 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_7_default   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  __deepcopy_7_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CopyOutList           DestTemp=5 SrcTemp=4 HeadCopy=Inline Purpose=IndependentClone   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  __deepcopy_7_default:
+    Return                Source=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __deepcopy_6  [AdtDeepCopier]
+  locals=2 temps=9
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadEnv               Target=1 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=2 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_6_default   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  __deepcopy_6_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Alloc                 Target=5 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    MakeClosure           Target=6 FuncLabel=__deepcopy_7 EnvPtrTemp=5 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallClosure           Target=7 ClosureTemp=6 ArgTemp=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  __deepcopy_6_default:
+    Return                Source=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __rcdrop_record_8  [RuntimeManagedAdtDropper]
+  locals=2 temps=6
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_25   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=3 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=4 FuncLabel=__rcdrop_record_5 EnvTemp=3 ArgTemp=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_drop_shared_25:
+    RcDrop                SourceTemp=0 TypeName=Res RuntimeManaged=true
+    LoadConstInt          Target=5 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function lambda_2  [ClosureHelper from lowerVar]
+  locals=8 temps=59
+    LoadLocal             Target=10 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadArgumentOwnership Target=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=12 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    AndInt                Target=13 Left=11 Right=12   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    JumpIfFalse           CondTemp=13 Target=rc_arg_normalize_copy_0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=2 Source=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_arg_normalize_done_1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_arg_normalize_copy_0:
+    IsReferenceCounted    Target=14 SourceTemp=10
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=15 SourceTemp=10 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=15   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_2:
+    LoadConstInt          Target=18 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=19 FuncLabel=__rcnorm_3 EnvTemp=18 ArgTemp=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=3 Source=19   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_3:
+    LoadLocal             Target=20 Slot=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=2 Source=20   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_arg_normalize_done_1:
+    LoadLocal             Target=21 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=1 Source=21   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:65)
+    GetAdtField           Target=1 Ptr=0 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:65)
+    LoadEnv               Target=2 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:83)
+    LoadConstInt          Target=3 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:90)
+    AddInt                Target=4 Left=2 Right=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:83)
+    AllocAdt              Target=5 Tag=0 FieldCount=2 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:65)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=1 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:65)
+    SetAdtField           Ptr=5 FieldIndex=1 Source=4 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:65)
+    LoadEnv               Target=6 Index=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:101)
+    LoadConstStr          Target=7 StrLabel=str_0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:109)
+    CmpStrEq              Target=8 Left=6 Right=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:101)
+    AllocAdt              Target=9 Tag=0 FieldCount=2 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:52)
+    SetAdtField           Ptr=9 FieldIndex=0 Source=5 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:52)
+    SetAdtField           Ptr=9 FieldIndex=1 Source=8 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:52)
+    IsReferenceCounted    Target=22 SourceTemp=9
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=23 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=23   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_9   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_8:
+    LoadConstInt          Target=26 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=27 FuncLabel=__rcnorm_4 EnvTemp=26 ArgTemp=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=4 Source=27   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_9:
+    LoadLocal             Target=28 Slot=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=29 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=30 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=31 FuncLabel=__rcdrop_record_5 EnvTemp=30 ArgTemp=29   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=5 Source=28   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=32 SourceTemp=28
+    JumpIfFalse           CondTemp=32 Target=general_rc_result_arena_copy_18   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=general_rc_result_already_owned_19   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  general_rc_result_arena_copy_18:
+    IsReferenceCounted    Target=33 SourceTemp=28
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_20   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=34 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=34   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_21   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_20:
+    LoadConstInt          Target=36 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=37 FuncLabel=__rcnorm_4 EnvTemp=36 ArgTemp=28   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=6 Source=37   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_21:
+    LoadLocal             Target=38 Slot=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=5 Source=38   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  general_rc_result_already_owned_19:
+    LoadLocal             Target=39 Slot=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadArgumentOwnership Target=40   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=41 Value=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    ShrInt                Target=42 Left=40 Right=41   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=43 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    AndInt                Target=44 Left=42 Right=43   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    JumpIfFalse           CondTemp=44 Target=independent_result_not_requested_22   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadArgumentOwnership Target=45   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=46 Value=-8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    AndInt                Target=47 Left=45 Right=46   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=48 Value=2305843009213693952   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=47 OffsetBytes=0 Source=48   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  independent_result_not_requested_22:
+    LoadArgumentOwnership Target=49   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=50 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    ShrInt                Target=51 Left=49 Right=50   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    AndInt                Target=52 Left=51 Right=50   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    JumpIfFalse           CondTemp=52 Target=rc_result_owned_23   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Alloc                 Target=53 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    MakeClosure           Target=54 FuncLabel=__deepcopy_6 EnvPtrTemp=53 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=53 OffsetBytes=0 Source=54   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallClosure           Target=55 ClosureTemp=54 ArgTemp=39   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadConstInt          Target=56 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CallKnown             Target=57 FuncLabel=__rcdrop_record_8 EnvTemp=56 ArgTemp=39   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=7 Source=55   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_result_done_24   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_result_owned_23:
+    StoreLocal            Slot=7 Source=39   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_result_done_24:
+    LoadLocal             Target=58 Slot=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=58   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __rc_cdrop_9  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDrop                SourceTemp=1 TypeName=String RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from lowerVar]
+  locals=3 temps=9
+    LoadLocal             Target=0 Slot=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=3 BasePtr=0 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=4 SourceTemp=3
+    JumpIfFalse           CondTemp=4 Target=rc_representation_copy_26   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=5 SourceTemp=3 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_27   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_26:
+    CopyOutArena          DestTemp=6 SrcTemp=3 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_27:
+    LoadLocal             Target=7 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadFuncAddr          Target=8 FuncLabel=__rc_cdrop_9   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function lambda_1  [ClosureHelper from lowerVar]
+  locals=2 temps=4
+    Alloc                 Target=0 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadEnv               Target=2 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function __rc_cdrop_10  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDrop                SourceTemp=1 TypeName=String RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from lowerVar]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_28   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Jump                  Target=rc_representation_done_29   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_copy_28:
+    CopyOutArena          DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+  rc_representation_done_29:
+    LoadLocal             Target=6 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_10   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function lambda_0  [SourceFunction from lowerVar]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    MakeClosure           Target=2 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+
+function lambda_13  [ClosureHelper from lowerLoaded]
+  locals=6 temps=14
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:42)
+    LoadEnv               Target=1 Index=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:48)
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:42)
+    LoadLocal             Target=3 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:54)
+    GetAdtField           Target=4 Ptr=3 FieldIndex=1 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:54)
+    CallClosure           Target=5 ClosureTemp=2 ArgTemp=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:42)
+    LoadLocal             Target=6 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:66)
+    LoadConstInt          Target=8 Value=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:42)
+    LoadArgumentOwnership Target=11
+    LoadConstInt          Target=12 Value=-4
+    AndInt                Target=10 Left=11 Right=12
+    OrInt                 Target=13 Left=10 Right=8
+    CallClosure           Target=7 ClosureTemp=5 ArgTemp=6 RuntimeManagedArgumentFlagTemp=13   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:42)
+    Return                Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+
+function lambda_12  [ClosureHelper from lowerLoaded]
+  locals=2 temps=4
+    Alloc                 Target=0 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    LoadEnv               Target=2 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    MakeClosure           Target=3 FuncLabel=lambda_13 EnvPtrTemp=0 EnvSizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    Return                Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+
+function lambda_11  [SourceFunction from lowerLoaded]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    MakeClosure           Target=2 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    Return                Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+
+function lambda_16  [ClosureHelper from lowerFields]
+  locals=49 temps=193
+    LoadEnv               Target=0 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=2 Source=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadEnv               Target=1 Index=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=3 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=85 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    IsReferenceCounted    Target=86 SourceTemp=85
+    JumpIfFalse           CondTemp=86 Target=rc_representation_copy_46   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    RcDup                 Target=87 SourceTemp=85 RuntimeManaged=true
+    StoreLocal            Slot=38 Source=87   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Jump                  Target=rc_representation_done_47   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_representation_copy_46:
+    CopyOutList           DestTemp=88 SrcTemp=85 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=38 Source=88   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_representation_done_47:
+    LoadLocal             Target=89 Slot=38   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=2 Source=89   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=90 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=7 Source=90   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=91 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadArgumentOwnership Target=92   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=93 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    AndInt                Target=94 Left=92 Right=93   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=94 Target=rc_arg_normalize_copy_48   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=39 Source=91   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Jump                  Target=rc_arg_normalize_done_49   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_arg_normalize_copy_48:
+    IsReferenceCounted    Target=95 SourceTemp=91
+    JumpIfFalse           CondTemp=95 Target=rc_representation_copy_50   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    RcDup                 Target=96 SourceTemp=91 RuntimeManaged=true
+    StoreLocal            Slot=40 Source=96   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Jump                  Target=rc_representation_done_51   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_representation_copy_50:
+    LoadConstInt          Target=99 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallKnown             Target=100 FuncLabel=__rcnorm_4 EnvTemp=99 ArgTemp=91   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=40 Source=100   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_representation_done_51:
+    LoadLocal             Target=101 Slot=40   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=39 Source=101   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_arg_normalize_done_49:
+    LoadLocal             Target=102 Slot=39   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=1 Source=102   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=103 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=8 Source=103   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=6 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  lambda_16_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=3 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:11)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadConstInt          Target=4 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    CmpIntNe              Target=5 Left=3 Right=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_32   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    GetAdtField           Target=6 Ptr=3 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    StoreLocal            Slot=15 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    LoadLocal             Target=7 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:19)
+    SaveArenaState        CursorLocalSlot=17 EndLocalSlot=18
+    LoadConstInt          Target=8 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    CmpIntEq              Target=9 Left=7 Right=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_36   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    LoadLocal             Target=10 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:17:25)
+    StoreLocal            Slot=16 Source=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=19
+    Jump                  Target=match_end_33   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+  match_arm_cleanup_36:
+    RestoreArenaState     CursorLocalSlot=17 EndLocalSlot=18 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=18 PreRestoreEndSlot=20
+    Jump                  Target=match_next_35   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+  match_next_35:
+    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
+    LoadConstInt          Target=11 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    CmpIntNe              Target=12 Left=7 Right=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_37   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    LoadMemOffset         Target=13 BasePtr=7 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    LoadMemOffset         Target=14 BasePtr=7 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    StoreLocal            Slot=23 Source=13   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    StoreLocal            Slot=24 Source=14   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    LoadLocal             Target=15 Slot=24   (tco_generic_curried_helper_result_passed_to_self_call.ash:21:36)
+    Borrow                Target=16 SourceTemp=15
+    LoadLocal             Target=17 Slot=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:21:42)
+    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
+    LoadEnv               Target=18 Index=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:20:24)
+    Borrow                Target=19 SourceTemp=18
+    LoadLocal             Target=20 Slot=23   (tco_generic_curried_helper_result_passed_to_self_call.ash:20:36)
+    Borrow                Target=21 SourceTemp=20
+    CopyOutArenaToSpace   DestTemp=22 SrcTemp=21
+    RcDrop                SourceTemp=13 TypeName=String OwnerSlot=23
+    LoadMemOffset         Target=23 BasePtr=19 OffsetBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=24 Value=62   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    ShrInt                Target=25 Left=23 Right=24   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=26 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    AndInt                Target=27 Left=25 Right=26   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=27 Source=22   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    JumpIfFalse           CondTemp=27 Target=rc_call_argument_not_retained_38   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    RcDup                 Target=28 SourceTemp=22 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=28   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  rc_call_argument_not_retained_38:
+    LoadLocal             Target=29 Slot=27   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    CallClosure           Target=30 ClosureTemp=19 ArgTemp=29 RuntimeManagedArgumentFlagTemp=27   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=31 Slot=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:20:42)
+    LoadMemOffset         Target=32 BasePtr=30 OffsetBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=33 Value=62   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    ShrInt                Target=34 Left=32 Right=33   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=35 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=36 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=28 Source=31   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    JumpIfFalse           CondTemp=36 Target=rc_call_argument_not_retained_39   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    RcDup                 Target=37 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=37   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  rc_call_argument_not_retained_39:
+    LoadLocal             Target=38 Slot=28   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    CallClosure           Target=39 ClosureTemp=30 ArgTemp=38 RuntimeManagedArgumentFlagTemp=36   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=40 Slot=15   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    Borrow                Target=41 SourceTemp=40
+    Alloc                 Target=43 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=44 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreMemOffset        BasePtr=43 OffsetBytes=0 Source=44   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=45 Value=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    OrInt                 Target=46 Left=45 Right=43   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    CallClosure           Target=42 ClosureTemp=39 ArgTemp=41 RuntimeManagedArgumentFlagTemp=46   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadMemOffset         Target=47 BasePtr=39 OffsetBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=48 Value=60   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    ShrInt                Target=49 Left=47 Right=48   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=50 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    AndInt                Target=51 Left=49 Right=50   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=52 Slot=30   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=31 Source=52   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=30 Source=42   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=29
+    JumpIfFalse           CondTemp=51 Target=general_rc_result_normalize_41   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    Jump                  Target=general_rc_result_owned_40   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  general_rc_result_normalize_41:
+    LoadMemOffset         Target=53 BasePtr=43 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=54 Value=4611686018427387904   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    AndInt                Target=55 Left=53 Right=54   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=56 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    CmpIntNe              Target=57 Left=55 Right=56   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    JumpIfFalse           CondTemp=57 Target=whole_result_not_handed_over_42   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    Jump                  Target=general_rc_result_owned_40   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  whole_result_not_handed_over_42:
+    LoadConstInt          Target=58 Value=2305843009213693952   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    AndInt                Target=59 Left=53 Right=58   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=60 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    CmpIntNe              Target=61 Left=59 Right=60   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    JumpIfFalse           CondTemp=61 Target=independent_result_not_counted_43   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    IsReferenceCounted    Target=62 SourceTemp=42
+    JumpIfFalse           CondTemp=62 Target=independent_result_not_counted_43   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    Jump                  Target=general_rc_result_owned_40   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  independent_result_not_counted_43:
+    IsReferenceCounted    Target=63 SourceTemp=42
+    JumpIfFalse           CondTemp=63 Target=rc_representation_copy_44   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    RcDup                 Target=64 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=64   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    Jump                  Target=rc_representation_done_45   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  rc_representation_copy_44:
+    LoadConstInt          Target=66 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    CallKnown             Target=67 FuncLabel=__rcnorm_4 EnvTemp=66 ArgTemp=42   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=32 Source=67   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  rc_representation_done_45:
+    LoadLocal             Target=68 Slot=32   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=30 Source=68   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+  general_rc_result_owned_40:
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=29
+    LoadConstInt          Target=69 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=33 Source=69   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=70 Slot=30   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    RcDup                 Target=71 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=14 TypeName=List OwnerSlot=24
+    LoadLocal             Target=72 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=73 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=7 Source=73   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=74 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=75 Slot=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadLocal             Target=76 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=2 Source=71   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=3 Source=17   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=1 Source=70   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    IsReferenceCounted    Target=153 SourceTemp=70
+    JumpIfFalse           CondTemp=153 Target=rc_representation_copy_70
+    RcDup                 Target=154 SourceTemp=70 RuntimeManaged=true
+    StoreLocal            Slot=45 Source=154
+    Jump                  Target=rc_representation_done_71
+  rc_representation_copy_70:
+    IsReferenceCounted    Target=156 SourceTemp=70
+    JumpIfFalse           CondTemp=156 Target=rc_representation_copy_72
+    RcDup                 Target=157 SourceTemp=70 RuntimeManaged=true
+    StoreLocal            Slot=46 Source=157
+    Jump                  Target=rc_representation_done_73
+  rc_representation_copy_72:
+    LoadConstInt          Target=159 Value=0
+    CallKnown             Target=160 FuncLabel=__rcnorm_4 EnvTemp=159 ArgTemp=70
+    StoreLocal            Slot=46 Source=160
+  rc_representation_done_73:
+    LoadLocal             Target=161 Slot=46
+    StoreLocal            Slot=45 Source=161
+  rc_representation_done_71:
+    LoadLocal             Target=162 Slot=45
+    LoadLocal             Target=163 Slot=7
+    JumpIfFalse           CondTemp=163 Target=rc_tco_drop_inactive_74
+    StoreLocal            Slot=47 Source=74
+  rcdrop_list_75:
+    LoadLocal             Target=164 Slot=47
+    LoadConstInt          Target=165 Value=0
+    CmpIntNe              Target=166 Left=164 Right=165
+    JumpIfFalse           CondTemp=166 Target=rcdrop_list_end_77
+    RcIsUnique            Target=167 SourceTemp=164
+    JumpIfFalse           CondTemp=167 Target=rcdrop_list_shared_76
+    LoadMemOffset         Target=168 BasePtr=164 OffsetBytes=0
+    RcDrop                SourceTemp=168 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=169 BasePtr=164 OffsetBytes=8
+    RcDrop                SourceTemp=164 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=47 Source=169
+    Jump                  Target=rcdrop_list_75
+  rcdrop_list_shared_76:
+    RcDrop                SourceTemp=164 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_77
+  rcdrop_list_end_77:
+  rc_tco_drop_inactive_74:
+    LoadLocal             Target=170 Slot=8
+    JumpIfFalse           CondTemp=170 Target=rc_tco_drop_inactive_78
+    LoadConstInt          Target=171 Value=0
+    CallKnown             Target=172 FuncLabel=__rcdrop_record_8 EnvTemp=171 ArgTemp=76
+  rc_tco_drop_inactive_78:
+    StoreLocal            Slot=48 Source=72
+  rcdrop_list_79:
+    LoadLocal             Target=173 Slot=48
+    LoadConstInt          Target=174 Value=0
+    CmpIntNe              Target=175 Left=173 Right=174
+    JumpIfFalse           CondTemp=175 Target=rcdrop_list_end_81
+    RcIsUnique            Target=176 SourceTemp=173
+    JumpIfFalse           CondTemp=176 Target=rcdrop_list_shared_80
+    LoadMemOffset         Target=177 BasePtr=173 OffsetBytes=0
+    RcDrop                SourceTemp=177 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=178 BasePtr=173 OffsetBytes=8
+    RcDrop                SourceTemp=173 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=48 Source=178
+    Jump                  Target=rcdrop_list_79
+  rcdrop_list_shared_80:
+    RcDrop                SourceTemp=173 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_81
+  rcdrop_list_end_81:
+    LoadLocal             Target=179 Slot=31
+    LoadConstInt          Target=180 Value=0
+    CmpIntNe              Target=181 Left=179 Right=180
+    JumpIfFalse           CondTemp=181 Target=general_rc_owned_absent_82
+    IsReferenceCounted    Target=182 SourceTemp=179
+    JumpIfFalse           CondTemp=182 Target=general_rc_owned_absent_82
+    LoadConstInt          Target=183 Value=0
+    CallKnown             Target=184 FuncLabel=__rcdrop_record_8 EnvTemp=183 ArgTemp=179
+    StoreLocal            Slot=31 Source=180
+  general_rc_owned_absent_82:
+    LoadLocal             Target=185 Slot=30
+    LoadConstInt          Target=186 Value=0
+    CmpIntNe              Target=187 Left=185 Right=186
+    JumpIfFalse           CondTemp=187 Target=general_rc_owned_absent_83
+    IsReferenceCounted    Target=188 SourceTemp=185
+    JumpIfFalse           CondTemp=188 Target=general_rc_owned_absent_83
+    LoadConstInt          Target=189 Value=0
+    CallKnown             Target=190 FuncLabel=__rcdrop_record_8 EnvTemp=189 ArgTemp=185
+    StoreLocal            Slot=30 Source=186
+  general_rc_owned_absent_83:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=44
+    StoreLocal            Slot=2 Source=71
+    LoadConstInt          Target=191 Value=1
+    StoreLocal            Slot=7 Source=191
+    StoreLocal            Slot=1 Source=162
+    RcDrop                SourceTemp=6 TypeName=St OwnerSlot=15
+    LoadConstInt          Target=192 Value=1
+    StoreLocal            Slot=8 Source=192
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=44
+    RestoreStackPointer   Slot=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    Jump                  Target=lambda_16_body   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    LoadConstInt          Target=77 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:19:21)
+    StoreLocal            Slot=16 Source=77   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=34
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=34
+    Jump                  Target=match_end_33   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+  match_arm_cleanup_37:
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=35
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=35
+    Jump                  Target=match_none_34   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+  match_none_34:
+    LoadConstInt          Target=80 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    StoreLocal            Slot=16 Source=80   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+  match_end_33:
+    LoadLocal             Target=81 Slot=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:16:13)
+    StoreLocal            Slot=12 Source=81   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    RcDrop                SourceTemp=6 TypeName=St OwnerSlot=15
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=36
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=36
+    Jump                  Target=match_end_30   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+  match_arm_cleanup_32:
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=37
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=37
+    Jump                  Target=match_none_31   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+  match_none_31:
+    LoadConstInt          Target=83 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    StoreLocal            Slot=12 Source=83   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+  match_end_30:
+    LoadLocal             Target=84 Slot=12   (tco_generic_curried_helper_result_passed_to_self_call.ash:14:5)
+    IsReferenceCounted    Target=104 SourceTemp=84
+    JumpIfFalse           CondTemp=104 Target=rc_representation_copy_52   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    RcDup                 Target=105 SourceTemp=84 RuntimeManaged=true
+    StoreLocal            Slot=41 Source=105   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Jump                  Target=rc_representation_done_53   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_representation_copy_52:
+    LoadConstInt          Target=107 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallKnown             Target=108 FuncLabel=__rcnorm_4 EnvTemp=107 ArgTemp=84   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=41 Source=108   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_representation_done_53:
+    LoadLocal             Target=109 Slot=41   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadArgumentOwnership Target=110   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=111 Value=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    ShrInt                Target=112 Left=110 Right=111   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=113 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    AndInt                Target=114 Left=112 Right=113   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=114 Target=independent_result_not_requested_54   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadArgumentOwnership Target=115   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=116 Value=-8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    AndInt                Target=117 Left=115 Right=116   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=118 Value=2305843009213693952   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreMemOffset        BasePtr=117 OffsetBytes=0 Source=118   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  independent_result_not_requested_54:
+    LoadLocal             Target=119 Slot=30   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=120 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CmpIntNe              Target=121 Left=119 Right=120   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=121 Target=general_rc_owned_absent_55   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    IsReferenceCounted    Target=122 SourceTemp=119
+    JumpIfFalse           CondTemp=122 Target=general_rc_owned_absent_55   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=123 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallKnown             Target=124 FuncLabel=__rcdrop_record_8 EnvTemp=123 ArgTemp=119   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=30 Source=120   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  general_rc_owned_absent_55:
+    LoadLocal             Target=125 Slot=31   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=126 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CmpIntNe              Target=127 Left=125 Right=126   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=127 Target=general_rc_owned_absent_56   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    IsReferenceCounted    Target=128 SourceTemp=125
+    JumpIfFalse           CondTemp=128 Target=general_rc_owned_absent_56   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=129 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallKnown             Target=130 FuncLabel=__rcdrop_record_8 EnvTemp=129 ArgTemp=125   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=31 Source=126   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  general_rc_owned_absent_56:
+    LoadLocal             Target=131 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=132 Slot=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=132 Target=rc_tco_exit_drop_inactive_57   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=42 Source=131   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rcdrop_list_58:
+    LoadLocal             Target=133 Slot=42   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=134 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CmpIntNe              Target=135 Left=133 Right=134   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=135 Target=rcdrop_list_end_60   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    RcIsUnique            Target=136 SourceTemp=133
+    JumpIfFalse           CondTemp=136 Target=rcdrop_list_shared_59   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadMemOffset         Target=137 BasePtr=133 OffsetBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    RcDrop                SourceTemp=137 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=138 BasePtr=133 OffsetBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    RcDrop                SourceTemp=133 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=42 Source=138   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Jump                  Target=rcdrop_list_58   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rcdrop_list_shared_59:
+    RcDrop                SourceTemp=133 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_60   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rcdrop_list_end_60:
+  rc_tco_exit_drop_inactive_57:
+    LoadLocal             Target=139 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=140 Slot=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=140 Target=rc_tco_exit_drop_inactive_61   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=141 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallKnown             Target=142 FuncLabel=__rcdrop_record_8 EnvTemp=141 ArgTemp=139   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_tco_exit_drop_inactive_61:
+    LoadArgumentOwnership Target=143   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=144 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    ShrInt                Target=145 Left=143 Right=144   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    AndInt                Target=146 Left=145 Right=144   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    JumpIfFalse           CondTemp=146 Target=rc_result_owned_62   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Alloc                 Target=147 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    MakeClosure           Target=148 FuncLabel=__deepcopy_6 EnvPtrTemp=147 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreMemOffset        BasePtr=147 OffsetBytes=0 Source=148   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallClosure           Target=149 ClosureTemp=148 ArgTemp=109   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadConstInt          Target=150 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    CallKnown             Target=151 FuncLabel=__rcdrop_record_8 EnvTemp=150 ArgTemp=109   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=43 Source=149   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Jump                  Target=rc_result_done_63   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_result_owned_62:
+    StoreLocal            Slot=43 Source=109   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+  rc_result_done_63:
+    LoadLocal             Target=152 Slot=43   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Return                Source=152   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+
+function lambda_15  [ClosureHelper from lowerFields]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadEnv               Target=1 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=3 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadEnv               Target=4 Index=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    MakeClosure           Target=6 FuncLabel=lambda_16 EnvPtrTemp=0 EnvSizeBytes=24 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Return                Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+
+function lambda_14  [SourceFunction from lowerFields]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadEnv               Target=4 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    MakeClosure           Target=6 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Return                Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+
+function lambda_17  [SourceFunction from run]
+  locals=12 temps=36
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:11)
+    LoadConstInt          Target=1 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    LoadConstStr          Target=2 StrLabel=str_1   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:34)
+    Alloc                 Target=3 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    LoadConstStr          Target=4 StrLabel=str_2   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:29)
+    Alloc                 Target=5 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    LoadConstStr          Target=6 StrLabel=str_3   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:24)
+    Alloc                 Target=7 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:23)
+    CallClosure           Target=8 ClosureTemp=0 ArgTemp=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:11)
+    LoadEnv               Target=9 Index=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:40)
+    Borrow                Target=10 SourceTemp=9
+    CallClosure           Target=11 ClosureTemp=8 ArgTemp=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:11)
+    LoadConstInt          Target=12 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:73)
+    LoadLocal             Target=13 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:74)
+    Alloc                 Target=14 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:73)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=13   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:73)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=12   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:73)
+    LoadLocal             Target=15 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:88)
+    AllocAdt              Target=16 Tag=0 FieldCount=2 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:62)
+    SetAdtField           Ptr=16 FieldIndex=0 Source=14 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:62)
+    SetAdtField           Ptr=16 FieldIndex=1 Source=15 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:62)
+    LoadConstBool         Target=17   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:102)
+    AllocAdt              Target=18 Tag=0 FieldCount=2 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:50)
+    SetAdtField           Ptr=18 FieldIndex=0 Source=16 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:50)
+    SetAdtField           Ptr=18 FieldIndex=1 Source=17 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:50)
+    CallClosure           Target=19 ClosureTemp=11 ArgTemp=18   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:11)
+    StoreLocal            Slot=5 Source=19   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    LoadLocal             Target=20 Slot=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:11)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=21 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    CmpIntNe              Target=22 Left=20 Right=21   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    JumpIfFalse           CondTemp=22 Target=match_arm_cleanup_66   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    GetAdtField           Target=23 Ptr=20 FieldIndex=0 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    LoadConstInt          Target=24 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    CmpIntNe              Target=25 Left=23 Right=24   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    JumpIfFalse           CondTemp=25 Target=match_arm_cleanup_66   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    GetAdtField           Target=26 Ptr=23 FieldIndex=1 Tagless=true   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    StoreLocal            Slot=9 Source=26   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    LoadLocal             Target=27 Slot=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:25:49)
+    StoreLocal            Slot=6 Source=27   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
+    Jump                  Target=match_end_64   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+  match_arm_cleanup_66:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=11
+    Jump                  Target=match_none_65   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+  match_none_65:
+    LoadConstInt          Target=28 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    StoreLocal            Slot=6 Source=28   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+  match_end_64:
+    LoadLocal             Target=29 Slot=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:24:5)
+    LoadLocal             Target=30 Slot=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    LoadConstInt          Target=31 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    CmpIntNe              Target=32 Left=30 Right=31   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    JumpIfFalse           CondTemp=32 Target=general_rc_owned_absent_67   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    IsReferenceCounted    Target=33 SourceTemp=30
+    JumpIfFalse           CondTemp=33 Target=general_rc_owned_absent_67   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    LoadConstInt          Target=34 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    CallKnown             Target=35 FuncLabel=__rcdrop_record_8 EnvTemp=34 ArgTemp=30   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    StoreLocal            Slot=5 Source=31   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+  general_rc_owned_absent_67:
+    Return                Source=29   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+
+function lambda_19  [ClosureHelper from rounds]
+  locals=16 temps=24
+    LoadEnv               Target=0 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    StoreLocal            Slot=2 Source=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    StoreLocal            Slot=5 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    StoreLocal            Slot=6 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    StoreLocal            Slot=7 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+  lambda_19_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    LoadLocal             Target=2 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:8)
+    LoadConstInt          Target=3 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:8)
+    JumpIfFalse           CondTemp=4 Target=else_68   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:5)
+    LoadLocal             Target=5 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:29:10)
+    StoreLocal            Slot=11 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:5)
+    Jump                  Target=endif_69   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:5)
+  else_68:
+    LoadLocal             Target=6 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:17)
+    LoadConstInt          Target=7 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:21)
+    SubInt                Target=8 Left=6 Right=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:17)
+    LoadLocal             Target=9 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:24)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:36)
+    LoadMemOffset         Target=13 BasePtr=11 OffsetBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    LoadConstInt          Target=14 Value=62   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    ShrInt                Target=15 Left=13 Right=14   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    LoadConstInt          Target=16 Value=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    LoadConstInt          Target=17 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    CallClosure           Target=18 ClosureTemp=11 ArgTemp=12 RuntimeManagedArgumentFlagTemp=17   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:32)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    AddInt                Target=19 Left=9 Right=18   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:24)
+    LoadLocal             Target=20 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    LoadLocal             Target=21 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    StoreLocal            Slot=2 Source=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    StoreLocal            Slot=1 Source=19   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
+    RestoreStackPointer   Slot=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    Jump                  Target=lambda_19_body   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    LoadConstInt          Target=22 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:30:10)
+    StoreLocal            Slot=11 Source=22   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:5)
+  endif_69:
+    LoadLocal             Target=23 Slot=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:28:5)
+    Return                Source=23   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+
+function lambda_18  [SourceFunction from rounds]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    LoadLocal             Target=1 Slot=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    LoadEnv               Target=4 Index=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    MakeClosure           Target=6 FuncLabel=lambda_19 EnvPtrTemp=0 EnvSizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    Return                Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+
+function _start_main  [ProgramEntry]
+  locals=20 temps=29
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    StoreLocal            Slot=2 Source=1   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    MakeClosureStack      Target=3 FuncLabel=lambda_11 EnvPtrTemp=2 EnvSizeBytes=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    StoreLocal            Slot=5 Source=3   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    Alloc                 Target=4 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    LoadLocal             Target=5 Slot=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    Borrow                Target=6 SourceTemp=5
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    MakeClosure           Target=7 FuncLabel=lambda_14 EnvPtrTemp=4 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    StoreLocal            Slot=6 Source=7   (tco_generic_curried_helper_result_passed_to_self_call.ash:13:1)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    AllocStack            Target=8 SizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    LoadLocal             Target=9 Slot=6   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    LoadLocal             Target=10 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    Borrow                Target=11 SourceTemp=10
+    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=11   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    MakeClosureStack      Target=12 FuncLabel=lambda_17 EnvPtrTemp=8 EnvSizeBytes=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    StoreLocal            Slot=9 Source=12   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    Alloc                 Target=13 SizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    LoadLocal             Target=14 Slot=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    Borrow                Target=15 SourceTemp=14
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=15   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    MakeClosure           Target=16 FuncLabel=lambda_18 EnvPtrTemp=13 EnvSizeBytes=8   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    StoreLocal            Slot=10 Source=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:27:1)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadLocal             Target=17 Slot=10   (tco_generic_curried_helper_result_passed_to_self_call.ash:33:4)
+    LoadConstInt          Target=18 Value=1000   (tco_generic_curried_helper_result_passed_to_self_call.ash:33:11)
+    CallClosure           Target=19 ClosureTemp=17 ArgTemp=18   (tco_generic_curried_helper_result_passed_to_self_call.ash:32:1)
+    LoadConstInt          Target=20 Value=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:32:1)
+    CallClosure           Target=21 ClosureTemp=19 ArgTemp=20   (tco_generic_curried_helper_result_passed_to_self_call.ash:32:1)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=13
+    PrintInt              Source=21   (tco_generic_curried_helper_result_passed_to_self_call.ash:32:1)
+    AllocAdt              Target=22 Tag=0 FieldCount=0   (tco_generic_curried_helper_result_passed_to_self_call.ash:32:1)
+    StoreLocal            Slot=14 Source=22   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    LoadLocal             Target=23 Slot=9   (tco_generic_curried_helper_result_passed_to_self_call.ash:23:1)
+    CleanupResource       SourceTemp=23 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=15
+    CopyOutArena          DestTemp=24 SrcTemp=22 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=15
+    StoreLocal            Slot=16 Source=24   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    LoadLocal             Target=25 Slot=5   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    CleanupResource       SourceTemp=25 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=17
+    LoadLocal             Target=26 Slot=16   (tco_generic_curried_helper_result_passed_to_self_call.ash:11:1)
+    StoreLocal            Slot=18 Source=26   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    LoadLocal             Target=27 Slot=2   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    CleanupResource       SourceTemp=27 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=19
+    LoadLocal             Target=28 Slot=18   (tco_generic_curried_helper_result_passed_to_self_call.ash:9:1)
+    Return                Source=28
+

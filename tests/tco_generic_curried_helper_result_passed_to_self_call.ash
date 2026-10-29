@@ -1,0 +1,35 @@
+// expect: 503500
+type St =
+    | items: List(Int)
+    | next: Int
+
+type Res =
+    | state: St
+    | done: Bool
+
+let lowerVar (name: Str) (temp: Int) (state: St) = Res(state = (state with next = temp + 1), done = name == "")
+
+let lowerLoaded name lower (state: St) = lower(name)(state.next)(state)
+
+let recursive lowerFields (names: List(Str)) lower (result: Res) =
+    match result with
+        | Res { state = state } ->
+            match names with
+                | [] -> result
+                | name :: rest ->
+                    state
+                    |> lowerLoaded(name)(lower)
+                    |> lowerFields(rest)(lower)
+
+let run (seed: Int) =
+    match lowerFields(["a", "b", "c"])(lowerVar)(Res(state = St(items = [seed], next = seed), done = false)) with
+        | Res { state = St { next = next } } -> next
+
+let recursive rounds (n: Int) (total: Int) =
+    if n == 0
+    then total
+    else rounds(n - 1)(total + run(n))
+
+0
+|> rounds(1000)
+|> Ashes.IO.print

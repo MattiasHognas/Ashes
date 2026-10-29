@@ -3784,6 +3784,12 @@ let testRunTcoListWalkFixture shipped unit =
 let testRunSharedTcoUnusedChainParameter shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_unused_chain_parameter.ash"))("selfhostBackendRunSharedTcoUnusedChainParameter")("selfhost_backend_shared_tco_unused_chain_parameter_e2e")("0")
 
+// A loop handing a generic curried helper's result (`lowerLoaded(name)(lower)(state)`, whose result type
+// comes from the closure parameter alone) to its own self call: the call takes the general
+// contract's owned result rather than an arena result the loop then releases as counted.
+let testRunSharedTcoGenericCurriedHelperResult shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_generic_curried_helper_result_passed_to_self_call.ash"))("selfhostBackendRunSharedTcoGenericCurriedHelper")("selfhost_backend_shared_tco_generic_curried_helper_e2e")("503500")
+
 let testRunSharedTcoLetCallResultInAccumulatorRecord shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_call_result_in_accumulator_record.ash"))("selfhostBackendRunSharedTcoAccumulatorRecord")("selfhost_backend_shared_tco_accumulator_record_e2e")("picked;other;picked;other;|2000")
 
@@ -5802,6 +5808,7 @@ let run shipped =
     |> testRunTcoScalarLoopFixture(shipped)
     |> testRunTcoListWalkFixture(shipped)
     |> testRunSharedTcoUnusedChainParameter(shipped)
+    |> testRunSharedTcoGenericCurriedHelperResult(shipped)
     |> testRunSharedTcoLetCallResultInAccumulatorRecord(shipped)
     |> testRunSharedTcoOwnedLetInTailArgumentRecord(shipped)
     |> testRunSharedTcoOwnedLetInOperandSelfCall(shipped)

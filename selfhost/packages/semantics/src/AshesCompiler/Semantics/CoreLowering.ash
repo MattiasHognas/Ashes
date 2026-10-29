@@ -28110,20 +28110,37 @@ let recursive handTupleBindersBack (arguments: List(Expr)) (slots: List(Int)) (n
         | (argument :: restArguments, slot :: restSlots, name :: restNames) -> handTupleBinderBack(argument)(slot)(name)(state) :: handTupleBindersBack(restArguments)(restSlots)(restNames)(state)
         | _ -> arguments
 
+// The self call's parameters take the types the loop's own lambdas declared, before any argument
+// is lowered: the recursive binding's type is settled only once the body is, so an argument call
+// whose result type comes from this parameter alone (a generic helper's, say) would otherwise
+// close its window on an unresolved type. A mismatch is left to the argument that reports it.
+let recursive bindSelfCallParameterTypes functionType (parameterTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match parameterTypes with
+        | [] -> state
+        | parameterType :: rest ->
+            match ensureFunctionType(functionType)(state) with
+                | FunctionTypeResolution { error = Some(_error) } -> state
+                | FunctionTypeResolution { state = functionState, argumentType = argumentType, resultType = resultType, error = None } ->
+                    match bindType(argumentType)(parameterType)(functionState) with
+                        | (_failed, Some(_error)) -> state
+                        | (bound, None) -> bindSelfCallParameterTypes(resultType)(rest)(bound)
+
 let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) lower (state: CoreLoweringState) =
     match lookupBinding(loop.selfName)(state.bindings) with
         | None -> failure(state)(UnknownLoweringBinding(loop.selfName))
         | Some(binding) ->
             match instantiateBinding(binding)(state) with
-                | InstantiatedBinding { state = instantiatedState, semanticType = functionType } ->
-                    let arguments = handTupleBindersBack(spine.arguments)(frame.parameterSlots)(loop.parameterNames)(instantiatedState)
+                | InstantiatedBinding { state = instantiatedFunctionState, semanticType = functionType } ->
+                    let instantiatedState = bindSelfCallParameterTypes(functionType)(loop.parameterTypes)(instantiatedFunctionState)
                     in
-                        match lowerTailSelfCallArguments(arguments)(frame.parameterSlots)(loop.argumentShapes)(0)(loop)(frame.affineReservationSlots)(functionType)(lower)(instantiatedState)([])([]) with
-                            | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                            | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
-                                argumentState
-                                |> markCallArgumentsMoved(spine)
-                                |> emitTailSelfCallBackEdge(frame)(loop)(arguments)(temps)(argumentTypes)
+                        let arguments = handTupleBindersBack(spine.arguments)(frame.parameterSlots)(loop.parameterNames)(instantiatedState)
+                        in
+                            match lowerTailSelfCallArguments(arguments)(frame.parameterSlots)(loop.argumentShapes)(0)(loop)(frame.affineReservationSlots)(functionType)(lower)(instantiatedState)([])([]) with
+                                | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
+                                    argumentState
+                                    |> markCallArgumentsMoved(spine)
+                                    |> emitTailSelfCallBackEdge(frame)(loop)(arguments)(temps)(argumentTypes)
 
 // Whether a reuse specialization's body is being lowered (stage 0's `_inSpecialization`): its
 // fresh inputs are recorded from the generating call until the body is lowered.

@@ -1668,6 +1668,15 @@ element produced right there keeps an owner of its own, released after the copy,
 arena element (a contract record, say) was built with for loop-parameter reads are withdrawn as a
 copied record's are. Otherwise the element and the sibling parameter it read stayed behind the arena
 cell with nothing to release them (`GRC_NO_COPIEDLITERALSUCCESSOR` switches this off).
+
+Each self-call argument is lowered against the type of the parameter it replaces, as the lambda that
+binds the parameter declared it. Stage 0 knows these types before it lowers the body; stage 1 settles
+the recursive binding's own type only once the body is lowered, so it binds the self call's parameter
+types to the loop's declared ones before it lowers the arguments. Without that, an argument whose
+type comes from that parameter alone (`state |> lowerLoaded(name)(lower) |> lowerFields(rest)(lower)`,
+a generic helper ending in a call of the closure parameter `lower`) closed its call window on an
+unresolved type: it asked for an arena result and skipped the contract's owned-result protocol, and
+the loop then released the arena cell as a counted one.
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).
