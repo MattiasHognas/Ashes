@@ -3969,6 +3969,55 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_closure_parameter_variant_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop calls a function parameter for an optional key. The function behind it builds a
+        // fresh `None` or reads the key out of a record a call returned, so it normalizes its result
+        // onto the reference-counted heap; the call through the parameter asks for an arena result,
+        // which the callee copies before releasing its own.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildClosureParameterVariantResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("closure parameter variant result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_list_piped_into_applied_lambda_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list of strings read out of records is piped into a lambda whose result keeps some of
+        // its heads. The lambda's compiled body returns a reference-counted list, so the consumed
+        // list is released with its heads rather than spine-only.
+        int[] roundCounts = [20_000, 250_000, 1_000_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildListPipedIntoAppliedLambdaProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list piped into applied lambda", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_worklist_of_indices_walked_and_refilled_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15501,6 +15550,77 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildClosureParameterVariantResultProgram(int rounds)
+        => $$"""
+            type Layout =
+                | layoutName: Maybe(Str)
+                | layoutArity: Int
+
+            let layoutOf (n: Int) =
+                if n > 5
+                then Some(Layout(layoutName = Some("big" + Ashes.Text.fromInt(n)), layoutArity = n))
+                else None
+
+            let keyOf (n: Int) =
+                match layoutOf(n) with
+                    | Some(layout) -> layout.layoutName
+                    | None -> None
+
+            let recursive countKeys (candidates: List(Int)) (groupKey: Int -> Maybe(Str)) (total: Int) =
+                match candidates with
+                    | [] -> total
+                    | arm :: rest ->
+                        match groupKey(arm) with
+                            | Some(key) -> countKeys(rest)(groupKey)(total + Ashes.Text.length(key) - 3)
+                            | None -> countKeys(rest)(groupKey)(total + 1)
+
+            let run (seed: Int) = countKeys([seed, seed + 7, seed + 2])(keyOf)(0)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildListPipedIntoAppliedLambdaProgram(int rounds)
+        => $$"""
+            type Reference =
+                | referenceModule: Str
+                | referenceMember: Str
+
+            let recursive modulesOf (references: List(Reference)) =
+                match references with
+                    | [] -> []
+                    | reference :: rest -> reference.referenceModule :: modulesOf(rest)
+
+            let recursive dropFirst (names: List(Str)) =
+                match names with
+                    | [] -> []
+                    | name :: rest ->
+                        if name == "Ashes.Text"
+                        then dropFirst(rest)
+                        else name :: dropFirst(rest)
+
+            let mkRefs (seed: Int) = [Reference(referenceModule = "Ashes." + "Text", referenceMember = "jo" + "in"), Reference(referenceModule = "Ashes." + "Byte", referenceMember = "len" + "gth")]
+
+            let needed (seed: Int) =
+                seed
+                |> mkRefs
+                |> modulesOf
+                |> (given (names) -> dropFirst(names))
+
+            let run (seed: Int) = seed + Ashes.Collection.List.length(needed(seed))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

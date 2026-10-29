@@ -15974,6 +15974,24 @@ let appliedLambdaResultRuntimeManaged (context: CoreCallContext) (resultType: Se
 // The call result's known ownership: the callee's facts, or an applied lambda's compiled body.
 let contextResultRuntimeManaged (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) = callResultRuntimeManaged(context.facts)(resultType)(state) || appliedLambdaResultRuntimeManaged(context)(resultType)(state)
 
+// Stage 0's `CalleeCompiledResultVerifiedRuntimeManaged`: a callee whose compiled body is verified
+// to return a reference-counted result, a named function or a lambda applied where it is written
+// (compiled under its own label just before the call), copied or retained every part it kept.
+let calleeVerifiedResultRuntimeManaged (context: CoreCallContext) (state: CoreLoweringState) =
+    calleeCompiledResultRuntimeManaged(context.facts)(state) || (match context.appliedLambdaLabel with
+        | Some(label) ->
+            match state
+            |> stateFunctionReturnedClosureLabels
+            |> innermostStageLabel(context.argumentCount - 1)(label) with
+                | Some(stage) ->
+                    match state
+                    |> stateBodyRuntimeManagedByLabel
+                    |> Ashes.Collection.Map.getStr(stage) with
+                        | Some(runtimeManaged) -> runtimeManaged
+                        | None -> false
+                | None -> false
+        | None -> false)
+
 // Stage 0's `IsNormalizableUncoveredRecord`: a single-constructor named type with no call copy-out
 // that the entry normalization's copy re-establishes.
 let classifyNormalizableUncoveredRecord (name: Str) (named: SemanticType) (state: CoreLoweringState) =
@@ -16121,27 +16139,44 @@ let siblingResultPinned (context: CoreCallContext) (resultType: SemanticType) (s
                 | None -> false
         | None -> false)
 
+// Stage 0's `RequestsArenaResultFromUnknownCallee`: a call through a closure no let-bound function
+// or applied lambda names, whose result is a variant outside the contract with no fixed copy-out,
+// keeps that result as an arena value and never releases it. A callee that normalized its result
+// onto the reference-counted heap would hand over a reference nothing releases, so the call asks
+// for an arena result, which such a callee deep-copies into the arena before releasing its own.
+let requestsArenaResultFromUnknownCallee (context: CoreCallContext) (readsResult: Bool) (resultType: SemanticType) (state: CoreLoweringState) =
+    match (readsResult, context.facts, context.appliedLambdaLabel, resolveType(state)(resultType)) with
+        | (false, None, None, SemNamed(_symbolId, _name, _arguments) as named) -> !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
+        | _ -> false
+
+// The request word itself: bit 1 beside the argument ownership flag, when the call passes one.
+let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = requestState, temp = requestTemp } ->
+            let loaded =
+                emit(LoadConstInt(requestTemp)(2))(requestState)
+            in
+                if argumentFlagTemp < 0
+                then (loaded, requestTemp)
+                else
+                    match freshTemp(loaded) with
+                        | FreshTemp { state = wordState, temp = wordTemp } ->
+                            (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
+
 // Stage 0's `EmitArenaResultRequestWord`: the hidden ownership word carrying the arena-result
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one. Only the
 // last application of a spine asks: an earlier one yields a closure, which stage 0 sees as a
 // function type, while a self call of a recursive binding whose arrow is still open sees a variable.
-let emitArenaResultRequestWord (context: CoreCallContext) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if (requestsArenaResult(resultType)(state) || siblingResultOpen(context)(resultType)(state)) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
-        match freshTemp(if selfResultDeferred(context)(state) || siblingResultPinned(context)(resultType)(state)
+        emitRequestWord(argumentFlagTemp)(if selfResultDeferred(context)(state) || siblingResultPinned(context)(resultType)(state)
         then state
-        else withStateUnresolvedCallResults(resultType :: stateUnresolvedCallResults(state))(state)) with
-            | FreshTemp { state = requestState, temp = requestTemp } ->
-                let loaded =
-                    emit(LoadConstInt(requestTemp)(2))(requestState)
-                in
-                    if argumentFlagTemp < 0
-                    then (loaded, requestTemp)
-                    else
-                        match freshTemp(loaded) with
-                            | FreshTemp { state = wordState, temp = wordTemp } ->
-                                (emit(OrInt(wordTemp)(argumentFlagTemp)(requestTemp))(wordState), wordTemp)
-    else (state, argumentFlagTemp)
+        else withStateUnresolvedCallResults(resultType :: stateUnresolvedCallResults(state))(state))
+    else
+        if requestsArenaResultFromUnknownCallee(context)(readsResult)(resultType)(state)
+        then emitRequestWord(argumentFlagTemp)(state)
+        else (state, argumentFlagTemp)
 
 // Stage 0's `_borrowedArgumentCalls`: a call that only borrows its argument, recorded by the
 // function it is emitted into (the program entry outside every lifted function) and its result.
@@ -16260,7 +16295,7 @@ let emitAppliedCall (context: CoreCallContext) arity argumentType consumed funct
                         | FreshTemp { state = targetState, temp = target } ->
                             match if arity == 1
                             then
-                                match emitArenaResultRequestWord(context)(argumentFlagTemp)(resultType)(targetState) with
+                                match emitArenaResultRequestWord(context)(readsResult)(argumentFlagTemp)(resultType)(targetState) with
                                     | (arenaState, arenaWord) -> emitTupleResultPartsRequestWord(context)(resultType)(arenaWord)(arenaState)
                             else (targetState, argumentFlagTemp) with
                                 | (wordState, wordTemp) ->
@@ -16992,7 +17027,7 @@ let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType)
         then (true, -1)
         else
             if contextResultRuntimeManaged(context)(resultType)(state)
-            then (!stableReuse && calleeCompiledResultRuntimeManaged(context.facts)(state), -1)
+            then (!stableReuse && calleeVerifiedResultRuntimeManaged(context)(state), -1)
             else (!stableReuse && hasCallCopyOut(resultType)(state), resultFlagTemp))
 
 // The generic list deep copy rebuilds every element and its owned parts on the arena branch of
@@ -17035,7 +17070,7 @@ let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticTyp
             |> normalizedOwnedResultSevers(stage) with
                 | (resultCopySevers, resultCopyFlagTemp) ->
                     emitConsumedArgumentDrops(CoreConsumedReleasePolicy(
-                        verifiedRuntimeResult = calleeCompiledResultRuntimeManaged(context.facts)(state),
+                        verifiedRuntimeResult = calleeVerifiedResultRuntimeManaged(context)(state),
                         elementCopyingFlagTemp = elementCopyingFlagTemp,
                         resultNormalized = stage.resultNormalized,
                         resultDeepCopied = stage.resultDeepCopied,
@@ -17737,7 +17772,7 @@ let resultCopyCopiesElements (semanticType: SemanticType) (state: CoreLoweringSt
 let resultAlreadySettled (context: CoreCallContext) (stage: CoreCallStage) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     isRuntimeTemp(temp)(state) || stage.resultNormalized || stage.resultDeepCopied || context.selfCallee && (match stateSpecializingReuseLabel(state) with
         | Some(_label) -> true
-        | None -> false) || contextResultRuntimeManaged(context)(semanticType)(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || resultCopyCopiesElements(semanticType)(state)
+        | None -> false) || contextResultRuntimeManaged(context)(semanticType)(state) || calleeVerifiedResultRuntimeManaged(context)(state) || resultCopyCopiesElements(semanticType)(state)
 
 // The elements of a tuple result made owned before its arguments are released: each is a scalar
 // or a value that normalizes into an owned one, and at least one is not a scalar.

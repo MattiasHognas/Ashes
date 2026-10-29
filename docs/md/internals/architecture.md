@@ -1518,6 +1518,17 @@ type the first pass settled there, right after the call. The call then takes a c
 compiler lowers only the recursive group twice, from the state before the group, and only when the
 group's first lowering settled such a call.
 
+A call through a closure that no function or applied lambda names (a function parameter, say) whose
+result is a variant outside the contract with no fixed copy-out reads no returns bit and keeps the
+result as an arena value. A callee may still have normalized such a result onto the
+reference-counted heap (`match lookup(n) with | Some(r) -> r.name | None -> None` joins a field it
+read with a fresh `None`), which nothing would then release, so the call asks for an arena result
+the same way and the callee copies its result into the arena before releasing its own
+(`GRC_NO_UNKNOWNCALLEEARENA` switches this off). A lambda applied where it is written (`names |>
+(given (xs) -> keep(xs))`) is compiled under its own label just before its call, so its body
+verifies its reference-counted result the way a named callee's does, and the list consumed by the
+pipe is released with its heads rather than spine-only (`GRC_NO_APPLIEDLAMBDAVERIFIED`).
+
 An arena cell never releases a fresh reference-counted child stored into it (an owned call result,
 or a tuple holding fresh lists). A constructor of the contract's types hands such a child to an
 owned slot, released once the result holds a reference of its own; any other constructor is placed

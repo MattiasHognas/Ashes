@@ -154,6 +154,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new PerformArmResultTemplate());
         registry.Register(new WorklistOfIndicesWalkedAndRefilledTemplate());
         registry.Register(new ForwardedIndependentResultTemplate());
+        registry.Register(new UnknownCalleeVariantResultTemplate());
+        registry.Register(new AppliedLambdaConsumedListTemplate());
     }
 }
 
