@@ -158,6 +158,18 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool NormalizedFreshJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDFRESHJOIN") is null;
+
+    // A normalized join every reaching arm of which now hands over a reference of its own: each arm
+    // the normalization did not touch already owned one (a value it just produced, a retain it took),
+    // and each arm it did was retained or copied right before its store. The join's value is then
+    // fresh, so a consuming read releases it as it would have released each arm's value.
+    private bool NormalizedArmsAllOwnTheirReference(IReadOnlyList<JoinArm> arms)
+        => NormalizedFreshJoinRuleEnabled
+            && arms.Where(arm => !IsOwnershipNeutralArm(arm))
+                .All(arm => !IsOwnedJoinArm(arm) || IsOwnedScopeResultArm(arm));
+
     private static bool FreshUniformJoinRuleEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_FRESHUNIFORMJOIN") is null;
 

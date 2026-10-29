@@ -142,7 +142,8 @@ public sealed partial class Lowering
         bool allNewlyProduced = (runtimeManagedResultArms is not null
             && runtimeManagedResultArms.Count == cases.Count
             && runtimeManagedResultArms.All(arm => arm.NewlyProduced))
-            || (joinArms is not null && ReachingArmsAllNewlyProduced(joinArms));
+            || (joinArms is not null && ReachingArmsAllNewlyProduced(joinArms))
+            || (normalized && NormalizedArmsAllOwnTheirReference(joinArms!));
         RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged, allNewlyProduced);
     }
 

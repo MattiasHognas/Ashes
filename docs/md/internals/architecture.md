@@ -1705,6 +1705,10 @@ the binding only borrows from the tuple (`GRC_NO_OWNERPARTCHILD`).
 A join of such a normalized join and an arm handing over a value it just built (the parser's
 `if in then (items, Some(expression), state) else <normalized join>`) owns its value too, so the
 function's return takes it over instead of retaining it a second time (`GRC_NO_FRESHUNIFORMJOIN`).
+A normalized `match` join whose untouched arms each hand over a reference of their own (a value the
+arm just produced, a retain it took) is itself newly produced, not only owned: a consuming read such
+as a byte length releases it. Before, `match [fromInt(n), "a"] with | x :: _ -> x | [] -> ""` read
+inline by its caller left the copied head on the heap once per call (`GRC_NO_NORMALIZEDFRESHJOIN`).
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record
