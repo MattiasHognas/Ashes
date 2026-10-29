@@ -667,6 +667,10 @@ type CoreFunctionState =
 
 type CoreOwnerState =
     | backEdgeDummyTemps: List(Int)
+    // The temps holding a cell rebuilt in place or allocated into to-space, and a reuse
+    // specialization's results of its own self call, stage 0's `_reuseResultTemps`: such a result
+    // crosses its scope's reset as it is, never copied onto the reference-counted heap.
+    | reuseResultTemps: List(Int)
     | patternOwnerCopyTemps: List(Int)
     | runtimeOwners: List((Int, Bool))
     // The temps holding a pattern owner's retained reference as a branch result, and the joins
@@ -1456,6 +1460,21 @@ let stateBackEdgeDummyTemps (state: CoreLoweringState) =
 let withStateBackEdgeDummyTemps value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with backEdgeDummyTemps = value))
+
+let stateReuseResultTemps (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.reuseResultTemps)
+
+let withStateReuseResultTemps value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with reuseResultTemps = value))
+
+let markReuseResultTemp (temp: Int) (state: CoreLoweringState) = withStateReuseResultTemps(temp :: stateReuseResultTemps(state))(state)
+
+let isReuseResultTemp (temp: Int) (state: CoreLoweringState) =
+    state
+    |> stateReuseResultTemps
+    |> containsInt(temp)
 
 let statePatternOwnerCopyTemps (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -2482,6 +2501,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         ownerState = CoreOwnerState(
             retiredLocals = [],
             backEdgeDummyTemps = [],
+            reuseResultTemps = [],
             patternOwnerCopyTemps = [],
             runtimeOwners = [],
             borrowedOwners = [],
@@ -4890,7 +4910,7 @@ let retainAliasArgumentOwners (argument: Expr) (reaches: Bool) (lowered: Lowered
 let closeScopeForResult (resultTemp: Int) (resultType: SemanticType) cursorSlot endSlot state =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
-            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(stateBackEdgeDummyTemps(allocated))
+            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(stateBackEdgeDummyTemps(allocated)) || isReuseResultTemp(resultTemp)(allocated)
             then emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
             else allocated
 
@@ -4970,7 +4990,7 @@ let emitScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSlot state 
 let closeOwnedScopeForResult (resultTemp: Int) (resultType: SemanticType) cursorSlot endSlot state =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
-            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(stateBackEdgeDummyTemps(allocated))
+            if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(stateBackEdgeDummyTemps(allocated)) || isReuseResultTemp(resultTemp)(allocated)
             then (emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated), None)
             else
                 match scopeCopyOutOf(resultType)(allocated) with
@@ -6172,6 +6192,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             (current with runtimeTemps = Ashes.Collection.Map.empty)
             |> withStateRecursiveProducerResultSlots([])
             |> withStateBackEdgeDummyTemps([])
+            |> withStateReuseResultTemps([])
             |> withStatePatternOwnerCopyTemps([])
             |> withStateRuntimeOwners([])
             |> withStateBorrowedOwners([])
@@ -17010,6 +17031,13 @@ let calleeResultPoisoned (context: CoreCallContext) =
         | Some(CoreCalleeFacts { reach = ResultReachState { isPoisoned = isPoisoned } }) -> isPoisoned
         | None -> true
 
+// Stage 0's `IsSpecializationSelfReuseCall`: a reuse specialization's call to itself rebuilds the
+// accumulator in place, so its result stays where it is rather than being copied past the reset.
+let specializationSelfReuseCall (context: CoreCallContext) (state: CoreLoweringState) =
+    context.selfCallee && (match stateSpecializingReuseLabel(state) with
+        | Some(_label) -> true
+        | None -> false)
+
 // Stage 0's `ResolveHandedOverReleaseGuard`. A result a reset reclaims holds no reference to any
 // argument, so copying it out severs everything. A callee whose compiled body is verified to return a
 // reference-counted result owns every part of it — its construction paths copied or retained whatever
@@ -17018,10 +17046,7 @@ let calleeResultPoisoned (context: CoreCallContext) =
 // references, and the result-ownership bit selects that branch at runtime. A specialization's self reuse
 // call keeps its result in place, so nothing is severed there.
 let handedOverReleaseGuard (context: CoreCallContext) (resultType: SemanticType) (resultFlagTemp: Int) (state: CoreLoweringState) =
-    (let stableReuse =
-        context.selfCallee && (match stateSpecializingReuseLabel(state) with
-            | Some(_label) -> true
-            | None -> false)
+    (let stableReuse = specializationSelfReuseCall(context)(state)
     in
         if resultSurvivesReset(resolveType(state)(resultType))(state)
         then (true, -1)
@@ -17593,9 +17618,11 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
             |> withdrawTuplePartsRequestOutsideContract(context)(temp)(semanticType)
             |> freshLocal with
                 | FreshLocal { state = allocated, local = preRestoreSlot } ->
-                    if !isGeneralRcValueType(semanticType)(allocated) && (isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated))
+                    if !isGeneralRcValueType(semanticType)(allocated) && (isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated) || specializationSelfReuseCall(context)(allocated))
                     then
-                        allocated
+                        (if specializationSelfReuseCall(context)(allocated)
+                        then markReuseResultTemp(temp)(allocated)
+                        else allocated)
                         |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
                         |> success(temp)(semanticType)
                         |> closedCallStage(stage)(false)(false)
@@ -19143,7 +19170,7 @@ let closeGuardedArmBracket cursorSlot endSlot (state: CoreLoweringState) =
 // Whether an arm's closing bracket resets the arena, stage 0's `PopOwnershipScope` test: the
 // result survives the reset, or already lives on the reference-counted heap.
 let armResultSurvivesReset (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state) || containsInt(resultTemp)(stateBackEdgeDummyTemps(state))
+    resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state) || containsInt(resultTemp)(stateBackEdgeDummyTemps(state)) || isReuseResultTemp(resultTemp)(state)
 
 // Stage 0's `EmitOwnedValueDrop` of a runtime-managed list owner whose heads are scalars: the
 // owner is loaded into a cursor slot and its spine walked iteratively (`rcdrop_list_N`), a
@@ -21150,6 +21177,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             (current with runtimeTemps = Ashes.Collection.Map.empty)
             |> withStateRecursiveProducerResultSlots([])
             |> withStateBackEdgeDummyTemps([])
+            |> withStateReuseResultTemps([])
             |> withStatePatternOwnerCopyTemps([])
             |> withStateRuntimeOwners([])
             |> withStateBorrowedOwners([])
@@ -22099,6 +22127,7 @@ let allocateListCell headTemp tailTemp elementType (runtimeManaged: Bool) state 
                 | FreshTemp { state = allocatedState, temp = cellTemp } ->
                     allocatedState
                     |> emit(AllocReusing(cellTemp)(0)(2)(token.temp)(false)(true)(false))
+                    |> markReuseResultTemp(cellTemp)
                     |> emit(StoreMemOffset(cellTemp)(0)(headTemp))
                     |> emit(StoreMemOffset(cellTemp)(8)(tailTemp))
                     |> markAggregateRuntimeManaged(cellTemp)(false)
@@ -23337,7 +23366,9 @@ let emitFreshConstructorCell (resultTemp: Int) (tag: Int) (fieldCount: Int) (sta
     else
         if specializationCellsArePersistent(state)
         then
-            emit(AllocAdtToSpace(resultTemp)(tag)(fieldCount)(tagless))(state)
+            state
+            |> emit(AllocAdtToSpace(resultTemp)(tag)(fieldCount)(tagless))
+            |> markReuseResultTemp(resultTemp)
         else
             emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))(state)
 
@@ -23354,6 +23385,7 @@ let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(S
                 | (transferredState, transferredTemps) ->
                     match transferredState
                     |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(token.runtimeManaged)(false)(tagless))
+                    |> markReuseResultTemp(resultTemp)
                     |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(Some(token))(resultTemp)(tagless)(transferredTemps) with
                         | (materializedState, materializedTemps) ->
                             materializedState
