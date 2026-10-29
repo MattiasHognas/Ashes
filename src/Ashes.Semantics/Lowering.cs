@@ -3238,7 +3238,7 @@ public sealed partial class Lowering
             Expr.TupleLit tuple => LowerTupleLit(tuple, request),
             Expr.ListLit list => LowerListLit(list, request),
             Expr.Cons cons => LowerCons(cons, request),
-            Expr.Match match => LowerMatch(match, request),
+            Expr.Match match => LowerMatchOrPerformScrutineeBinding(match, request),
             Expr.Await awaitExpr => LowerAwait(awaitExpr),
             Expr.RecordLit rl => LowerRecordLit(rl, request),
             Expr.RecordUpdate ru => LowerRecordUpdate(ru, request),

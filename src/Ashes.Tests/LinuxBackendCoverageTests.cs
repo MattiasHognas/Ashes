@@ -3178,6 +3178,29 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_match_on_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A handled body matches the perform result directly and returns its head. The perform
+        // site adopts the arm's list as an owned value, and the match releases it after the arm.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMatchOnPerformResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 481}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("match on a perform result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14770,6 +14793,27 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + countOf(continueParsing(wide)(Ok(make(n)))))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMatchOnPerformResultProgram(int rounds)
+        => $$"""
+            capability Source(a) =
+                | get : Unit -> a
+
+            let wide = "{{new string('w', 480)}}"
+
+            let probe (n: Int) =
+                handle (match perform Source.get(Unit) with
+                    | x :: _ -> x
+                    | [] -> "") with
+                    | Source.get(_) -> resume([wide + Ashes.Text.fromInt(n % 10), wide])
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + Ashes.Text.byteLength(probe(n)))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

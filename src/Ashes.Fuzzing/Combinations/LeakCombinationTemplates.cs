@@ -157,6 +157,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new UnknownCalleeVariantResultTemplate());
         registry.Register(new AppliedLambdaConsumedListTemplate());
         registry.Register(new NamedHelperConsumedListTemplate());
+        registry.Register(new PerformScrutineeTemplate());
     }
 }
 

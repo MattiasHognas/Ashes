@@ -1588,6 +1588,33 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool PerformScrutineeOwnerRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_PERFORMSCRUTINEE") is null;
+
+    /// <summary>
+    /// A match directly on a perform result, in a function that may run under a live handler post,
+    /// lowers as a `let` binding of the result scoped over the match. The perform site adopts the
+    /// arm's result into an owned reference-counted value on both of its branches, but such a
+    /// function gives a match scrutinee no owner (a pending post can leave a scope's result as a
+    /// raw arena pointer), so the result was never released. The binding owns it instead and
+    /// releases it after the match, while the arms read its parts as views copied out of their
+    /// scopes as the function's other values are.
+    /// </summary>
+    private (int, TypeRef) LowerMatchOrPerformScrutineeBinding(Expr.Match match, LoweredValueRequest request)
+    {
+        if (!PerformScrutineeOwnerRuleEnabled
+            || match.Value is not Expr.Perform
+            || !AllowsAsyncIndependentRcPlacement
+            || AllowsOrdinaryRcPlacement)
+        {
+            return LowerMatch(match, request);
+        }
+
+        string name = $"$perform_scrutinee_{_nextCapabilitySiteId}";
+        Expr.Let binding = new(name, match.Value, match with { Value = new Expr.Var(name) });
+        return LowerExpr(binding, request).AsPair();
+    }
+
     /// <summary>
     /// Establishes (or resolves) the single owner whose drop is responsible for a match scrutinee,
     /// returning its tracking name together with the names of any fields that got their own

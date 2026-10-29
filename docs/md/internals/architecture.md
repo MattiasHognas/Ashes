@@ -2078,6 +2078,13 @@ self-hosted compiler applies the `return` arm inline instead, as a `let` of the 
 over the arm and bracketed like a nested `let`: the binding adopts a newly produced body value and
 releases it when the arm's result does not hand it on.
 
+A function that installs a handler keeps its match scrutinees off the reference-counted owner
+path, because a pending post can leave a scope's result as a raw arena pointer. A perform result
+is the exception: the site adopts it into an owned reference-counted value on both of its
+branches, so a `match` directly on `perform` there lowers as a `let` binding of the result scoped
+over the match. The binding owns the value and releases it after the match, and the arms read its
+parts as views copied out of their scopes (`GRC_NO_PERFORMSCRUTINEE`).
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the
