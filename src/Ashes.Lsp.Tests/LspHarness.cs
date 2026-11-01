@@ -180,10 +180,10 @@ public sealed class LspHarness : IAsyncDisposable
         {
             await _process.WaitForExitAsync(cts.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
             TryKillProcess();
-            throw new TimeoutException($"Timed out waiting for ashes-lsp to exit. Assembly: '{_lspAssemblyPath}'.");
+            throw new TimeoutException($"Timed out waiting for ashes-lsp to exit. Assembly: '{_lspAssemblyPath}'.", ex);
         }
     }
 

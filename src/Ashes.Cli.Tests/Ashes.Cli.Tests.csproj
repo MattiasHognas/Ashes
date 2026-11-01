@@ -15,9 +15,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="TUnit" Version="1.68.4" />
+    <PackageReference Include="TUnit" Version="1.78.0" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
-    <PackageReference Include="Microsoft.Testing.Platform" Version="2.4.1" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="2.5.2" />
   </ItemGroup>
 
 </Project>

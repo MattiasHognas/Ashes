@@ -621,12 +621,12 @@ public sealed class LinuxArm64BackendCoverageTests
             {
                 await proc.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout).ConfigureAwait(false);
             }
-            catch (TimeoutException)
+            catch (TimeoutException ex)
             {
                 TryKillProcess(proc);
                 var stdout = await stdoutTask.ConfigureAwait(false);
                 var stderr = await stderrTask.ConfigureAwait(false);
-                throw new TimeoutException($"Compiled linux-arm64 process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
+                throw new TimeoutException($"Compiled linux-arm64 process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}", ex);
             }
 
             var finalStdout = await stdoutTask.ConfigureAwait(false);
