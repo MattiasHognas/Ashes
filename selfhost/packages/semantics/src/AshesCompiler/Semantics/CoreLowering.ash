@@ -672,6 +672,10 @@ type CoreOwnerState =
     // crosses its scope's reset as it is, never copied onto the reference-counted heap.
     | reuseResultTemps: List(Int)
     | patternOwnerCopyTemps: List(Int)
+    // The pattern-owner duplicates an arena cell held and a scope's copy took over, each released
+    // right after the copy by a marker promoted together with the duplicate (stage 0's
+    // `_releasedPatternOwnerDuplicates`).
+    | releasedPatternOwnerDuplicates: List(Int)
     | runtimeOwners: List((Int, Bool))
     // The temps holding a pattern owner's retained reference as a branch result, and the joins
     // every reaching branch stored one into: such a result crosses an arm's reset without a copy.
@@ -1486,6 +1490,14 @@ let statePatternOwnerCopyTemps (state: CoreLoweringState) =
 let withStatePatternOwnerCopyTemps value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with patternOwnerCopyTemps = value))
+
+let stateReleasedPatternOwnerDuplicates (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.releasedPatternOwnerDuplicates)
+
+let withStateReleasedPatternOwnerDuplicates value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with releasedPatternOwnerDuplicates = value))
 
 let statePatternOwnerResultTemps (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -2514,6 +2526,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             backEdgeDummyTemps = [],
             reuseResultTemps = [],
             patternOwnerCopyTemps = [],
+            releasedPatternOwnerDuplicates = [],
             runtimeOwners = [],
             borrowedOwners = [],
             pendingBorrowedOwners = [],
@@ -5031,9 +5044,43 @@ let scopeCopyOutInstruction copyOut copyTemp resultTemp =
         | ShallowScopeCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(true)(RcNormalization)(None)
         | ListScopeCopyOut -> CopyOutList(copyTemp)(resultTemp)(InlineListHead)(true)(RcNormalization)
 
+// Whether this function built `cellTemp` as an arena cell (a cons or tuple allocation).
+let recursive allocatesCell (cellTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(target, _sizeBytes, _runtimeManaged) } :: rest -> target == cellTemp || allocatesCell(cellTemp)(rest)
+        | _instruction :: rest -> allocatesCell(cellTemp)(rest)
+
+// Whether `temp` is a duplicate marker not yet made real: the identity a pattern owner's read
+// takes for an aggregate until the loop's finalize pass promotes it.
+let recursive isDuplicateMarker (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged == false
+            else isDuplicateMarker(temp)(rest)
+        | _instruction :: rest -> isDuplicateMarker(temp)(rest)
+
+// Stage 0's `ReleaseCellTailRetainAfterCopy`: a scope's result built as an arena cons cell whose
+// tail is a pattern owner's duplicate taken for the cell (a list matched out of a loop parameter
+// inside the loop's successor). The reference-counted copy stops at that tail and takes a reference
+// of its own, and the arena cell never releases anything, so the duplicate is released right after
+// the copy by a marker promoted together with it.
+let releaseCellTailDuplicateAfterCopy copyOut (resultType: SemanticType) (cellTemp: Int) (state: CoreLoweringState) =
+    match (copyOut, constructionWordSource(cellTemp)(8)(state.reversedInstructions)) with
+        | (ListScopeCopyOut, Some(tail)) ->
+            if allocatesCell(cellTemp)(state.reversedInstructions) && isDuplicateMarker(tail)(state.reversedInstructions) && !containsInt(tail)(stateReleasedPatternOwnerDuplicates(state))
+            then
+                state
+                |> emit(RcDrop(tail)(patternOwnerTypeName(resolveType(state)(resultType))(state))(-1)(false)(false)(None))
+                |> withStateReleasedPatternOwnerDuplicates(tail :: stateReleasedPatternOwnerDuplicates(state))
+            else state
+        | _ -> state
+
 // Restores the arena, copies the result past the reset into a fresh runtime-managed temp, and
 // reclaims the chunks, stage 0's `TryEmitScopeCopyOut` with the RC-normalizing copy.
-let emitUnguardedScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSlot state =
+let emitUnguardedScopeCopyOut copyOut (resultType: SemanticType) resultTemp cursorSlot endSlot preRestoreSlot state =
     match state
     |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
     |> freshTemp with
@@ -5041,6 +5088,7 @@ let emitUnguardedScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSl
             restored
             |> emit(scopeCopyOutInstruction(copyOut)(copyTemp)(resultTemp))
             |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+            |> releaseCellTailDuplicateAfterCopy(copyOut)(resultType)(resultTemp)
             |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
             |> (given (closed) -> (closed, copyTemp))
 
@@ -5048,10 +5096,10 @@ let emitUnguardedScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSl
 // result travels through a slot that the skipped path leaves holding the original pointer. The
 // reloaded temp carries the copy's ownership fact; on the skipped path it reads the arena value,
 // whose release is a no-op against its immortal header.
-let emitScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSlot state =
+let emitScopeCopyOut copyOut (resultType: SemanticType) resultTemp cursorSlot endSlot preRestoreSlot state =
     if stateCapabilityGlobalCount(state) == 0
     then
-        match emitUnguardedScopeCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(state) with
+        match emitUnguardedScopeCopyOut(copyOut)(resultType)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(state) with
             | (closed, copyTemp) -> (closed, Some(copyTemp))
     else
         match freshLocal(state) with
@@ -5060,7 +5108,7 @@ let emitScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSlot state 
                 |> emit(StoreLocal(guardSlot)(resultTemp))
                 |> beginLivePostsGuard with
                     | (guarded, skipLabel) ->
-                        match emitUnguardedScopeCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(guarded) with
+                        match emitUnguardedScopeCopyOut(copyOut)(resultType)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(guarded) with
                             | (copied, copyTemp) ->
                                 match copied
                                 |> emit(StoreLocal(guardSlot)(copyTemp))
@@ -5083,7 +5131,7 @@ let closeOwnedScopeForResult (resultTemp: Int) (resultType: SemanticType) cursor
             else
                 match scopeCopyOutOf(resultType)(allocated) with
                     | None -> (allocated, None)
-                    | Some(copyOut) -> emitScopeCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
+                    | Some(copyOut) -> emitScopeCopyOut(copyOut)(resultType)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
 
 // The reloaded copy of a spilled reference-counted result holds the same reference.
 let inheritRuntimeTemp (sourceTemp: Int) (targetTemp: Int) (state: CoreLoweringState) =
@@ -6280,6 +6328,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateBackEdgeDummyTemps([])
             |> withStateReuseResultTemps([])
             |> withStatePatternOwnerCopyTemps([])
+            |> withStateReleasedPatternOwnerDuplicates([])
             |> withStateRuntimeOwners([])
             |> withStateBorrowedOwners([])
             |> withStatePendingBorrowedOwners([])
@@ -13865,19 +13914,23 @@ let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLo
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
 // type name, naming the structural dropper of a value whose release reaches past its own cell
-// (the marker is one instruction, so an aggregate owner's walk lives behind that label).
-let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
+// (the marker is one instruction, so an aggregate owner's walk lives behind that label). A release
+// marker of a duplicate a scope's copy took over (`released`) is promoted with that duplicate.
+let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (released: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
     match instructions with
         | [] -> []
         | (IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
             (if containsInt(source)(aliases) && !runtimeManaged
             then instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
-        | (IrInstruction { instruction = RcDrop(source, _typeName, ownerSlot, _runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+        | (IrInstruction { instruction = RcDrop(source, markerTypeName, ownerSlot, runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
             (if ownerSlot == slot
             then instruction with instruction = RcDrop(source)(typeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
-        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
+            else
+                if !runtimeManaged && containsInt(source)(released) && containsInt(source)(aliases)
+                then instruction with instruction = RcDrop(source)(markerTypeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
+                else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
 
 let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
@@ -13900,7 +13953,7 @@ let promotePatternOwnerMarkers (site: PatternOwnerSite) (state: CoreLoweringStat
                         synthesized
                         |> markRuntimeTemps(aliases)
                         |> (given (marked: CoreLoweringState) ->
-                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
+                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(stateReleasedPatternOwnerDuplicates(marked))(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
 
 let recursive promotePatternOwnerSites (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
     match sites with
@@ -21570,6 +21623,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateBackEdgeDummyTemps([])
             |> withStateReuseResultTemps([])
             |> withStatePatternOwnerCopyTemps([])
+            |> withStateReleasedPatternOwnerDuplicates([])
             |> withStateRuntimeOwners([])
             |> withStateBorrowedOwners([])
             |> withStatePendingBorrowedOwners([])

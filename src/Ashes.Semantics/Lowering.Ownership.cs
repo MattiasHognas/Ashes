@@ -2462,6 +2462,7 @@ public sealed partial class Lowering
         if (normalizeToRuntimeOwnership)
         {
             MarkRuntimeManagedTemp(copyDest);
+            ReleaseCellTailRetainAfterCopy(copyOutKind, resultType, resultTemp);
         }
         Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
         PopTrackedOwnershipScope();
@@ -2485,6 +2486,24 @@ public sealed partial class Lowering
 
         copiedResultTemp = copyDest;
         return true;
+    }
+
+    /// <summary>
+    /// A scope's result built as an arena cons cell whose tail is a pattern owner's duplicate taken
+    /// for the cell (a list matched out of a loop parameter inside the loop's successor): the
+    /// reference-counted copy stops at that tail and takes a reference of its own, and the arena cell
+    /// never releases anything, so the duplicate is released right after the copy by a marker
+    /// promoted together with it.
+    /// </summary>
+    private void ReleaseCellTailRetainAfterCopy(CopyOutKind copyOutKind, TypeRef resultType, int cellTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_SCOPECOPYTAILRELEASE") is null
+            && copyOutKind == CopyOutKind.List
+            && FindLastInstruction(instruction => instruction is IrInst.Alloc allocation && allocation.Target == cellTemp) >= 0
+            && ConstructionWordSource(cellTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)) is int tail)
+        {
+            ReleaseNormalizedPatternOwnerDuplicate(tail, resultType);
+        }
     }
 
     private void EmitScopeCopyOutInstruction(

@@ -1693,6 +1693,14 @@ unchanged or through a name, is only borrowed by the update, and releasing it li
 frees what the record still holds. Left unreleased, the update's cons kept its retain of the old
 tail, one list cell per iteration (`GRC_NO_NESTEDUPDATERELEASE`).
 
+A record update successor, alone or inside such a literal, whose field is a match consing onto the
+list it matches out of the state builds that cons in the match arm's arena scope:
+`go(n - 1)(state with items = (match state with | State { items = is } -> n :: is))`. The cell
+holds a pattern-owner duplicate of the list, and the arm's scope copies the cell onto the
+reference-counted heap, the copy stopping at that list and taking a reference of its own. The arena
+cell never releases the duplicate, so it is released right after the copy by a marker promoted
+together with it; left alone, it kept one list cell per iteration (`GRC_NO_SCOPECOPYTAILRELEASE`).
+
 A tuple literal written as the successor of a tuple parameter (`go((t, h :: acc))`,
 `go((St(instructions = n :: state.instructions, names = extra), state.names))`) is built in the
 arena and copied at the back edge, and the copy takes its own reference to every element. The

@@ -3296,6 +3296,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_field_match_join_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is a record update whose field is a match consing onto the list it
+        // matches out of the state. The arm's arena cons holds a duplicate of that list and is
+        // copied onto the heap at the arm's scope, so the duplicate is released after the copy.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateFieldMatchJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 22}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update field match join", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_record_update_in_literal_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15244,6 +15268,35 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordUpdateFieldMatchJoinProgram(int rounds)
+        => $$"""
+            type State =
+                | instructions: List(Int)
+                | next: Int
+
+            let recursive size (xs: List(Int)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (n: Int) (state: State) =
+                if n == 0
+                then state
+                else go(n - 1)(state with instructions = (match state with
+                    | State { instructions = is } -> n :: is))
+
+            let run (seed: Int) =
+                match go(20)(State(instructions = [seed], next = seed)) with
+                    | State { next = next, instructions = instructions } -> next + size(instructions)(0)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1 + n % 1))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
