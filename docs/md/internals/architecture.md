@@ -1062,7 +1062,13 @@ iteration was given (`GRC_NO_TUPLETAILOWNER` switches the tuple form off). A lis
 elements walked by its consumed tail otherwise stays in the arena, which reclaims it; in such a tuple
 beside a parameter that owns heap parts it takes the consumed-tail placement as well, since the
 tuple is built on the reference-counted heap and retains the tail it binds
-(`GRC_NO_INLINETUPLETAIL` switches that off). Closure promotion
+(`GRC_NO_INLINETUPLETAIL` switches that off). A list of general reference-counted values, or of
+constructors of different sizes holding only scalars (`TyInt | TyVar(Int)`), walked by its consumed
+tail out of such a tuple takes the same placement for the same reason (`GRC_NO_GENERALTUPLETAIL`).
+A `GrownCons` argument builds its cell on the reference-counted heap only when the list's element is
+one a caller releases as part of a reference-counted list (a loop-placeable element or a value of the
+general contract): a list of mixed-size scalar constructors is reclaimed by its callers with the
+arena, so its cells stay there (`GRC_NO_RELEASABLEAFFINECONS` switches that off). Closure promotion
 also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
 capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
 rechecked against resolved local slots. When body inference resolves an unannotated closure

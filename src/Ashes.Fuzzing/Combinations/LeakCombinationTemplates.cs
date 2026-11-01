@@ -159,6 +159,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new NamedHelperConsumedListTemplate());
         registry.Register(new PerformScrutineeTemplate());
         registry.Register(new NormalizedMatchJoinReadTemplate());
+        registry.Register(new GeneralListTailMatchedInTupleTemplate());
+        registry.Register(new MixedScalarConstructorAccumulatorTemplate());
     }
 }
 

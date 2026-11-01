@@ -408,6 +408,7 @@ public sealed partial class Lowering
         bool generalAccumulator = IsGeneralRcAccumulatorList(tco, facts, list) || IsWalkedOrRefilledList(tco, facts, list);
         bool layoutEligible = (CanRuntimeManageTcoListElement(list.Element)
                 || (IsGeneralRcTcoListElement(list.Element) && facts.AffineConsList && !facts.ConsumedListTail)
+                || IsGeneralTupleScrutineeTail(tco, facts, list)
                 || generalAccumulator)
             && IsBytesProvenanceEligibleTcoListElement(facts, list.Element);
         bool consumedTail = facts.ConsumedListTail
@@ -485,6 +486,18 @@ public sealed partial class Lowering
             && CanArenaReset(Prune(list.Element))
             && GetTcoParameterOrdinals(tco.OwnershipFunction, static structural => structural.FreshOrHandedOnListRebuild)
                 .Contains(facts.ParameterOrdinal);
+
+    // A list of general reference-counted values walked by its tail out of a tuple scrutinee built
+    // on the reference-counted heap is copied into that tuple, and its tail is retained for the next
+    // iteration; the parameter takes the consumed-tail placement so the back edge releases it.
+    private bool IsGeneralTupleScrutineeTail(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
+        => Environment.GetEnvironmentVariable("GRC_NO_GENERALTUPLETAIL") is null
+            && facts.ConsumedListTail
+            && (IsGeneralRcTcoListElement(list.Element) || IsRuntimeCopyAdtElement(list.Element))
+            && IsTupleScrutineeTailBesideHeapParameter(tco, facts.ParameterOrdinal);
+
+    private bool IsRuntimeCopyAdtElement(TypeRef element)
+        => Prune(element) is TypeRef.TNamedType named && IsRuntimeCopyAdtLayout(named);
 
     // A list of inline elements walked by its tail stays in the arena while its scrutinee does. A
     // tuple scrutinee that also holds a parameter owning heap parts (`match (pending, state)`) is

@@ -12818,6 +12818,13 @@ let tupleTailBesideHeapParameter (ordinal: Int) (loop: CoreTcoLoop) (state: Core
             anyHeapTupleTailPartner(tcoTupleTailPartnerOrdinals(loop.parameterNames)(name)(loop.body))(loop)(state)
         | None -> false
 
+// Stage 0's `IsGeneralTupleScrutineeTail`: a list of general reference-counted values, or of
+// mixed-size scalar constructors, walked by its tail out of a tuple scrutinee built on the
+// reference-counted heap is copied into that tuple and its tail retained for the next iteration, so
+// it takes the consumed-tail placement whose back edge releases it.
+let isGeneralTupleScrutineeTail (element: SemanticType) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    shape == TcoConsumedTailShape && (isGeneralRcNamedType(element)(state) || copyAdtSupported(heapFactsOf(element)(state))) && tupleTailBesideHeapParameter(ordinal)(loop)(state)
+
 // A grown accumulator is placed on the reference-counted heap when every back edge stores a counted
 // cell into it, or, as stage 0 places any list of Bytes-holding values under the general contract,
 // when its elements hold Bytes: a cell over a head of unknown Bytes origin stays in the arena and the
@@ -12828,7 +12835,7 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loo
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && (tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || containsBytesLayout(element)(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isGeneralTupleScrutineeTail(element)(shape)(ordinal)(loop)(state) || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && (tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || containsBytesLayout(element)(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
@@ -27327,10 +27334,20 @@ let isRecordSuccessor (expression: Expr) =
         | ExprRecord(_name, _fields, _isMultiline) -> true
         | _ -> false
 
+// Stage 0's `IsReleasableAffineConsElement`: a grown cons builds reference-counted cells only for an
+// element a caller can release as part of a reference-counted list. A list of mixed-size scalar
+// constructors (`TyInt | TyVar(Int)`) is not one: its callers reclaim the result with the arena.
+let isReleasableAffineConsElement (parameterType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(parameterType) with
+        | SemList(element) -> placesTcoListElement(element)(state) || isGeneralRcNamedType(element)(state)
+        | _ -> true
+
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
-    withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = shape == TcoGrownConsShape, runtimeString = runtimeString, runtimeTcoListTailSlot = (if shape == TcoGrownConsShape
-    then tailSlot
-    else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument), lateCopiedCellParts = !copiesSuccessor && buildsCopiedCells(argument), recordFieldCells = !copiesSuccessor && isRecordSuccessor(argument)))(state)
+    (let grownCons = shape == TcoGrownConsShape && isReleasableAffineConsElement(parameterType)(state)
+    in
+        withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = grownCons, runtimeString = runtimeString, runtimeTcoListTailSlot = (if grownCons
+        then tailSlot
+        else None), borrowsCellParts = copiesSuccessor && buildsCopiedCells(argument), lateCopiedCellParts = !copiesSuccessor && buildsCopiedCells(argument), recordFieldCells = !copiesSuccessor && isRecordSuccessor(argument)))(state))
 
 // A `+` chain with the parameter's own read among its operands, through any nesting of `+`.
 // A variable that is the parameter itself or a `let` bound to a plain read of it (the slot was

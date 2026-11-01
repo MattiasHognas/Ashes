@@ -3607,6 +3607,55 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_general_list_tail_matched_in_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop matches a tuple of its list of string-holding constructors and a record parameter
+        // and passes the list's tail on: the tuple copies the list onto the reference-counted heap
+        // and retains the tail, so the parameter takes the consumed-tail placement and each back
+        // edge releases the list the iteration was given.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildGeneralListTailMatchedInTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + (2L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("general list tail matched in a tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_mixed_scalar_constructor_accumulator_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop conses constructors of different sizes holding only scalars onto its accumulator.
+        // Its caller reclaims such a list with the arena, so the cells stay in the arena rather than
+        // being built on the reference-counted heap, where nothing would release them.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildMixedScalarConstructorAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mixed scalar constructor accumulator", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_loop_conses_record_holding_parameter_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -16235,6 +16284,57 @@ public sealed class LinuxBackendCoverageTests
             let rounds = {{rounds}}
 
             Ashes.IO.print(Ashes.Text.fromInt(loop(rounds)(0)) + " " + Ashes.Text.fromInt(loopPositions(rounds)(0)))
+            """;
+
+    private static string BuildGeneralListTailMatchedInTupleProgram(int rounds)
+        => $$"""
+            type Pat =
+                | PVar(Str)
+                | PTuple(List(Pat))
+
+            type Res =
+                | total: Int
+                | names: List(Str)
+
+            let recursive walk (pats: List(Pat)) (result: Res) =
+                match (pats, result) with
+                    | ([], _) -> result
+                    | (_pat :: rest, Res { total = total, names = names }) -> walk(rest)(Res(total = total + 1, names = names))
+
+            let run (seed: Int) =
+                match walk([PVar("a"), PTuple([PVar("b")])])(Res(total = seed, names = ["x"])) with
+                    | Res { total = t } -> t
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildMixedScalarConstructorAccumulatorProgram(int rounds)
+        => $$"""
+            type Ty =
+                | TyInt
+                | TyVar(Int)
+
+            let recursive freshTypes (count: Int) (acc: List(Ty)) =
+                if count == 0
+                then acc
+                else freshTypes(count - 1)(TyVar(count) :: acc)
+
+            let run (seed: Int) =
+                match freshTypes(2)([]) with
+                    | [] -> seed
+                    | _ :: _ -> seed + 1
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
     private static string BuildLoopConsesRecordHoldingParameterProgram(int rounds)

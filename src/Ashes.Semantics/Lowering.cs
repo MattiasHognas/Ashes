@@ -11915,7 +11915,8 @@ public sealed partial class Lowering
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
-            && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument));
+            && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument))
+            && IsReleasableAffineConsElement(tco, index);
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild
@@ -11968,6 +11969,17 @@ public sealed partial class Lowering
             ClearBackEdgeCopiedCells();
         }
     }
+
+    // An accumulator argument consing onto its parameter builds reference-counted cells only for an
+    // element a caller can release as part of a reference-counted list: a list of mixed-size scalar
+    // constructors (`TyInt | TyVar(Int)`) is not one, so its callers reclaim the result with the
+    // arena and the cells stay there.
+    private bool IsReleasableAffineConsElement(TcoContext tco, int index)
+        => Environment.GetEnvironmentVariable("GRC_NO_RELEASABLEAFFINECONS") is not null
+            || !tco.ParamTypes.TryGetValue(index, out TypeRef? parameterType)
+            || Prune(parameterType) is not TypeRef.TList list
+            || CanRuntimeManageTcoListElement(list.Element)
+            || IsGeneralRcTcoListElement(list.Element);
 
     private void ClearBackEdgeCopiedCells()
     {
