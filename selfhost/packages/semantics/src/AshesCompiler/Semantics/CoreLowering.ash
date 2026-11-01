@@ -22340,26 +22340,6 @@ let normalizesTupleElement (copiesSiblings: Bool) (semanticType: SemanticType) (
         | Some(_plan) -> true
         | None -> false)
 
-// Stage 0's `NormalizeGeneralRcTupleElements`: each element of the contract's types, and each arena
-// sibling of a reference-counted element, is retained or copied into an owned value, and the tuple
-// stores that. The flags mark the elements normalized: each already holds the reference the
-// tuple stores, so none is retained again for the cell.
-let recursive normalizeTupleSiblings (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
-    match (elements, temps, semanticTypes) with
-        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
-            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || !normalizesTupleElement(copiesSiblings)(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
-                | (false, Some(plan)) ->
-                    match emitGuardedDeepCopy(temp)(plan)(state) with
-                        | (copied, copyTemp) ->
-                            match copied
-                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
-                            |> normalizeTupleSiblings(copiesSiblings)(restElements)(restTemps)(restTypes) with
-                                | (normalized, rest, restFlags) -> (normalized, copyTemp :: rest, true :: restFlags)
-                | _ ->
-                    match normalizeTupleSiblings(copiesSiblings)(restElements)(restTemps)(restTypes)(state) with
-                        | (normalized, rest, restFlags) -> (normalized, temp :: rest, false :: restFlags)
-        | _ -> (state, [], [])
-
 // The most recent identity duplicate a pattern-owner read took of a tuple element, made a plain
 // borrow: the cell holds a copy instead, and a marker left behind could still be promoted to a
 // retain nothing releases. Yields the value the element was read as, or none when no marker made it.
@@ -22386,6 +22366,83 @@ let neutralizeElementDuplicate (temp: Int) (state: CoreLoweringState) =
     match findElementDuplicate(temp)(state.reversedInstructions) with
         | Some(source) -> ((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)), source)
         | None -> (state, temp)
+
+let recursive isPatternOwnerSiteSlot (slot: Int) (sites: List(PatternOwnerSite)) =
+    match sites with
+        | [] -> false
+        | site :: rest -> site.siteSlot == slot || isPatternOwnerSiteSlot(slot)(rest)
+
+let recursive isTcoParameterRetainSite (temp: Int) (sites: List((Int, Int, SemanticType))) =
+    match sites with
+        | [] -> false
+        | (duplicate, _slot, _semanticType) :: rest -> duplicate == temp || isTcoParameterRetainSite(temp)(rest)
+
+let recursive isArenaParameterCopy (temp: Int) (copies: List((Int, Int, Int, SemanticType))) =
+    match copies with
+        | [] -> false
+        | (duplicate, _source, _slot, _semanticType) :: rest -> duplicate == temp || isArenaParameterCopy(temp)(rest)
+
+// Whether the identity duplicate `temp` is one finalization promotes to a real retain: a read of a
+// pattern owner bound out of a loop parameter, or a loop parameter's retain marker, that no release
+// after a call or arena copy was recorded for.
+let isPromotableCellMarker (temp: Int) (state: CoreLoweringState) =
+    match findElementDuplicate(temp)(state.reversedInstructions) with
+        | None -> false
+        | Some(source) ->
+            (isPatternOwnerSiteSlot(loadedSlotOf(source)(state.reversedInstructions))(statePatternOwnerSites(state)) || isTcoParameterRetainSite(temp)(stateTcoParameterRetainSites(state))) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state)) && !isArenaParameterCopy(temp)(stateArenaParameterCopies(state))
+
+// Stage 0's `EmitRuntimeManagedTcoTupleSuccessorCopy`: a literal nested in a tuple successor (a
+// cons, a record, a record update) that stays in the arena is copied into the tuple with
+// references of its own, before the back edge releases the old parameters, and the arena never
+// releases what the cell held. The duplicates its construction took of pattern owners and loop
+// parameters, and those of the literals nested in it, become borrows; a duplicate with another
+// reader is left alone.
+let recursive withdrawCopiedCellMarkers (pending: List(Int)) (visited: List(Int)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> state
+        | temp :: rest ->
+            if containsInt(temp)(visited)
+            then withdrawCopiedCellMarkers(rest)(visited)(state)
+            else
+                if isArenaCell(temp)(state.reversedInstructions)
+                then
+                    withdrawCopiedCellMarkers(append(storedValuesOf(temp)(state.reversedInstructions)([]))(rest))(temp :: visited)(state)
+                else
+                    if isPromotableCellMarker(temp)(state) && countTempUses(temp)(state.reversedInstructions)(0) == 1
+                    then withdrawCopiedCellMarkers(rest)(temp :: visited)((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)))
+                    else withdrawCopiedCellMarkers(rest)(temp :: visited)(state)
+
+let isRecordUpdateExpression (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprRecordUpdate(_target, _fields) -> true
+        | _ -> false
+
+let withdrawSuccessorLiteralMarkers (successor: Bool) (element: Expr) (temp: Int) (state: CoreLoweringState) =
+    if successor && (isFreshAggregateLiteral(element)(state) || isRecordUpdateExpression(element)) && isArenaCell(temp)(state.reversedInstructions)
+    then withdrawCopiedCellMarkers([temp])([])(state)
+    else state
+
+// Stage 0's `NormalizeGeneralRcTupleElements`: each element of the contract's types, and each arena
+// sibling of a reference-counted element, is retained or copied into an owned value, and the tuple
+// stores that. The flags mark the elements normalized: each already holds the reference the
+// tuple stores, so none is retained again for the cell. `successor` marks a loop's tuple successor.
+let recursive normalizeTupleSiblings (successor: Bool) (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
+            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || !normalizesTupleElement(copiesSiblings)(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
+                | (false, Some(plan)) ->
+                    match state
+                    |> withdrawSuccessorLiteralMarkers(successor)(element)(temp)
+                    |> emitGuardedDeepCopy(temp)(plan) with
+                        | (copied, copyTemp) ->
+                            match copied
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> normalizeTupleSiblings(successor)(copiesSiblings)(restElements)(restTemps)(restTypes) with
+                                | (normalized, rest, restFlags) -> (normalized, copyTemp :: rest, true :: restFlags)
+                | _ ->
+                    match normalizeTupleSiblings(successor)(copiesSiblings)(restElements)(restTemps)(restTypes)(state) with
+                        | (normalized, rest, restFlags) -> (normalized, temp :: rest, false :: restFlags)
+        | _ -> (state, [], [])
 
 // `runtimeOnly` limits the copies to the elements held as reference-counted values.
 let recursive demoteTupleElements (runtimeOnly: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
@@ -22451,7 +22508,7 @@ let recursive cloneNormalizedStringParameterElements (runtimeTuple: Bool) (eleme
                     | (cloned, rest) -> (cloned, temp :: rest)
         | _ -> (state, temps)
 
-let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered =
+let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValues { state = state, temps = loweredTemps, semanticTypes = semanticTypes, error = None } ->
@@ -22459,7 +22516,7 @@ let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered 
                 | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
                     if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
                     then
-                        match normalizeTupleSiblings(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
+                        match normalizeTupleSiblings(successor)(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
                             | (normalizedState, temps, normalized) -> finishPlacedTuple(elements)(temps)(semanticTypes)(normalized)(tupleTemp)(true)(transfers)(normalizedState)
                     else
                         match demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes)(reservedState) with
@@ -22476,6 +22533,12 @@ let tupleTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
     match request with
         | ConsumerRequest { runtimeTuple = runtimeTuple, transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state) || runtimeTuple
 
+// A tuple a loop's tail self call passes as its successor.
+let isTupleSuccessorRequest (request: ConsumerRequest) (state: CoreLoweringState) =
+    match (request.argumentSite, stateTcoLoop(state)) with
+        | (Some(_site), Some(_loop)) -> true
+        | _ -> false
+
 // A resource stored into a tuple, list, cons cell, or constructor moves into it. The tuple
 // carries its children out of the scopes that own them when it is a function result (the
 // transfer flag, or the tail position of a loop body) or when it will own them as a runtime
@@ -22487,7 +22550,7 @@ let lowerTuple elements lower state =
             state
             |> markResourceArgumentsMoved(elements)
             |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(expectedTupleElements(request)(coreListLength(elements))(state))(elements)(lower)([])([])
-            |> finishTupleLowering(elements)(runtimeTuple)(tupleTransfers(request)(state))
+            |> finishTupleLowering(isTupleSuccessorRequest(request)(state))(elements)(runtimeTuple)(tupleTransfers(request)(state))
             |> unifyTupleWithExpected(request)
 
 // The live arena list-cell token, if one was published by a cons arm of the match this cell is

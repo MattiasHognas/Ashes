@@ -1700,7 +1700,11 @@ tuple's own elements are only borrowed by it, but a literal nested in it (a cons
 record update) retained what it stored, so those references are released from the dying cell,
 each only where the construction made a real retain: a pattern owner stored in a nested literal is
 borrowed, and releasing it frees what the parameter still holds. Left unreleased, a reverse over a
-tuple of lists kept every cell it consed (`GRC_NO_TUPLESUCCESSORLITERALS`).
+tuple of lists kept every cell it consed (`GRC_NO_TUPLESUCCESSORLITERALS`). Stage 1 builds such a
+tuple on the reference-counted heap and copies each nested arena literal into it as the tuple is
+built, before the back edge releases the old parameters, so the literal takes no reference of its
+own: the duplicates its construction took of pattern owners and loop-parameter reads, which the
+loop's finalization would promote to retains, are made borrows instead.
 
 A list literal of heap elements written as the successor of a list parameter on the
 reference-counted heap (`go([(other, [k])])`) has its arena cells copied at the back edge like a

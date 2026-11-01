@@ -12,8 +12,11 @@ import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 export (
     value constructionFieldSource,
     value constructionWordSource,
+    value countTempUses,
+    value isArenaCell,
     value isUnrealizedConstructionRetain,
     value retainsHeldPastTheCopy,
+    value storedValuesOf,
     value withdrawLoopParameterRetainsOfCopiedCells,
 )
 
