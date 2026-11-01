@@ -2150,7 +2150,10 @@ extent it was pushed in, every arena reclaim (per-call watermarks, scope exits, 
 resets, failed-match-arm cleanups) is guarded by a **live-posts counter** (a second reserved
 global): while it is non-zero the reclaim is skipped. Data a post references always predates its
 push, so windows with no push during them stay safe to reclaim; the counter is decremented as
-each post is folded. Programs that declare no capabilities compile byte-for-byte as before — the
+each post is folded. A post the arm has stored in the pending-post register but its perform
+site has not yet counted is pending too, so the guard also reads that register: a `let` scoped
+over the arm's one-shot `resume` closes its window before the arm returns, and would otherwise
+reset the arena under the post it just made (`GRC_NO_PENDINGPOSTGUARD`). Programs that declare no capabilities compile byte-for-byte as before — the
 guards are only emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see

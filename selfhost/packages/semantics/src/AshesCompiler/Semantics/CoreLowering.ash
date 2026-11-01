@@ -19405,9 +19405,11 @@ let recursive armBindings (count: Int) (bindings: List(CoreBinding)) =
 let livePostsIndex (state: CoreLoweringState) = stateCapabilityGlobalCount(state) + 1
 
 // Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
-// while a one-shot post is pending, since the post's closure still lives in the window. The
-// guard reads the live-posts counter and jumps past the block when it is not zero; without a
-// capability nothing is emitted and there is no label to close.
+// while a one-shot post is pending, since the post's closure still lives in the window. A post
+// an arm has stored in the pending-post register but its perform site has not yet counted is
+// pending too: a `let` scoped over the arm's one-shot `resume` closes before the arm returns. The
+// guard reads the live-posts counter and the pending-post register and jumps past the block when
+// either is not zero; without a capability nothing is emitted and there is no label to close.
 let beginLivePostsGuard (state: CoreLoweringState) =
     if stateCapabilityGlobalCount(state) == 0
     then (state, None)
@@ -19415,19 +19417,27 @@ let beginLivePostsGuard (state: CoreLoweringState) =
         match freshTemp(state) with
             | FreshTemp { state = counterState, temp = counterTemp } ->
                 match freshTemp(counterState) with
-                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
-                        match freshTemp(zeroState) with
-                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
-                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
-                                in
-                                    isZeroState
-                                    |> emit(state
-                                    |> livePostsIndex
-                                    |> LoadCapabilityHandler(counterTemp))
-                                    |> emit(LoadConstInt(zeroTemp)(0))
-                                    |> emit(CmpIntEq(isZeroTemp)(counterTemp)(zeroTemp))
-                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
-                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
+                    | FreshTemp { state = pendingState, temp = pendingTemp } ->
+                        match freshTemp(pendingState) with
+                            | FreshTemp { state = guardedState, temp = guardedTemp } ->
+                                match freshTemp(guardedState) with
+                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                        match freshTemp(zeroState) with
+                                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
+                                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
+                                                in
+                                                    isZeroState
+                                                    |> emit(state
+                                                    |> livePostsIndex
+                                                    |> LoadCapabilityHandler(counterTemp))
+                                                    |> emit(state
+                                                    |> stateCapabilityGlobalCount
+                                                    |> LoadCapabilityHandler(pendingTemp))
+                                                    |> emit(OrInt(guardedTemp)(counterTemp)(pendingTemp))
+                                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                                    |> emit(CmpIntEq(isZeroTemp)(guardedTemp)(zeroTemp))
+                                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
+                                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
 
 let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
     match skipLabel with

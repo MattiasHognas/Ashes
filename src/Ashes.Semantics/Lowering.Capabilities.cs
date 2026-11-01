@@ -429,9 +429,11 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Begins a live-posts guard around an arena restore/copy-out/reclaim block: emits a check
-    /// that jumps past the block when any post-resume continuation is pending. Returns the skip
-    /// label to place after the block, or null (emitting nothing) when the program declares no
-    /// capabilities and the guard is unnecessary.
+    /// that jumps past the block when any post-resume continuation is pending. A post an arm
+    /// has stored in the pending-post register but its perform site has not yet counted is pending
+    /// too: a `let` scoped over the arm's one-shot `resume` closes before the arm returns. Returns
+    /// the skip label to place after the block, or null (emitting nothing) when the program declares
+    /// no capabilities and the guard is unnecessary.
     /// </summary>
     private string? BeginLivePostsGuard()
     {
@@ -442,10 +444,19 @@ public sealed partial class Lowering
 
         int counterTemp = NewTemp();
         Emit(new IrInst.LoadCapabilityHandler(counterTemp, LivePostsIndex));
+        int guardedTemp = counterTemp;
+        if (Environment.GetEnvironmentVariable("GRC_NO_PENDINGPOSTGUARD") is null)
+        {
+            int pendingTemp = NewTemp();
+            Emit(new IrInst.LoadCapabilityHandler(pendingTemp, PostRegisterIndex));
+            guardedTemp = NewTemp();
+            Emit(new IrInst.OrInt(guardedTemp, counterTemp, pendingTemp));
+        }
+
         int zeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         int isZeroTemp = NewTemp();
-        Emit(new IrInst.CmpIntEq(isZeroTemp, counterTemp, zeroTemp));
+        Emit(new IrInst.CmpIntEq(isZeroTemp, guardedTemp, zeroTemp));
         string skipLabel = $"live_posts_skip_{_nextCapabilitySiteId++}";
         Emit(new IrInst.JumpIfFalse(isZeroTemp, skipLabel));
         return skipLabel;
