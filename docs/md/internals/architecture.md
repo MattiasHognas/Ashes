@@ -2171,11 +2171,15 @@ normalization, the generic list deep copy, and the general-RC result) are guarde
 perform in a call's argument, or inside its callee, pushes its post into that call's window, and
 the restore and reclaim are skipped while it is pending, with the result's copy into
 reference-counted storage still made on both paths (`GRC_NO_CALLRESULTPOSTGUARD`). The
-self-hosted compiler guards the same four exits. A post capturing a reference-counted owner of its
-arm's `let` prefix is an RC closure that owns it (see the closure representation above), and the
-fold releases such a post once it has run. The fold emits that release only for a handle whose arms
-lowered such a post. Programs that declare no capabilities compile byte-for-byte as before — the
-guards are only emitted when capabilities exist.
+self-hosted compiler guards the same four exits, and the same unconditional ones stage 0 guards:
+the call window's reset and plain copy-out (a deferred one included), a scope's reset and
+copy-out, and the plain and compacting back-edge resets, the copy-outs routing their result
+through a slot the skipped path leaves holding the original pointer. Neither compiler guards the
+runtime-managed back-edge reset. A post capturing a reference-counted owner of its arm's `let`
+prefix is an RC closure that owns it (see the closure representation above), and the fold releases
+such a post once it has run. The fold emits that release only for a handle whose arms lowered such
+a post. Programs that declare no capabilities compile byte-for-byte as before — the guards are only
+emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
 [IR Reference](ir.md)); frames, posts cells, and the fold loop use the ordinary
