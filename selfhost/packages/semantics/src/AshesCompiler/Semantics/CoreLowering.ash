@@ -27341,13 +27341,60 @@ let recursive installOperationArmClosures capName ops opArms frameTemp globalCou
                                 |> emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))
                                 |> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)
 
-// The ownership word of a post call whose fold starts from an arena value: bit 1 asks the post for
-// its result in the arena, so a post that produces a reference-counted value copies it out and
-// releases the original. A fold that starts from a reference-counted value passes no word.
-let postResultRequestWord (initialResultTemp: Int) (state: CoreLoweringState) =
+// The posts fold hands the handle's value to each post under the owned-argument contract when the
+// value it starts from is reference-counted and its type has a complete copy-out (stage 0's
+// `ownedResult` in `LowerHandleFoldPosts`); the copy-out is what an arena post result is
+// normalized with.
+let ownedPostsFoldCopyOut (initialResultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if isRuntimeTemp(initialResultTemp)(state)
-    then (state, -1)
-    else emitRequestWord(-1)(state)
+    then callCopyOutOf(resultType)(state)
+    else None
+
+// A post call whose fold slot holds an arena value: bit 1 of the ownership word asks the post for
+// its result in the arena, so a post that produces a reference-counted value copies it out and
+// releases the original.
+let emitArenaPostCall postClosureTemp currentResultTemp resultLocal state =
+    match emitRequestWord(-1)(state) with
+        | (wordState, wordTemp) ->
+            match freshTemp(wordState) with
+                | FreshTemp { state = callState, temp = nextResultTemp } ->
+                    callState
+                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(wordTemp))
+                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
+
+// Stage 0's `EmitOwnedContinuationCall` for a post: the fold's value is retained when the post's
+// entry adopts reference-counted arguments and handed over under that flag; a reference-counted
+// result is adopted and an arena one normalized into a reference-counted copy, after which the
+// value the post was given is released, so the fold's slot holds one owned reference-counted
+// value before and after every post.
+let emitOwnedPostCall (copyOut: CallCopyOut) postClosureTemp currentResultTemp resultLocal resultType state =
+    match emitAcceptsRuntimeManagedFlag(postClosureTemp)(state) with
+        | (flagged, acceptsFlagTemp) ->
+            match emitConditionalArgumentRetain(currentResultTemp)(resultType)(acceptsFlagTemp)(flagged) with
+                | (retained, passedTemp) ->
+                    match emitReturnsRuntimeManagedFlag(postClosureTemp)(retained) with
+                        | (returnsFlagged, returnsFlagTemp) ->
+                            match freshLabel("posts_fold_copy_arena_result")(returnsFlagged) with
+                                | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                                    match freshLabel("posts_fold_owned_result")(copyLabelled) with
+                                        | FreshLabel { state = ownedLabelled, label = ownedLabel } ->
+                                            match freshTempRun(2)(ownedLabelled) with
+                                                | FreshTemp { state = callState, temp = nextResultTemp } ->
+                                                    callState
+                                                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(passedTemp)(acceptsFlagTemp))
+                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
+                                                    |> emit(JumpIfFalse(returnsFlagTemp)(copyLabel))
+                                                    |> emit(Jump(ownedLabel))
+                                                    |> emit(Label(copyLabel))
+                                                    |> emit(callCopyOutInstruction(copyOut)(nextResultTemp + 1)(nextResultTemp))
+                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp + 1))
+                                                    |> emit(Label(ownedLabel))
+                                                    |> emitArenaResultRelease(currentResultTemp)(resultType)
+
+let emitCapabilityPostCall postClosureTemp currentResultTemp resultLocal initialResultTemp resultType state =
+    match ownedPostsFoldCopyOut(initialResultTemp)(resultType)(state) with
+        | Some(copyOut) -> emitOwnedPostCall(copyOut)(postClosureTemp)(currentResultTemp)(resultLocal)(resultType)(state)
+        | None -> emitArenaPostCall(postClosureTemp)(currentResultTemp)(resultLocal)(state)
 
 // Folds every collected one-shot post continuation over the handle's current result, in
 // most-recently-collected-first order (the posts list is a stack, newest at the head — matching
@@ -27402,32 +27449,30 @@ and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal initialRes
                                                     let loadedResultState =
                                                         emit(LoadLocal(currentResultTemp)(resultLocal))(currentResultState)
                                                     in
-                                                        match freshTemp(loadedResultState) with
-                                                            | FreshTemp { state = callState, temp = nextResultTemp } ->
-                                                                let calledState =
-                                                                    match postResultRequestWord(initialResultTemp)(callState) with
-                                                                        | (wordState, wordTemp) ->
-                                                                            wordState
-                                                                            |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(wordTemp))
-                                                                            |> emit(StoreLocal(resultLocal)(nextResultTemp))
-                                                                in
-                                                                    match freshTemp(calledState) with
-                                                                        | FreshTemp { state = nextCellState, temp = nextCellTemp } ->
-                                                                            nextCellState
-                                                                            |> emit(LoadMemOffset(nextCellTemp)(cellTemp)(8))
-                                                                            |> emit(StoreLocal(cellLocal)(nextCellTemp))
-                                                                            |> emit(Jump(loopLabel))
-                                                                            |> emit(Label(doneLabel))
-                                                                            |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
-// The handle's value read back after the fold keeps the reference-counted fact of the value the
-// fold started from: a fold from an arena value asks every post for an arena result.
+                                                        match loadedResultState
+                                                        |> emitCapabilityPostCall(postClosureTemp)(currentResultTemp)(resultLocal)(initialResultTemp)(resultType)
+                                                        |> freshTemp with
+                                                            | FreshTemp { state = nextCellState, temp = nextCellTemp } ->
+                                                                nextCellState
+                                                                |> emit(LoadMemOffset(nextCellTemp)(cellTemp)(8))
+                                                                |> emit(StoreLocal(cellLocal)(nextCellTemp))
+                                                                |> emit(Jump(loopLabel))
+                                                                |> emit(Label(doneLabel))
+                                                                |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
+// The handle's value read back after the fold is reference-counted exactly when the fold handed
+// it to the posts owned; a fold from any other value asks every post for an arena result.
 and finishCapabilityPostsFold resultLocal initialResultTemp resultType state =
     match freshTemp(state) with
         | FreshTemp { state = readState, temp = finalResultTemp } ->
-            readState
-            |> emit(LoadLocal(finalResultTemp)(resultLocal))
-            |> joinedCopyFact(initialResultTemp)(finalResultTemp)
-            |> success(finalResultTemp)(resultType)
+            let read =
+                emit(LoadLocal(finalResultTemp)(resultLocal))(readState)
+            in
+                match ownedPostsFoldCopyOut(initialResultTemp)(resultType)(read) with
+                    | Some(_copyOut) ->
+                        read
+                        |> markRuntimeTemp(finalResultTemp)(RuntimeNewlyProduced)
+                        |> success(finalResultTemp)(resultType)
+                    | None -> success(finalResultTemp)(resultType)(read)
 
 // The return arm binds the handled body's value as a `let` binding scoped over the arm, bracketed
 // and closed as a nested `let` is: a value the binding adopted as its owner is released when the
