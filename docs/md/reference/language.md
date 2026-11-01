@@ -1790,8 +1790,9 @@ Rules:
 - Or-patterns are not allowed in let bindings; use `match` when alternatives are required.
 - Integer, string, and boolean literal patterns are not allowed in let
   bindings because they are refutable.
-- List patterns (`[]`, `x :: xs`) are not allowed in let bindings: a list may be empty, and a
-  `let` never fails at run time. Use `match` and handle the empty list.
+- List patterns (`[]`, `x :: xs`) are not allowed on the left of a `let`: a list may be empty, and a
+  `let` never fails at run time. They stay ordinary `match` patterns, where an `[]` arm handles
+  the empty list.
 
 Accepted, one example per irrefutable form:
 
