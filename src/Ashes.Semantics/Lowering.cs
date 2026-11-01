@@ -2026,7 +2026,9 @@ public sealed partial class Lowering
         else if (argType is TypeRef.TTuple tuple
             && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
         {
-            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+            return ArenaTupleLiteralSuccessor(sourceTemp, tuple, sourceExpression) is { } literal
+                ? EmitRuntimeManagedTcoTupleSuccessorCopy(sourceTemp, tuple, literal)
+                : EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
         }
         else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
         {
@@ -2044,6 +2046,79 @@ public sealed partial class Lowering
 
         MarkRuntimeManagedTemp(normalizedTemp);
         return normalizedTemp;
+    }
+
+    /// <summary>
+    /// Copies a tuple literal successor built in the arena, then releases the references its
+    /// nested arena literals were built with. The tuple's own elements are only borrowed by a
+    /// copied successor, but a literal stored in it (a cons, a record, a record update) retained
+    /// what it stored, and the arena reclaims that cell right after the copy took references of
+    /// its own. An element that is not an arena literal of this function is left alone.
+    /// </summary>
+    private int EmitRuntimeManagedTcoTupleSuccessorCopy(int sourceTemp, TypeRef.TTuple tuple, Expr.TupleLit literal)
+    {
+        int copiedTemp = EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, tuple, releaseAdtSourceChildren: false, sourceExpression: null);
+        bool saved = _sourceChildReleaseNeedsRetain;
+        _sourceChildReleaseNeedsRetain = true;
+        for (int index = 0; index < tuple.Elements.Count; index++)
+        {
+            Expr element = literal.Elements[index];
+            if (CanArenaReset(Prune(tuple.Elements[index]))
+                || !(IsFreshAggregateLiteral(element) || element is Expr.RecordUpdate)
+                || ConstructionWordSource(sourceTemp, index * 8) is not int stored
+                || !IsArenaCellConstruction(stored))
+            {
+                continue;
+            }
+
+            int elementTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(elementTemp, sourceTemp, index * 8));
+            EmitRuntimeManagedTcoSourceChildRelease(elementTemp, tuple.Elements[index], element, stored);
+        }
+
+        _sourceChildReleaseNeedsRetain = saved;
+        return copiedTemp;
+    }
+
+    // The tuple literal a successor is written as, when this function built it in the arena.
+    private Expr.TupleLit? ArenaTupleLiteralSuccessor(int sourceTemp, TypeRef.TTuple tuple, Expr? sourceExpression)
+        => sourceExpression is Expr.TupleLit literal
+            && literal.Elements.Count == tuple.Elements.Count
+            && Environment.GetEnvironmentVariable("GRC_NO_TUPLESUCCESSORLITERALS") is null
+            && IsArenaCellConstruction(sourceTemp)
+                ? literal
+                : null;
+
+    // Set while a tuple successor's nested literals are released: a child is released only where
+    // the construction made a real retain of it, since a pattern owner stored in a literal of a
+    // copied successor is only borrowed by the cell.
+    private bool _sourceChildReleaseNeedsRetain;
+
+    // True when temp is a runtime retain the construction made.
+    private bool IsDefinedByRealizedRetain(int temp)
+    {
+        int index = FindLastInstruction(instruction => instruction switch
+        {
+            IrInst.RcDup duplicate => duplicate.Target == temp,
+            IrInst.Borrow borrow => borrow.Target == temp,
+            IrInst.LoadLocal load => load.Target == temp,
+            IrInst.GetAdtField field => field.Target == temp,
+            IrInst.LoadMemOffset load => load.Target == temp,
+            _ => false,
+        });
+        return index >= 0 && _inst[index] is IrInst.RcDup { RuntimeManaged: true };
+    }
+
+    // True when temp is a cell this function allocated in the arena.
+    private bool IsArenaCellConstruction(int temp)
+    {
+        int index = FindLastInstruction(instruction => instruction switch
+        {
+            IrInst.Alloc allocation => allocation.Target == temp,
+            IrInst.AllocAdt allocation => allocation.Target == temp,
+            _ => false,
+        });
+        return index >= 0 && _inst[index] is IrInst.Alloc { RuntimeManaged: false } or IrInst.AllocAdt { RuntimeManaged: false };
     }
 
     private int TcoBackEdgeRetainRuntimeManagedArg(
@@ -2636,6 +2711,11 @@ public sealed partial class Lowering
 
         if (sourceExpression is Expr.RecordUpdate update
             && TryEmitRuntimeManagedTcoRecordUpdateChildrenRelease(childTemp, childType, update, storedTemp))
+        {
+            return;
+        }
+
+        if (_sourceChildReleaseNeedsRetain && !(storedTemp is int retained && IsDefinedByRealizedRetain(retained)))
         {
             return;
         }

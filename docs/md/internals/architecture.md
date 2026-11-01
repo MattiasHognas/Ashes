@@ -1262,6 +1262,12 @@ lifetime operations from lexical anchors to control-flow-precise positions:
 - `RcDrop` is emitted after the last use or at the start of a branch where the
   owner is dead;
 - match payloads receive their own reference before a parent is consumed;
+- a back edge into the block that defines an owner ends the owner's life on that path: the block
+  binds the next iteration's own reference, so the owner is not live around the loop. A tuple
+  parameter bound by one irrefutable pattern at the loop head (`match pair with | (xs, extra) ->
+  if ... then ... else go((xs, extra))`) defines its owners in the loop's first block; read as live
+  around the loop, each iteration's protective references were never released, and the loop kept
+  the whole graph (`GRC_NO_REDEFINEDOWNERBACKEDGE`);
 - TCO back-edges drop replaced owners, and function exit transfers the returned root while dropping
   every other active owner. When an active TCO parameter is stored inside a returned tuple or ADT,
   construction retains the field reference before the parameter owner is dropped; this applies even
@@ -1686,6 +1692,15 @@ construction retained what it stored. A field read out of a borrowed record and 
 unchanged or through a name, is only borrowed by the update, and releasing it like a literal's child
 frees what the record still holds. Left unreleased, the update's cons kept its retain of the old
 tail, one list cell per iteration (`GRC_NO_NESTEDUPDATERELEASE`).
+
+A tuple literal written as the successor of a tuple parameter (`go((t, h :: acc))`,
+`go((St(instructions = n :: state.instructions, names = extra), state.names))`) is built in the
+arena and copied at the back edge, and the copy takes its own reference to every element. The
+tuple's own elements are only borrowed by it, but a literal nested in it (a cons, a record, a
+record update) retained what it stored, so those references are released from the dying cell,
+each only where the construction made a real retain: a pattern owner stored in a nested literal is
+borrowed, and releasing it frees what the parameter still holds. Left unreleased, a reverse over a
+tuple of lists kept every cell it consed (`GRC_NO_TUPLESUCCESSORLITERALS`).
 
 A list literal of heap elements written as the successor of a list parameter on the
 reference-counted heap (`go([(other, [k])])`) has its arena cells copied at the back edge like a

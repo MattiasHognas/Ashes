@@ -3248,6 +3248,54 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_tuple_head_owners_at_back_edge_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop binds its tuple parameter with one irrefutable pattern at the loop head and hands
+        // the bindings on in a new tuple from inside an `if`. Each iteration's protective references
+        // of the bindings end at the back edge into the block that binds them again.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildTupleHeadOwnersAtBackEdgeProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 42}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple head owners at back edge", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_cons_in_tuple_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is a tuple literal holding a cons onto a matched list. The cons is an
+        // arena cell that retained its head and tail; the back edge's copy takes references of its
+        // own, so the dying cell's retains are released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildConsInTupleSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons in tuple successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_record_update_in_literal_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15150,6 +15198,52 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + run(1 + n % 1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildTupleHeadOwnersAtBackEdgeProgram(int rounds)
+        => $$"""
+            let recursive size (xs: List(Int)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (n: Int) (pair: (List(Int), List(Str))) =
+                match pair with
+                    | (xs, extra) ->
+                        if n == 0
+                        then size(xs)(0) + 1
+                        else go(n - 1)((xs, extra))
+
+            let run (seed: Int) = go(20)(([seed, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], ["b", "c"]))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsInTupleSuccessorProgram(int rounds)
+        => $$"""
+            let recursive size (xs: List(Str)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (pair: (List(Str), List(Str))) =
+                match pair with
+                    | ([], acc) -> size(acc)(0)
+                    | (h :: t, acc) -> go((t, h :: acc))
+
+            let run (seed: Int) = go((["x", "y", "z"], ["b"]))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

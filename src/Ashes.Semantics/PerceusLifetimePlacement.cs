@@ -195,7 +195,7 @@ internal static class PerceusLifetimePlacement
             && ownerAliases.Contains(copy.SrcTemp));
         HashSet<int> borrowingArenaCells = arenaCellsReleaseChildren ? [] : arenaAdtCells;
 
-        ComputeLiveness(blocks, region);
+        ComputeLiveness(blocks, region, definitionBlock);
         var retargets = new Dictionary<int, IrInst>();
         Dictionary<int, List<IrInst>> insertions = CollectInsertions(
             instructions, blocks, region, definitionBlock, owner, ownerSlot, anchor, functionLabel, borrowedArgumentCalls, borrowingArenaCells, retargets, ref tempCount);
@@ -247,8 +247,13 @@ internal static class PerceusLifetimePlacement
         return true;
     }
 
-    private static void ComputeLiveness(List<Block> blocks, HashSet<int> region)
+    // A back edge into the block that defines the owner (a loop whose body binds it before any
+    // branch, an irrefutable tuple pattern at the loop head) re-runs the definition, which binds the
+    // next iteration's own reference: the owner reaching that edge is dead there, not live around
+    // the loop, so its last use on the edge's path releases it.
+    private static void ComputeLiveness(List<Block> blocks, HashSet<int> region, int definitionBlock)
     {
+        bool redefinedAtBackEdge = Environment.GetEnvironmentVariable("GRC_NO_REDEFINEDOWNERBACKEDGE") is null;
         bool changed;
         do
         {
@@ -256,7 +261,9 @@ internal static class PerceusLifetimePlacement
             foreach (int blockIndex in region.OrderByDescending(index => index))
             {
                 Block block = blocks[blockIndex];
-                bool liveOut = block.Successors.Any(successor => region.Contains(successor) && blocks[successor].LiveIn);
+                bool liveOut = block.Successors.Any(successor => region.Contains(successor)
+                    && blocks[successor].LiveIn
+                    && !(successor == definitionBlock && redefinedAtBackEdge));
                 bool liveIn = block.HasUse || liveOut;
                 if (block.LiveOut != liveOut || block.LiveIn != liveIn)
                 {
