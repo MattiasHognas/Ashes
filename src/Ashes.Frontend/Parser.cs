@@ -1686,7 +1686,7 @@ public sealed class Parser
         if (!IsIrrefutableLetPattern(pattern))
         {
             var span = AstSpans.GetOrDefault(pattern);
-            _diag.Error(span, "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns.", DiagnosticCodes.ParseError);
+            _diag.Error(span, "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, record, as) are allowed — use 'match' for refutable patterns.", DiagnosticCodes.ParseError);
         }
 
         Consume(TokenKind.Equals);
@@ -1707,9 +1707,9 @@ public sealed class Parser
     ///   <item><see cref="Pattern.Var"/> — always matches and binds.</item>
     ///   <item><see cref="Pattern.Wildcard"/> — always matches.</item>
     ///   <item><see cref="Pattern.Tuple"/> — irrefutable when every element is irrefutable.</item>
-    ///   <item><see cref="Pattern.Cons"/> — allowed (may fail at runtime on empty list).</item>
+    ///   <item><see cref="Pattern.Record"/> and <see cref="Pattern.As"/> — irrefutable when what they wrap is.</item>
     /// </list>
-    /// All other patterns (Constructor, IntLit, StrLit, BoolLit, EmptyList)
+    /// All other patterns (Constructor, Cons, EmptyList, IntLit, StrLit, BoolLit, Or)
     /// are refutable and must not appear in let-pattern bindings.
     /// </summary>
     internal static bool IsIrrefutableLetPattern(Pattern pattern) => pattern switch
@@ -1717,7 +1717,6 @@ public sealed class Parser
         Pattern.Var => true,
         Pattern.Wildcard => true,
         Pattern.Tuple t => t.Elements.All(IsIrrefutableLetPattern),
-        Pattern.Cons c => IsIrrefutableLetPattern(c.Head) && IsIrrefutableLetPattern(c.Tail),
         Pattern.Record record => record.Fields.All(field => IsIrrefutableLetPattern(field.Pattern)),
         Pattern.As asPattern => IsIrrefutableLetPattern(asPattern.Inner),
         _ => false,

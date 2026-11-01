@@ -2433,10 +2433,6 @@ and parserPatternIsIrrefutable pattern =
         | PatternVar(_) -> true
         | PatternWildcard -> true
         | PatternTuple(elements) -> parserPatternsAreIrrefutable(elements)
-        | PatternCons(head, tail) ->
-            if parserPatternIsIrrefutable(head)
-            then parserPatternIsIrrefutable(tail)
-            else false
         | PatternRecord(_name, fields) -> parserPatternFieldsAreIrrefutable(fields)
         | PatternAs(inner, _name) -> parserPatternIsIrrefutable(inner)
         | _ -> false
@@ -2468,7 +2464,7 @@ and parserParseLetPattern state =
                                 pattern
                                 |> parserPatternSpan
                                 |> Ashes.Internal.deepCopy,
-                                "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns."
+                                "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, record, as) are allowed — use 'match' for refutable patterns."
                             )
                     in
                         match parserConsume(Equals)(checkedState) with

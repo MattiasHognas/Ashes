@@ -1776,7 +1776,6 @@ Syntax:
 
 ```text
 let (a, b) = expr in body
-let x :: xs = expr in body
 ```
 
 Rules:
@@ -1791,17 +1790,14 @@ Rules:
 - Or-patterns are not allowed in let bindings; use `match` when alternatives are required.
 - Integer, string, and boolean literal patterns are not allowed in let
   bindings because they are refutable.
-- List cons patterns (`x :: xs`) are allowed but will fail at runtime
-  if the list is empty.
+- List patterns (`[]`, `x :: xs`) are not allowed in let bindings: a list may be empty, and a
+  `let` never fails at run time. Use `match` and handle the empty list.
 
 Example:
 
 ```ash
 let (x, y) = (1, 2)
 in x + y
-
-let first :: rest = [1, 2, 3]
-in first
 ```
 
 ---
