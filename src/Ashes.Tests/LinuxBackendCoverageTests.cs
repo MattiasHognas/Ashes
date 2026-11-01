@@ -2962,6 +2962,31 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("worklist back queue grown and emptied", samples, maxRssKb: 16_000);
     }
+    [Test]
+    public async Task Linux_backend_string_passed_to_generic_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop inserts each matched name into a tree through a function generic in its key and
+        // takes the result as its next tree. The key used to be copied into the persistent blob
+        // region at every call, which nothing reclaims; it now goes as a reference-counted
+        // reference the caller releases once the result is copied out.
+        int[] roundCounts = [100_000, 400_000, 1_600_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildStringPassedToGenericParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("string passed to a generic parameter", samples, maxRssKb: 16_000);
+    }
+
 
     [Test]
     public async Task Linux_backend_pattern_list_passed_to_borrowing_call_memory_should_plateau()
@@ -14681,6 +14706,35 @@ public sealed class LinuxBackendCoverageTests
             |> rounds({{rounds}})
             |> Ashes.IO.print
             """;
+    private static string BuildStringPassedToGenericParameterProgram(int rounds)
+        => $$"""
+            type Tree(K, V) =
+                | Leaf
+                | Node(Tree(K, V), K, V)
+
+            let recursive insert key value tree =
+                match tree with
+                    | Leaf -> Node(Leaf, key, value)
+                    | Node(left, k, v) -> Node(insert(key)(value)(left), k, v)
+
+            let recursive count tree =
+                match tree with
+                    | Leaf -> 0
+                    | Node(left, _, _) -> 1 + count(left)
+
+            let recursive loop (items: List(Str)) seen (n: Int) =
+                match items with
+                    | [] -> n + count(seen)
+                    | name :: rest -> loop(rest)(insert(name)(n)(seen))(n + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + loop(["coal"])(Leaf)(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
 
     private static string BuildWorklistBackGrownAndEmptiedProgram(int rounds)
         => $$"""

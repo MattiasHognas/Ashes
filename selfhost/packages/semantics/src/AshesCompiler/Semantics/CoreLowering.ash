@@ -16768,6 +16768,58 @@ let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argument
             else (state, argumentTemp)
         | None -> (state, argumentTemp)
 
+// The result of the last application of a curried call, `remaining` applications after this one;
+// None when the type runs out of arrows first.
+let recursive finalApplicationResult (resultType: SemanticType) (remaining: Int) (state: CoreLoweringState) =
+    if remaining == 0
+    then
+        resultType
+        |> resolveType(state)
+        |> Some
+    else
+        match resolveType(state)(resultType) with
+            | SemFunction(_argument, result, _row) -> finalApplicationResult(result)(remaining - 1)(state)
+            | _ -> None
+
+// Stage 0's `OwnsGenericStringArgument`: a string passed to a generic parameter of a call whose
+// final result holds no closure goes as an owned reference-counted reference instead of a copy in
+// the persistent blob region, which nothing reclaims. Only the final result can keep it: no curry
+// stage's closure escapes the call, and the final result is a value the caller settles the
+// reference against.
+let ownsGenericStringArgument (argumentType: SemanticType) (resultType: SemanticType) (arity: Int) (state: CoreLoweringState) =
+    match resolveType(state)(argumentType) with
+        | SemString ->
+            match finalApplicationResult(resultType)(arity - 1)(state) with
+                | Some(SemFunction(_argument, _result, _row)) -> false
+                | Some(finalType) -> canTestRepresentation && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | None -> false
+        | _ -> false
+
+let rcStringCopyOut (sourceTemp: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = copyTemp } -> (rcNormalizationCopyOut(copyTemp)(sourceTemp)(-1)(allocated), copyTemp)
+
+// Stage 0's `EmitHandedOverGenericStringArgument`: the reference is handed over and never adopted,
+// so the caller releases it once the result was copied out, and parks it in an owned slot while
+// an arena result may still hold it.
+let handOverGenericStringArgument (context: CoreCallContext) (arity: Int) (argumentType: SemanticType) (resultType: SemanticType) (argumentTemp: Int) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+    match context.calleeScheme with
+        | Some(TypeScheme { quantified = quantified, body = body }) ->
+            if parameterQuantifiedAt(quantified)(context.argumentCount - arity)(body) && ownsGenericStringArgument(argumentType)(resultType)(arity)(state)
+            then
+                match emitReferenceOrCopy(argumentTemp)(rcStringCopyOut(argumentTemp))(state) with
+                    | (owned, ownedTemp) ->
+                        match freshTemp(owned) with
+                            | FreshTemp { state = flagged, temp = notAdoptedTemp } ->
+                                Some((flagged |> emit(LoadConstInt(notAdoptedTemp)(0)), ownedTemp, append(consumed)([CoreConsumedArgument(
+                                    temp = ownedTemp,
+                                    semanticType = argumentType,
+                                    preserveEscapedChildren = true,
+                                    adoptionFlagTemp = notAdoptedTemp
+                                )])))
+            else None
+        | None -> None
+
 // Stage 0's `ApplyReuseSpecializationClosure`: a call routed to a reuse specialization (its callee
 // bound to the specialization's closure while the call is lowered) passes every argument but the
 // accumulator borrowed, since the specialization copies them into the persistent region rather
@@ -16783,6 +16835,16 @@ let borrowedByReuseSpecialization (context: CoreCallContext) (arity: Int) (state
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
 // follows.
+let applyCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
+    match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
+        | (decidedState, readsResult, resultNormalizedOwned) ->
+            decidedState
+            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
+            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
+            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
+
+// The argument reaches the application as the value itself, a handed-over reference for a generic
+// string parameter, or a to-space copy for any other generic parameter.
 let finishCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp argumentTemp resultType binding =
     match binding with
         | (unifiedState, Some(error)) ->
@@ -16790,14 +16852,11 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> failure(unifiedState)
             |> callStageOf
         | (unifiedState, None) ->
-            match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
-                | (copiedState, passedTemp) ->
-                    match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
-                        | (decidedState, readsResult, resultNormalizedOwned) ->
-                            decidedState
-                            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
-                            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
-                            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
+            match handOverGenericStringArgument(context)(arity)(argumentType)(resultType)(argumentTemp)(consumed)(unifiedState) with
+                | Some((ownedState, ownedTemp, handedConsumed)) -> applyCoreCall(context)(arity)(argument)(argumentType)(handedConsumed)(functionTemp)(resultType)(ownedTemp)(ownedState)
+                | None ->
+                    match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
+                        | (copiedState, passedTemp) -> applyCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(resultType)(passedTemp)(copiedState)
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
 // state's span is back to once the argument is lowered.

@@ -147,63 +147,63 @@ function __rcnorm_3  [RuntimeManagedAdtNormalizer]
   locals=7 temps=27
     LoadLocal             Target=0 Slot=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     IsReferenceCounted    Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_13   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_17   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
     StoreLocal            Slot=2 Source=2   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=rc_representation_done_14   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_copy_13:
+    Jump                  Target=rc_representation_done_18   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_representation_copy_17:
     GetAdtTag             Target=3 Ptr=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_15   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rcnorm_ctor_15:
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_19   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rcnorm_ctor_19:
     CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=3 Source=4   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=rcnorm_end_17   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rcnorm_ctor_16:
+    Jump                  Target=rcnorm_end_21   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rcnorm_ctor_20:
     CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=40 RuntimeManaged=true Purpose=RcNormalization
     GetAdtField           Target=6 Ptr=0 FieldIndex=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     IsReferenceCounted    Target=7 SourceTemp=6
-    JumpIfFalse           CondTemp=7 Target=rc_representation_copy_18   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    JumpIfFalse           CondTemp=7 Target=rc_representation_copy_22   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     RcDup                 Target=8 SourceTemp=6 RuntimeManaged=true
     StoreLocal            Slot=4 Source=8   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=rc_representation_done_19   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_copy_18:
+    Jump                  Target=rc_representation_done_23   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_representation_copy_22:
     LoadConstInt          Target=10 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     CallKnown             Target=11 FuncLabel=__rcnorm_3 EnvTemp=10 ArgTemp=6   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     StoreLocal            Slot=4 Source=11   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_done_19:
+  rc_representation_done_23:
     LoadLocal             Target=12 Slot=4   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     SetAdtField           Ptr=5 FieldIndex=0 Source=12   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     GetAdtField           Target=13 Ptr=0 FieldIndex=2   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     IsReferenceCounted    Target=14 SourceTemp=13
-    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_20   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    JumpIfFalse           CondTemp=14 Target=rc_representation_copy_24   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     RcDup                 Target=15 SourceTemp=13 RuntimeManaged=true
     StoreLocal            Slot=5 Source=15   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=rc_representation_done_21   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_copy_20:
+    Jump                  Target=rc_representation_done_25   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_representation_copy_24:
     CopyOutArena          DestTemp=16 SrcTemp=13 RuntimeManaged=true Purpose=RcNormalization
     StoreLocal            Slot=5 Source=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_done_21:
+  rc_representation_done_25:
     LoadLocal             Target=17 Slot=5   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     SetAdtField           Ptr=5 FieldIndex=2 Source=17   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     GetAdtField           Target=18 Ptr=0 FieldIndex=3   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     IsReferenceCounted    Target=19 SourceTemp=18
-    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_22   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_26   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     RcDup                 Target=20 SourceTemp=18 RuntimeManaged=true
     StoreLocal            Slot=6 Source=20   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=rc_representation_done_23   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_copy_22:
+    Jump                  Target=rc_representation_done_27   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_representation_copy_26:
     LoadConstInt          Target=22 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     CallKnown             Target=23 FuncLabel=__rcnorm_3 EnvTemp=22 ArgTemp=18   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     StoreLocal            Slot=6 Source=23   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_done_23:
+  rc_representation_done_27:
     LoadLocal             Target=24 Slot=6   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     SetAdtField           Ptr=5 FieldIndex=3 Source=24   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     StoreLocal            Slot=3 Source=5   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=rcnorm_end_17   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rcnorm_end_17:
+    Jump                  Target=rcnorm_end_21   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rcnorm_end_21:
     LoadLocal             Target=25 Slot=3   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     StoreLocal            Slot=2 Source=25   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  rc_representation_done_14:
+  rc_representation_done_18:
     LoadLocal             Target=26 Slot=2   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     Return                Source=26   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
 
@@ -211,12 +211,12 @@ function __rcdrop_general_4  [RuntimeManagedAdtDropper]
   locals=2 temps=11
     LoadLocal             Target=0 Slot=1
     RcIsUnique            Target=1 SourceTemp=0
-    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_34
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_42
     GetAdtTag             Target=2 Ptr=0
-    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_34
-  rcdrop_general_ctor_35:
-    Jump                  Target=rcdrop_general_shared_34
-  rcdrop_general_ctor_36:
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_42
+  rcdrop_general_ctor_43:
+    Jump                  Target=rcdrop_general_shared_42
+  rcdrop_general_ctor_44:
     GetAdtField           Target=3 Ptr=0 FieldIndex=0
     LoadConstInt          Target=4 Value=0
     CallKnown             Target=5 FuncLabel=__rcdrop_general_4 EnvTemp=4 ArgTemp=3
@@ -225,14 +225,14 @@ function __rcdrop_general_4  [RuntimeManagedAdtDropper]
     GetAdtField           Target=7 Ptr=0 FieldIndex=3
     LoadConstInt          Target=8 Value=0
     CallKnown             Target=9 FuncLabel=__rcdrop_general_4 EnvTemp=8 ArgTemp=7
-    Jump                  Target=rcdrop_general_shared_34
-  rcdrop_general_shared_34:
+    Jump                  Target=rcdrop_general_shared_42
+  rcdrop_general_shared_42:
     RcDrop                SourceTemp=0 TypeName=Tree RuntimeManaged=true
     LoadConstInt          Target=10 Value=0
     Return                Source=10
 
 function _start_main  [ProgramEntry]
-  locals=24 temps=75
+  locals=26 temps=93
     LoadConstInt          Target=0 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:5:1)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:5:1)
     StoreLocal            Slot=0 Source=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:5:1)
@@ -241,140 +241,180 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=3 Value=2   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:29)
     CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
     LoadConstStr          Target=5 StrLabel=str_0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:32)
-    CopyOutArenaToSpace   DestTemp=6 SrcTemp=5
-    CallClosure           Target=7 ClosureTemp=4 ArgTemp=6   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
-    LoadLocal             Target=8 Slot=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    LoadConstInt          Target=9 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:44)
-    CallClosure           Target=10 ClosureTemp=8 ArgTemp=9   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    LoadConstStr          Target=11 StrLabel=str_1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:47)
-    CopyOutArenaToSpace   DestTemp=12 SrcTemp=11
-    CallClosure           Target=13 ClosureTemp=10 ArgTemp=12   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    AllocAdt              Target=14 Tag=0 FieldCount=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:52)
-    CallClosure           Target=15 ClosureTemp=13 ArgTemp=14   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    LoadMemOffset         Target=16 BasePtr=13 OffsetBytes=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    LoadConstInt          Target=17 Value=60   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    ShrInt                Target=18 Left=16 Right=17   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    LoadConstInt          Target=19 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    AndInt                Target=20 Left=18 Right=19   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    StoreLocal            Slot=6 Source=15   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
-    JumpIfFalse           CondTemp=20 Target=general_rc_result_normalize_10   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    Jump                  Target=general_rc_result_owned_9   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  general_rc_result_normalize_10:
-    IsReferenceCounted    Target=21 SourceTemp=15
+    IsReferenceCounted    Target=6 SourceTemp=5
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_9   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=7   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    Jump                  Target=rc_representation_done_10   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  rc_representation_copy_9:
+    CopyOutArena          DestTemp=8 SrcTemp=5 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=8   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  rc_representation_done_10:
+    LoadLocal             Target=9 Slot=3   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadConstInt          Target=10 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadMemOffset         Target=11 BasePtr=4 OffsetBytes=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadConstInt          Target=12 Value=62   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    ShrInt                Target=13 Left=11 Right=12   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadConstInt          Target=14 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    AndInt                Target=15 Left=13 Right=14   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    CallClosure           Target=16 ClosureTemp=4 ArgTemp=9 RuntimeManagedArgumentFlagTemp=15   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadLocal             Target=17 Slot=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstInt          Target=18 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:44)
+    CallClosure           Target=19 ClosureTemp=17 ArgTemp=18   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstStr          Target=20 StrLabel=str_1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:47)
+    IsReferenceCounted    Target=21 SourceTemp=20
     JumpIfFalse           CondTemp=21 Target=rc_representation_copy_11   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    RcDup                 Target=22 SourceTemp=15 RuntimeManaged=true
-    StoreLocal            Slot=7 Source=22   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    RcDup                 Target=22 SourceTemp=20 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=22   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
     Jump                  Target=rc_representation_done_12   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
   rc_representation_copy_11:
-    LoadConstInt          Target=24 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    CallKnown             Target=25 FuncLabel=__rcnorm_3 EnvTemp=24 ArgTemp=15   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    StoreLocal            Slot=7 Source=25   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    CopyOutArena          DestTemp=23 SrcTemp=20 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=6 Source=23   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
   rc_representation_done_12:
-    LoadLocal             Target=26 Slot=7   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    StoreLocal            Slot=6 Source=26   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-  general_rc_result_owned_9:
-    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
-    LoadLocal             Target=27 Slot=6   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
-    CallClosure           Target=28 ClosureTemp=7 ArgTemp=27   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    LoadMemOffset         Target=29 BasePtr=7 OffsetBytes=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    LoadConstInt          Target=30 Value=60   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    ShrInt                Target=31 Left=29 Right=30   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    LoadConstInt          Target=32 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    AndInt                Target=33 Left=31 Right=32   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    StoreLocal            Slot=9 Source=28   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=8
-    JumpIfFalse           CondTemp=33 Target=general_rc_result_normalize_25   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    Jump                  Target=general_rc_result_owned_24   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-  general_rc_result_normalize_25:
-    IsReferenceCounted    Target=34 SourceTemp=28
-    JumpIfFalse           CondTemp=34 Target=rc_representation_copy_26   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    RcDup                 Target=35 SourceTemp=28 RuntimeManaged=true
-    StoreLocal            Slot=10 Source=35   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    Jump                  Target=rc_representation_done_27   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-  rc_representation_copy_26:
-    LoadConstInt          Target=37 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    CallKnown             Target=38 FuncLabel=__rcnorm_3 EnvTemp=37 ArgTemp=28   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    StoreLocal            Slot=10 Source=38   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-  rc_representation_done_27:
-    LoadLocal             Target=39 Slot=10   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    StoreLocal            Slot=9 Source=39   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-  general_rc_result_owned_24:
-    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=8
-    LoadLocal             Target=40 Slot=9   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
-    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
-    LoadConstInt          Target=41 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    CmpIntNe              Target=42 Left=40 Right=41   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    JumpIfFalse           CondTemp=42 Target=match_arm_cleanup_31   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    GetAdtTag             Target=43 Ptr=40   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    LoadConstInt          Target=45 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    CmpIntEq              Target=44 Left=43 Right=45   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    JumpIfFalse           CondTemp=44 Target=match_arm_cleanup_31   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    LoadConstInt          Target=46 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:17:15)
-    StoreLocal            Slot=11 Source=46   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
-    Jump                  Target=match_end_28   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-  match_arm_cleanup_31:
-    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
-    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
-    Jump                  Target=match_next_30   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-  match_next_30:
-    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
-    LoadConstInt          Target=47 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    CmpIntNe              Target=48 Left=40 Right=47   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    JumpIfFalse           CondTemp=48 Target=match_arm_cleanup_32   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    GetAdtTag             Target=49 Ptr=40   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    LoadConstInt          Target=51 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    CmpIntEq              Target=50 Left=49 Right=51   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    JumpIfFalse           CondTemp=50 Target=match_arm_cleanup_32   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    GetAdtField           Target=52 Ptr=40 FieldIndex=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    StoreLocal            Slot=18 Source=52   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    RcDrop                SourceTemp=52 TypeName=Tree OwnerSlot=18
-    GetAdtField           Target=53 Ptr=40 FieldIndex=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    StoreLocal            Slot=19 Source=53   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    GetAdtField           Target=54 Ptr=40 FieldIndex=2   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    StoreLocal            Slot=20 Source=54   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    RcDrop                SourceTemp=54 TypeName=String OwnerSlot=20
-    GetAdtField           Target=55 Ptr=40 FieldIndex=3   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    StoreLocal            Slot=21 Source=55   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    RcDrop                SourceTemp=55 TypeName=Tree OwnerSlot=21
-    LoadLocal             Target=56 Slot=19   (recursive_insert_curried_stage_requests_no_arena_result.ash:18:43)
-    StoreLocal            Slot=11 Source=56   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
-    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
-    Jump                  Target=match_end_28   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-  match_arm_cleanup_32:
-    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=23
-    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=23
-    Jump                  Target=match_none_29   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-  match_none_29:
-    LoadConstInt          Target=60 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    StoreLocal            Slot=11 Source=60   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-  match_end_28:
-    LoadLocal             Target=61 Slot=11   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
-    PrintInt              Source=61   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:1)
-    AllocAdt              Target=62 Tag=0 FieldCount=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:1)
-    LoadLocal             Target=63 Slot=6
-    LoadConstInt          Target=64 Value=0
-    CmpIntNe              Target=65 Left=63 Right=64
-    JumpIfFalse           CondTemp=65 Target=general_rc_owned_absent_33
-    IsReferenceCounted    Target=66 SourceTemp=63
-    JumpIfFalse           CondTemp=66 Target=general_rc_owned_absent_33
-    LoadConstInt          Target=67 Value=0
-    CallKnown             Target=68 FuncLabel=__rcdrop_general_4 EnvTemp=67 ArgTemp=63
-    StoreLocal            Slot=6 Source=64
-  general_rc_owned_absent_33:
-    LoadLocal             Target=69 Slot=9
-    LoadConstInt          Target=70 Value=0
-    CmpIntNe              Target=71 Left=69 Right=70
-    JumpIfFalse           CondTemp=71 Target=general_rc_owned_absent_37
-    IsReferenceCounted    Target=72 SourceTemp=69
-    JumpIfFalse           CondTemp=72 Target=general_rc_owned_absent_37
-    LoadConstInt          Target=73 Value=0
-    CallKnown             Target=74 FuncLabel=__rcdrop_general_4 EnvTemp=73 ArgTemp=69
-    StoreLocal            Slot=9 Source=70
-  general_rc_owned_absent_37:
-    Return                Source=62
+    LoadLocal             Target=24 Slot=6   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstInt          Target=25 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadMemOffset         Target=26 BasePtr=19 OffsetBytes=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstInt          Target=27 Value=62   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    ShrInt                Target=28 Left=26 Right=27   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstInt          Target=29 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    AndInt                Target=30 Left=28 Right=29   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    CallClosure           Target=31 ClosureTemp=19 ArgTemp=24 RuntimeManagedArgumentFlagTemp=30   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    AllocAdt              Target=32 Tag=0 FieldCount=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:52)
+    CallClosure           Target=33 ClosureTemp=31 ArgTemp=32   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadMemOffset         Target=34 BasePtr=31 OffsetBytes=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstInt          Target=35 Value=60   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    ShrInt                Target=36 Left=34 Right=35   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    LoadConstInt          Target=37 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    AndInt                Target=38 Left=36 Right=37   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    StoreLocal            Slot=8 Source=33   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=7
+    JumpIfFalse           CondTemp=38 Target=general_rc_result_normalize_14   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    Jump                  Target=general_rc_result_owned_13   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  general_rc_result_normalize_14:
+    IsReferenceCounted    Target=39 SourceTemp=33
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_15   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    RcDup                 Target=40 SourceTemp=33 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=40   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    Jump                  Target=rc_representation_done_16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_representation_copy_15:
+    LoadConstInt          Target=42 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    CallKnown             Target=43 FuncLabel=__rcnorm_3 EnvTemp=42 ArgTemp=33   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    StoreLocal            Slot=9 Source=43   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_representation_done_16:
+    LoadLocal             Target=44 Slot=9   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    StoreLocal            Slot=8 Source=44   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  general_rc_result_owned_13:
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=7
+    LoadLocal             Target=45 Slot=8   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    JumpIfFalse           CondTemp=25 Target=rc_handed_over_not_adopted_28   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+    Jump                  Target=rc_handed_over_done_29   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:37)
+  rc_handed_over_not_adopted_28:
+    RcDrop                SourceTemp=24 TypeName=String RuntimeManaged=true
+  rc_handed_over_done_29:
+    CallClosure           Target=46 ClosureTemp=16 ArgTemp=45   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadMemOffset         Target=47 BasePtr=16 OffsetBytes=16   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadConstInt          Target=48 Value=60   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    ShrInt                Target=49 Left=47 Right=48   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    LoadConstInt          Target=50 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    AndInt                Target=51 Left=49 Right=50   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    StoreLocal            Slot=11 Source=46   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=10
+    JumpIfFalse           CondTemp=51 Target=general_rc_result_normalize_31   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    Jump                  Target=general_rc_result_owned_30   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  general_rc_result_normalize_31:
+    IsReferenceCounted    Target=52 SourceTemp=46
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_32   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    RcDup                 Target=53 SourceTemp=46 RuntimeManaged=true
+    StoreLocal            Slot=12 Source=53   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    Jump                  Target=rc_representation_done_33   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  rc_representation_copy_32:
+    LoadConstInt          Target=55 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    CallKnown             Target=56 FuncLabel=__rcnorm_3 EnvTemp=55 ArgTemp=46   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    StoreLocal            Slot=12 Source=56   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  rc_representation_done_33:
+    LoadLocal             Target=57 Slot=12   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    StoreLocal            Slot=11 Source=57   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  general_rc_result_owned_30:
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=10
+    LoadLocal             Target=58 Slot=11   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    JumpIfFalse           CondTemp=10 Target=rc_handed_over_not_adopted_34   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+    Jump                  Target=rc_handed_over_done_35   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:22)
+  rc_handed_over_not_adopted_34:
+    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
+  rc_handed_over_done_35:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=59 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    CmpIntNe              Target=60 Left=58 Right=59   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    JumpIfFalse           CondTemp=60 Target=match_arm_cleanup_39   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    GetAdtTag             Target=61 Ptr=58   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    LoadConstInt          Target=63 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    CmpIntEq              Target=62 Left=61 Right=63   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    JumpIfFalse           CondTemp=62 Target=match_arm_cleanup_39   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    LoadConstInt          Target=64 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:17:15)
+    StoreLocal            Slot=13 Source=64   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=16
+    Jump                  Target=match_end_36   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+  match_arm_cleanup_39:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=17
+    Jump                  Target=match_next_38   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+  match_next_38:
+    SaveArenaState        CursorLocalSlot=18 EndLocalSlot=19
+    LoadConstInt          Target=65 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    CmpIntNe              Target=66 Left=58 Right=65   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    JumpIfFalse           CondTemp=66 Target=match_arm_cleanup_40   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    GetAdtTag             Target=67 Ptr=58   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    LoadConstInt          Target=69 Value=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    CmpIntEq              Target=68 Left=67 Right=69   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    JumpIfFalse           CondTemp=68 Target=match_arm_cleanup_40   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    GetAdtField           Target=70 Ptr=58 FieldIndex=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    StoreLocal            Slot=20 Source=70   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    RcDrop                SourceTemp=70 TypeName=Tree OwnerSlot=20
+    GetAdtField           Target=71 Ptr=58 FieldIndex=1   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    StoreLocal            Slot=21 Source=71   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    GetAdtField           Target=72 Ptr=58 FieldIndex=2   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    StoreLocal            Slot=22 Source=72   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    RcDrop                SourceTemp=72 TypeName=String OwnerSlot=22
+    GetAdtField           Target=73 Ptr=58 FieldIndex=3   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    StoreLocal            Slot=23 Source=73   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    RcDrop                SourceTemp=73 TypeName=Tree OwnerSlot=23
+    LoadLocal             Target=74 Slot=21   (recursive_insert_curried_stage_requests_no_arena_result.ash:18:43)
+    StoreLocal            Slot=13 Source=74   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=24
+    Jump                  Target=match_end_36   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+  match_arm_cleanup_40:
+    RestoreArenaState     CursorLocalSlot=18 EndLocalSlot=19 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=19 PreRestoreEndSlot=25
+    Jump                  Target=match_none_37   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+  match_none_37:
+    LoadConstInt          Target=78 Value=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    StoreLocal            Slot=13 Source=78   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+  match_end_36:
+    LoadLocal             Target=79 Slot=13   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:16)
+    PrintInt              Source=79   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:1)
+    AllocAdt              Target=80 Tag=0 FieldCount=0   (recursive_insert_curried_stage_requests_no_arena_result.ash:16:1)
+    LoadLocal             Target=81 Slot=8
+    LoadConstInt          Target=82 Value=0
+    CmpIntNe              Target=83 Left=81 Right=82
+    JumpIfFalse           CondTemp=83 Target=general_rc_owned_absent_41
+    IsReferenceCounted    Target=84 SourceTemp=81
+    JumpIfFalse           CondTemp=84 Target=general_rc_owned_absent_41
+    LoadConstInt          Target=85 Value=0
+    CallKnown             Target=86 FuncLabel=__rcdrop_general_4 EnvTemp=85 ArgTemp=81
+    StoreLocal            Slot=8 Source=82
+  general_rc_owned_absent_41:
+    LoadLocal             Target=87 Slot=11
+    LoadConstInt          Target=88 Value=0
+    CmpIntNe              Target=89 Left=87 Right=88
+    JumpIfFalse           CondTemp=89 Target=general_rc_owned_absent_45
+    IsReferenceCounted    Target=90 SourceTemp=87
+    JumpIfFalse           CondTemp=90 Target=general_rc_owned_absent_45
+    LoadConstInt          Target=91 Value=0
+    CallKnown             Target=92 FuncLabel=__rcdrop_general_4 EnvTemp=91 ArgTemp=87
+    StoreLocal            Slot=11 Source=88
+  general_rc_owned_absent_45:
+    Return                Source=80
 

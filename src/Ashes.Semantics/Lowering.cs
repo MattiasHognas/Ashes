@@ -14275,7 +14275,9 @@ public sealed partial class Lowering
             TypeRef prunedArgType = Prune(argType);
             if (IsToSpaceCopySafeType(prunedArgType))
             {
-                argTemp = EmitDeepCopyToSpace(argTemp, prunedArgType);
+                argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
+                    ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
+                    : EmitDeepCopyToSpace(argTemp, prunedArgType);
             }
         }
 
@@ -14306,6 +14308,65 @@ public sealed partial class Lowering
             i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
+    }
+
+    // A string passed to a generic parameter of a call whose final result holds no closure goes as
+    // an owned reference-counted reference instead of a copy in the persistent blob region, which
+    // nothing reclaims. Only the final result can keep it: no curry stage's closure escapes the
+    // call, and the final result is a value the caller settles the reference against.
+    private bool OwnsGenericStringArgument(TypeRef argumentType, TypeRef.TFun funType, int remainingArguments)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_GENERICSTRARG") is not null
+            || !GeneralRcEnabled
+            || !CanTestRepresentation
+            || argumentType is not TypeRef.TStr)
+        {
+            return false;
+        }
+
+        TypeRef resultType = Prune(funType.Ret);
+        for (int remaining = remainingArguments; remaining > 0; remaining--)
+        {
+            if (resultType is not TypeRef.TFun stage)
+            {
+                return false;
+            }
+
+            resultType = Prune(stage.Ret);
+        }
+
+        return resultType is not TypeRef.TFun
+            && !ContainsUnresolvedLayoutType(resultType, [])
+            && IsToSpaceCopySafeType(resultType);
+    }
+
+    // The reference is handed over and never adopted: the caller releases it once the result was
+    // copied out, and parks it in an owned slot while an arena result may still hold it.
+    private int EmitHandedOverGenericStringArgument(
+        int argumentTemp,
+        TypeRef argumentType,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments)
+    {
+        int ownedTemp = EmitReferenceOrCopy(argumentTemp, () =>
+        {
+            int copiedTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                copiedTemp,
+                argumentTemp,
+                TcoRuntimeManagedCopySize(argumentType),
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            return copiedTemp;
+        });
+        int notAdoptedTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(notAdoptedTemp, 0));
+        consumedRuntimeArguments.Add(
+            new ConsumedRuntimeArgument(
+                ownedTemp,
+                argumentType,
+                PreserveEscapedChildren: true,
+                AdoptionFlagTemp: notAdoptedTemp));
+        return ownedTemp;
     }
 
     // The result types whose ownership a call reads from the callee's returns bit when the callee

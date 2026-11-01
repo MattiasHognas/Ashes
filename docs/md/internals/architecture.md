@@ -1938,6 +1938,17 @@ there after its last use, as does each value a call site copies in for a
 generic function's quantified parameter, so a loop that builds a fresh map per
 round grows by that map every round.
 
+A string passed to a quantified parameter skips that copy when the call's final
+result has a resolved layout with no closure in it: the caller passes an owned
+reference instead (a retain of a reference-counted string, a reference-counted
+copy of any other) and hands it over unadopted, so it is released once the
+result is copied out, or parked in an owned slot while an arena result may hold
+it (`GRC_NO_GENERICSTRARG`, both stages). A loop inserting into a generic tree
+used to grow by one blob copy of the key per call. A partial application still
+copies, since its closure may outlive the call, and so does a call inside a
+generic body whose result type is still unresolved there (`Map`'s own worker,
+for one), which has no point at which the result is copied out.
+
 ### Cycles
 
 Reference counting does not collect cycles. RC admission is limited to acyclic
