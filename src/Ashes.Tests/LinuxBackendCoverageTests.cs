@@ -3272,6 +3272,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_reuse_specialized_result_read_by_scalar_caller_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A passthrough function called with a fresh list runs as its reuse specialization, which
+        // hands its result over reference-counted to a caller that only counts or matches it. The
+        // caller owns that result, and the cons arm built over the parameter's own cell takes the
+        // recursive result over, so each round's lists are released.
+        int[] roundCounts = [3000, 12000, 48000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildReuseSpecializedResultReadByScalarCallerProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds / 3 * 13}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("reuse specialized result read by scalar caller", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15028,6 +15053,62 @@ public sealed class LinuxBackendCoverageTests
                 else rounds(n - 1)(total + run(1 + n % 1))
 
             Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildReuseSpecializedResultReadByScalarCallerProgram(int rounds)
+        => $$"""
+            type Shape =
+                | PassShape
+                | GrownShape
+
+            let shapeOf (argument: Int) =
+                if argument > 1
+                then GrownShape
+                else PassShape
+
+            let recursive observe (arguments: List(Int)) (observed: List(Maybe(Shape))) =
+                match (arguments, observed) with
+                    | (argument :: restArguments, current :: restObserved) ->
+                        Some(shapeOf(argument)) :: observe(restArguments)(restObserved)
+                    | _ -> observed
+
+            let recursive observeNested (arguments: List(Int)) (observed: List(Maybe(Shape))) =
+                match arguments with
+                    | argument :: restArguments ->
+                        match observed with
+                            | current :: restObserved ->
+                                Some(shapeOf(argument)) :: observeNested(restArguments)(restObserved)
+                            | [] -> observed
+                    | [] -> observed
+
+            let recursive initial (count: Int) =
+                if count == 0
+                then []
+                else None :: initial(count - 1)
+
+            let recursive countSome (observed: List(Maybe(Shape))) =
+                match observed with
+                    | [] -> 0
+                    | Some(GrownShape) :: rest -> 1 + countSome(rest)
+                    | _ :: rest -> countSome(rest)
+
+            let run (seed: Int) =
+                countSome(3
+                |> initial
+                |> observe([seed, 2, 3])) + (match 3
+                |> initial
+                |> observeNested([seed, 2, 3]) with
+                    | [] -> 0
+                    | _ :: rest -> countSome(rest))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n % 3))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
             """;
 
     private static string BuildNormalizedMatchJoinReadInlineProgram(int rounds)

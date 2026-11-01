@@ -1772,8 +1772,29 @@ public sealed partial class Lowering
         RecordRoutedSpecializationCall(label, callExpr, args[^1], prepared.SourceTypes[^1]);
 
         int closureTemp = LowerReuseSpecializationClosure(label);
+        int resultTemp = ApplyReuseSpecializationClosure(closureTemp, prepared.AppliedTemps);
+        RecordReuseSpecializationResultOwnership(label, prepared.AppliedTemps.Length, resultTemp, prepared.ResultType);
+        return (resultTemp, prepared.ResultType);
+    }
 
-        return (ApplyReuseSpecializationClosure(closureTemp, prepared.AppliedTemps), prepared.ResultType);
+    // A specialization whose compiled body hands its result over reference-counted (a passthrough
+    // parameter normalized onto the heap, say) gives the caller an owned value: recorded like any
+    // known call's result, the caller releases it after its last use. Without it a caller that only
+    // matches or reads the result (`match observe(xs)(fresh) with | [] -> 0 | _ -> 1`) leaked the
+    // whole result.
+    private void RecordReuseSpecializationResultOwnership(string label, int argumentCount, int resultTemp, TypeRef resultType)
+    {
+        TypeRef pruned = Prune(resultType);
+        if (Environment.GetEnvironmentVariable("GRC_NO_REUSESPECRESULT") is not null
+            || IsGeneralRcValueType(pruned)
+            || !IsConcretelyRuntimeManageableResultType(pruned)
+            || !TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
+            || !runtimeManaged)
+        {
+            return;
+        }
+
+        RecordCallResultTempOwnership(resultTemp, pruned, runtimeManagedResult: true, normalizedRuntimeManagedResult: false, BuiltinRegistry.BytesOwnershipProvenance.Unknown);
     }
 
     // Applies the specialized closure to each (already-lowered) argument in turn. The

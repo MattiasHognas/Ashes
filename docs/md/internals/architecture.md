@@ -1731,7 +1731,16 @@ The join copies that arm's arena cells onto the heap and links the recursive res
 taking that reference over instead of retaining it, so the join is owned on every arm and the
 function's result normalization copies it no further. Before, every such call left the recursive
 result's cells on the heap: stage 1's shape walk kept 285 cells of `Some(...)` lists per compiled
-function at exit (`GRC_NO_CONSONTOSELFRESULT`).
+function at exit (`GRC_NO_CONSONTOSELFRESULT`). A cell the arm builds over a reuse token (the matched
+parameter's own cell, in the function's reuse specialization) is such a cell too, whether the token's
+cell was on the arena or the heap; before, the arm retained the recursive result it was built over
+(`GRC_NO_REUSEDCONSCELL`).
+A call handed a fresh argument runs as the callee's reuse specialization, which bypasses the ordinary
+call's result handling. When that specialization's compiled body returns a reference-counted result
+(a passthrough parameter normalized onto the heap, say), the caller records the result as an owned
+call result and releases it after its last use. Before, a caller that only matched or counted the
+result (`match observe(xs)(initial(3)) with | [] -> 0 | _ -> 1`) left the whole list on the heap
+at every call (`GRC_NO_REUSESPECRESULT`).
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record

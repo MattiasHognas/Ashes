@@ -240,7 +240,7 @@ public sealed partial class Lowering
                     return -1;
                 case IrInst.CallClosure or IrInst.CallKnown:
                     return _inst.OfType<IrInst.StoreLocal>().FirstOrDefault(store => store.Source == tailTemp && ownedSlots.Contains(store.Slot))?.Slot ?? -1;
-                case IrInst.Alloc { RuntimeManaged: false }:
+                case var cell when IsConsChainCell(cell):
                     current = tailTemp;
                     break;
                 default:
@@ -251,16 +251,24 @@ public sealed partial class Lowering
         return -2;
     }
 
+    // A cons cell the chain builds here: an arena cell, or a list cell built over a reuse token
+    // (the matched parameter's own cell), which is fresh whether the token's cell was on the
+    // arena or the heap.
+    private static bool IsConsChainCell(IrInst? definition)
+        => definition is IrInst.Alloc { RuntimeManaged: false }
+            || (definition is IrInst.AllocReusing { ListCell: true, RuntimeManaged: false }
+                && Environment.GetEnvironmentVariable("GRC_NO_REUSEDCONSCELL") is null);
+
     // The arena cell a value is, directly or through the one store of the local it is read from.
     private int ArenaCellOf(int temp)
     {
         switch (DefinitionOf(temp))
         {
-            case IrInst.Alloc { RuntimeManaged: false }:
+            case var cell when IsConsChainCell(cell):
                 return temp;
             case IrInst.LoadLocal load:
                 List<IrInst.StoreLocal> stores = [.. _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == load.Slot)];
-                return stores.Count == 1 && DefinitionOf(stores[0].Source) is IrInst.Alloc { RuntimeManaged: false } ? stores[0].Source : -1;
+                return stores.Count == 1 && IsConsChainCell(DefinitionOf(stores[0].Source)) ? stores[0].Source : -1;
             default:
                 return -1;
         }

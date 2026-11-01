@@ -11918,14 +11918,21 @@ let recursive consCellTailTemp (cellTemp: Int) (instructions: List(IrInstruction
             else consCellTailTemp(cellTemp)(rest)
         | _ :: rest -> consCellTailTemp(cellTemp)(rest)
 
-let recursive definedByArenaCell (temp: Int) (instructions: List(IrInstruction)) =
+// Stage 0's `IsConsChainCell`: a cons cell the chain builds here, an arena cell or a list cell
+// built over a reuse token (the matched parameter's own cell), which is fresh whether the token's
+// cell was on the arena or the heap.
+let recursive definedByConsChainCell (temp: Int) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = Alloc(target, _size, runtimeManaged) } :: rest ->
             if target == temp
             then runtimeManaged == false
-            else definedByArenaCell(temp)(rest)
-        | _ :: rest -> definedByArenaCell(temp)(rest)
+            else definedByConsChainCell(temp)(rest)
+        | IrInstruction { instruction = AllocReusing(target, _tag, _fieldCount, _token, runtimeManaged, listCell, _tagless) } :: rest ->
+            if target == temp
+            then listCell && runtimeManaged == false
+            else definedByConsChainCell(temp)(rest)
+        | _ :: rest -> definedByConsChainCell(temp)(rest)
 
 // The local slot a temp is a plain read of, or -1.
 let recursive loadedSlotOf (temp: Int) (instructions: List(IrInstruction)) =
@@ -11973,7 +11980,7 @@ let recursive ownedSlotStoringTemp (temp: Int) (ownedSlots: List((Int, SemanticT
 // Stage 0's `ArenaCellOf`: the arena cell a value is, directly or through the one store of the
 // local it is read from; -1 otherwise.
 let arenaCellOf (temp: Int) (state: CoreLoweringState) =
-    if definedByArenaCell(temp)(state.reversedInstructions)
+    if definedByConsChainCell(temp)(state.reversedInstructions)
     then temp
     else
         let slot = loadedSlotOf(temp)(state.reversedInstructions)
@@ -11983,7 +11990,7 @@ let arenaCellOf (temp: Int) (state: CoreLoweringState) =
             else
                 match slotStoreSources(slot)(state.reversedInstructions)([]) with
                     | source :: [] ->
-                        if definedByArenaCell(source)(state.reversedInstructions)
+                        if definedByConsChainCell(source)(state.reversedInstructions)
                         then source
                         else -1
                     | _ -> -1
@@ -12016,7 +12023,7 @@ let recursive consChainTailOwnedSlotFrom (hops: Int) (cellTemp: Int) (state: Cor
                         then
                             ownedSlotStoringTemp(tailTemp)(ownedSlotsOfActiveFunction(state))(state.reversedInstructions)
                         else
-                            if definedByArenaCell(tailTemp)(state.reversedInstructions)
+                            if definedByConsChainCell(tailTemp)(state.reversedInstructions)
                             then consChainTailOwnedSlotFrom(hops + 1)(tailTemp)(state)
                             else -2
 
@@ -18656,7 +18663,9 @@ let recursive anyArmConsesOntoSelfResult (arms: List(MatchArmResult)) =
 // one it does not own is not owned as a whole, so the owned arm's reference is never released: the
 // consumer retains or copies the join's value again. Such arms are normalized in place instead,
 // right before their store, so every arm hands the join a reference of its own. A reuse
-// specialization keeps its values in the persistent region and takes no part in this.
+// specialization keeps its values in the persistent region and takes no part in this, except for
+// an arm consing onto the specialization's own recursive result: that result is reference-counted,
+// and the arm takes it over as stage 0's passthrough branch does.
 let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     (let consedElementPlan = consedJoinElementPlan(resultType)(state)
     in
@@ -18665,17 +18674,21 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
                 | Some(_elementPlan) -> anyArmConsesOntoSelfResult(arms)
                 | None -> false
         in
-            match (joinArmTally(arms)(0)(0), stateSpecializationFreshInputs(state)) with
-                | ((reaching, owned), None) ->
-                    if joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
-                    then (state, arms)
-                    else
-                        match joinNormalizationPlanOf(resultType)(state) with
-                            | None -> (state, arms)
-                            | Some(ScalarArgumentCopy) -> (state, arms)
-                            | Some(plan) ->
-                                normalizeUnownedJoinArms(resultSlot)(consedElementPlan)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state)
-                | _ -> (state, arms))
+            let outsideSpecialization =
+                match stateSpecializationFreshInputs(state) with
+                    | None -> true
+                    | Some(_inputs) -> consing
+            in
+                match joinArmTally(arms)(0)(0) with
+                    | (reaching, owned) ->
+                        if !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+                        then (state, arms)
+                        else
+                            match joinNormalizationPlanOf(resultType)(state) with
+                                | None -> (state, arms)
+                                | Some(ScalarArgumentCopy) -> (state, arms)
+                                | Some(plan) ->
+                                    normalizeUnownedJoinArms(resultSlot)(consedElementPlan)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state))
 
 // Stage 0's `IsOwnedScopeResultArm` over every arm that reaches the join: a fresh value, a retain the
 // arm took of a reference-counted value, or a join that holds its own reference, none borrowed
