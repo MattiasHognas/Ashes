@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <None Include="fixtures\**\*.ash" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="fixtures\**\*.hover.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

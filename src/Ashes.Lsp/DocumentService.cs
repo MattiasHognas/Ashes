@@ -1637,29 +1637,57 @@ public static partial class DocumentService
     /// inferred type, prefixed with the name when available — or null when nothing resolves there.
     /// <paramref name="filePath"/> supplies project context when present.
     /// </summary>
-    public static HoverItem? GetHover(string source, int position, string? filePath = null)
+    public static HoverItem? GetHover(string source, int position, string? filePath = null) =>
+        GetHovers(source, [position], filePath)[0];
+
+    /// <summary>
+    /// Returns the hover at each of <paramref name="positions"/> in <paramref name="source"/>, as
+    /// <see cref="GetHover"/> would, analyzing the document once for all of them.
+    /// </summary>
+    public static IReadOnlyList<HoverItem?> GetHovers(
+        string source,
+        IReadOnlyList<int> positions,
+        string? filePath = null)
     {
+        var hovers = new HoverItem?[positions.Count];
         ImportHeaderInfo hoverHeader = StripImportHeader(source);
         var context = PrepareAnalysisContext(source, filePath);
         if (context.Diagnostics.Count > 0)
         {
-            return null;
-        }
-
-        var analysisPosition = MapOriginalPositionToAnalysis(position, context);
-        if (analysisPosition is null)
-        {
-            return null;
+            return hovers;
         }
 
         var diag = new Diagnostics();
         var program = new Parser(context.AnalysisSource, diag).ParseProgram();
         var lowering = CreateLowering(diag, context);
         lowering.Lower(program);
+        Frontend.Program strippedProgram = new Parser(context.StrippedSource, new Diagnostics()).ParseProgram();
+
+        for (int index = 0; index < positions.Count; index++)
+        {
+            hovers[index] = ResolveHover(context, hoverHeader, program, strippedProgram, lowering, positions[index]);
+        }
+
+        return hovers;
+    }
+
+    private static HoverItem? ResolveHover(
+        AnalysisContext context,
+        ImportHeaderInfo hoverHeader,
+        Frontend.Program program,
+        Frontend.Program strippedProgram,
+        Lowering lowering,
+        int position)
+    {
+        var analysisPosition = MapOriginalPositionToAnalysis(position, context);
+        if (analysisPosition is null)
+        {
+            return null;
+        }
 
         HoverItem? declarationHover = GetMappedTypeDeclarationHover(context, position, program)
             ?? GetMappedExternalDeclarationHover(context, position, program, lowering)
-            ?? GetMappedTraitHover(context, position, lowering);
+            ?? GetMappedTraitHover(context, position, strippedProgram, lowering);
         if (declarationHover is not null)
         {
             return declarationHover;
@@ -2214,11 +2242,10 @@ public static partial class DocumentService
     private static HoverItem? GetMappedTraitHover(
         AnalysisContext context,
         int originalPosition,
+        Frontend.Program program,
         Lowering lowering)
     {
         int strippedPosition = originalPosition - context.HeaderOffset;
-        var diagnostics = new Diagnostics();
-        Frontend.Program program = new Parser(context.StrippedSource, diagnostics).ParseProgram();
         Lowering.HoverTypeInfo? hover = TryGetTraitHover(
             context.StrippedSource,
             strippedPosition,

@@ -1,0 +1,87 @@
+1:0 type -> `type Shape =     | Circle(Int)     | Squ...` Shape -> Str | *function*
+1:5 Shape -> `Shape` type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show} | *algebraic data type*
+2:6 Circle -> `Circle` Circle(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+2:13 Int -> `Int` Int | *built-in type*
+3:6 Square -> `Square` Square(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+3:13 Int -> `Int` Int | *built-in type*
+4:4 deriving -> `type Shape =     | Circle(Int)     | Squ...` Shape -> Str | *function*
+4:14 Eq -> `Eq` trait Ashes.Trait.Eq(a) | *trait*
+4:18 Show -> `Show` trait Ashes.Trait.Show(a) | *trait*
+6:0 trait -> -
+6:6 Area -> `Area` trait Area(a) | *trait*
+6:11 a -> -
+7:6 area -> `area` Area.area : a -> Int requires {Area(a)} | *trait method*
+7:13 a -> -
+7:18 Int -> `Int` Int | *built-in type*
+8:6 doubled -> `doubled` Area.doubled : a -> Int requires {Area(a)} | *trait method*
+8:16 a -> -
+8:21 Int -> `Int` Int | *built-in type*
+9:8 given -> `given (s) -> Area.area(s) * 2` Shape -> Int | *function*
+9:15 s -> `s` s : Shape | *parameter*
+9:21 Area -> `Area` trait Area(a) | *trait*
+9:26 area -> `area` Area.area : a -> Int requires {Area(a)} | *trait method*
+9:31 s -> `s` s : Shape | *parameter*
+9:36 2 -> `2` Int | *expression*
+11:0 implement -> -
+11:10 Area -> `Area` trait Area(a) | *trait*
+11:15 Shape -> `Shape` type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show} | *algebraic data type*
+12:6 area -> `area` Area.area : a -> Int requires {Area(a)} | *trait method*
+13:8 given -> `given (s) ->             match s with   ...` Shape -> Int | *function*
+13:15 s -> `s` s : Shape | *parameter*
+14:12 match -> `match s with                 | Circle(r)...` Int | *expression*
+14:18 s -> `s` s : Shape | *parameter*
+14:20 with -> `match s with                 | Circle(r)...` Int | *expression*
+15:18 Circle -> `Circle` Circle(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+15:25 r -> `r` r : Int | *value*
+15:31 r -> `r` r : Int | *value*
+15:35 r -> `r` r : Int | *value*
+15:39 3 -> `3` Int | *expression*
+16:18 Square -> `Square` Square(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+16:25 w -> `w` w : Int | *value*
+16:31 w -> `w` w : Int | *value*
+16:35 w -> `w` w : Int | *value*
+18:0 let -> -
+18:4 recursive -> -
+18:14 total -> `total` total : List<a> -> Int requires {Area(a)} | *function* | **Parameters** | - `shapes` : `List<a>` | **Returns:** `Int`
+18:22 List -> `List` List | *built-in type*
+18:27 a -> -
+18:33 Int -> `Int` Int | *built-in type*
+18:37 requires -> -
+18:47 Area -> `Area` trait Area(a) | *trait*
+18:52 a -> -
+19:4 given -> `given (shapes) ->         match shapes w...` List<a> -> Int | *function*
+19:11 shapes -> `shapes` shapes : List<a> | *parameter*
+20:8 match -> `match shapes with             | [] -> 0 ...` Int | *expression*
+20:14 shapes -> `shapes` shapes : List<a> | *parameter*
+20:21 with -> `match shapes with             | [] -> 0 ...` Int | *expression*
+21:20 0 -> `0` Int | *expression*
+22:14 s -> `s` s : a | *value*
+22:19 rest -> `rest` rest : List<a> | *value*
+22:27 Area -> `Area` trait Area(a) | *trait*
+22:32 area -> `area` Area.area : a -> Int requires {Area(a)} | *trait method*
+22:37 s -> `s` s : a | *value*
+22:42 total -> `total` total : (a -> Int, b -> Int) -> List<a> -> Int | *function* | **Parameters** | - `shapes` : `(a -> Int, b -> Int)` | **Returns:** `List<a> -> Int`
+22:48 rest -> `rest` rest : List<a> | *value*
+24:0 let -> -
+24:4 same -> `same` same : Bool | *value*
+24:11 Circle -> `Circle` Circle(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+24:18 1 -> `1` Int | *expression*
+24:24 Circle -> `Circle` Circle(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+24:31 1 -> `1` Int | *expression*
+26:0 let -> -
+26:4 shown -> `shown` shown : Str | *value*
+26:12 Show -> `Show` trait Ashes.Trait.Show(a) | *trait*
+26:17 show -> `show` Ashes.Trait.Show.show : a -> Str requires {Ashes.Trait.Show(a)} | *trait method*
+26:22 Square -> `Square` Square(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+26:29 2 -> `2` Int | *expression*
+28:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+28:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+28:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+28:15 Area -> `Area` trait Area(a) | *trait*
+28:20 doubled -> `doubled` Area.doubled : a -> Int requires {Area(a)} | *trait method*
+28:28 Circle -> `Circle` Circle(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+28:35 2 -> `2` Int | *expression*
+28:41 Area -> `Area` trait Area(a) | *trait*
+28:46 area -> `area` Area.area : a -> Int requires {Area(a)} | *trait method*
+28:51 Square -> `Square` Square(Int) | *constructor of `Shape`* | type Shape =     | Circle(Int)     | Square(Int)     deriving {Eq, Show}
+28:58 3 -> `3` Int | *expression*

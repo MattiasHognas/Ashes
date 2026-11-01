@@ -1,0 +1,58 @@
+1:0 capability -> -
+1:11 Clock -> `Clock` capability Clock =     | now : Unit -> Int | *capability*
+2:6 now -> `now` Clock.now : Unit -> Int | *capability operation of `Clock`*
+2:12 Unit -> `Unit` Unit | *built-in type*
+2:20 Int -> `Int` Int | *built-in type*
+4:0 capability -> -
+4:11 Log -> `Log` capability Log =     | log : Str -> Unit needs {ConsoleIO} | *capability*
+5:6 log -> `log` Log.log : Str -> Unit needs {ConsoleIO} | *capability operation of `Log`*
+5:12 Str -> `Str` Str | *built-in type*
+5:19 Unit -> `Unit` Unit | *built-in type*
+5:24 needs -> -
+5:31 ConsoleIO -> -
+7:0 provide -> -
+7:8 Log -> `Log` capability Log =     | log : Str -> Unit needs {ConsoleIO} | *capability*
+8:6 log -> `log` Log.log : Str -> Unit needs {ConsoleIO} | *capability operation of `Log`*
+9:8 given -> `given (msg) -> Ashes.IO.print(msg)` Str -> Unit needs {ConsoleIO} | *function*
+9:15 msg -> `msg` msg : Str | *parameter*
+9:23 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+9:29 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+9:32 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+9:38 msg -> `msg` msg : Str | *parameter*
+11:0 let -> -
+11:4 stamp -> `stamp` stamp : Unit -> Int needs {Clock} | *function* | **Parameters** | - `_` : `Unit` | **Returns:** `Int`
+11:12 Unit -> `Unit` Unit | *built-in type*
+11:20 Int -> `Int` Int | *built-in type*
+11:24 needs -> -
+11:31 Clock -> `Clock` capability Clock =     | now : Unit -> Int | *capability*
+12:4 given -> `given (_) -> perform Clock.now(Unit) + 1` Unit -> Int needs {Clock} | *function*
+12:11 _ -> `_` _ : Unit | *parameter*
+12:17 perform -> `perform Clock.now(Unit)` Int | *expression*
+12:25 Clock -> `Clock` capability Clock =     | now : Unit -> Int | *capability*
+12:31 now -> `Clock.now` Clock.now : Unit -> Int | *function*
+12:35 Unit -> `Unit` Unit | *built-in type*
+12:43 1 -> `1` Int | *expression*
+14:0 let -> -
+14:4 x -> `x` x : Int | *value*
+15:4 handle -> `handle stamp(Unit) with         | Clock....` Int | *expression*
+15:11 stamp -> `stamp` stamp : Unit -> Int needs {Clock} | *function* | **Parameters** | - `_` : `Unit` | **Returns:** `Int`
+15:17 Unit -> `Unit` Unit | *built-in type*
+15:23 with -> `handle stamp(Unit) with         | Clock....` Int | *expression*
+16:10 Clock -> `Clock` capability Clock =     | now : Unit -> Int | *capability*
+16:16 now -> `now` Clock.now : Unit -> Int | *capability operation of `Clock`*
+16:20 _ -> `handle stamp(Unit) with         | Clock....` Int | *expression*
+16:26 resume -> `resume(42)` Unit -> Int needs {ConsoleIO | a} | *function*
+16:33 42 -> `42` Int | *expression*
+17:10 return -> `handle stamp(Unit) with         | Clock....` Int | *expression*
+17:17 r -> `r` r : Int | *value*
+17:23 r -> `r` r : Int | *value*
+17:27 2 -> `2` Int | *expression*
+19:0 let -> -
+19:4 _ -> `_` _ : Unit | *value*
+19:8 Log -> `Log` capability Log =     | log : Str -> Unit needs {ConsoleIO} | *capability*
+19:12 log -> `Log.log` Log.log : Str -> Unit needs {ConsoleIO} | *function*
+19:17 hi -> `"hi"` Str | *expression*
+21:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+21:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+21:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+21:15 x -> `x` x : Int | *value*

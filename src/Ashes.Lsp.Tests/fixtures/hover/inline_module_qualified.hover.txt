@@ -1,0 +1,62 @@
+1:0 module -> -
+1:7 Geometry -> -
+2:4 export -> -
+2:12 value -> -
+2:18 square -> -
+2:26 value -> -
+2:32 cube -> -
+2:38 type -> -
+2:43 Unit2 -> -
+2:54 module -> -
+2:61 Inner -> -
+3:4 type -> -
+3:9 Unit2 -> -
+4:10 Meter -> -
+5:10 Foot -> -
+6:4 let -> -
+6:8 square -> -
+6:17 given -> -
+6:24 x -> -
+6:30 x -> -
+6:34 x -> -
+7:4 let -> -
+7:8 cube -> -
+7:15 given -> -
+7:22 x -> -
+7:28 x -> -
+7:32 square -> -
+7:39 x -> -
+8:4 module -> -
+8:11 Inner -> -
+9:8 let -> -
+9:12 half -> -
+9:19 given -> -
+9:26 x -> -
+9:32 x -> -
+9:36 2 -> -
+11:0 let -> -
+11:4 viaQualified -> `viaQualified` viaQualified : Int | *value*
+11:19 Geometry -> `Geometry.square` Geometry.square : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+11:28 square -> `Geometry.square` Geometry.square : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+11:35 3 -> `3` Int | *expression*
+12:0 let -> -
+12:4 viaNested -> `viaNested` viaNested : Int | *value*
+12:16 Geometry -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+12:25 Inner -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+12:31 half -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+12:36 10 -> `10` Int | *expression*
+13:0 let -> -
+13:4 viaSelector -> `viaSelector` viaSelector : Int | *value*
+13:18 Geometry -> `Geometry.cube` Geometry.cube : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+13:27 cube -> `Geometry.cube` Geometry.cube : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+13:32 2 -> `2` Int | *expression*
+14:0 let -> -
+14:4 unit -> `unit` unit : Unit2 | *value*
+14:11 Geometry -> `Geometry.Meter` Geometry.Meter : Unit2 | *value*
+14:20 Meter -> `Meter` Meter | *constructor of `Unit2`* | type Unit2 =     | Meter     | Foot
+16:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+16:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+16:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+16:15 viaQualified -> `viaQualified` viaQualified : Int | *value*
+16:30 viaNested -> `viaNested` viaNested : Int | *value*
+16:42 viaSelector -> `viaSelector` viaSelector : Int | *value*

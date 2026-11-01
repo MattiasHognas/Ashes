@@ -1,0 +1,286 @@
+1:0 import -> -
+1:7 Ashes -> -
+1:13 IO -> -
+2:0 import -> -
+2:7 Ashes -> -
+2:13 Collection -> -
+2:24 List -> -
+2:29 as -> -
+2:32 L -> -
+3:0 import -> -
+3:7 Ashes -> -
+3:13 Core -> -
+3:18 Maybe -> -
+3:24 map -> -
+3:28 as -> -
+3:31 mapMaybe -> -
+4:0 type -> -
+4:5 Color -> `Color` type Color =     | Red     | Green(Int)     | Blue(Str, Int) | *algebraic data type*
+5:6 Red -> `Red` Red | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+6:6 Green -> `Green` Green(Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+6:12 Int -> `Int` Int | *built-in type*
+7:6 Blue -> `Blue` Blue(Str, Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+7:11 Str -> `Str` Str | *built-in type*
+7:16 Int -> `Int` Int | *built-in type*
+9:0 type -> -
+9:5 alias -> -
+9:11 Name -> `Name` type alias Name = Str | *type alias*
+9:18 Str -> `Str` Str | *built-in type*
+11:0 type -> -
+11:5 UserId -> `UserId` type UserId = UserId(Int) | *zero-cost nominal type*
+11:14 UserId -> `UserId` type UserId = UserId(Int) | *zero-cost nominal type*
+11:21 Int -> `Int` Int | *built-in type*
+13:0 type -> -
+13:5 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
+14:6 x -> `x` x: Int | *field of record `Point`*
+14:9 Int -> `Int` Int | *built-in type*
+15:6 y -> `y` y: Int | *field of record `Point`*
+15:9 Int -> `Int` Int | *built-in type*
+17:0 let -> -
+17:4 answer -> `answer` answer : Int | *value*
+17:13 42 -> `42` Int | *expression*
+19:0 let -> -
+19:4 big -> `big` big : BigInt | *value*
+19:10 123456789012345678901234567890N -> `123456789012345678901234567890N` BigInt | *expression*
+21:0 let -> -
+21:4 ratio -> `ratio` ratio : Float | *value*
+21:12 1 -> `1.5` Float | *expression*
+21:14 5 -> `1.5` Float | *expression*
+23:0 let -> -
+23:4 letter -> `letter` letter : Rune | *value*
+23:14 a -> `'a'` Rune | *expression*
+25:0 let -> -
+25:4 flag -> `flag` flag : Bool | *value*
+25:11 true -> `true` Bool | *expression*
+27:0 let -> -
+27:4 label -> `label` label : Str | *value*
+27:12 Name -> `Name` type alias Name = Str | *type alias*
+27:20 hi -> `"hi"` Str | *expression*
+29:0 let -> `let add a b = a + b` Int -> Int | *function*
+29:4 add -> `add` add : a -> a -> a requires {Ashes.Trait.Add(a)} | *function* | **Parameters** | - `a` : `a` - `b` : `a` | **Returns:** `a`
+29:8 a -> `a` a : Int | *parameter*
+29:10 b -> `b` b : Int | *parameter*
+29:14 a -> `a` a : Int | *parameter*
+29:18 b -> `b` b : Int | *parameter*
+31:0 let -> `let scale (p: Point) k = Point(x = p.x *...` Int -> Point | *function*
+31:4 scale -> `scale` scale : Point -> Int -> Point | *function* | **Parameters** | - `p` : `Point` - `k` : `Int` | **Returns:** `Point`
+31:11 p -> `p` p : Point | *parameter*
+31:14 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
+31:21 k -> `k` k : Int | *parameter*
+31:25 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
+31:31 x -> `Point(x = p.x * k, y = p.y * k)` Point | *expression*
+31:35 p -> `p.x` p.x : Int | *value*
+31:37 x -> `p.x` p.x : Int | *value*
+31:41 k -> `k` k : Int | *parameter*
+31:44 y -> `Point(x = p.x * k, y = p.y * k)` Point | *expression*
+31:48 p -> `p.y` p.y : Int | *value*
+31:50 y -> `p.y` p.y : Int | *value*
+31:54 k -> `k` k : Int | *parameter*
+33:0 let -> -
+33:4 origin -> `origin` origin : Point | *value*
+33:13 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
+33:19 x -> `Point(x = 0, y = 0)` Point | *expression*
+33:23 0 -> `0` Int | *expression*
+33:26 y -> `Point(x = 0, y = 0)` Point | *expression*
+33:30 0 -> `0` Int | *expression*
+35:0 let -> -
+35:4 moved -> `moved` moved : Point | *value*
+35:12 origin -> `origin` origin : Point | *value*
+35:19 with -> `origin with x = 3` Point | *expression*
+35:24 x -> `origin with x = 3` Point | *expression*
+35:28 3 -> `3` Int | *expression*
+37:0 let -> -
+37:4 pair -> `pair` pair : (Int, Str) | *value*
+37:12 1 -> `1` Int | *expression*
+37:16 one -> `"one"` Str | *expression*
+39:0 let -> -
+39:4 nums -> `nums` nums : List<Int> | *value*
+39:12 1 -> `1` Int | *expression*
+39:15 2 -> `2` Int | *expression*
+39:18 3 -> `3` Int | *expression*
+41:0 let -> -
+41:4 more -> `more` more : List<Int> | *value*
+41:11 0 -> `0` Int | *expression*
+41:16 nums -> `nums` nums : List<Int> | *value*
+43:0 let -> -
+43:4 uid -> `uid` uid : UserId | *value*
+43:10 UserId -> `UserId` type UserId = UserId(Int) | *zero-cost nominal type*
+43:17 7 -> `7` Int | *expression*
+45:0 let -> -
+45:4 unwrap -> `unwrap` unwrap : UserId -> Int | *function* | **Parameters** | - `id` : `UserId` | **Returns:** `Int`
+45:11 id -> `id` id : UserId | *parameter*
+46:4 match -> `match id with         | UserId(value) ->...` Int | *expression*
+46:10 id -> `id` id : UserId | *parameter*
+46:13 with -> `match id with         | UserId(value) ->...` Int | *expression*
+47:10 UserId -> `UserId` type UserId = UserId(Int) | *zero-cost nominal type*
+47:17 value -> `value` value : Int | *value*
+47:27 value -> `value` value : Int | *value*
+49:0 let -> `let recursive even n =     if n == 0    ...` even : Int -> Bool | *function*
+49:4 recursive -> `let recursive even n =     if n == 0    ...` even : Int -> Bool | *function*
+49:14 even -> `even` even : Int -> Bool | *function* | **Parameters** | - `n` : `Int` | **Returns:** `Bool`
+49:19 n -> `n` n : Int | *parameter*
+50:4 if -> `if n == 0     then true     else odd(n -...` Bool | *expression*
+50:7 n -> `n` n : Int | *parameter*
+50:12 0 -> `0` Int | *expression*
+51:4 then -> `if n == 0     then true     else odd(n -...` Bool | *expression*
+51:9 true -> `true` Bool | *expression*
+52:4 else -> `if n == 0     then true     else odd(n -...` Bool | *expression*
+52:9 odd -> `odd` odd : Int -> Bool | *function* | **Parameters** | - `n` : `Int` | **Returns:** `Bool`
+52:13 n -> `n` n : Int | *parameter*
+52:17 1 -> `1` Int | *expression*
+53:0 and -> `and odd n =     if n == 0     then false...` odd : Int -> Bool | *function*
+53:4 odd -> `odd` odd : Int -> Bool | *function* | **Parameters** | - `n` : `Int` | **Returns:** `Bool`
+53:8 n -> `n` n : Int | *parameter*
+54:4 if -> `if n == 0     then false     else even(n...` Bool | *expression*
+54:7 n -> `n` n : Int | *parameter*
+54:12 0 -> `0` Int | *expression*
+55:4 then -> `if n == 0     then false     else even(n...` Bool | *expression*
+55:9 false -> `false` Bool | *expression*
+56:4 else -> `if n == 0     then false     else even(n...` Bool | *expression*
+56:9 even -> `even` even : Int -> Bool | *function* | **Parameters** | - `n` : `Int` | **Returns:** `Bool`
+56:14 n -> `n` n : Int | *parameter*
+56:18 1 -> `1` Int | *expression*
+58:0 let -> -
+58:4 describe -> `describe` describe : Color -> Str | *function* | **Parameters** | - `c` : `Color` | **Returns:** `Str`
+58:13 c -> `c` c : Color | *parameter*
+59:4 match -> `match c with         | Red -> "red"     ...` Str | *expression*
+59:10 c -> `c` c : Color | *parameter*
+59:12 with -> `match c with         | Red -> "red"     ...` Str | *expression*
+60:10 Red -> `Red` Red | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+60:18 red -> `"red"` Str | *expression*
+61:10 Green -> `Green` Green(Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+61:16 n -> `n` n : Int | *value*
+61:19 when -> `match c with         | Red -> "red"     ...` Str | *expression*
+61:24 n -> `n` n : Int | *value*
+61:28 10 -> `10` Int | *expression*
+61:35 big -> `"big green"` Str | *expression*
+61:39 green -> `"big green"` Str | *expression*
+62:10 Green -> `Green` Green(Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+62:16 n -> `n` n : Int | *value*
+62:23 green -> `"green"` Str | *expression*
+63:10 Blue -> `Blue` Blue(Str, Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+63:15 s -> `s` s : Str | *value*
+63:18 _ -> `match c with         | Red -> "red"     ...` Str | *expression*
+63:21 as -> `match c with         | Red -> "red"     ...` Str | *expression*
+63:24 whole -> `whole` whole : Color | *value*
+63:33 s -> `s` s : Str | *value*
+65:0 let -> -
+65:4 sumList -> `sumList` sumList : List<Int> -> Int | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
+65:12 xs -> `xs` xs : List<Int> | *parameter*
+66:4 L -> `L.foldLeft` Ashes.Collection.List.foldLeft : (Int -> Int -> Int) -> Int -> List<Int> -> Int | *function* | **Parameters** | - `f` : `Int -> Int -> Int` - `initial` : `Int` - `xs` : `List<Int>` | **Returns:** `Int`
+66:6 foldLeft -> `L.foldLeft` Ashes.Collection.List.foldLeft : (Int -> Int -> Int) -> Int -> List<Int> -> Int | *function* | **Parameters** | - `f` : `Int -> Int -> Int` - `initial` : `Int` - `xs` : `List<Int>` | **Returns:** `Int`
+66:15 given -> `given (acc) ->         given (v) -> acc ...` Int -> Int -> Int | *function*
+66:22 acc -> `acc` acc : Int | *parameter*
+67:8 given -> `given (v) -> acc + v` Int -> Int | *function*
+67:15 v -> `v` v : Int | *parameter*
+67:21 acc -> `acc` acc : Int | *parameter*
+67:27 v -> `v` v : Int | *parameter*
+67:30 0 -> `0` Int | *expression*
+67:33 xs -> `xs` xs : List<Int> | *parameter*
+69:0 let -> -
+69:4 lam -> `lam` lam : Int -> Int | *function* | **Parameters** | - `z` : `Int` | **Returns:** `Int`
+70:4 given -> `given (z) -> z * 2` Int -> Int | *function*
+70:11 z -> `z` z : Int | *parameter*
+70:17 z -> `z` z : Int | *parameter*
+70:21 2 -> `2` Int | *expression*
+72:0 let -> -
+72:4 piped -> `piped` piped : List<Int> | *value*
+72:12 nums -> `nums` nums : List<Int> | *value*
+72:20 L -> `L.map` Ashes.Collection.List.map : (Int -> Int needs {ConsoleIO | a}) -> List<Int> -> List<Int> needs {ConsoleIO | a} needs {ConsoleIO | a} | *function* | **Parameters** | - `f` : `Int -> Int needs {ConsoleIO | a}` | **Returns:** `List<Int> -> List<Int> needs {ConsoleIO | a}`
+72:22 map -> `L.map` Ashes.Collection.List.map : (Int -> Int needs {ConsoleIO | a}) -> List<Int> -> List<Int> needs {ConsoleIO | a} needs {ConsoleIO | a} | *function* | **Parameters** | - `f` : `Int -> Int needs {ConsoleIO | a}` | **Returns:** `List<Int> -> List<Int> needs {ConsoleIO | a}`
+72:26 lam -> `lam` lam : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `z` : `Int` | **Returns:** `Int`
+74:0 let -> -
+74:4 bits -> `bits` bits : Int | *value*
+74:11 answer -> `answer` answer : Int | *value*
+74:20 7 -> `7` Int | *expression*
+74:24 1 -> `1` Int | *expression*
+74:29 2 -> `2` Int | *expression*
+74:34 3 -> `3` Int | *expression*
+74:39 1 -> `1` Int | *expression*
+76:0 let -> -
+76:4 byte -> `byte` byte : u8 | *value*
+76:11 255u8 -> `255u8` u8 | *expression*
+78:0 let -> -
+78:4 logic -> `logic` logic : Bool | *value*
+78:13 flag -> `flag` flag : Bool | *value*
+78:22 answer -> `answer` answer : Int | *value*
+78:32 3 -> `3` Int | *expression*
+78:37 answer -> `answer` answer : Int | *value*
+78:47 4 -> `4` Int | *expression*
+80:0 let -> -
+80:4 local -> `local` local : Int | *value*
+81:4 match -> `match pair with         | (q, r) -> q` Int | *expression*
+81:10 pair -> `pair` pair : (Int, Str) | *value*
+81:15 with -> `match pair with         | (q, r) -> q` Int | *expression*
+82:11 q -> `q` q : Int | *value*
+82:14 r -> `r` r : Str | *value*
+82:20 q -> `q` q : Int | *value*
+84:0 let -> -
+84:4 headOr -> `headOr` headOr : List<Int> -> Int | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
+84:11 xs -> `xs` xs : List<Int> | *parameter*
+85:4 match -> `match xs with         | [] -> 0         ...` Int | *expression*
+85:10 xs -> `xs` xs : List<Int> | *parameter*
+85:13 with -> `match xs with         | [] -> 0         ...` Int | *expression*
+86:16 0 -> `0` Int | *expression*
+87:10 h -> `h` h : Int | *value*
+87:15 _ -> `match xs with         | [] -> 0         ...` Int | *expression*
+87:20 h -> `h` h : Int | *value*
+89:0 let -> -
+89:4 orPat -> `orPat` orPat : Color -> Int | *function* | **Parameters** | - `c` : `Color` | **Returns:** `Int`
+89:10 c -> `c` c : Color | *parameter*
+90:4 match -> `match c with         | Red | Green(_) ->...` Int | *expression*
+90:10 c -> `c` c : Color | *parameter*
+90:12 with -> `match c with         | Red | Green(_) ->...` Int | *expression*
+91:10 Red -> `Red` Red | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+91:16 Green -> `Green` Green(Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+91:22 _ -> `match c with         | Red | Green(_) ->...` Int | *expression*
+91:28 1 -> `1` Int | *expression*
+92:10 Blue -> `Blue` Blue(Str, Int) | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
+92:15 _ -> `match c with         | Red | Green(_) ->...` Int | *expression*
+92:18 _ -> `match c with         | Red | Green(_) ->...` Int | *expression*
+92:24 2 -> `2` Int | *expression*
+94:0 let -> -
+94:4 pointPat -> `pointPat` pointPat : Point -> Int | *function* | **Parameters** | - `p` : `Point` | **Returns:** `Int`
+94:13 p -> `p` p : Point | *parameter*
+95:4 match -> `match p with         | Point { x = px, y...` Int | *expression*
+95:10 p -> `p` p : Point | *parameter*
+95:12 with -> `match p with         | Point { x = px, y...` Int | *expression*
+96:10 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
+96:18 x -> `match p with         | Point { x = px, y...` Int | *expression*
+96:22 px -> `px` px : Int | *value*
+96:26 y -> `match p with         | Point { x = px, y...` Int | *expression*
+96:30 _ -> `match p with         | Point { x = px, y...` Int | *expression*
+96:37 px -> `px` px : Int | *value*
+98:0 let -> -
+98:4 maybeDouble -> `maybeDouble` maybeDouble : Maybe<Int> | *value*
+99:4 mapMaybe -> `mapMaybe` Ashes.Core.Maybe.map : (Int -> Int needs {ConsoleIO | a}) -> Maybe<Int> -> Maybe<Int> needs {ConsoleIO | a} needs {ConsoleIO | a} | *function*
+99:13 given -> `given (v) -> v * 2` Int -> Int needs {ConsoleIO | a} | *function*
+99:20 v -> `v` v : Int | *parameter*
+99:26 v -> `v` v : Int | *parameter*
+99:30 2 -> `2` Int | *expression*
+99:33 Some -> `Some(3)` Maybe<Int> | *expression*
+99:38 3 -> `3` Int | *expression*
+101:0 let -> -
+101:4 resultChain -> `resultChain` resultChain : Result<Str, Int> | *value*
+102:4 Ok -> `Ok(1)` Result<Str, Int> | *expression*
+102:7 1 -> `1` Int | *expression*
+103:9 given -> `given (v) -> v + 1` Int -> Int needs {ConsoleIO | a} | *function*
+103:16 v -> `v` v : Int | *parameter*
+103:22 v -> `v` v : Int | *parameter*
+103:26 1 -> `1` Int | *expression*
+104:9 given -> `given (e) -> e + "!"` Str -> Str needs {ConsoleIO | a} | *function*
+104:16 e -> `e` e : Str | *parameter*
+104:22 e -> `e` e : Str | *parameter*
+106:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+106:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+106:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+106:15 add -> `add` add : Int -> Int -> Int needs {ConsoleIO | a} needs {ConsoleIO | b} | *function* | **Parameters** | - `a` : `Int` - `b` : `Int` | **Returns:** `Int`
+106:19 answer -> `answer` answer : Int | *value*
+106:27 unwrap -> `unwrap` unwrap : UserId -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `id` : `UserId` | **Returns:** `Int`
+106:34 uid -> `uid` uid : UserId | *value*
+106:42 sumList -> `sumList` sumList : List<Int> -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
+106:50 more -> `more` more : List<Int> | *value*
+106:58 local -> `local` local : Int | *value*
+106:66 headOr -> `headOr` headOr : List<Int> -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
+106:73 piped -> `piped` piped : List<Int> | *value*
+106:82 bits -> `bits` bits : Int | *value*

@@ -99,10 +99,12 @@ public sealed class LspHoverCoverageTests
             Ashes.IO.print(total([Circle(1), Square(2)]))
             """;
 
+        IReadOnlyList<DocumentService.HoverItem?> hovers = DocumentService.GetHovers(
+            source,
+            [.. Enumerable.Range(0, source.Length)]);
         for (int position = 0; position < source.Length; position++)
         {
-            DocumentService.HoverItem? hover = DocumentService.GetHover(source, position);
-            if (hover is { } item)
+            if (hovers[position] is { } item)
             {
                 item.Contents.ShouldNotContain("__", customMessage: $"position {position}");
             }

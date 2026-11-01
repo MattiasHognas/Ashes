@@ -1,0 +1,24 @@
+1:0 external -> -
+1:9 strlen -> `strlen` external strlen(Str) -> Int | *external function*
+1:16 Str -> `Str` Str | *built-in type*
+1:24 Int -> `Int` Int | *built-in type*
+2:0 external -> -
+2:9 type -> -
+2:14 Handle -> `Handle` external type Handle | *external opaque type*
+3:0 external -> -
+3:9 handleOf -> `handleOf` external handleOf(Str) -> Handle = "strlen" | *external function*
+3:18 Str -> `Str` Str | *built-in type*
+3:26 Handle -> `Handle` external type Handle | *external opaque type*
+3:36 strlen -> -
+5:0 let -> -
+5:4 length -> `length` length : Int | *value*
+5:13 strlen -> `strlen` strlen : Str -> Int needs {UnsafeFfi} | *function*
+5:21 Ashes -> `"Ashes"` Str | *expression*
+7:0 let -> -
+7:4 h -> `h` h : Handle | *value*
+7:8 handleOf -> `handleOf` handleOf : Str -> Handle needs {UnsafeFfi} | *function*
+7:18 x -> `"x"` Str | *expression*
+9:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+9:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+9:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+9:15 length -> `length` length : Int | *value*
