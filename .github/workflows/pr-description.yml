@@ -20,7 +20,7 @@ jobs:
           BODY: ${{ github.event.pull_request.body }}
         run: |
           banned="$(printf '%s\n' "$BODY" | grep -nEi \
-            'claude-projects-attribution|^[[:space:]]*_?Requested by \*\*|^[[:space:]]*(Co-Authored-By|Claude-Session)[[:space:]]*:|Generated with \[?Claude' \
+            'claude-projects-attribution|^[[:space:]]*_?Requested by \*\*|^[[:space:]]*(Co-Authored-By|Claude-Session)[[:space:]]*:|Generated with \[Claude Code\]' \
             || true)"
           if [ -n "$banned" ]; then
             echo "The pull request description carries banned attribution line(s):"
