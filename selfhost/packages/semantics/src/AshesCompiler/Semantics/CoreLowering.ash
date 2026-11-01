@@ -12068,6 +12068,19 @@ let isConsChainOntoSelfCall (branch: Expr) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
+// Whether a branch ends in a nested match or `if` one of whose arms, at any depth, conses onto the
+// function's own full recursive call.
+let recursive nestedJoinConsesOntoSelfResult (branch: Expr) (state: CoreLoweringState) =
+    match letChainBody(branch) with
+        | ExprMatch(_scrutinee, cases, _id) -> anyCaseConsesOntoSelfResult(cases)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) -> branchConsesOntoSelfResult(thenBranch)(state) || branchConsesOntoSelfResult(elseBranch)(state)
+        | _ -> false
+and anyCaseConsesOntoSelfResult (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match cases with
+        | [] -> false
+        | (_pattern, body, _guard) :: rest -> branchConsesOntoSelfResult(body)(state) || anyCaseConsesOntoSelfResult(rest)(state)
+and branchConsesOntoSelfResult (branch: Expr) (state: CoreLoweringState) = isConsChainOntoSelfCall(branch)(state) || nestedJoinConsesOntoSelfResult(branch)(state)
+
 // The temp the most recent store wrote into a cons cell's tail, or -1.
 let recursive consCellTailTemp (cellTemp: Int) (instructions: List(IrInstruction)) =
     match instructions with
@@ -18704,6 +18717,7 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
             armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
             armFreshCell = constructsFreshCell(body)(state),
             armConsesOntoSelfResult = isConsChainOntoSelfCall(body)(state),
+            armJoinsSelfConsingArms = nestedJoinConsesOntoSelfResult(body)(state),
             armStoreTemp = if armNeverReachesJoin(body)(state)
             then -1
             else finalTemp
@@ -18725,7 +18739,7 @@ let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: Co
     in
         matchArmResultWith(body)(finalTemp)(resultType)(borrowsParameter)((borrowsParameter || armPatternRootIsPlaced(body)(state)) && containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && definedByRetain(finalTemp)(state.reversedInstructions))(state))
 
-let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false)
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = false)
 
 // Stage 0's `TransferDirectRuntimeManagedBranchResult`: an `if` branch that returns a pattern
 // owner takes a duplicate of its read, an identity marker until the loop's finalize places the
@@ -18836,7 +18850,7 @@ let recursive normalizeUnownedJoinArms (slot: Int) (consedElementPlan: Maybe(Arg
                 match state
                 |> normalizeJoinArmStore(slot)(consedElementPlan)(plan)(arm)
                 |> normalizeUnownedJoinArms(slot)(consedElementPlan)(plan)(rest) with
-                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false) :: restArms)
+                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = arm.armJoinsSelfConsingArms) :: restArms)
 
 // The arms that reach the join, and how many of them hand it a reference-counted value: one of
 // their own, or a reference a pattern owner retained (stage 0's `IsReferenceCountedJoinArm`).
@@ -18902,13 +18916,21 @@ let recursive anyArmConsesOntoSelfResult (arms: List(MatchArmResult)) =
         | [] -> false
         | arm :: rest -> arm.armStoreTemp >= 0 && arm.armConsesOntoSelfResult && !arm.armOwned && !arm.armRetainedOwner && !arm.armBorrowsLoopParameter || anyArmConsesOntoSelfResult(rest)
 
+// Whether an arm reaching the join is a nested join that took part in the arm normalization
+// because one of its own arms conses onto the function's own recursive result.
+let recursive anyArmJoinsSelfConsingArms (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && arm.armJoinsSelfConsingArms || anyArmJoinsSelfConsingArms(rest)
+
 // Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
 // one it does not own is not owned as a whole, so the owned arm's reference is never released: the
 // consumer retains or copies the join's value again. Such arms are normalized in place instead,
 // right before their store, so every arm hands the join a reference of its own. A reuse
 // specialization keeps its values in the persistent region and takes no part in this, except for
 // an arm consing onto the specialization's own recursive result: that result is reference-counted,
-// and the arm takes it over as stage 0's passthrough branch does.
+// and the arm takes it over as stage 0's passthrough branch does. A join enclosing such an arm's
+// join takes part too, as stage 0's passthrough branch copies the parameter its other arms return.
 let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     (let consedElementPlan = consedJoinElementPlan(resultType)(state)
     in
@@ -18920,7 +18942,7 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
             let outsideSpecialization =
                 match stateSpecializationFreshInputs(state) with
                     | None -> true
-                    | Some(_inputs) -> consing
+                    | Some(_inputs) -> consing || anyArmJoinsSelfConsingArms(arms)
             in
                 match joinArmTally(arms)(0)(0) with
                     | (reaching, owned) ->
@@ -19893,7 +19915,7 @@ let closeArmScope body owners bracket resultSlot resultTemp resultType (state: C
 let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
     LoweredMatchArm(
         lowered = failure(failedState)(error),
-        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false)
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = false)
     )
 
 // A constructor application whose every argument is a literal or another such application, with
