@@ -1793,23 +1793,30 @@ Rules:
 - List patterns (`[]`, `x :: xs`) are not allowed in let bindings: a list may be empty, and a
   `let` never fails at run time. Use `match` and handle the empty list.
 
-Examples:
+Accepted, one example per irrefutable form:
 
 ```ash
-let (x, y) = (1, 2)
+let (x, y) = (1, 2)           // tuple of variables
 in x + y
 
-let ((a, _), c) = ((1, 2), 3)
+let ((a, _), c) = ((1, 2), 3) // nested tuple with a wildcard
 in a + c
 
-let (first, _) as pair = (4, 5)
+let (first, _) as pair = (4, 5) // as-pattern over an irrefutable tuple
 in first
 ```
 
-The first element of a list is taken with `match`, which names what happens when there is none:
+Rejected, because the pattern can fail to match; each needs a `match` that says what happens
+otherwise:
+
+```text
+let (Some(value), other) = pair in value   // constructor pattern
+let (0, rest) = pair in rest              // literal pattern
+let first :: rest = items in first        // list pattern: the list may be empty
+```
 
 ```ash
-match xs with
+match items with
     | first :: _ -> first
     | [] -> 0
 ```
