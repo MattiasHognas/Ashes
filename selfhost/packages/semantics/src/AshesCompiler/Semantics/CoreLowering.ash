@@ -23039,7 +23039,8 @@ let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType:
         | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
 
 // Stage 0's `OwnHeadOfCellOverFreshTail`: a cons onto a fresh reference-counted tail (a call's owned
-// result, `entry :: build(n)`) builds a reference-counted cell, the list counterpart of a
+// result, `entry :: build(n)`, or a cons cell that took such a tail over, `x :: y :: build(n)`)
+// builds a reference-counted cell, the list counterpart of a
 // constructor owning a fresh child. The cell takes the tail over, and the head takes a reference
 // of its own when it is reference-counted or a copy when it lies in the arena. A live arena
 // list-cell reuse token beats it, as it beats the recursive producer's request: a reuse
@@ -23050,9 +23051,10 @@ let noListCellReuseToken (tokens: List(CoreReuseToken)) =
         | Some(_found) -> false
         | None -> true
 
-let freshCallTail (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
+let freshProducedTail (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
     (match unspanArgument(tailExpression) with
         | ExprCall(_function, _argument, _isSugar, _layout) -> true
+        | ExprCons(_head, _tail) -> true
         | _ -> false) && (match runtimeTempStateOf(tailTemp)(state) with
         | Some(RuntimeNewlyProduced) -> true
         | _ -> false)
@@ -23062,7 +23064,7 @@ let cellRequestOf (request: ConsumerRequest) = request with runtimeList = true
 let ownHeadOfCellOverFreshTail (request: ConsumerRequest) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
-            if canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshCallTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
+            if canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshProducedTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
             then
                 if headType
                 |> resolveType(tailState)

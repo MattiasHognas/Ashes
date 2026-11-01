@@ -1787,6 +1787,12 @@ specialization's body returns a reference-counted result the call takes the ordi
 fresh cells live in the arena and whose counted result the caller releases
 (`GRC_NO_COUNTEDSPECRESULT`). The specialization of a generic function is not generated early and
 keeps the rule above.
+A cons onto a call's fresh reference-counted result builds a reference-counted cell that takes the
+result over, and so does a cons onto such a fresh cell: in `x :: s :: keep(rest)(more)`, which is no
+tail-recursion-modulo-cons loop, every cell of the chain is counted and owns the next. Before, the
+outer cell stayed in the arena, and the result normalization that copied it took a reference of its
+own to the counted cell it shared, so each call left the inner cell and everything behind it on the
+heap (`GRC_NO_FRESHCONSTAILCELL`).
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record

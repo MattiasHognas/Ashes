@@ -88,7 +88,7 @@ public sealed partial class Lowering
             || Environment.GetEnvironmentVariable("GRC_NO_FRESHTAILCELL") is not null
             || !CanTestRepresentation
             || request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
-            || cons.Tail is not Expr.Call
+            || !IsFreshTailExpression(cons.Tail)
             || !IsNewlyProducedRcTemp(tailTemp)
             || IsBackEdgeCopiedCell(cons)
             || ContainsUnresolvedLayoutType(tailType, [])
@@ -107,6 +107,15 @@ public sealed partial class Lowering
 
         return (head, request.AddRuntime(true, LoweredValueRuntimeRepresentation.List));
     }
+
+    /// <summary>
+    /// A tail whose value can be a fresh reference-counted list: a call's owned result, or a cons
+    /// cell that itself took over such a tail (`x :: y :: build(n)`), which the outer cell takes over
+    /// in turn instead of leaving it to an arena cell.
+    /// </summary>
+    private static bool IsFreshTailExpression(Expr tail)
+        => tail is Expr.Call
+            || (tail is Expr.Cons && Environment.GetEnvironmentVariable("GRC_NO_FRESHCONSTAILCELL") is null);
 
     private void LinkLambdaLabel(string label, Expr.Lambda lambda)
     {

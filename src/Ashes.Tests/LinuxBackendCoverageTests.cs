@@ -20475,4 +20475,83 @@ public sealed class LinuxBackendCoverageTests
 
         return total;
     }
+
+    private static string BuildConsChainOntoFreshRecursiveCellProgram(int rounds)
+        => $$"""
+            let recursive keepPairs (xs: List(Str)) (seen: List(Str)) =
+                match (xs, seen) with
+                    | (x :: rest, s :: more) ->
+                        if x == s
+                        then keepPairs(rest)(more)
+                        else x :: s :: keepPairs(rest)(more)
+                    | _ -> seen
+
+            let recursive triple (xs: List(Int)) =
+                match xs with
+                    | x :: rest -> x :: x :: x :: triple(rest)
+                    | [] -> []
+
+            let recursive words (n: Int) =
+                if n == 0
+                then []
+                else "w" + Ashes.Text.fromInt(n) :: words(n - 1)
+
+            let recursive numbers (n: Int) =
+                if n == 0
+                then []
+                else n :: numbers(n - 1)
+
+            let recursive count (xs: List(Str)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> Ashes.Text.byteLength(x) + count(rest)
+
+            let recursive total (xs: List(Int)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> x + total(rest)
+
+            let run (seed: Int) =
+                (let a = words(seed % 4 + 3)
+                in
+                    let b =
+                        keepPairs(words(3))(a)
+                    in
+                        count(b) + count(keepPairs(b)(a)) + total(seed % 3 + 1
+                        |> numbers
+                        |> triple))
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + run(n))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    [Test]
+    public async Task Linux_backend_cons_chain_onto_fresh_recursive_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `x :: s :: keep(rest)(more)` is no tail-recursion-modulo-cons loop: the inner cell takes
+        // the fresh recursive result over, and the outer cell takes that fresh cell over in turn, so
+        // no arena cell is left holding a reference the copy-out retains a second time.
+        (int Rounds, long Expected)[] cases = [(3000, 109_500), (12000, 438_000), (48000, 1_752_000)];
+        List<MemoryExecutionResult> samples = new(cases.Length);
+        foreach ((int rounds, long expected) in cases)
+        {
+            IrProgram ir = LowerProgram(BuildConsChainOntoFreshRecursiveCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons chain onto fresh recursive cell", samples, maxRssKb: 16_000);
+    }
 }

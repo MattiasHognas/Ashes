@@ -172,6 +172,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new TupleHeadOwnersAtBackEdgeTemplate());
         registry.Register(new ConsInTupleSuccessorTemplate());
         registry.Register(new UpdateFieldMatchJoinTemplate());
+        registry.Register(new ConsChainOntoFreshCellTemplate());
     }
 }
 
