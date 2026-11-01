@@ -450,7 +450,7 @@ Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
         {
             await process.WaitForExitAsync().WaitAsync(SocketTestConstants.ProcessExitTimeout).ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (TimeoutException ex)
         {
             try
             {
@@ -470,7 +470,7 @@ Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(8080) with
 
             var stdout = await stdoutTask.ConfigureAwait(false);
             var stderr = await stderrTask.ConfigureAwait(false);
-            throw new TimeoutException($"Compiled CLI process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}");
+            throw new TimeoutException($"Compiled CLI process exceeded {SocketTestConstants.ProcessExitTimeout}.{Environment.NewLine}stdout:{Environment.NewLine}{stdout}{Environment.NewLine}stderr:{Environment.NewLine}{stderr}", ex);
 
         }
 

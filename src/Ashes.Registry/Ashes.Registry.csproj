@@ -21,13 +21,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.14" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.14">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Scalar.AspNetCore" Version="2.17.4" />
+    <PackageReference Include="Scalar.AspNetCore" Version="2.18.7" />
     <!-- Pin patched versions of vulnerable transitive dependencies (NU1903 gate).
          Microsoft.OpenApi 2.0.0 (via AspNetCore.OpenApi) is patched at 2.7.5 (GHSA-v5pm-xwqc-g5wc);
          SQLitePCLRaw (via EF Core Sqlite) is only fixed in the 3.x line (GHSA-2m69-gcr7-jv3q). -->
