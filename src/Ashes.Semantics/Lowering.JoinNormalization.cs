@@ -29,7 +29,7 @@ public sealed partial class Lowering
         List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
         if (!GeneralRcEnabled
             || reaching.Count < 2
-            || !reaching.Any(IsReferenceCountedJoinArm)
+            || !reaching.Any(arm => IsReferenceCountedJoinArm(arm) || ConsesOntoOwnedSelfResult(arm, pruned))
             || reaching.All(IsReferenceCountedJoinArm)
             || reaching.Any(arm => arm.Store is null)
             || CanArenaReset(pruned)
@@ -44,9 +44,16 @@ public sealed partial class Lowering
             RecordJoinRetainsParameter();
         }
 
+        // A join normalized only for an arm consing onto the recursive result leaves an empty list
+        // arm as it is: nil holds no reference.
+        bool consingOnly = !reaching.Any(IsReferenceCountedJoinArm);
         foreach (JoinArm arm in reaching)
         {
-            if (!IsOwnedJoinArm(arm))
+            if (ConsesOntoOwnedSelfResult(arm, pruned))
+            {
+                NormalizeJoinArmStoreMovingTail(arm.Store!, (TypeRef.TList)pruned);
+            }
+            else if (!IsOwnedJoinArm(arm) && !(consingOnly && arm.Body is { } nil && IsEmptyListLiteral(nil)))
             {
                 NormalizeJoinArmStore(arm.Store!, pruned, Environment.GetEnvironmentVariable("GRC_NO_FRESHARM") is null && arm.Body is { } body && ConstructsFreshCell(body));
             }
@@ -74,6 +81,39 @@ public sealed partial class Lowering
 
         return body is Ashes.Frontend.Expr.Cons or Ashes.Frontend.Expr.TupleLit or Ashes.Frontend.Expr.ListLit { Elements.Count: > 0 }
             || IsConstructorExpression(body);
+    }
+
+    // An arm consing arena cells onto the function's own full recursive call: the call's result is
+    // owned under the contract, held by the last cell or by the owned slot keeping it, so the arm's
+    // value can own that reference although its first cells are in the arena.
+    private bool ConsesOntoOwnedSelfResult(JoinArm arm, TypeRef pruned)
+    {
+        if (!ConsOntoSelfResultRuleEnabled
+            || pruned is not TypeRef.TList list
+            || !CanRuntimeManageTcoListElement(list.Element)
+            || arm.Store is null
+            || IsReferenceCountedJoinArm(arm)
+            || arm.Body is not { } body
+            || !_loweringFunctionLabels.TryPeek(out string? label))
+        {
+            return false;
+        }
+
+        while (body is Ashes.Frontend.Expr.Let let)
+        {
+            body = let.Body;
+        }
+
+        return IsConsChainOntoSelfCall(body, label);
+    }
+
+    // Copies such an arm's arena cells onto the heap and links the recursive result as their tail,
+    // taking over the reference the last cell held, or the owned slot keeping it, instead of
+    // retaining it.
+    private void NormalizeJoinArmStoreMovingTail(IrInst.StoreLocal store, TypeRef.TList list)
+    {
+        int ownedSlot = ConsChainTailOwnedSlot(store.Source);
+        ReplaceJoinArmStore(store, source => EmitRuntimeManagedTcoListDeepCopyByCopy(source, list.Element, shareReferenceCountedSuffix: true, moveSharedSuffix: ownedSlot != -2, takenOverSlot: ownedSlot));
     }
 
     // An arm returning one of the function's own parameters as it is: a caller handing a fresh
@@ -787,6 +827,11 @@ public sealed partial class Lowering
     // Replaces the arm's store with a normalization of its value followed by the store of the
     // normalized value, emitted into a buffer and spliced where the store was.
     private void NormalizeJoinArmStore(IrInst.StoreLocal store, TypeRef type, bool freshValue = false)
+        => ReplaceJoinArmStore(store, source => freshValue
+            ? EmitOwnedResultOrCopy(source, type)
+            : EmitRuntimeManagedTcoDeepCopy(source, type));
+
+    private void ReplaceJoinArmStore(IrInst.StoreLocal store, Func<int, int> normalize)
     {
         int index = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, store));
         if (index < 0)
@@ -799,9 +844,7 @@ public sealed partial class Lowering
         _inst = buffer;
         try
         {
-            int normalizedTemp = freshValue
-                ? EmitOwnedResultOrCopy(store.Source, type)
-                : EmitRuntimeManagedTcoDeepCopy(store.Source, type);
+            int normalizedTemp = normalize(store.Source);
             MarkRuntimeManagedTemp(normalizedTemp);
             Emit(new IrInst.StoreLocal(store.Slot, normalizedTemp));
         }

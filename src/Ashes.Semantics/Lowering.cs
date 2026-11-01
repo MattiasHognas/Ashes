@@ -2268,8 +2268,11 @@ public sealed partial class Lowering
 
     // With `shareReferenceCountedSuffix` the copy stops at the first reference-counted cell and
     // links it, retained, as the tail: a reference-counted cell's tail is reference-counted, so
-    // everything from there on is already owned whole.
-    private int EmitRuntimeManagedTcoListDeepCopyByCopy(int sourceTemp, TypeRef elementType, bool shareReferenceCountedSuffix = false)
+    // everything from there on is already owned whole. With `moveSharedSuffix` the link takes over
+    // the reference the source's last arena cell held instead of retaining the suffix; when that
+    // reference is kept in `takenOverSlot`, the slot is cleared, and a suffix the slot does not hold
+    // is retained.
+    private int EmitRuntimeManagedTcoListDeepCopyByCopy(int sourceTemp, TypeRef elementType, bool shareReferenceCountedSuffix = false, bool moveSharedSuffix = false, int takenOverSlot = -1)
     {
         int currentSlot = NewLocal();
         int firstSlot = NewLocal();
@@ -2290,7 +2293,7 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
         if (shareReferenceCountedSuffix)
         {
-            EmitRuntimeManagedTcoListShareSuffix(currentTemp, firstSlot, lastSlot, zeroTemp, endLabel);
+            EmitRuntimeManagedTcoListShareSuffix(currentTemp, firstSlot, lastSlot, zeroTemp, endLabel, moveSharedSuffix, takenOverSlot);
         }
 
         int headTemp = NewTemp();
@@ -2326,18 +2329,52 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    private void EmitRuntimeManagedTcoListShareSuffix(int currentTemp, int firstSlot, int lastSlot, int zeroTemp, string endLabel)
+    private void EmitRuntimeManagedTcoListShareSuffix(int currentTemp, int firstSlot, int lastSlot, int zeroTemp, string endLabel, bool moveSharedSuffix, int takenOverSlot)
     {
         int referenceCountedTemp = NewTemp();
         Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, currentTemp));
         string copyCellLabel = NewLabel("rc_normalize_list_cell");
         Emit(new IrInst.JumpIfFalse(referenceCountedTemp, copyCellLabel));
-        int retainedTemp = NewTemp();
-        Emit(new IrInst.RcDup(retainedTemp, currentTemp, RuntimeManaged: true));
-        EmitRuntimeManagedTcoListAppendCell(firstSlot, lastSlot, zeroTemp, retainedTemp);
+        int linkedTemp = currentTemp;
+        if (!moveSharedSuffix)
+        {
+            linkedTemp = NewTemp();
+            Emit(new IrInst.RcDup(linkedTemp, currentTemp, RuntimeManaged: true));
+        }
+        else if (takenOverSlot >= 0)
+        {
+            linkedTemp = EmitTakeOverOwnedSlotSuffix(currentTemp, takenOverSlot, zeroTemp);
+        }
+
+        EmitRuntimeManagedTcoListAppendCell(firstSlot, lastSlot, zeroTemp, linkedTemp);
         Emit(new IrInst.Jump(endLabel));
         Emit(new IrInst.Label(copyCellLabel));
         RecordPossiblySharedChild();
+    }
+
+    // The suffix taken over from the owned slot that holds it, the slot cleared so its release skips
+    // it; a suffix the slot does not hold is retained instead.
+    private int EmitTakeOverOwnedSlotSuffix(int suffixTemp, int ownedSlot, int zeroTemp)
+    {
+        int linkedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(linkedSlot, suffixTemp));
+        int heldTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(heldTemp, ownedSlot));
+        int heldHereTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(heldHereTemp, heldTemp, suffixTemp));
+        string retainLabel = NewLabel("rc_normalize_list_retain_suffix");
+        string linkLabel = NewLabel("rc_normalize_list_link_suffix");
+        Emit(new IrInst.JumpIfFalse(heldHereTemp, retainLabel));
+        Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+        Emit(new IrInst.Jump(linkLabel));
+        Emit(new IrInst.Label(retainLabel));
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(retainedTemp, suffixTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(linkedSlot, retainedTemp));
+        Emit(new IrInst.Label(linkLabel));
+        int linkedTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(linkedTemp, linkedSlot));
+        return linkedTemp;
     }
 
     private void EmitRuntimeManagedTcoListAppendCell(
@@ -7883,7 +7920,7 @@ public sealed partial class Lowering
         _normalizedAlwaysReturnedParameter = NormalizesAlwaysReturnedParameter(lam, label, paramTy)
             ? (lam.ParamName, argSlot, paramTy)
             : null;
-        _passthroughParameter = ResolvePassthroughParameter(lam, argSlot, paramTy);
+        _passthroughParameter = ResolvePassthroughParameter(lam, label, argSlot, paramTy);
         PredictRuntimeManagedResult(label, paramTy);
         BeginCurryStage(label, lam);
         bool outerParameterMoved = _normalizedParameterMovedIntoAggregate;

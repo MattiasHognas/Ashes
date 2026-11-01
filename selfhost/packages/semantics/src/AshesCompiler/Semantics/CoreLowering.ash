@@ -787,6 +787,9 @@ type CoreTcoState =
     // a fresh value on the others (stage 0's `_passthroughParameter`): its name, its slot, and
     // its type. The arm returning it copies it into an owned reference-counted graph.
     | passthroughParameter: Maybe((Str, Int, SemanticType))
+    // The label of the function body being lowered (stage 0's `_loweringFunctionLabels` top),
+    // empty outside one.
+    | loweringBodyLabel: Str
     // The labels whose result was promised reference-counted before their body was lowered, so
     // their own recursive call sites hand the result over as an owned value; the promise is
     // kept at the return.
@@ -1978,6 +1981,14 @@ let withStatePassthroughParameter value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with passthroughParameter = value))
 
+let stateLoweringBodyLabel (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.loweringBodyLabel)
+
+let withStateLoweringBodyLabel (value: Str) (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with loweringBodyLabel = value))
+
 let statePredictedRuntimeManagedResultLabels (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.predictedRuntimeManagedResultLabels)
@@ -2542,6 +2553,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             tcoLoop = None,
             functionReturnedClosureLabels = [],
             passthroughParameter = None,
+            loweringBodyLabel = "",
             predictedRuntimeManagedResultLabels = [],
             curryStage = None,
             tcoLoopFrame = None,
@@ -6863,16 +6875,18 @@ let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (s
 and emitGuardedListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
     if canTestRepresentation
     then
-        emitReferenceOrCopy(sourceTemp)(emitListDeepCopyWith(true)(sourceTemp)(elementPlan))(state)
+        emitReferenceOrCopy(sourceTemp)(emitListDeepCopyWith(true)(false)(-1)(sourceTemp)(elementPlan))(state)
     else emitListDeepCopy(sourceTemp)(elementPlan)(state)
 // Stage 0's `EmitRuntimeManagedTcoListDeepCopy`: a list whose heads have no spine copy is walked
 // cell by cell, each head deep-copied into a fresh reference-counted cons cell appended behind
 // the last one; the first cell is the copy.
-and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) = emitListDeepCopyWith(false)(sourceTemp)(elementPlan)(state)
+and emitListDeepCopy (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) = emitListDeepCopyWith(false)(false)(-1)(sourceTemp)(elementPlan)(state)
 // With `shareSuffix` the copy stops at the first reference-counted cell and links it, retained, as
 // the tail: a reference-counted cell's tail is reference-counted, so everything from there on is
-// already owned whole.
-and emitListDeepCopyWith (shareSuffix: Bool) (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+// already owned whole. With `moveSuffix` the link takes over the reference the source's last arena
+// cell held instead of retaining the suffix; when that reference is kept in `ownedSlot`, the slot is
+// cleared, and a suffix the slot does not hold is retained.
+and emitListDeepCopyWith (shareSuffix: Bool) (moveSuffix: Bool) (ownedSlot: Int) (sourceTemp: Int) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = currentState, local = currentSlot } ->
             match freshLocal(currentState) with
@@ -6891,7 +6905,7 @@ and emitListDeepCopyWith (shareSuffix: Bool) (sourceTemp: Int) (elementPlan: Arg
                                                     |> emit(StoreLocal(firstSlot)(zeroTemp))
                                                     |> emit(StoreLocal(lastSlot)(zeroTemp))
                                                     |> emit(Label(loopLabel))
-                                                    |> emitListDeepCopyCell(shareSuffix)(currentSlot)(firstSlot)(lastSlot)(zeroTemp)(loopLabel)(endLabel)(elementPlan)
+                                                    |> emitListDeepCopyCell(shareSuffix)(moveSuffix)(ownedSlot)(currentSlot)(firstSlot)(lastSlot)(zeroTemp)(loopLabel)(endLabel)(elementPlan)
                                                     |> emit(Label(endLabel))
                                                     |> freshTemp with
                                                         | FreshTemp { state = resultState, temp = resultTemp } ->
@@ -6899,7 +6913,7 @@ and emitListDeepCopyWith (shareSuffix: Bool) (sourceTemp: Int) (elementPlan: Arg
                                                             |> emit(LoadLocal(resultTemp)(firstSlot))
                                                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
                                                             |> (given (copied) -> (copied, resultTemp))
-and emitListDeepCopyCell (shareSuffix: Bool) (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (loopLabel: Str) (endLabel: Str) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
+and emitListDeepCopyCell (shareSuffix: Bool) (moveSuffix: Bool) (ownedSlot: Int) (currentSlot: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (loopLabel: Str) (endLabel: Str) (elementPlan: ArgumentCopyPlan) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = currentState, temp = currentTemp } ->
             match freshTemp(currentState) with
@@ -6908,7 +6922,7 @@ and emitListDeepCopyCell (shareSuffix: Bool) (currentSlot: Int) (firstSlot: Int)
                     |> emit(LoadLocal(currentTemp)(currentSlot))
                     |> emit(CmpIntNe(nonEmptyTemp)(currentTemp)(zeroTemp))
                     |> emit(JumpIfFalse(nonEmptyTemp)(endLabel))
-                    |> emitListDeepCopyShareSuffix(shareSuffix)(currentTemp)(firstSlot)(lastSlot)(zeroTemp)(endLabel)
+                    |> emitListDeepCopyShareSuffix(shareSuffix)(moveSuffix)(ownedSlot)(currentTemp)(firstSlot)(lastSlot)(zeroTemp)(endLabel)
                     |> freshTemp with
                         | FreshTemp { state = headState, temp = headTemp } ->
                             match freshTemp(headState) with
@@ -6928,8 +6942,9 @@ and emitListDeepCopyCell (shareSuffix: Bool) (currentSlot: Int) (firstSlot: Int)
                                                     |> emit(StoreLocal(currentSlot)(tailTemp))
                                                     |> emit(Jump(loopLabel))
 // Stage 0's `EmitRuntimeManagedTcoListShareSuffix`: a reference-counted cell ends the copy. It is
-// retained and appended behind the cells copied so far, and the walk jumps to its end.
-and emitListDeepCopyShareSuffix (shareSuffix: Bool) (currentTemp: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (endLabel: Str) (state: CoreLoweringState) =
+// retained, or taken over under `moveSuffix`, and appended behind the cells copied so far, and the
+// walk jumps to its end.
+and emitListDeepCopyShareSuffix (shareSuffix: Bool) (moveSuffix: Bool) (ownedSlot: Int) (currentTemp: Int) (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (endLabel: Str) (state: CoreLoweringState) =
     if shareSuffix == false
     then state
     else
@@ -6941,13 +6956,53 @@ and emitListDeepCopyShareSuffix (shareSuffix: Bool) (currentTemp: Int) (firstSlo
                     | FreshLabel { state = labelledState, label = copyCellLabel } ->
                         match labelledState
                         |> emit(JumpIfFalse(referenceCountedTemp)(copyCellLabel))
-                        |> freshTemp with
-                            | FreshTemp { state = retainedState, temp = retainedTemp } ->
-                                retainedState
-                                |> emit(RcDup(retainedTemp)(currentTemp)(true)(false))
-                                |> emitListDeepCopyAppend(firstSlot)(lastSlot)(zeroTemp)(retainedTemp)
+                        |> emitListDeepCopySuffixLink(moveSuffix)(ownedSlot)(zeroTemp)(currentTemp) with
+                            | (linkedState, linkedTemp) ->
+                                linkedState
+                                |> emitListDeepCopyAppend(firstSlot)(lastSlot)(zeroTemp)(linkedTemp)
                                 |> emit(Jump(endLabel))
                                 |> emit(Label(copyCellLabel))
+// The suffix the copy links: a retain of it, the suffix itself when the copy takes over the
+// reference to it, or the suffix taken over from the owned slot keeping it.
+and emitListDeepCopySuffixLink (moveSuffix: Bool) (ownedSlot: Int) (zeroTemp: Int) (suffixTemp: Int) (state: CoreLoweringState) =
+    if moveSuffix
+    then
+        if ownedSlot < 0
+        then (state, suffixTemp)
+        else emitTakeOverOwnedSlotSuffix(suffixTemp)(ownedSlot)(zeroTemp)(state)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = retainedState, temp = retainedTemp } ->
+                (emit(RcDup(retainedTemp)(suffixTemp)(true)(false))(retainedState), retainedTemp)
+// Stage 0's `EmitTakeOverOwnedSlotSuffix`: the suffix is taken over from the owned slot that holds
+// it, the slot cleared so its release skips it; a suffix the slot does not hold is retained.
+and emitTakeOverOwnedSlotSuffix (suffixTemp: Int) (ownedSlot: Int) (zeroTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = linkedState, local = linkedSlot } ->
+            match freshTemp(linkedState) with
+                | FreshTemp { state = heldState, temp = heldTemp } ->
+                    match freshTemp(heldState) with
+                        | FreshTemp { state = comparedState, temp = heldHereTemp } ->
+                            match freshLabel("rc_normalize_list_retain_suffix")(comparedState) with
+                                | FreshLabel { state = retainLabelState, label = retainLabel } ->
+                                    match freshLabel("rc_normalize_list_link_suffix")(retainLabelState) with
+                                        | FreshLabel { state = linkLabelState, label = linkLabel } ->
+                                            match freshTemp(linkLabelState) with
+                                                | FreshTemp { state = retainedState, temp = retainedTemp } ->
+                                                    match freshTemp(retainedState) with
+                                                        | FreshTemp { state = loadedState, temp = linkedTemp } ->
+                                                            (loadedState
+                                                            |> emit(StoreLocal(linkedSlot)(suffixTemp))
+                                                            |> emit(LoadLocal(heldTemp)(ownedSlot))
+                                                            |> emit(CmpIntEq(heldHereTemp)(heldTemp)(suffixTemp))
+                                                            |> emit(JumpIfFalse(heldHereTemp)(retainLabel))
+                                                            |> emit(StoreLocal(ownedSlot)(zeroTemp))
+                                                            |> emit(Jump(linkLabel))
+                                                            |> emit(Label(retainLabel))
+                                                            |> emit(RcDup(retainedTemp)(suffixTemp)(true)(false))
+                                                            |> emit(StoreLocal(linkedSlot)(retainedTemp))
+                                                            |> emit(Label(linkLabel))
+                                                            |> emit(LoadLocal(linkedTemp)(linkedSlot)), linkedTemp)
 // Stage 0's `EmitRuntimeManagedTcoListAppendCell`: the fresh cell becomes the first cell of the
 // copy or the tail of the last one, and is the last one from then on.
 and emitListDeepCopyAppend (firstSlot: Int) (lastSlot: Int) (zeroTemp: Int) (cellTemp: Int) (state: CoreLoweringState) =
@@ -11806,15 +11861,200 @@ let bindingIsLocalSlot (name: Str) (slot: Int) (state: CoreLoweringState) =
         | Some(CoreBinding { location = CoreLocal(boundSlot) }) -> boundSlot == slot
         | _ -> false
 
+// The body a branch's `let` chain ends in.
+let recursive letChainBody (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> letChainBody(inner)
+        | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> letChainBody(body)
+        | other -> other
+
+let recursive consChainTail (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> consChainTail(inner)
+        | ExprCons(_head, tail) -> consChainTail(tail)
+        | other -> other
+
+// The label a recursive call through `name` enters: the binding's own, or the let-bound lambda's.
+let selfCallLabel (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreSelf(label, _environmentSize) }) -> Some(label)
+        | _ ->
+            state
+            |> stateLetLambdaLabels
+            |> lookupLetLambdaLabel(name)
+
+// Stage 0's `IsConsChainOntoSelfCall`: a branch consing cells onto the function's own full
+// recursive call. That call's result was promised reference-counted, so the last cell holds an
+// owned reference nothing else releases.
+let isConsChainOntoSelfCall (branch: Expr) (state: CoreLoweringState) =
+    match letChainBody(branch) with
+        | ExprCons(_head, tail) ->
+            match consChainTail(tail) with
+                | ExprCall(_callee, _argument, _sugar, _layout) as call ->
+                    match callSpineRootAndArity(call)(0) with
+                        | (ExprVar(name), applied) ->
+                            if isSelfCallName(name)(state)
+                            then
+                                match selfCallLabel(name)(state) with
+                                    | Some(label) ->
+                                        match state
+                                        |> stateFunctionReturnedClosureLabels
+                                        |> innermostStageLabel(applied - 1)(label) with
+                                            | Some(stage) -> stage == stateLoweringBodyLabel(state)
+                                            | None -> false
+                                    | None -> false
+                            else false
+                        | _ -> false
+                | _ -> false
+        | _ -> false
+
+// The temp the most recent store wrote into a cons cell's tail, or -1.
+let recursive consCellTailTemp (cellTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = StoreMemOffset(base, offset, source) } :: rest ->
+            if base == cellTemp && offset == 8
+            then source
+            else consCellTailTemp(cellTemp)(rest)
+        | _ :: rest -> consCellTailTemp(cellTemp)(rest)
+
+let recursive definedByArenaCell (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(target, _size, runtimeManaged) } :: rest ->
+            if target == temp
+            then runtimeManaged == false
+            else definedByArenaCell(temp)(rest)
+        | _ :: rest -> definedByArenaCell(temp)(rest)
+
+// The local slot a temp is a plain read of, or -1.
+let recursive loadedSlotOf (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then slot
+            else loadedSlotOf(temp)(rest)
+        | _ :: rest -> loadedSlotOf(temp)(rest)
+
+// The sources of every store into a local slot.
+let recursive slotStoreSources (slot: Int) (instructions: List(IrInstruction)) (sources: List(Int)) =
+    match instructions with
+        | [] -> sources
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot == slot
+            then slotStoreSources(slot)(rest)(source :: sources)
+            else slotStoreSources(slot)(rest)(sources)
+        | _ :: rest -> slotStoreSources(slot)(rest)(sources)
+
+let recursive definedByCall (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallClosure(target, _closure, _argument, _flag) } :: rest ->
+            if target == temp
+            then true
+            else definedByCall(temp)(rest)
+        | IrInstruction { instruction = CallKnown(target, _label, _environment, _argument, _flag, _tail) } :: rest ->
+            if target == temp
+            then true
+            else definedByCall(temp)(rest)
+        | _ :: rest -> definedByCall(temp)(rest)
+
+// The owned slot a call result was stored into as it is, or -1.
+let recursive ownedSlotStoringTemp (temp: Int) (ownedSlots: List((Int, SemanticType))) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest ->
+            if source == temp && isOwnedSlotIn(slot)(ownedSlots)
+            then slot
+            else ownedSlotStoringTemp(temp)(ownedSlots)(rest)
+        | _ :: rest -> ownedSlotStoringTemp(temp)(ownedSlots)(rest)
+
+// Stage 0's `ArenaCellOf`: the arena cell a value is, directly or through the one store of the
+// local it is read from; -1 otherwise.
+let arenaCellOf (temp: Int) (state: CoreLoweringState) =
+    if definedByArenaCell(temp)(state.reversedInstructions)
+    then temp
+    else
+        let slot = loadedSlotOf(temp)(state.reversedInstructions)
+        in
+            if slot < 0
+            then -1
+            else
+                match slotStoreSources(slot)(state.reversedInstructions)([]) with
+                    | source :: [] ->
+                        if definedByArenaCell(source)(state.reversedInstructions)
+                        then source
+                        else -1
+                    | _ -> -1
+
+// Stage 0's `ConsChainTailOwnedSlot`: where the reference a cons chain's last arena cell holds to
+// its tail is kept. The owned slot keeping the recursive call's result, which the function's end
+// releases when its result no longer reaches it; -1 when the tail is a call result or a read of a
+// slot nothing releases; -2 when the chain or its tail is not recognized, and the reference is
+// retained rather than taken over.
+let recursive consChainTailOwnedSlotFrom (hops: Int) (cellTemp: Int) (state: CoreLoweringState) =
+    if hops >= 64 || cellTemp < 0
+    then -2
+    else
+        let tailTemp = consCellTailTemp(cellTemp)(state.reversedInstructions)
+        in
+            if tailTemp < 0
+            then -2
+            else
+                let slot = loadedSlotOf(tailTemp)(state.reversedInstructions)
+                in
+                    if slot >= 0
+                    then
+                        if state
+                        |> ownedSlotsOfActiveFunction
+                        |> isOwnedSlotIn(slot)
+                        then slot
+                        else -1
+                    else
+                        if definedByCall(tailTemp)(state.reversedInstructions)
+                        then
+                            ownedSlotStoringTemp(tailTemp)(ownedSlotsOfActiveFunction(state))(state.reversedInstructions)
+                        else
+                            if definedByArenaCell(tailTemp)(state.reversedInstructions)
+                            then consChainTailOwnedSlotFrom(hops + 1)(tailTemp)(state)
+                            else -2
+
+let consChainTailOwnedSlot (valueTemp: Int) (state: CoreLoweringState) =
+    consChainTailOwnedSlotFrom(0)(arenaCellOf(valueTemp)(state))(state)
+
+// The branch copies such a chain's arena cells onto the heap and links the recursive result as
+// their tail, taking over the reference the last cell held, so the join is owned on every branch
+// and copied no further.
+let emitConsChainOntoSelfResultCopy (temp: Int) (listType: SemanticType) (state: CoreLoweringState) =
+    match argumentCopyPlanOf(listType)(state) with
+        | Some(ListDeepArgumentCopy(elementPlan)) ->
+            let ownedSlot = consChainTailOwnedSlot(temp)(state)
+            in
+                match emitListDeepCopyWith(true)(ownedSlot != -2)(ownedSlot)(temp)(elementPlan)(state) with
+                    | (copied, copyTemp) -> Some((copied, copyTemp))
+        | _ -> None
+
 // Stage 0's `NormalizeParameterPassthroughBranch`: a branch result that is a plain read of the
 // passthrough parameter is copied into an owned reference-counted graph, so the join it flows
-// into is reference-counted on every branch.
+// into is reference-counted on every branch. A branch consing onto the function's own recursive
+// result moves that result into its copy instead.
 let normalizeParameterPassthroughBranch (branch: Expr) (temp: Int) (state: CoreLoweringState) =
     match (statePassthroughParameter(state), tailForwardedVariable(branch)) with
         | (Some((name, slot, parameterType)), Some(variable)) ->
             if variable == name && isRuntimeTemp(temp)(state) == false && bindingIsLocalSlot(name)(slot)(state) && isPassthroughNormalizableParameterType(parameterType)(state)
             then emitOwnedPassthroughCopy(temp)(parameterType)(state)
             else (state, temp)
+        | (Some((_name, _slot, parameterType)), None) ->
+            match resolveType(state)(parameterType) with
+                | SemList(_element) as listType ->
+                    if isRuntimeTemp(temp)(state) == false && isPassthroughNormalizableParameterType(listType)(state) && isConsChainOntoSelfCall(branch)(state)
+                    then
+                        match emitConsChainOntoSelfResultCopy(temp)(listType)(state) with
+                            | Some(moved) -> moved
+                            | None -> (state, temp)
+                    else (state, temp)
+                | _ -> (state, temp)
         | _ -> (state, temp)
 
 // Stage 0's `PredictRuntimeManagedResult`: the function's result is promised reference-counted
@@ -15021,6 +15261,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
                 |> withNormalizedAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> enterLambdaTcoLoop(parameterType)
                 |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
+                |> withStateLoweringBodyLabel("lambda_" + Ashes.Text.fromInt(lambdaId))
                 |> withPassthroughParameter(parameter)(body)(parameterType)
                 |> predictRuntimeManagedResult("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
                 |> beginCurryStage("lambda_" + Ashes.Text.fromInt(lambdaId))(body)
@@ -18212,6 +18453,7 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
             armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
             armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
             armFreshCell = constructsFreshCell(body)(state),
+            armConsesOntoSelfResult = isConsChainOntoSelfCall(body)(state),
             armStoreTemp = if armNeverReachesJoin(body)(state)
             then -1
             else finalTemp
@@ -18233,7 +18475,7 @@ let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: Co
     in
         matchArmResultWith(body)(finalTemp)(resultType)(borrowsParameter)((borrowsParameter || armPatternRootIsPlaced(body)(state)) && containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && definedByRetain(finalTemp)(state.reversedInstructions))(state))
 
-let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false)
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false)
 
 // Stage 0's `TransferDirectRuntimeManagedBranchResult`: an `if` branch that returns a pattern
 // owner takes a duplicate of its read, an identity marker until the loop's finalize places the
@@ -18299,18 +18541,23 @@ let recursive shiftPatternOwnerSites (index: Int) (delta: Int) (sites: List(Patt
             then site with siteInsertCount = site.siteInsertCount + delta
             else site) :: shiftPatternOwnerSites(index)(delta)(rest)
 
-let emitJoinArmNormalization (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
-    if arm.armFreshCell
-    then emitOwnedResultOrCopy(arm.armStoreTemp)(plan)(state)
-    else emitGuardedDeepCopy(arm.armStoreTemp)(plan)(state)
+// An arm consing arena cells onto the function's own recursive result copies them and takes that
+// owned result over as their tail (stage 0's `NormalizeJoinArmStoreMovingTail`).
+let emitJoinArmNormalization (consedElementPlan: Maybe(ArgumentCopyPlan)) (ownedSlot: Int) (arm: MatchArmResult) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match (arm.armConsesOntoSelfResult, consedElementPlan) with
+        | (true, Some(elementPlan)) -> emitListDeepCopyWith(true)(ownedSlot != -2)(ownedSlot)(arm.armStoreTemp)(elementPlan)(state)
+        | _ ->
+            if arm.armFreshCell
+            then emitOwnedResultOrCopy(arm.armStoreTemp)(plan)(state)
+            else emitGuardedDeepCopy(arm.armStoreTemp)(plan)(state)
 
 // Stage 0's `NormalizeJoinArmStore`: the arm's store becomes a normalization of its value (a
 // reference when it is reference-counted, a copy otherwise) followed by the store of the
 // normalized value, emitted into a buffer and spliced where the store was.
-let normalizeJoinArmStore (slot: Int) (plan: ArgumentCopyPlan) (arm: MatchArmResult) (state: CoreLoweringState) =
+let normalizeJoinArmStore (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan)) (plan: ArgumentCopyPlan) (arm: MatchArmResult) (state: CoreLoweringState) =
     (let emptied = state with reversedInstructions = []
     in
-        match emitJoinArmNormalization(arm)(plan)(emptied) with
+        match emitJoinArmNormalization(consedElementPlan)(consChainTailOwnedSlot(arm.armStoreTemp)(state))(arm)(plan)(emptied) with
             | (copied, normalizedTemp) ->
                 let buffered =
                     emit(StoreLocal(slot)(normalizedTemp))(copied)
@@ -18327,19 +18574,19 @@ let normalizeJoinArmStore (slot: Int) (plan: ArgumentCopyPlan) (arm: MatchArmRes
                                 |> statePatternOwnerSites
                                 |> shiftPatternOwnerSites(index)(length(buffered.reversedInstructions) - 1))(spliced)))
 
-let recursive normalizeUnownedJoinArms (slot: Int) (plan: ArgumentCopyPlan) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+let recursive normalizeUnownedJoinArms (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan)) (plan: ArgumentCopyPlan) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     match arms with
         | [] -> (state, [])
         | arm :: rest ->
             if arm.armStoreTemp < 0 || (arm.armOwned || arm.armRetainedOwner) && !arm.armBorrowsLoopParameter
             then
-                match normalizeUnownedJoinArms(slot)(plan)(rest)(state) with
+                match normalizeUnownedJoinArms(slot)(consedElementPlan)(plan)(rest)(state) with
                     | (normalized, restArms) -> (normalized, arm :: restArms)
             else
                 match state
-                |> normalizeJoinArmStore(slot)(plan)(arm)
-                |> normalizeUnownedJoinArms(slot)(plan)(rest) with
-                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell) :: restArms)
+                |> normalizeJoinArmStore(slot)(consedElementPlan)(plan)(arm)
+                |> normalizeUnownedJoinArms(slot)(consedElementPlan)(plan)(rest) with
+                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false) :: restArms)
 
 // The arms that reach the join, and how many of them hand it a reference-counted value: one of
 // their own, or a reference a pattern owner retained (stage 0's `IsReferenceCountedJoinArm`).
@@ -18385,23 +18632,50 @@ let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringSta
                 else None
         | _ -> ownedResultPlanOf(semanticType)(state)
 
+// The element copy of a list result whose arms may cons onto the function's own recursive
+// result, when its elements are ones the runtime manages (stage 0's `ConsesOntoOwnedSelfResult`).
+let consedJoinElementPlan (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemList(element) as listType ->
+            if tcoListElementSupported(element)(state)
+            then
+                match argumentCopyPlanOf(listType)(state) with
+                    | Some(ListDeepArgumentCopy(elementPlan)) -> Some(elementPlan)
+                    | _ -> None
+            else None
+        | _ -> None
+
+// Whether an arm the join does not own conses onto the function's own recursive result: its
+// value then owns the reference its last cell holds although its first cells are in the arena.
+let recursive anyArmConsesOntoSelfResult (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && arm.armConsesOntoSelfResult && !arm.armOwned && !arm.armRetainedOwner && !arm.armBorrowsLoopParameter || anyArmConsesOntoSelfResult(rest)
+
 // Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
 // one it does not own is not owned as a whole, so the owned arm's reference is never released: the
 // consumer retains or copies the join's value again. Such arms are normalized in place instead,
 // right before their store, so every arm hands the join a reference of its own. A reuse
 // specialization keeps its values in the persistent region and takes no part in this.
 let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
-    match (joinArmTally(arms)(0)(0), stateSpecializationFreshInputs(state)) with
-        | ((reaching, owned), None) ->
-            if joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
-            then (state, arms)
-            else
-                match joinNormalizationPlanOf(resultType)(state) with
-                    | None -> (state, arms)
-                    | Some(ScalarArgumentCopy) -> (state, arms)
-                    | Some(plan) ->
-                        normalizeUnownedJoinArms(resultSlot)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state)
-        | _ -> (state, arms)
+    (let consedElementPlan = consedJoinElementPlan(resultType)(state)
+    in
+        let consing =
+            match consedElementPlan with
+                | Some(_elementPlan) -> anyArmConsesOntoSelfResult(arms)
+                | None -> false
+        in
+            match (joinArmTally(arms)(0)(0), stateSpecializationFreshInputs(state)) with
+                | ((reaching, owned), None) ->
+                    if joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+                    then (state, arms)
+                    else
+                        match joinNormalizationPlanOf(resultType)(state) with
+                            | None -> (state, arms)
+                            | Some(ScalarArgumentCopy) -> (state, arms)
+                            | Some(plan) ->
+                                normalizeUnownedJoinArms(resultSlot)(consedElementPlan)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state)
+                | _ -> (state, arms))
 
 // Stage 0's `IsOwnedScopeResultArm` over every arm that reaches the join: a fresh value, a retain the
 // arm took of a reference-counted value, or a join that holds its own reference, none borrowed
@@ -19397,7 +19671,7 @@ let closeArmScope body owners bracket resultSlot resultTemp resultType (state: C
 let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
     LoweredMatchArm(
         lowered = failure(failedState)(error),
-        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false)
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false)
     )
 
 // A constructor application whose every argument is a literal or another such application, with
@@ -21317,6 +21591,7 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
                             |> refreshSelfResultDeferral(name)
                             |> enterRecursiveTcoLoop(name)(parameter)(parameterType)(body)(captureCount(selfBindings) == 1)
                             |> enterTcoLoopBody(label)(parameter)
+                            |> withStateLoweringBodyLabel(label)
                             |> withPassthroughParameter(parameter)(body)(parameterType)
                             |> predictRuntimeManagedResult(label)(parameterType)
                             |> beginCurryStage(label)(body)

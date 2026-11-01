@@ -3224,6 +3224,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_cons_onto_self_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function returns its list parameter on one arm and conses onto its own recursive call on
+        // the other. The join takes over the recursive result its cons arm's last cell holds, so the
+        // walk's earlier lists are released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildConsOntoSelfResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 6}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons onto self result", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14886,6 +14910,64 @@ public sealed class LinuxBackendCoverageTests
                 if n == 0
                 then total
                 else rounds(n - 1)(total + Ashes.Text.byteLength(probe(n)))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsOntoSelfResultProgram(int rounds)
+        => $$"""
+            type Shape =
+                | PassShape
+                | GrownShape
+                | OtherShape
+
+            type Walk =
+                | observed: List(Maybe(Shape))
+                | count: Int
+
+            let merge (observed: Maybe(Shape)) (local: Shape) =
+                match observed with
+                    | None -> Some(local)
+                    | Some(previous) ->
+                        match (previous, local) with
+                            | (PassShape, PassShape) -> Some(PassShape)
+                            | (GrownShape, GrownShape) -> Some(GrownShape)
+                            | _ -> Some(OtherShape)
+
+            let shapeOf (argument: Int) =
+                if argument > 1
+                then GrownShape
+                else PassShape
+
+            let recursive observe (arguments: List(Int)) (observed: List(Maybe(Shape))) =
+                match (arguments, observed) with
+                    | (argument :: restArguments, current :: restObserved) -> merge(current)(shapeOf(argument)) :: observe(restArguments)(restObserved)
+                    | _ -> observed
+
+            let recursive initial (count: Int) =
+                if count == 0
+                then []
+                else None :: initial(count - 1)
+
+            let recursive walkCalls (calls: List(List(Int))) (walk: Walk) =
+                match calls with
+                    | [] -> walk
+                    | arguments :: rest -> walkCalls(rest)(Walk(observed = observe(arguments)(walk.observed), count = walk.count + 1))
+
+            let recursive countSome (observed: List(Maybe(Shape))) =
+                match observed with
+                    | [] -> 0
+                    | Some(OtherShape) :: rest -> 1 + countSome(rest)
+                    | _ :: rest -> countSome(rest)
+
+            let run (seed: Int) =
+                match walkCalls([[seed, 2, 3], [1, seed, 0], [5, 5, seed]])(Walk(observed = initial(3), count = 0)) with
+                    | Walk { observed = observed, count = count } -> countSome(observed) + count
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1 + n % 1))
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;

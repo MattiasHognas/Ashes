@@ -1715,6 +1715,14 @@ A normalized `match` join whose untouched arms each hand over a reference of the
 arm just produced, a retain it took) is itself newly produced, not only owned: a consuming read such
 as a byte length releases it. Before, `match [fromInt(n), "a"] with | x :: _ -> x | [] -> ""` read
 inline by its caller left the copied head on the heap once per call (`GRC_NO_NORMALIZEDFRESHJOIN`).
+A function that returns its list parameter on one arm and conses onto its own full recursive call on
+another (`| x :: rest -> f(x) :: self(rest) | _ -> xs`) has a promised reference-counted result, so
+the cons arm's last arena cell holds an owned reference to that result that nothing else releases.
+The join copies that arm's arena cells onto the heap and links the recursive result as their tail,
+taking that reference over instead of retaining it, so the join is owned on every arm and the
+function's result normalization copies it no further. Before, every such call left the recursive
+result's cells on the heap: stage 1's shape walk kept 285 cells of `Some(...)` lists per compiled
+function at exit (`GRC_NO_CONSONTOSELFRESULT`).
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record
