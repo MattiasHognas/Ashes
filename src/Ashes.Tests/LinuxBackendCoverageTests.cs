@@ -3297,6 +3297,31 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_one_shot_post_under_let_prefix_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A one-shot operation arm under a `let` prefix builds a fresh string from the resumed handle
+        // value. The prefix's arena window keeps the stored post alive until the perform site counts
+        // it, and the fold, starting from an arena value, asks the post for an arena result, so the
+        // post releases the reference-counted string it built.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildOneShotPostResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{OneShotPostResultLength(rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("one-shot post under let prefix", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -15054,6 +15079,39 @@ public sealed class LinuxBackendCoverageTests
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
+
+    private static string BuildOneShotPostResultProgram(int rounds)
+        => $$"""
+            capability Tick =
+                | get : Unit -> Int
+
+            let probe (n: Int) =
+                handle Ashes.Text.fromInt(perform Tick.get(Unit)) with
+                    | Tick.get(_) ->
+                        let k = n + 1
+                        in
+                            let x = resume(k)
+                            in x + "s"
+                    | return(r) -> r
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    private static long OneShotPostResultLength(int rounds)
+    {
+        long total = 0;
+        for (int n = 1; n <= rounds; n++)
+        {
+            total += (n + 1).ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 1;
+        }
+
+        return total;
+    }
 
     private static string BuildReuseSpecializedResultReadByScalarCallerProgram(int rounds)
         => $$"""

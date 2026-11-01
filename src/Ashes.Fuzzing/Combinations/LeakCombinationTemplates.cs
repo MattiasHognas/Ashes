@@ -164,6 +164,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConsOntoSelfResultTemplate());
         registry.Register(new RecordUpdateInLiteralSuccessorTemplate());
         registry.Register(new ReuseSpecializedResultReadByScalarCallerTemplate());
+        registry.Register(new OneShotPostResultTemplate());
     }
 }
 

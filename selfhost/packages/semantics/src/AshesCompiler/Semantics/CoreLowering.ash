@@ -27323,6 +27323,14 @@ let recursive installOperationArmClosures capName ops opArms frameTemp globalCou
                                 |> emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))
                                 |> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)
 
+// The ownership word of a post call whose fold starts from an arena value: bit 1 asks the post for
+// its result in the arena, so a post that produces a reference-counted value copies it out and
+// releases the original. A fold that starts from a reference-counted value passes no word.
+let postResultRequestWord (initialResultTemp: Int) (state: CoreLoweringState) =
+    if isRuntimeTemp(initialResultTemp)(state)
+    then (state, -1)
+    else emitRequestWord(-1)(state)
+
 // Folds every collected one-shot post continuation over the handle's current result, in
 // most-recently-collected-first order (the posts list is a stack, newest at the head — matching
 // the innermost `resume` completing first). Empty list: the loop's own JumpIfFalse skips straight
@@ -27379,9 +27387,11 @@ and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal initialRes
                                                         match freshTemp(loadedResultState) with
                                                             | FreshTemp { state = callState, temp = nextResultTemp } ->
                                                                 let calledState =
-                                                                    callState
-                                                                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(-1))
-                                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
+                                                                    match postResultRequestWord(initialResultTemp)(callState) with
+                                                                        | (wordState, wordTemp) ->
+                                                                            wordState
+                                                                            |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(wordTemp))
+                                                                            |> emit(StoreLocal(resultLocal)(nextResultTemp))
                                                                 in
                                                                     match freshTemp(calledState) with
                                                                         | FreshTemp { state = nextCellState, temp = nextCellTemp } ->
@@ -27392,8 +27402,7 @@ and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal initialRes
                                                                             |> emit(Label(doneLabel))
                                                                             |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
 // The handle's value read back after the fold keeps the reference-counted fact of the value the
-// fold started from: only a non-tail `resume` collects a post, and this lowering rejects one, so
-// the value read back is the handled body's (or `return` arm's) own, owned exactly as it was.
+// fold started from: a fold from an arena value asks every post for an arena result.
 and finishCapabilityPostsFold resultLocal initialResultTemp resultType state =
     match freshTemp(state) with
         | FreshTemp { state = readState, temp = finalResultTemp } ->

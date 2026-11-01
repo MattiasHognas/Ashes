@@ -2117,7 +2117,11 @@ continuation `given pattern -> body` under the same contract as a post: the valu
 only when the closure's entry adopts reference-counted arguments, the result is adopted or
 normalized by the closure's returns bit, and the original is released once the result cannot
 reach it. The posts fold applies each one-shot continuation the same way, so the handle's value
-stays reference-counted through every post and its caller releases it exactly once. The
+stays reference-counted through every post and its caller releases it exactly once. A fold that
+starts from an arena value asks each post for its result in the arena through bit 1 of the
+ownership word, so a post that builds a reference-counted value copies it out and releases the
+original (`GRC_NO_POSTARENARESULT`). The self-hosted compiler's fold passes the same request when
+its starting value is not reference-counted. The
 self-hosted compiler applies the `return` arm inline instead, as a `let` of the body value scoped
 over the arm and bracketed like a nested `let`: the binding adopts a newly produced body value and
 releases it when the arm's result does not hand it on.

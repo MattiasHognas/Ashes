@@ -1647,7 +1647,7 @@ public sealed partial class Lowering
         else
         {
             foldOutTemp = NewTemp();
-            Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp));
+            Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp, PostArenaResultRequestWord()));
         }
 
         Emit(new IrInst.StoreLocal(foldResultSlot, foldOutTemp));
@@ -1666,6 +1666,14 @@ public sealed partial class Lowering
 
         return finalResultTemp;
     }
+
+    // The ownership word of a post call whose fold slot holds an arena value: bit 1 asks the post
+    // for its result in the arena, so a post that produces a reference-counted value copies it out
+    // and releases the original instead of handing the fold a reference it never releases.
+    private int PostArenaResultRequestWord()
+        => Environment.GetEnvironmentVariable("GRC_NO_POSTARENARESULT") is null
+            ? EmitArenaResultRequestWord(-1)
+            : -1;
 
     // A value the current function owns as a newly produced reference-counted result, as opposed
     // to a borrowed read of a binding whose own owner releases it.
