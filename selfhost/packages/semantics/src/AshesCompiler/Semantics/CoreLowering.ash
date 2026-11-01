@@ -4515,20 +4515,6 @@ let storeLetValue name (tailForwarded: Bool) bodyRequest outerBindings valueTemp
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
                     |> addOwnedBinding(name)(scheme)(CoreLocal(local))
 
-let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTemp valueType fresh =
-    fresh
-    |> storeLetValue(name)(isTailForwardedBindingResult(requestBody)(name))(bodyRequest)(outerBindings)(valueTemp)(valueType)
-    |> lower(body)
-    |> restoreLoweredBindings(outerBindings)
-
-let finishLetValue name body lower outerBindings lowered =
-    match lowered with
-        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            state
-            |> freshLocal
-            |> lowerStoredLet(name)(body)(body)(consumerRequestOf(state))(lower)(outerBindings)(temp)(semanticType)
-
 let recursive stripExprAt (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> stripExprAt(inner)
@@ -5073,8 +5059,6 @@ let recordRecursiveProducerSlot expression (fresh: FreshLocal) =
                 in fresh with state = recorded
             else fresh
 
-// `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it,
-// and the body's request decided by the caller from the body the binding scopes over.
 // The stored half of `finishLetValueInSlot`: the binding's slot allocated and its value stored in
 // it, with the body left for the caller to lower over the returned state.
 // The owners a `let` collected from its value ahead of the store, taken back out by name: the
@@ -20175,7 +20159,9 @@ let letOwnedTypeName (value: Expr) (loweredValue: LoweredCoreValue) (state: Core
     then None
     else loweredValueOwnedTypeName(loweredValue)
 
-let lowerArenaBracketedNestedLet name value body lower outerBindings state =
+// The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
+// every analysis of the body still reads `body`.
+let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindings state =
     match freshLocal(state) with
         | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
             match freshLocal(cursorAllocated) with
@@ -20192,11 +20178,13 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(state))
                             |> armOwnerReleasePlan(value)
-                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
+                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBody)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+
+let lowerArenaBracketedNestedLet name value body lower outerBindings state = lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lower)(outerBindings)(state)
 
 let recursive constructorSpineRoot (expression: Expr) (argumentCount: Int) =
     match expression with
@@ -26963,7 +26951,7 @@ let tailResumeArgument body =
                 | _ -> None
         | _ -> None
 
-// Handed to finishLetValue/lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
+// Handed to lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
 // a continuation lower instead of a literal expression (the rest of a top-level program's items in
 // lowerCoreProgramItems, or the rest of an operation arm's body in resolveOperationArmBody below)
 // — the continuation lower ignores it. A bare int literal needs no environment/binding resolution,
@@ -27068,7 +27056,7 @@ let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex st
 // interleaves shape recognition with real lowering rather than rewriting the Expr tree first and
 // lowering the rewrite once: selfhost's Expr type is a closed ADT with no synthetic "post" node to
 // rewrite into, so each non-resuming prefix's own value is lowered here, in place, through the
-// ordinary let/let-recursive/if/match lowering path (finishLetValue /
+// ordinary let/let-recursive/if/match lowering path (lowerArenaBracketedNestedLetWith /
 // lowerPreparedRecursiveGroupWith / lowerIfThenBranch+finishIfElseBranch / a
 // resolveOperationArmMatchArm(s) mirror of lowerMatchArm(s)), with the recursive call into the
 // rest of the arm body supplied as the continuation — the same sentinel-placeholder-plus-custom-
@@ -27099,13 +27087,14 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                         match state with
                             | CoreLoweringState { bindings = outerBindings } ->
                                 state
-                                |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(letBody))
-                                |> lower(value)
-                                |> finishLetValue(
+                                |> collectPendingBorrowedOwners(name)(value)
+                                |> lowerArenaBracketedNestedLetWith(
                                     name,
-                                    topLevelContinuationBody,
+                                    value,
+                                    letBody,
                                     given (_ignoredBody) ->
                                         given (s) -> resolveOperationArmBody(letBody)(lower)(postRegisterIndex)(capName)(opName)(s),
+                                    lower,
                                     outerBindings
                                 )
         | ExprLetRecursive(name, value, letBody, _parameters, _annotation, _requirements) ->
@@ -27267,9 +27256,12 @@ let recursive buildArmParameterExpr index patterns body =
 // prefixes before reaching a resume shape), reaches the same place. Every layer is handed the same
 // placeholderBody purely so lowerLambda's own free-variable/capture analysis (`collectFree`) sees
 // the closure's true free variables; the placeholder itself is never lowered.
+// A span-wrapped parameter is looked through, and a wildcard binds a name no source can read.
 let recursive lowerOperationArmParameters patterns armBody placeholderBody lower postRegisterIndex capName opName state =
     match patterns with
         | [] -> resolveOperationArmBody(armBody)(lower)(postRegisterIndex)(capName)(opName)(state)
+        | PatternAt(_span, inner) :: rest -> lowerOperationArmParameters(inner :: rest)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
+        | PatternWildcard :: rest -> lowerOperationArmParameters(PatternVar("__arm_wildcard") :: rest)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
         | PatternVar(name) :: rest ->
             lowerLambda(
                 name,
@@ -27290,8 +27282,8 @@ let recursive lowerOperationArmParameters patterns armBody placeholderBody lower
 // lowerOperationArmParameters — also supports non-variable operation parameters (synthetic name +
 // match), since `e` needs no lowering-time hook of its own. Everything else (a one-shot
 // `let x = resume(v) in body`, or any non-resuming let/letrec prefix before either shape) goes
-// through the general resolveOperationArmBody recursion, which only supports variable operation
-// parameters.
+// through the general resolveOperationArmBody recursion, which supports variable and wildcard
+// operation parameters.
 let buildOperationArmClosure capName opName patterns armBody lower postRegisterIndex state =
     match tailResumeArgument(armBody) with
         | Some(resumedValue) ->
