@@ -3248,6 +3248,30 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_record_update_in_literal_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is a record literal holding a record update that conses onto the
+        // matched state's list. The update's cell retains the list's old tail and the back edge's
+        // copy retains it again, so the update's own reference is released through its fields.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateInLiteralSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 22}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update in literal successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -14963,6 +14987,40 @@ public sealed class LinuxBackendCoverageTests
             let run (seed: Int) =
                 match walkCalls([[seed, 2, 3], [1, seed, 0], [5, 5, seed]])(Walk(observed = initial(3), count = 0)) with
                     | Walk { observed = observed, count = count } -> countSome(observed) + count
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1 + n % 1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordUpdateInLiteralSuccessorProgram(int rounds)
+        => $$"""
+            type State =
+                | instructions: List(Int)
+                | next: Int
+
+            type Step =
+                | state: State
+                | error: Maybe(Str)
+
+            let recursive size (xs: List(Int)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (n: Int) (step: Step) =
+                match step with
+                    | Step { state = state } ->
+                        if n == 0
+                        then step
+                        else go(n - 1)(Step(state = (state with instructions = n :: state.instructions), error = None))
+
+            let run (seed: Int) =
+                match go(20)(Step(state = State(instructions = [seed], next = seed), error = None)) with
+                    | Step { state = State { next = next, instructions = instructions } } -> next + size(instructions)(0)
 
             let recursive rounds (n: Int) (total: Int) =
                 if n == 0

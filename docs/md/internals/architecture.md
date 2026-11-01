@@ -1667,6 +1667,15 @@ of it. A retain is withdrawn only when the cell holds its sole reference and the
 is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
 child's root there).
 
+A record update written as a child of such a literal (`Step(state = (state with items = n ::
+state.items), error = None)`) is an arena cell like the literal, and the copy of the literal copies
+it too, so the references its construction took are released from the dying cell field by field: a
+field updated to a fresh literal through that literal, and any other field only when the
+construction retained what it stored. A field read out of a borrowed record and stored back,
+unchanged or through a name, is only borrowed by the update, and releasing it like a literal's child
+frees what the record still holds. Left unreleased, the update's cons kept its retain of the old
+tail, one list cell per iteration (`GRC_NO_NESTEDUPDATERELEASE`).
+
 A list literal of heap elements written as the successor of a list parameter on the
 reference-counted heap (`go([(other, [k])])`) has its arena cells copied at the back edge like a
 cons's, the copy taking a reference of its own to each element. Its cells are copied cells: an

@@ -2634,6 +2634,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (sourceExpression is Expr.RecordUpdate update
+            && TryEmitRuntimeManagedTcoRecordUpdateChildrenRelease(childTemp, childType, update, storedTemp))
+        {
+            return;
+        }
+
         // A child whose retain finalization left without effect is only borrowed by the cell.
         if (storedTemp is int stored
             && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCHILDKEEP") is null
@@ -2657,6 +2663,68 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(referenceCountedTemp, arenaLabel));
         EmitRuntimeManagedTcoSourceChildDrop(childTemp, Prune(childType));
         Emit(new IrInst.Label(arenaLabel));
+    }
+
+    /// <summary>
+    /// Releases the references a record update built into the dying successor as a child holds.
+    /// The update is an arena cell like a literal's, so its references are released field by field,
+    /// each only where the construction took one: a field updated to a fresh literal through that
+    /// literal, and any other field only when the construction retained what it stored. A field read
+    /// out of a borrowed record, unchanged or bound to a name and stored back, is only borrowed by
+    /// the cell. True when <paramref name="storedTemp"/> names the cell as this function built it.
+    /// </summary>
+    private bool TryEmitRuntimeManagedTcoRecordUpdateChildrenRelease(int cellTemp, TypeRef type, Expr.RecordUpdate update, int? storedTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_NESTEDUPDATERELEASE") is not null
+            || storedTemp is not int cell
+            || Prune(type) is not TypeRef.TNamedType { Symbol.Constructors: [ConstructorSymbol constructor] } named
+            || !IsDefinedBy<IrInst.AllocAdt>(cell))
+        {
+            return false;
+        }
+
+        Dictionary<string, Expr> updated = new(StringComparer.Ordinal);
+        foreach ((string name, Expr value) in update.Updates)
+        {
+            updated.TryAdd(name, value);
+        }
+
+        foreach (OrdinaryHeapLayoutChild child in GetOwnedOrdinaryHeapChildren(named, constructor))
+        {
+            if (ConstructionFieldSource(cell, child.Index) is not int stored)
+            {
+                continue;
+            }
+
+            _ = updated.TryGetValue(constructor.DeclaringSyntax.FieldNames[child.Index], out Expr? value);
+            bool isFreshLiteral = value is not null && IsFreshAggregateLiteral(value);
+            if (!isFreshLiteral && !IsDefinedBy<IrInst.RcDup>(stored))
+            {
+                continue;
+            }
+
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, cellTemp, child.Index, IsTaglessConstructor(constructor)));
+            EmitRuntimeManagedTcoSourceChildRelease(childTemp, child.Type, value, stored);
+        }
+
+        return true;
+    }
+
+    // True when the last instruction defining temp is a T.
+    private bool IsDefinedBy<T>(int temp)
+        where T : IrInst
+    {
+        int index = FindLastInstruction(instruction => instruction switch
+        {
+            IrInst.AllocAdt allocation => allocation.Target == temp,
+            IrInst.RcDup duplicate => duplicate.Target == temp,
+            IrInst.GetAdtField field => field.Target == temp,
+            IrInst.LoadLocal load => load.Target == temp,
+            IrInst.Alloc allocation => allocation.Target == temp,
+            _ => false,
+        });
+        return index >= 0 && _inst[index] is T;
     }
 
     private void EmitRuntimeManagedTcoSourceChildDrop(int childTemp, TypeRef pruned)
