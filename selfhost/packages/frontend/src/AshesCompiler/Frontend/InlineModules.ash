@@ -5,6 +5,8 @@
 // - Nested modules are emitted before their parent so downstream planning can use dependency order.
 // - Same-scope qualifiers are composed without rewriting strings or already-qualified paths.
 // - Inline modules reject imports, externals, trailing expressions, duplicate names, and `Ashes`.
+// - A lifted module keeps its lines at their file line and column: blank lines stand before it
+//   and its own lines keep their indentation; the outer source keeps the block as blank lines.
 
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
@@ -44,6 +46,7 @@ type InlineModuleHeader =
 type DirectInlineModule =
     | name: Str
     | body: List(Str)
+    | firstLine: Int
 
 type InlineModuleCollection =
     | names: List(Str)
@@ -213,7 +216,7 @@ let recursive collectBody headerIndent lines reversed =
 
 // One module header and its body taken off the lines: the name and the module join the
 // collected lists, and the lines after the body remain.
-let collectInlineModule scope (header: InlineModuleHeader) remaining names modules =
+let collectInlineModule scope (header: InlineModuleHeader) firstLine remaining names modules =
     if containsName(header.name)(names)
     then
         header.name
@@ -229,7 +232,15 @@ let collectInlineModule scope (header: InlineModuleHeader) remaining names modul
             then Error(ReservedInlineModule(composedName))
             else
                 match collectBody(header.indent)(remaining)([]) with
-                    | InlineModuleBody { lines = body, remaining = afterBody } -> Ok((header.name :: names, DirectInlineModule(name = header.name, body = body) :: modules, afterBody))
+                    | InlineModuleBody { lines = body, remaining = afterBody } -> Ok((header.name :: names, DirectInlineModule(name = header.name, body = body, firstLine = firstLine) :: modules, afterBody))
+
+// A lifted block keeps its lines where they stand in the file: the lines before it are blank and
+// its own lines keep their indentation, so every span inside the module is the file's own line and
+// column.
+let recursive blankLines count lines =
+    if count <= 0
+    then lines
+    else blankLines(count - 1)("" :: lines)
 
 let recursive prependBlankLines lines outer =
     match lines with
@@ -241,7 +252,7 @@ let recursive prependBlankLines lines outer =
 let blankLiftedModule modules outer =
     match modules with
         | [] -> outer
-        | DirectInlineModule { name = _, body = body } :: _ -> prependBlankLines(body)("" :: outer)
+        | DirectInlineModule { name = _, body = body, firstLine = _ } :: _ -> prependBlankLines(body)("" :: outer)
 
 // The collected names, outer lines, and modules travel as three list parameters, each grown by
 // one cell at a time. A record accumulator holding the three lists was rebuilt every iteration
@@ -254,45 +265,10 @@ let recursive collectInlineModules scope lines names outer modules =
             match parseInlineModuleHeader(line) with
                 | None -> collectInlineModules(scope)(rest)(names)(line :: outer)(modules)
                 | Some(header) ->
-                    match collectInlineModule(scope)(header)(rest)(names)(modules) with
+                    match collectInlineModule(scope)(header)(Ashes.Collection.List.length(outer) + 1)(rest)(names)(modules) with
                         | Error(error) -> Error(error)
                         | Ok((nextNames, nextModules, remaining)) ->
                             collectInlineModules(scope)(remaining)(nextNames)(blankLiftedModule(nextModules)(outer))(nextModules)
-
-let recursive minimumIndent lines current =
-    match lines with
-        | [] -> current
-        | line :: rest ->
-            if Ashes.Text.trim(line) == ""
-            then minimumIndent(rest)(current)
-            else
-                let width = leadingWhitespaceWidth(line)
-                in
-                    match current with
-                        | None -> minimumIndent(rest)(Some(width))
-                        | Some(existing) ->
-                            if width < existing
-                            then minimumIndent(rest)(Some(width))
-                            else minimumIndent(rest)(current)
-
-let recursive dedentLines lines indent =
-    match lines with
-        | [] -> []
-        | line :: rest ->
-            let dedented =
-                if Ashes.Text.length(line) >= indent
-                then Ashes.Text.drop(line)(indent)
-                else line
-            in dedented :: dedentLines(rest)(indent)
-
-let dedent lines =
-    match minimumIndent(lines)(None) with
-        | None -> Ashes.Text.join("\n")(lines)
-        | Some(0) -> Ashes.Text.join("\n")(lines)
-        | Some(indent) ->
-            indent
-            |> dedentLines(lines)
-            |> Ashes.Text.join("\n")
 
 let byteAt bytes index =
     index
@@ -452,7 +428,7 @@ let composeModuleName scope name =
 let recursive directModuleNames modules =
     match modules with
         | [] -> []
-        | DirectInlineModule { name = name, body = _body } :: rest -> name :: directModuleNames(rest)
+        | DirectInlineModule { name = name, body = _body, firstLine = _ } :: rest -> name :: directModuleNames(rest)
 
 let publishInlineModule name source = deepCopy(InlineModuleInfo(name = name, source = source))
 
@@ -469,12 +445,13 @@ let finishExpandedModules outerSource result =
 let recursive expandCollectedModules scope childNames modules =
     match modules with
         | [] -> Ok([])
-        | DirectInlineModule { name = name, body = body } :: rest ->
+        | DirectInlineModule { name = name, body = body, firstLine = firstLine } :: rest ->
             let composedName = composeModuleName(scope)(name)
             in
                 let blockSource =
                     body
-                    |> dedent
+                    |> blankLines(firstLine)
+                    |> Ashes.Text.join("\n")
                     |> rewriteInlineQualifiers(scope)(childNames)
                 in
                     match validateInlineModuleBody(composedName)(blockSource) with

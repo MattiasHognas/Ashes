@@ -44,7 +44,7 @@ let checkFlatExpansion unit =
     |> assertNamed("flat expansion")(
         inlineExpansion(
             "\n\nlet result = Example.Math.answer",
-            [moduleInfo("Example.Math")("let answer = 42")]
+            [moduleInfo("Example.Math")("\n    let answer = 42")]
         )
     )
 
@@ -55,7 +55,7 @@ let checkEntryExpansion unit =
     |> assertNamed("entry expansion")(
         inlineExpansion(
             "\n\nMath.answer",
-            [moduleInfo("Math")("let answer = 42")]
+            [moduleInfo("Math")("\n    let answer = 42")]
         )
     )
 
@@ -74,8 +74,8 @@ let checkNestedExpansion unit =
         inlineExpansion(
             "\n\n\n\nlet result = Example.Outer.answer",
             [
-                moduleInfo("Example.Outer.Inner")("let answer = 42"),
-                moduleInfo("Example.Outer")("\n\nlet answer = Example.Outer.Inner.answer")
+                moduleInfo("Example.Outer.Inner")("\n\n        let answer = 42"),
+                moduleInfo("Example.Outer")("\n\n\n    let answer = Example.Outer.Inner.answer")
             ]
         )
     )
@@ -128,7 +128,7 @@ let checkMalformedExpansion (expansion: InlineModuleExpansion) =
     match expansion with
         | InlineModuleExpansion { source = _source, modules = modules } ->
             assertNamed("malformed body")(
-                [moduleInfo("Example.Nested")("let answer =")],
+                [moduleInfo("Example.Nested")("\n    let answer =")],
                 modules
             )
 
@@ -161,7 +161,8 @@ let checkLargeCrLfSource unit =
                 | InlineModuleExpansion { source = source, modules = modules } ->
                     unit
                     |> (given (_) -> assertNamed("normalized large source")(Ashes.Text.join("\n")(outerLines) + "\n\n")(source))
-                    |> (given (_) -> assertNamed("large source modules")([moduleInfo("Example.Nested")("let answer = 42")])(modules))))
+                    |> (given (_) ->
+                        assertNamed("large source modules")([moduleInfo("Example.Nested")(Ashes.Text.join("\n")(Ashes.Collection.List.map(given (_) -> "")(outerLines)) + "\n\n    let answer = 42")])(modules))))
 
 let run unit =
     unit

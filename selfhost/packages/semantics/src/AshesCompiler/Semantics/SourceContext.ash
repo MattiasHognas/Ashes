@@ -280,6 +280,15 @@ let recursive resolveItemRegion (regions: List(StitchedItemRegion)) (indexes: Li
                 else resolveItemRegion(restRegions)(restIndexes)(itemIndex)
             else resolveItemRegion(restRegions)(restIndexes)(itemIndex)
 
+// An inline module's region is named `<file>#<module>`; its text keeps the file's own lines and
+// columns, so its spans are reported against the file itself.
+let locationFilePath (path: Str) =
+    (let index = Ashes.Text.indexOf(path)("#")
+    in
+        if index < 0
+        then path
+        else Ashes.Text.take(path)(index))
+
 // A span of the combined item at itemIndex: in a stitched context the item's region names the
 // file and the span's start is an offset into that file; an item outside every region is
 // stitching glue and stays unlocated. Without item regions the span resolves by offset as before.
@@ -297,7 +306,7 @@ let resolveItemSpanLocation (context: SourceContext) (itemIndex: Int) (span: Tex
                                 | (line, col) ->
                                     Some(
                                         IrSourceLocation(
-                                            filePath = filePath,
+                                            filePath = locationFilePath(filePath),
                                             line = line,
                                             column = col
                                         )
