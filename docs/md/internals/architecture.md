@@ -2157,7 +2157,13 @@ push, so windows with no push during them stay safe to reclaim; the counter is d
 each post is folded. A post the arm has stored in the pending-post register but its perform
 site has not yet counted is pending too, so the guard also reads that register: a `let` scoped
 over the arm's one-shot `resume` closes its window before the arm returns, and would otherwise
-reset the arena under the post it just made (`GRC_NO_PENDINGPOSTGUARD`). Programs that declare no capabilities compile byte-for-byte as before — the
+reset the arena under the post it just made (`GRC_NO_PENDINGPOSTGUARD`). The call-window exits
+that settle a result's placement at run time (the conditional copy-out, the conditional
+normalization, the generic list deep copy, and the general-RC result) are guarded the same way: a
+perform in a call's argument, or inside its callee, pushes its post into that call's window, and
+the restore and reclaim are skipped while it is pending, with the result's copy into
+reference-counted storage still made on both paths (`GRC_NO_CALLRESULTPOSTGUARD`). The
+self-hosted compiler guards the same four exits. Programs that declare no capabilities compile byte-for-byte as before — the
 guards are only emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see

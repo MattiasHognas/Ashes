@@ -3322,6 +3322,39 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_one_shot_post_pushed_inside_call_window_survives_the_window()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The perform runs inside the arena window of the call that consumes its result, so its
+        // post cell and closure live in that window. The window's conditional copy-out exit must
+        // not rewind the arena while the post is pending, or the fold reads freed memory.
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            capability Cap =
+                | get : Unit -> Str
+
+            let one (a: Str) = a + "k"
+
+            let probe (n: Int) =
+                handle one(perform Cap.get(Unit)) with
+                    | Cap.get(u) -> let x = resume("lit") in x + "s"
+                    | return(r) -> r + Ashes.Text.fromInt(n)
+
+            let recursive loop (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n) + ",")
+
+            Ashes.IO.print(loop(3)(""))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("litk3s,litk2s,litk1s,\n");
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

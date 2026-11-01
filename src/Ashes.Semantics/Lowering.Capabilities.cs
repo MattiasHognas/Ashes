@@ -470,6 +470,27 @@ public sealed partial class Lowering
         }
     }
 
+    // Rewinds a call's arena window unless a one-shot post is pending: a perform inside the window
+    // pushes its post cell and closure into the window's allocations, which must survive until the
+    // handle folds them. The paired reclaim is guarded the same way, and the result normalization
+    // between the two runs either way, since it copies into reference-counted storage.
+    private void EmitPostGuardedArenaRestore(int cursorSlot, int endSlot, int preRestoreEndSlot)
+    {
+        string? skipLabel = CallResultPostGuardEnabled ? BeginLivePostsGuard() : null;
+        Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+        EndLivePostsGuard(skipLabel);
+    }
+
+    private void EmitPostGuardedArenaReclaim(int endSlot, int preRestoreEndSlot)
+    {
+        string? skipLabel = CallResultPostGuardEnabled ? BeginLivePostsGuard() : null;
+        Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+        EndLivePostsGuard(skipLabel);
+    }
+
+    private static bool CallResultPostGuardEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_CALLRESULTPOSTGUARD") is null;
+
     /// <summary>Emits `counter := counter + delta` on the live-posts global.</summary>
     private void EmitLivePostsAdjust(long delta)
     {

@@ -15674,7 +15674,7 @@ public sealed partial class Lowering
     {
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
 
         string copyLabel = NewLabel("call_copy_arena_result");
         string reclaimLabel = NewLabel("call_reclaim_owned_result");
@@ -15684,7 +15684,7 @@ public sealed partial class Lowering
         int copiedTemp = EmitRuntimeManagedResultCopyOut(currentTemp, callCopyOutKind, listHeadCopy, callCopySize);
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
@@ -15718,8 +15718,8 @@ public sealed partial class Lowering
         // The copy walks the result's children, and a child's own normalization allocates: the arena
         // is rewound only once every path is past that, or the rewound cursor would hand the copy
         // the bytes it is still reading from.
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
@@ -15783,15 +15783,15 @@ public sealed partial class Lowering
     {
         if (runtimeManagedResultFlagTemp < 0)
         {
-            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
             int unconditionallyCopiedTemp = EmitRuntimeManagedCallResultListDeepCopy(currentTemp, elementType);
-            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+            EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
             return unconditionallyCopiedTemp;
         }
 
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
 
         string copyLabel = NewLabel("call_deep_copy_arena_result");
         string reclaimLabel = NewLabel("call_reclaim_owned_result");
@@ -15801,7 +15801,7 @@ public sealed partial class Lowering
         int copiedTemp = EmitRuntimeManagedTcoListDeepCopy(currentTemp, elementType);
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
 
         // Owned on both paths: the reference-counted result taken over as it is, the arena one
         // rebuilt with references of its own.

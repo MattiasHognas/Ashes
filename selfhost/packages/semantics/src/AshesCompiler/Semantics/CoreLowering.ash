@@ -17380,6 +17380,69 @@ let elementCopyingFlagOf (stage: CoreCallStage) =
             else -1
         | _ -> -1
 
+// The index of the live-posts counter among the capability globals: one past the pending-post
+// register that follows the capability handler slots.
+let livePostsIndex (state: CoreLoweringState) = stateCapabilityGlobalCount(state) + 1
+
+// Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
+// while a one-shot post is pending, since the post's closure still lives in the window. A post
+// an arm has stored in the pending-post register but its perform site has not yet counted is
+// pending too: a `let` scoped over the arm's one-shot `resume` closes before the arm returns. The
+// guard reads the live-posts counter and the pending-post register and jumps past the block when
+// either is not zero; without a capability nothing is emitted and there is no label to close.
+let beginLivePostsGuard (state: CoreLoweringState) =
+    if stateCapabilityGlobalCount(state) == 0
+    then (state, None)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = counterState, temp = counterTemp } ->
+                match freshTemp(counterState) with
+                    | FreshTemp { state = pendingState, temp = pendingTemp } ->
+                        match freshTemp(pendingState) with
+                            | FreshTemp { state = guardedState, temp = guardedTemp } ->
+                                match freshTemp(guardedState) with
+                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                        match freshTemp(zeroState) with
+                                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
+                                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
+                                                in
+                                                    isZeroState
+                                                    |> emit(state
+                                                    |> livePostsIndex
+                                                    |> LoadCapabilityHandler(counterTemp))
+                                                    |> emit(state
+                                                    |> stateCapabilityGlobalCount
+                                                    |> LoadCapabilityHandler(pendingTemp))
+                                                    |> emit(OrInt(guardedTemp)(counterTemp)(pendingTemp))
+                                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                                    |> emit(CmpIntEq(isZeroTemp)(guardedTemp)(zeroTemp))
+                                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
+                                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
+
+let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
+    match skipLabel with
+        | Some(label) -> emit(Label(label))(state)
+        | None -> state
+
+// Stage 0's `EmitPostGuardedArenaRestore`: a call window's rewind is skipped while a one-shot post
+// is pending, since a perform inside the window pushed its post cell and closure into the window's
+// allocations, which must survive until the handle folds them. The paired reclaim is guarded the
+// same way; the result normalization between the two runs either way, since it copies into
+// reference-counted storage.
+let emitPostGuardedArenaRestore cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuard(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuard(skipLabel)
+
+let emitPostGuardedArenaReclaim endSlot preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuard(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuard(skipLabel)
+
 // Stage 0's `LowerCallConditionalCopyOutResult`: the result is spilled to a slot, the arena is
 // restored, and the callee's returns bit selects between reclaiming the window as is (the
 // result already lives on the reference-counted heap) and first copying the result past the
@@ -17389,7 +17452,7 @@ let emitConditionalCallCopyOut copyOut resultTemp flagTemp cursorSlot endSlot pr
         | FreshLocal { state = allocated, local = resultSlot } ->
             match allocated
             |> emit(StoreLocal(resultSlot)(resultTemp))
-            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
             |> freshLabel("call_copy_arena_result") with
                 | FreshLabel { state = copyLabelled, label = copyLabel } ->
                     match freshLabel("call_reclaim_owned_result")(copyLabelled) with
@@ -17404,7 +17467,7 @@ let emitConditionalCallCopyOut copyOut resultTemp flagTemp cursorSlot endSlot pr
                                     |> emit(callCopyOutInstruction(copyOut)(copiedTemp)(resultTemp))
                                     |> emit(StoreLocal(resultSlot)(copiedTemp))
                                     |> emit(Label(reclaimLabel))
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> reloadRuntimeSlot(resultSlot)
 
 // Stage 0's `LowerCallConditionalNormalizeResult`: a record result with no fixed copy-out from a
@@ -17417,7 +17480,7 @@ let emitConditionalNormalizeResult (plan: ArgumentCopyPlan) (resultTemp: Int) (f
         | FreshLocal { state = allocated, local = resultSlot } ->
             match allocated
             |> emit(StoreLocal(resultSlot)(resultTemp))
-            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
             |> freshLabel("call_normalize_arena_result") with
                 | FreshLabel { state = copyLabelled, label = copyLabel } ->
                     match freshLabel("call_owned_result")(copyLabelled) with
@@ -17431,7 +17494,7 @@ let emitConditionalNormalizeResult (plan: ArgumentCopyPlan) (resultTemp: Int) (f
                                     copied
                                     |> emit(StoreLocal(resultSlot)(copiedTemp))
                                     |> emit(Label(ownedLabel))
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> reloadRuntimeSlot(resultSlot)
 
 // Stage 0's `LowerCallDeepCopyOutListResult`: the generic list result is walked out of the call
@@ -17442,16 +17505,15 @@ let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagT
     if flagTemp < 0
     then
         match state
-        |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+        |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
         |> emitListDeepCopy(resultTemp)(elementPlan) with
-            | (copied, copiedTemp) ->
-                (emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))(copied), copiedTemp)
+            | (copied, copiedTemp) -> (emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)(copied), copiedTemp)
     else
         match freshLocal(state) with
             | FreshLocal { state = allocated, local = resultSlot } ->
                 match allocated
                 |> emit(StoreLocal(resultSlot)(resultTemp))
-                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
                 |> freshLabel("call_deep_copy_arena_result") with
                     | FreshLabel { state = copyLabelled, label = copyLabel } ->
                         match freshLabel("call_reclaim_owned_result")(copyLabelled) with
@@ -17465,7 +17527,7 @@ let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagT
                                         match copied
                                         |> emit(StoreLocal(resultSlot)(copiedTemp))
                                         |> emit(Label(reclaimLabel))
-                                        |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                        |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                         |> freshTemp with
                                             | FreshTemp { state = reloadState, temp = reloadTemp } ->
                                                 (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
@@ -17811,7 +17873,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                             let restored =
                                 slotted
                                 |> emit(StoreLocal(ownedSlot)(temp))
-                                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                                |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
                             in
                                 let owned =
                                     match (returnsOwned, generalCopyPlanOf(semanticType)(restored)) with
@@ -17825,7 +17887,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                                         | _ -> restored
                                 in
                                     match owned
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
                                     |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
                                     |> freshTemp with
@@ -19399,50 +19461,6 @@ let recursive armBindings (count: Int) (bindings: List(CoreBinding)) =
             if count <= 0
             then []
             else binding :: armBindings(count - 1)(rest)
-
-// The index of the live-posts counter among the capability globals: one past the pending-post
-// register that follows the capability handler slots.
-let livePostsIndex (state: CoreLoweringState) = stateCapabilityGlobalCount(state) + 1
-
-// Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
-// while a one-shot post is pending, since the post's closure still lives in the window. A post
-// an arm has stored in the pending-post register but its perform site has not yet counted is
-// pending too: a `let` scoped over the arm's one-shot `resume` closes before the arm returns. The
-// guard reads the live-posts counter and the pending-post register and jumps past the block when
-// either is not zero; without a capability nothing is emitted and there is no label to close.
-let beginLivePostsGuard (state: CoreLoweringState) =
-    if stateCapabilityGlobalCount(state) == 0
-    then (state, None)
-    else
-        match freshTemp(state) with
-            | FreshTemp { state = counterState, temp = counterTemp } ->
-                match freshTemp(counterState) with
-                    | FreshTemp { state = pendingState, temp = pendingTemp } ->
-                        match freshTemp(pendingState) with
-                            | FreshTemp { state = guardedState, temp = guardedTemp } ->
-                                match freshTemp(guardedState) with
-                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
-                                        match freshTemp(zeroState) with
-                                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
-                                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
-                                                in
-                                                    isZeroState
-                                                    |> emit(state
-                                                    |> livePostsIndex
-                                                    |> LoadCapabilityHandler(counterTemp))
-                                                    |> emit(state
-                                                    |> stateCapabilityGlobalCount
-                                                    |> LoadCapabilityHandler(pendingTemp))
-                                                    |> emit(OrInt(guardedTemp)(counterTemp)(pendingTemp))
-                                                    |> emit(LoadConstInt(zeroTemp)(0))
-                                                    |> emit(CmpIntEq(isZeroTemp)(guardedTemp)(zeroTemp))
-                                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
-                                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
-
-let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
-    match skipLabel with
-        | Some(label) -> emit(Label(label))(state)
-        | None -> state
 
 // A match arm's closing reset under the live-posts guard: the pre-restore slot is allocated
 // first, as stage 0 does, then the guarded restore and reclaim.

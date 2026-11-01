@@ -1003,7 +1003,7 @@ public sealed partial class Lowering
         int ownedSlot = NewLocal();
         int predecessorSlot = SaveGeneralRcOwnedPredecessor(ownedSlot);
         Emit(new IrInst.StoreLocal(ownedSlot, currentTemp));
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
         if (!calleeReturnsOwned)
         {
             // A closure whose header says its function returns the result owned hands it over.
@@ -1026,7 +1026,7 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(ownedLabel));
         }
 
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
         GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
         RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders, ownedSlot);
         int resultTemp = NewTemp();
