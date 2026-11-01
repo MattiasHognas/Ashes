@@ -520,7 +520,7 @@ public static partial class DocumentService
 
     private static AnalysisContext PrepareStandaloneAnalysisContext(ImportHeaderInfo header)
     {
-        var standaloneImportDiagnostics = ValidateStandaloneImports(header.Imports);
+        var standaloneImportDiagnostics = ValidateStandaloneImports(header.Imports, header.StrippedSource);
         if (standaloneImportDiagnostics.Count == 0 && DetectSelectorConflict(header.Imports) is { } selectorConflict)
         {
             return new AnalysisContext(
@@ -633,9 +633,10 @@ public static partial class DocumentService
         return aliases;
     }
 
-    private static IReadOnlyList<DiagnosticItem> ValidateStandaloneImports(IReadOnlyList<ImportItem> imports)
+    private static IReadOnlyList<DiagnosticItem> ValidateStandaloneImports(IReadOnlyList<ImportItem> imports, string strippedSource)
     {
         var diagnostics = new List<DiagnosticItem>();
+        HashSet<string>? inlineModuleNames = null;
 
         foreach (var import in imports)
         {
@@ -653,6 +654,12 @@ public static partial class DocumentService
                 continue;
             }
 
+            inlineModuleNames ??= CollectInlineModuleNames(strippedSource);
+            if (inlineModuleNames.Contains(import.ModuleName))
+            {
+                continue;
+            }
+
             diagnostics.Add(new DiagnosticItem(
                 import.Span.Start,
                 import.Span.End,
@@ -660,6 +667,27 @@ public static partial class DocumentService
         }
 
         return diagnostics;
+    }
+
+    // The inline modules a file declares resolve in standalone mode exactly as they do for the
+    // compiler; a malformed block yields no names here and is reported by analysis instead.
+    private static HashSet<string> CollectInlineModuleNames(string strippedSource)
+    {
+        if (!ProjectSupport.ContainsInlineModule(strippedSource))
+        {
+            return [];
+        }
+
+        try
+        {
+            return ProjectSupport.ExpandInlineModules(strippedSource, string.Empty, "<memory>").InlineModules
+                .Select(module => module.ModuleName)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+        catch (InvalidOperationException)
+        {
+            return [];
+        }
     }
 
     private static HashSet<string> BuildImportedStdModules(IReadOnlyList<ImportItem> imports)
@@ -1638,15 +1666,22 @@ public static partial class DocumentService
         }
 
         var hover = lowering.GetTypeAtPosition(analysisPosition.Value);
-        if (hover is null)
+        // A handler arm's `Clock.now(_)` records no type of its own, so the covering type is the
+        // whole handle expression's; the operation's declaration says more.
+        if (hover is null || string.IsNullOrEmpty(hover.Value.Name))
         {
-            return null;
+            HoverItem? operationHover = GetMappedCapabilityOperationHover(context, position, program);
+            if (operationHover is not null || hover is null)
+            {
+                return operationHover;
+            }
         }
 
         var mappedSpan = MapToOriginalSpan(
             hover.Value.Span.Start,
             hover.Value.Span.End,
-            context);
+            context,
+            requireSourceText: true);
         if (mappedSpan is null)
         {
             return null;
@@ -1681,39 +1716,214 @@ public static partial class DocumentService
             return null;
         }
 
-        string? declaration = null;
-        string? kind = null;
-        TypeAliasDecl? alias = program.TypeAliasDecls.FirstOrDefault(candidate =>
-            string.Equals(candidate.Name, identifier.Value.Token.Text, StringComparison.Ordinal));
-        if (alias is not null)
+        string? markdown = FormatTypeAliasOrZeroCostHover(program, identifier.Value.Token.Text)
+            ?? FormatAlgebraicTypeHover(context, program, identifier.Value)
+            ?? FormatCapabilityHover(context, program, identifier.Value)
+            ?? FormatBuiltinTypeHover(context.AnalysisSource, identifier.Value);
+        return MapDeclarationHover(context, identifier.Value.Span, markdown);
+    }
+
+    // Hover over a capability operation where no expression type was recorded: its declaration, a
+    // provider binding, or a handler arm (`| Clock.now(_) -> ...`).
+    private static HoverItem? GetMappedCapabilityOperationHover(
+        AnalysisContext context,
+        int originalPosition,
+        Frontend.Program program)
+    {
+        int? analysisPosition = MapOriginalPositionToAnalysis(originalPosition, context);
+        (Token Token, TextSpan Span)? identifier = analysisPosition is null
+            ? null
+            : FindIdentifierAtPosition(context.AnalysisSource, analysisPosition.Value);
+        if (identifier is null || !char.IsLower(identifier.Value.Token.Text[0]))
         {
-            declaration = Ashes.Formatter.Formatter.Format(
-                new Frontend.Program([new TopLevelItem.TypeAlias(alias)], null)).Trim();
-            kind = "type alias";
-        }
-        else
-        {
-            ZeroCostTypeDecl? zeroCostType = program.ZeroCostTypeDecls.FirstOrDefault(candidate =>
-                string.Equals(candidate.Name, identifier.Value.Token.Text, StringComparison.Ordinal)
-                || string.Equals(candidate.Constructor.Name, identifier.Value.Token.Text, StringComparison.Ordinal));
-            if (zeroCostType is not null)
-            {
-                declaration = Ashes.Formatter.Formatter.Format(
-                    new Frontend.Program([new TopLevelItem.ZeroCostType(zeroCostType)], null)).Trim();
-                kind = "zero-cost nominal type";
-            }
+            return null;
         }
 
-        TextSpan? mapped = declaration is null
+        string name = identifier.Value.Token.Text;
+        string? qualifier = FindQualifierBeforeIdentifier(context.AnalysisSource, identifier.Value.Span.Start);
+        CapabilityDecl? owner = program.Items.OfType<TopLevelItem.Capability>()
+            .Select(item => item.Decl)
+            .FirstOrDefault(declaration => declaration.Operations.Any(operation => string.Equals(operation.Name, name, StringComparison.Ordinal))
+                && (string.Equals(declaration.Name, qualifier, StringComparison.Ordinal)
+                    || ContainsSpan(AstSpans.GetOrDefault(declaration), identifier.Value.Span)
+                    || program.Items.OfType<TopLevelItem.Provide>().Any(provide =>
+                        string.Equals(provide.Decl.CapabilityName, declaration.Name, StringComparison.Ordinal)
+                        && ContainsSpan(AstSpans.GetOrDefault(provide.Decl), identifier.Value.Span))));
+        if (owner is null)
+        {
+            return null;
+        }
+
+        string formatted = Ashes.Formatter.Formatter.Format(
+            new Frontend.Program([new TopLevelItem.Capability(owner)], null)).Trim();
+        string? line = FindDeclarationBranch(formatted, name);
+        string signature = line is null ? $"{owner.Name}.{name}" : $"{owner.Name}.{line}";
+        return MapDeclarationHover(
+            context,
+            identifier.Value.Span,
+            $"```ashes\n{signature}\n```\n\n*capability operation of `{owner.Name}`*");
+    }
+
+    private static HoverItem? MapDeclarationHover(AnalysisContext context, TextSpan identifierSpan, string? markdown)
+    {
+        TextSpan? mapped = markdown is null
             ? null
-            : MapToOriginalSpan(identifier.Value.Span.Start, identifier.Value.Span.End, context);
+            : MapToOriginalSpan(identifierSpan.Start, identifierSpan.End, context, requireSourceText: true);
         return mapped is null
             ? null
             : new HoverItem(
                 mapped.Value.Start + context.HeaderOffset,
                 mapped.Value.End + context.HeaderOffset,
-                $"```ashes\n{declaration}\n```\n\n*{kind}*");
+                markdown!);
     }
+
+    private static string? FormatTypeAliasOrZeroCostHover(Frontend.Program program, string name)
+    {
+        TypeAliasDecl? alias = program.TypeAliasDecls.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name, StringComparison.Ordinal));
+        if (alias is not null)
+        {
+            string declaration = Ashes.Formatter.Formatter.Format(
+                new Frontend.Program([new TopLevelItem.TypeAlias(alias)], null)).Trim();
+            return $"```ashes\n{declaration}\n```\n\n*type alias*";
+        }
+
+        ZeroCostTypeDecl? zeroCostType = program.ZeroCostTypeDecls.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name, StringComparison.Ordinal)
+            || string.Equals(candidate.Constructor.Name, name, StringComparison.Ordinal));
+        if (zeroCostType is not null)
+        {
+            string declaration = Ashes.Formatter.Formatter.Format(
+                new Frontend.Program([new TopLevelItem.ZeroCostType(zeroCostType)], null)).Trim();
+            return $"```ashes\n{declaration}\n```\n\n*zero-cost nominal type*";
+        }
+
+        return null;
+    }
+
+    // An algebraic or record type: its name, one of its constructors, or (inside a record
+    // declaration) one of its fields. A name that qualifies a member (`Shape.x`) is a module or
+    // capability qualifier, not this type.
+    private static string? FormatAlgebraicTypeHover(
+        AnalysisContext context,
+        Frontend.Program program,
+        (Token Token, TextSpan Span) identifier)
+    {
+        string name = identifier.Token.Text;
+        if (IsFollowedByMemberAccess(context.AnalysisSource, identifier.Span))
+        {
+            return null;
+        }
+
+        if (char.IsLower(name[0]))
+        {
+            TypeDecl? record = program.TypeDecls.FirstOrDefault(candidate => candidate.IsRecord
+                && ContainsSpan(AstSpans.GetOrDefault(candidate), identifier.Span)
+                && candidate.Constructors.Any(constructor => constructor.FieldNames.Contains(name, StringComparer.Ordinal)));
+            if (record is null)
+            {
+                return null;
+            }
+
+            string? field = FindDeclarationBranch(FormatTypeDeclaration(record), name);
+            return field is null ? null : $"```ashes\n{field}\n```\n\n*field of record `{record.Name}`*";
+        }
+
+        TypeDecl[] candidates = [.. program.TypeDecls.Where(candidate =>
+            string.Equals(candidate.Name, name, StringComparison.Ordinal)
+            || !candidate.IsRecord && candidate.Constructors.Any(constructor => string.Equals(constructor.Name, name, StringComparison.Ordinal)))];
+        // A stitched module may declare a type of the same name; the file's own declaration wins.
+        TypeDecl? declaration = candidates.FirstOrDefault(candidate =>
+                MapToOriginalSpan(AstSpans.GetOrDefault(candidate).Start, AstSpans.GetOrDefault(candidate).End, context) is not null)
+            ?? candidates.FirstOrDefault();
+        if (declaration is null)
+        {
+            return null;
+        }
+
+        string formatted = FormatTypeDeclaration(declaration);
+        if (string.Equals(declaration.Name, name, StringComparison.Ordinal))
+        {
+            return $"```ashes\n{formatted}\n```\n\n*{(declaration.IsRecord ? "record type" : "algebraic data type")}*";
+        }
+
+        string constructor = FindDeclarationBranch(formatted, name) ?? name;
+        return $"```ashes\n{constructor}\n```\n\n*constructor of `{declaration.Name}`*\n\n```ashes\n{formatted}\n```";
+    }
+
+    private static string? FormatCapabilityHover(
+        AnalysisContext context,
+        Frontend.Program program,
+        (Token Token, TextSpan Span) identifier)
+    {
+        CapabilityDecl? capability = program.Items.OfType<TopLevelItem.Capability>()
+            .Select(item => item.Decl)
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, identifier.Token.Text, StringComparison.Ordinal));
+        if (capability is null)
+        {
+            return null;
+        }
+
+        string formatted = Ashes.Formatter.Formatter.Format(
+            new Frontend.Program([new TopLevelItem.Capability(capability)], null)).Trim();
+        return $"```ashes\n{formatted}\n```\n\n*capability*";
+    }
+
+    private static readonly HashSet<string> BuiltinTypeNames = new(StringComparer.Ordinal)
+    {
+        "Int", "Float", "Str", "Bool", "Unit", "Rune", "BigInt", "Bytes", "Never",
+        "u8", "u16", "u32", "u64", "List", "Maybe", "Result", "Task",
+    };
+
+    // A built-in type name written in an annotation or a declaration's payload. A segment of a
+    // qualified path (`Ashes.Collection.List.map`) is a module name instead.
+    private static string? FormatBuiltinTypeHover(string source, (Token Token, TextSpan Span) identifier)
+    {
+        string name = identifier.Token.Text;
+        if (!BuiltinTypeNames.Contains(name)
+            || IsFollowedByMemberAccess(source, identifier.Span)
+            || FindQualifierBeforeIdentifier(source, identifier.Span.Start) is not null)
+        {
+            return null;
+        }
+
+        return $"```ashes\n{name}\n```\n\n*built-in type*";
+    }
+
+    private static string FormatTypeDeclaration(TypeDecl declaration) =>
+        Ashes.Formatter.Formatter.Format(new Frontend.Program([new TopLevelItem.Type(declaration)], null)).Trim();
+
+    // The `| name...` branch of a formatted declaration (a constructor, a record field, a
+    // capability operation), without its leading bar.
+    private static string? FindDeclarationBranch(string formatted, string name)
+    {
+        foreach (string line in formatted.Split('\n'))
+        {
+            string trimmed = line.Trim();
+            if (!trimmed.StartsWith("| ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string branch = trimmed[2..];
+            if (branch.StartsWith(name, StringComparison.Ordinal)
+                && (branch.Length == name.Length || branch[name.Length] is '(' or ':' or ' '))
+            {
+                return branch;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsFollowedByMemberAccess(string source, TextSpan span)
+    {
+        int end = new SourceTextIndex(source).ToUtf16Offset(span.End);
+        return end + 1 < source.Length && source[end] == '.' && char.IsLetter(source[end + 1]);
+    }
+
+    private static bool ContainsSpan(TextSpan outer, TextSpan inner) =>
+        outer.End > outer.Start && inner.Start >= outer.Start && inner.End <= outer.End;
 
     private static HoverItem? GetMappedExternalDeclarationHover(
         AnalysisContext context,
@@ -1752,7 +1962,10 @@ public static partial class DocumentService
         bool hasSpecialFfiParameter = declaration is ExternalDecl.Function function
             && (function.ReturnType is ParsedType.NativeString
                 || function.ParameterTypes.Any(type => type is ParsedType.Buffer or ParsedType.Out));
-        if (ownership is null && !hasSpecialFfiParameter)
+        // A plain external function shows its declaration on the declaration itself; a use site
+        // keeps the inferred type, which carries its capability row.
+        if (ownership is null && !hasSpecialFfiParameter && declaration is ExternalDecl.Function
+            && !ContainsSpan(AstSpans.GetOrDefault(declaration), identifier.Value.Span))
         {
             return null;
         }
@@ -1760,7 +1973,7 @@ public static partial class DocumentService
         string formatted = Ashes.Formatter.Formatter.Format(new Frontend.Program(
             [new TopLevelItem.External(declaration)], null)).Trim();
         string markdown = FormatExternalDeclarationHover(formatted, declaration, ownership);
-        TextSpan? mapped = MapToOriginalSpan(identifier.Value.Span.Start, identifier.Value.Span.End, context);
+        TextSpan? mapped = MapToOriginalSpan(identifier.Value.Span.Start, identifier.Value.Span.End, context, requireSourceText: true);
         return mapped is null
             ? null
             : new HoverItem(mapped.Value.Start + context.HeaderOffset, mapped.Value.End + context.HeaderOffset, markdown);
@@ -1777,6 +1990,10 @@ public static partial class DocumentService
             markdown.Append("*affine external resource*\n\n**Destructor:** `");
             markdown.Append(resourceOwnership.Destructor);
             markdown.Append('`');
+        }
+        else if (declaration is ExternalDecl.OpaqueType)
+        {
+            markdown.Append("*external opaque type*");
         }
         else
         {
@@ -2059,15 +2276,20 @@ public static partial class DocumentService
         }
         else
         {
+            // An unqualified name outside a trait or implementation declaration is an ordinary
+            // binding (`let add a b = ...`), even when it spells a trait method; its hover comes
+            // from the binding it resolves to.
             string? declarationTrait = FindContainingTraitMethodOwner(program, position, identifier.Value.Token.Text);
-            if (declarationTrait is not null)
+            if (declarationTrait is null)
             {
-                methodTraits = methodTraits
-                    .Where(trait => string.Equals(trait.Name, declarationTrait, StringComparison.Ordinal)
-                        || string.Equals(trait.QualifiedName, declarationTrait, StringComparison.Ordinal)
-                        || trait.QualifiedName.EndsWith($".{declarationTrait}", StringComparison.Ordinal))
-                    .ToArray();
+                return null;
             }
+
+            methodTraits = methodTraits
+                .Where(trait => string.Equals(trait.Name, declarationTrait, StringComparison.Ordinal)
+                    || string.Equals(trait.QualifiedName, declarationTrait, StringComparison.Ordinal)
+                    || trait.QualifiedName.EndsWith($".{declarationTrait}", StringComparison.Ordinal))
+                .ToArray();
         }
         return TryCreateTraitMethodHover(identifier.Value, methodTraits, lowering);
     }
@@ -2347,14 +2569,9 @@ public static partial class DocumentService
     /// declarations were replaced by blank lines or import aliases, so body spans map by line and
     /// character rather than by subtracting the hoisted declaration length.
     /// </summary>
-    private static TextSpan? MapToOriginalSpan(int start, int end, AnalysisContext context)
+    private static TextSpan? MapToOriginalSpan(int start, int end, AnalysisContext context, bool requireSourceText = false)
     {
         if (context.EntryOffset == 0)
-        {
-            return TextSpan.FromBounds(start, end);
-        }
-
-        if (context.BodyStart > 0 && start <= context.BodyStart && end <= context.BodyStart)
         {
             return TextSpan.FromBounds(start, end);
         }
@@ -2363,7 +2580,7 @@ public static partial class DocumentService
         if (start >= context.EntryOffset && end <= analysisIndex.Utf8Length)
         {
             string entrySource = context.AnalysisSource[analysisIndex.ToUtf16Offset(context.EntryOffset)..];
-            return TextSpan.FromBounds(
+            TextSpan mapped = TextSpan.FromBounds(
                 MapPositionByLineAndCharacter(
                     entrySource,
                     start - context.EntryOffset,
@@ -2372,6 +2589,36 @@ public static partial class DocumentService
                     entrySource,
                     end - context.EntryOffset,
                     context.StrippedSource));
+            // The entry keeps the file's lines, but a line the file leaves blank can carry
+            // generated text (an import's alias prelude); such a span has no source of its own.
+            SourceTextIndex strippedIndex = new(context.StrippedSource);
+            int analysisChar = analysisIndex.ToUtf16Offset(start);
+            int strippedChar = strippedIndex.ToUtf16Offset(mapped.Start);
+            bool sameText = analysisChar < context.AnalysisSource.Length
+                && strippedChar < context.StrippedSource.Length
+                && context.AnalysisSource[analysisChar] == context.StrippedSource[strippedChar];
+            return !requireSourceText || sameText || start == end ? mapped : null;
+        }
+
+        // A hoisted entry declaration is copied verbatim, so it maps back by fragment offset. Every
+        // other span before the entry belongs to a stitched module (the standard library, an import,
+        // a lifted inline module) and has no position in this file.
+        if (context.Layout?.EntryTypeDeclFragments is not { } fragments)
+        {
+            return null;
+        }
+
+        int utf16Start = analysisIndex.ToUtf16Offset(start);
+        int utf16End = analysisIndex.ToUtf16Offset(end);
+        foreach ((int combinedStart, int originalStart, int length) in fragments)
+        {
+            if (utf16Start >= combinedStart && utf16End <= combinedStart + length)
+            {
+                SourceTextIndex strippedIndex = new(context.StrippedSource);
+                return TextSpan.FromBounds(
+                    strippedIndex.ToUtf8Offset(originalStart + (utf16Start - combinedStart)),
+                    strippedIndex.ToUtf8Offset(originalStart + (utf16End - combinedStart)));
+            }
         }
 
         return null;
@@ -2424,7 +2671,8 @@ public static partial class DocumentService
     private static int? MapOriginalPositionToAnalysis(int position, AnalysisContext context)
     {
         var strippedPosition = position - context.HeaderOffset;
-        if (strippedPosition < 0 || strippedPosition > new SourceTextIndex(context.StrippedSource).Utf8Length)
+        SourceTextIndex strippedIndex = new(context.StrippedSource);
+        if (strippedPosition < 0 || strippedPosition > strippedIndex.Utf8Length)
         {
             return null;
         }
@@ -2434,12 +2682,19 @@ public static partial class DocumentService
             return strippedPosition;
         }
 
-        if (context.BodyStart > 0 && strippedPosition <= context.BodyStart)
+        SourceTextIndex analysisIndex = new(context.AnalysisSource);
+        if (context.Layout?.EntryTypeDeclFragments is { } fragments)
         {
-            return strippedPosition;
+            int utf16Position = strippedIndex.ToUtf16Offset(strippedPosition);
+            foreach ((int combinedStart, int originalStart, int length) in fragments)
+            {
+                if (utf16Position >= originalStart && utf16Position < originalStart + length)
+                {
+                    return analysisIndex.ToUtf8Offset(combinedStart + (utf16Position - originalStart));
+                }
+            }
         }
 
-        SourceTextIndex analysisIndex = new(context.AnalysisSource);
         string entrySource = context.AnalysisSource[analysisIndex.ToUtf16Offset(context.EntryOffset)..];
         return context.EntryOffset + MapPositionByLineAndCharacter(
             context.StrippedSource,

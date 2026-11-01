@@ -544,6 +544,14 @@ public sealed partial class Lowering
 
     private void RecordExprHoverType(Expr expr, TypeRef type)
     {
+        // A binding's span covers its name, annotation, and value while its type is the body's (for
+        // a top-level declaration, the rest of the file), so it would show an unrelated type over
+        // every token of the binding that has no narrower hover of its own.
+        if (expr is Expr.Let or Expr.LetResult or Expr.LetRecursive or RecursiveGroupExpr)
+        {
+            return;
+        }
+
         RecordHoverType(GetSpan(expr), null, type);
     }
 
@@ -568,7 +576,10 @@ public sealed partial class Lowering
         bool isParameter = false,
         bool isDefinition = true)
     {
-        if (_collectInferredTraitElaboration || _suppressHoverRecording || !IsValidSpan(span))
+        // A compiler-generated binding (trait evidence, a derived implementation, a recursive-group
+        // wrapper) borrows the span of the source it was generated from; it is never a hover target.
+        if (_collectInferredTraitElaboration || _suppressHoverRecording || !IsValidSpan(span)
+            || name?.StartsWith("__", StringComparison.Ordinal) == true)
         {
             return;
         }

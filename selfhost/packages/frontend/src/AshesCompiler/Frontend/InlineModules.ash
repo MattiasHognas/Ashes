@@ -231,6 +231,18 @@ let collectInlineModule scope (header: InlineModuleHeader) remaining names modul
                 match collectBody(header.indent)(remaining)([]) with
                     | InlineModuleBody { lines = body, remaining = afterBody } -> Ok((header.name :: names, DirectInlineModule(name = header.name, body = body) :: modules, afterBody))
 
+let recursive prependBlankLines lines outer =
+    match lines with
+        | [] -> outer
+        | _ :: rest -> prependBlankLines(rest)("" :: outer)
+
+// A lifted block leaves its header and body behind as blank lines, so every later line of the
+// outer source keeps its line number for diagnostics and editor positions.
+let blankLiftedModule modules outer =
+    match modules with
+        | [] -> outer
+        | DirectInlineModule { name = _, body = body } :: _ -> prependBlankLines(body)("" :: outer)
+
 // The collected names, outer lines, and modules travel as three list parameters, each grown by
 // one cell at a time. A record accumulator holding the three lists was rebuilt every iteration
 // and its lists copied out of the arena at every back edge, so a source of n lines cost n^2
@@ -244,7 +256,8 @@ let recursive collectInlineModules scope lines names outer modules =
                 | Some(header) ->
                     match collectInlineModule(scope)(header)(rest)(names)(modules) with
                         | Error(error) -> Error(error)
-                        | Ok((nextNames, nextModules, remaining)) -> collectInlineModules(scope)(remaining)(nextNames)(outer)(nextModules)
+                        | Ok((nextNames, nextModules, remaining)) ->
+                            collectInlineModules(scope)(remaining)(nextNames)(blankLiftedModule(nextModules)(outer))(nextModules)
 
 let recursive minimumIndent lines current =
     match lines with

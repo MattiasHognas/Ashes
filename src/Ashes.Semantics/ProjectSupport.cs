@@ -5226,7 +5226,11 @@ public static class ProjectSupport
                 continue;
             }
 
-            i = CollectInlineModuleBlock(lines, i, header, displayPath, seenNames, directChildren);
+            // The block's lines stay behind as blank lines, so every later line of the outer source
+            // keeps its line number and diagnostics and editor positions map back by line.
+            var blockEnd = CollectInlineModuleBlock(lines, i, header, displayPath, seenNames, directChildren);
+            outer.AddRange(Enumerable.Repeat(string.Empty, blockEnd - i));
+            i = blockEnd;
         }
 
         if (directChildren.Count == 0)

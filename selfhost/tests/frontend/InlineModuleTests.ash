@@ -43,7 +43,7 @@ let checkFlatExpansion unit =
     |> expectExpansion
     |> assertNamed("flat expansion")(
         inlineExpansion(
-            "let result = Example.Math.answer",
+            "\n\nlet result = Example.Math.answer",
             [moduleInfo("Example.Math")("let answer = 42")]
         )
     )
@@ -54,7 +54,7 @@ let checkEntryExpansion unit =
     |> expectExpansion
     |> assertNamed("entry expansion")(
         inlineExpansion(
-            "Math.answer",
+            "\n\nMath.answer",
             [moduleInfo("Math")("let answer = 42")]
         )
     )
@@ -72,10 +72,10 @@ let checkNestedExpansion unit =
     |> expectExpansion
     |> assertNamed("nested expansion")(
         inlineExpansion(
-            "let result = Example.Outer.answer",
+            "\n\n\n\nlet result = Example.Outer.answer",
             [
                 moduleInfo("Example.Outer.Inner")("let answer = 42"),
-                moduleInfo("Example.Outer")("let answer = Example.Outer.Inner.answer")
+                moduleInfo("Example.Outer")("\n\nlet answer = Example.Outer.Inner.answer")
             ]
         )
     )
@@ -84,7 +84,7 @@ let checkQualifierExpansion (expansion: InlineModuleExpansion) =
     match expansion with
         | InlineModuleExpansion { source = source, modules = _modules } ->
             assertNamed("qualifier boundaries")(
-                "let direct = Example.Math.answer\nlet deeper = Existing.Math.answer\nlet text = \"Math.answer\"",
+                "\n\nlet direct = Example.Math.answer\nlet deeper = Existing.Math.answer\nlet text = \"Math.answer\"",
                 source
             )
 
@@ -160,8 +160,7 @@ let checkLargeCrLfSource unit =
             match expansion with
                 | InlineModuleExpansion { source = source, modules = modules } ->
                     unit
-                    |> (given (_) ->
-                        assertNamed("normalized large source")(Ashes.Text.join("\n")(outerLines))(source))
+                    |> (given (_) -> assertNamed("normalized large source")(Ashes.Text.join("\n")(outerLines) + "\n\n")(source))
                     |> (given (_) -> assertNamed("large source modules")([moduleInfo("Example.Nested")("let answer = 42")])(modules))))
 
 let run unit =

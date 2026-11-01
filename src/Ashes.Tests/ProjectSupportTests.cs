@@ -908,6 +908,25 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void MapDiagnosticsToOriginal_maps_entry_spans_after_an_inline_module_to_their_own_line()
+    {
+        var original = "module Geometry =\n    let square = given (x) -> x * x\n\nlet a = 1\nlet b = a + \"oops\"\n\nAshes.IO.print(b)";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+
+        var diag = new Diagnostics();
+        var program = new Parser(layout.Source, diag).ParseProgram();
+        _ = new Lowering(diag, new HashSet<string>(StringComparer.Ordinal), parsed.ImportAliases).Lower(program);
+        diag.StructuredErrors.ShouldNotBeEmpty();
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, diag.StructuredErrors, "<memory>", original, parsed.SourceWithoutImports);
+
+        // The lifted module's lines stay behind blank, so the error keeps line 5 of the user's file.
+        var expectedStart = original.IndexOf("a + \"oops\"", StringComparison.Ordinal);
+        mapped.Where(m => m.HasPosition).ShouldContain(m => m.Entry.Start == expectedStart);
+    }
+
+    [Test]
     public void MapDiagnosticsToOriginal_maps_entry_region_spans_to_original_coordinates()
     {
         // The Ashes.Collection.List import stitches a source stdlib module, so the entry body sits behind a
