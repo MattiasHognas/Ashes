@@ -1775,7 +1775,7 @@ Let expressions support destructuring patterns on the left side of `=`.
 Syntax:
 
 ```text
-let (a, b) = expr in body
+let pattern = expr in body
 ```
 
 Rules:
@@ -1793,11 +1793,25 @@ Rules:
 - List patterns (`[]`, `x :: xs`) are not allowed in let bindings: a list may be empty, and a
   `let` never fails at run time. Use `match` and handle the empty list.
 
-Example:
+Examples:
 
 ```ash
 let (x, y) = (1, 2)
 in x + y
+
+let ((a, _), c) = ((1, 2), 3)
+in a + c
+
+let (first, _) as pair = (4, 5)
+in first
+```
+
+The first element of a list is taken with `match`, which names what happens when there is none:
+
+```ash
+match xs with
+    | first :: _ -> first
+    | [] -> 0
 ```
 
 ---
