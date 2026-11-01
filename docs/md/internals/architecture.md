@@ -1733,6 +1733,10 @@ the loop then released the arena cell as a counted one.
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).
+A constructor cell nested in a copied successor as a field (`Node(seen, Item(name))`) is copied by the
+same normalizer, which takes its own reference to the nested cell's children, so the retains the
+nested cell was built with are released after the copy as the outer cell's are. Before, each iteration
+left the matched head's string one count too high (`GRC_NO_NESTEDHELDRETAINS`).
 
 A back edge releases the owned slots its iteration may have stored. A slot stored inside another arm
 of a `match` or `if` that is still open at the back edge is skipped, since one iteration never runs
@@ -1748,6 +1752,12 @@ is kept in an owned slot of its own and holds references of its own, so no succe
 whatever the successors' placement. Without this, a loop whose successors include an arena list that
 might hold such a value's parts (the whole-program lowering's remaining top-level items) released the
 steps only at its exit, two group records per `let recursive` (`GRC_NO_HANDEDONPREDECESSOR`).
+A value no name was bound to that a self call hands on whole as a loop parameter (an insert's result
+taken as the next tree: `loop(rest)(insert(name)(Item(name))(seen))`) is held only through that
+parameter, so the parameters the body's flow can carry it into stand in for its binders: the value is
+released once no successor names one of them. Without this, a loop kept in the arena by a list arm
+(`| Wrapped(inner) :: rest -> loop(inner :: rest)(seen)`) released only its last two trees, at its
+exit, and each call kept every earlier tree (`GRC_NO_UNNAMEDPREDECESSORFLOW`).
 A join whose arms mix an owned value with one it does not own normalizes the unowned arms, so the
 join owns its value as a whole. A tuple joins the same way when each element is a scalar or a value
 that normalizes (`("", "")` beside a tuple of fresh strings): the arena arm is copied into a counted

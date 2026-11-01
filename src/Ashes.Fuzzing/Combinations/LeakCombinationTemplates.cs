@@ -173,6 +173,9 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConsInTupleSuccessorTemplate());
         registry.Register(new UpdateFieldMatchJoinTemplate());
         registry.Register(new ConsChainOntoFreshCellTemplate());
+        registry.Register(new NestedCellInArenaSuccessorTemplate());
+        registry.Register(new UnnamedPredecessorInArenaLoopTemplate());
+        registry.Register(new PatternOwnerInCallArgumentCellTemplate());
     }
 }
 

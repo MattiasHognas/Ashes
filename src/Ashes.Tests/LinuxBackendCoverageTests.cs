@@ -20554,4 +20554,105 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("cons chain onto fresh recursive cell", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildNestedCellInArenaSuccessorProgram(int rounds)
+        => $$"""
+            type Item =
+                | ItemPlain(Str)
+
+            type Tree =
+                | Leaf
+                | Node(Tree, Item)
+
+            let recursive loop (items: List(Str)) (seen: Tree) (count: Int) =
+                match items with
+                    | [] -> count
+                    | name :: rest -> loop(rest)(Node(seen, ItemPlain(name)))(count + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + loop(["coal", "ash", "dust", "soot"])(Leaf)(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildUnnamedPredecessorInArenaLoopProgram(int rounds)
+        => $$"""
+            type Item =
+                | ItemPlain(Str)
+                | ItemWrapped(Item)
+
+            type Tree(K, V) =
+                | Leaf
+                | Node(Tree(K, V), K, V, Tree(K, V))
+
+            let recursive insert (key: Str) (value: Item) (tree: Tree(Str, Item)) =
+                match tree with
+                    | Leaf -> Node(Leaf, key, value, Leaf)
+                    | Node(left, k, v, right) -> Node(insert(key)(value)(left), k, v, right)
+
+            let recursive loop (items: List(Item)) (seen: Tree(Str, Item)) (count: Int) =
+                match items with
+                    | [] -> count
+                    | ItemWrapped(inner) :: rest -> loop(inner :: rest)(seen)(count)
+                    | ItemPlain(name) :: rest -> loop(rest)(insert(name)(ItemPlain(name))(seen))(count + 1)
+
+            let run (seed: Int) = loop([ItemPlain("ash"), ItemPlain("dust"), ItemPlain("coal"), ItemPlain("soot")])(Leaf)(seed)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_nested_cell_in_arena_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is an arena node holding the loop's own tree beside a fresh cell over
+        // the matched head. The back edge copies the node with a normalizer, which takes its own
+        // reference to the head through the nested cell, so the nested cell's retain is released.
+        int[] roundCounts = [10000, 40000, 160000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildNestedCellInArenaSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nested cell in arena successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_unnamed_predecessor_in_arena_loop_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop that stays in the arena (one arm conses a wrapped item back onto its list) inserts
+        // into a tree through a call and hands the result on as its tree. The earlier iteration's
+        // tree, never bound to a name, is released at the back edge, since no successor names it.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildUnnamedPredecessorInArenaLoopProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("unnamed predecessor in arena loop", samples, maxRssKb: 16_000);
+    }
 }

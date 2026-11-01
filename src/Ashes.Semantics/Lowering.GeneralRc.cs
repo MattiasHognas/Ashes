@@ -504,27 +504,53 @@ public sealed partial class Lowering
             return false;
         }
 
-        HashSet<int> ownedResultSlots = loopSlots.Where(owned => !owned.Predecessor).Select(owned => owned.Slot).ToHashSet();
-        HashSet<int> savedInto = loopSlots.Where(owned => owned.Predecessor && owned.Origin == predecessor.Origin).Select(owned => owned.Slot).ToHashSet();
-        if (HandedOnCallTargets(predecessor.Origin, savedInto) is not { Count: > 0 } callTargets)
-        {
-            return false;
-        }
+        return HandedOnCallTargets(predecessor.Origin, SavedInto(predecessor, loopSlots)) is { Count: > 0 } callTargets
+            && AllStoredIntoOwnedResults(callTargets, loopSlots);
+    }
 
+    private static HashSet<int> SavedInto(GeneralRcOwnedSlot predecessor, List<GeneralRcOwnedSlot> loopSlots)
+        => loopSlots.Where(owned => owned.Predecessor && owned.Origin == predecessor.Origin).Select(owned => owned.Slot).ToHashSet();
+
+    private bool AllStoredIntoOwnedResults(HashSet<int> callTargets, List<GeneralRcOwnedSlot> loopSlots)
+    {
+        HashSet<int> ownedResultSlots = loopSlots.Where(owned => !owned.Predecessor).Select(owned => owned.Slot).ToHashSet();
+        HashSet<int> pending = [.. callTargets];
         foreach (IrInst inst in _inst)
         {
-            if (inst is IrInst.StoreLocal store && callTargets.Contains(store.Source) && ownedResultSlots.Contains(store.Slot))
+            if (inst is IrInst.StoreLocal store && pending.Contains(store.Source) && ownedResultSlots.Contains(store.Slot))
             {
-                callTargets.Remove(store.Source);
+                pending.Remove(store.Source);
             }
         }
 
-        return callTargets.Count == 0;
+        return pending.Count == 0;
+    }
+
+    // The loop parameter positions an earlier iteration's value no name was bound to was handed to
+    // as a successor, when every other read of it is the argument of a call whose result is kept in
+    // an owned slot; null when it is read any other way. Those parameters are the only names that
+    // can hold it, or a part of it, without a reference of their own.
+    private HashSet<int>? UnnamedPredecessorParameterPositions(PendingTcoReset info, GeneralRcOwnedSlot predecessor)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_UNNAMEDPREDECESSORFLOW") is not null
+            || predecessor.Origin < 0
+            || predecessor.Binders is not { Count: 0 }
+            || !_generalRcBackEdgeSlots.TryGetValue(_generalRcBackEdgeId, out List<GeneralRcOwnedSlot>? loopSlots))
+        {
+            return null;
+        }
+
+        HashSet<int> positions = [];
+        return HandedOnCallTargets(predecessor.Origin, SavedInto(predecessor, loopSlots), info.ParamSlots, positions) is { } callTargets
+            && AllStoredIntoOwnedResults(callTargets, loopSlots)
+            ? positions
+            : null;
     }
 
     // The results of the calls an owned slot's value is the argument of, or null when it is read
-    // any other way.
-    private HashSet<int>? HandedOnCallTargets(int slot, HashSet<int> savedInto)
+    // any other way. With parameter slots, a read stored into one of them as a successor is allowed
+    // too, and its position added to the positions.
+    private HashSet<int>? HandedOnCallTargets(int slot, HashSet<int> savedInto, int[]? parameterSlots = null, HashSet<int>? positions = null)
     {
         HashSet<int> reads = _inst.OfType<IrInst.LoadLocal>().Where(load => load.Slot == slot).Select(load => load.Target).ToHashSet();
         HashSet<int> callTargets = [];
@@ -538,6 +564,9 @@ public sealed partial class Lowering
                     case IrInst.CmpIntNe:
                     case IrInst.IsReferenceCounted:
                     case IrInst.CallKnown dropCall when dropCall.FuncLabel.StartsWith("__rcdrop", StringComparison.Ordinal):
+                        break;
+                    case IrInst.StoreLocal successor when parameterSlots is not null && Array.IndexOf(parameterSlots, successor.Slot) is >= 0 and var position:
+                        positions?.Add(position);
                         break;
                     case IrInst.CallClosure call when call.ArgTemp == used && call.ClosureTemp != used && call.RuntimeManagedArgumentFlagTemp != used:
                         callTargets.Add(call.Target);
@@ -1698,11 +1727,12 @@ public sealed partial class Lowering
     // them), and none of the parameters a self call may hand such a name, or a part of one, whole
     // or through another parameter. A parameter normalized onto the reference-counted heap on this
     // path holds references of its own, so nothing reaches a successor through it. Claimed only
-    // when the value was bound to names and the body's parameter flow was followed.
+    // when the value was bound to names and the body's parameter flow was followed. A value no
+    // name was bound to reaches the successors only through the parameters it was handed to as a
+    // successor, which start the flow in place of the binders.
     private bool[] SuccessorsNamingNoPartOf(PendingTcoReset info, GeneralRcOwnedSlot predecessor, bool successorsNormalized)
     {
         if (Environment.GetEnvironmentVariable("GRC_NO_PREDECESSORNAMES") is not null
-            || predecessor.Binders is not { Count: > 0 } binders
             || FlowOmittingInlineHeads(info.Tco) is not { } flow
             || info.Tco.Body is not { } body)
         {
@@ -1711,10 +1741,25 @@ public sealed partial class Lowering
 
         List<string> parameters = info.Tco.ParamNames;
         FlowCallPolicy policy = info.Tco.FlowPolicy;
-        HashSet<string> named = CollectDerivedNames(body, binders, parameters, policy);
         HashSet<int> ownReferences = PositionsHoldingOwnReferences(info.Tco, body);
-        HashSet<int> holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named, policy);
-        holders.ExceptWith(ownReferences);
+        HashSet<string> named;
+        HashSet<int> holders;
+        if (predecessor.Binders is { Count: > 0 } binders)
+        {
+            named = CollectDerivedNames(body, binders, parameters, policy);
+            holders = CollectSelfCallPositionsMentioning(info.Tco.SelfName, parameters, body, named, policy);
+            holders.ExceptWith(ownReferences);
+        }
+        else if (UnnamedPredecessorParameterPositions(info, predecessor) is { } handedTo)
+        {
+            named = [];
+            holders = handedTo;
+        }
+        else
+        {
+            return [];
+        }
+
         bool changed = true;
         while (changed)
         {

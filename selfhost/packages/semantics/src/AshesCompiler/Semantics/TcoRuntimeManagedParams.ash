@@ -44,6 +44,7 @@ export (
     value tcoSelfCallSpineFlow,
     value shapePatternNames,
     value flowSuccessorsNamingNoPartOf,
+    value flowSuccessorsNamingNoHandedParameter,
     value tcoOwnReferencePositions,
     value flowCallKeyOf,
     value flowNodes,
@@ -1619,6 +1620,19 @@ let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (policy: Li
                     |> flowHolderClosure(sources)(flowCutsWith(ownReferences)(0)(cuts)) with
                         | holders ->
                             flowPositionsReadingNone(arguments)(0)(flowParameterNamesAt(holders)(parameters)(named))(parameters)(policy)
+
+// The binders' counterpart for an earlier iteration's value no name was bound to: the positions
+// whose successor names none of the parameters the value was handed to as a successor
+// (`handedTo`), nor a parameter the body's flow carries one of them into. Nothing is claimed
+// without the body's flow.
+let flowSuccessorsNamingNoHandedParameter (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (flow: Maybe(List(List(Int)))) (handedTo: List(Int)) (ownReferences: List(Int)) (cuts: List(Bool)) (arguments: List(Expr)) =
+    match flow with
+        | None -> []
+        | Some(sources) ->
+            handedTo
+            |> flowHolderClosure(sources)(flowCutsWith(ownReferences)(0)(cuts))
+            |> (given (holders: List(Int)) -> flowParameterNamesAt(holders)(parameters)([]))
+            |> (given (names: List(Str)) -> flowPositionsReadingNone(arguments)(0)(names)(parameters)(policy))
 
 // The source parameters an argument reads, by ordinal, added to the sources a position already has.
 let recursive flowArgumentSources (argument: Expr) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =
