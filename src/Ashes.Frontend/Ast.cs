@@ -164,6 +164,8 @@ public abstract record Expr
         public TypeExpr? TypeAnnotation { get; init; }
         /// <summary>Written trait constraints on the complete annotated type scheme.</summary>
         public IReadOnlyList<TraitConstraintSyntax> Requires { get; init; } = [];
+        /// <summary>True for a <c>let! Name = Value</c> binding, whose <see cref="Value"/> is the <c>await</c> it desugars to.</summary>
+        public bool IsAwaitBinding { get; init; }
     }
     /// <summary>A result-unwrapping binding, <c>let? Name = Value in Body</c>: binds the ok value of
     /// <paramref name="Value"/>, short-circuiting the whole expression on error.</summary>
@@ -233,7 +235,11 @@ public abstract record Expr
     /// <param name="Value">The scrutinee being matched.</param>
     /// <param name="Cases">The match arms in source order.</param>
     /// <param name="Pos">The source offset of the <c>match</c> keyword, or null when synthesized.</param>
-    public sealed record Match(Expr Value, IReadOnlyList<MatchCase> Cases, int? Pos = null) : Expr;
+    public sealed record Match(Expr Value, IReadOnlyList<MatchCase> Cases, int? Pos = null) : Expr
+    {
+        /// <summary>True for a <c>let pattern = Value in body</c> binding, which desugars to this one-arm match.</summary>
+        public bool IsLetPattern { get; init; }
+    }
 
     /// <summary>An <c>await</c> expression that suspends until a task completes.</summary>
     /// <param name="Task">The task expression being awaited.</param>
@@ -341,7 +347,7 @@ public sealed record TypeConstructor(string Name, IReadOnlyList<TypeExpr> Parame
 /// <param name="Constructors">The type's constructors (a single one for a record type).</param>
 public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypeParameters, IReadOnlyList<TypeConstructor> Constructors)
 {
-    /// <summary>True when this was declared with record syntax: <c>type T = { field: Type, ... }</c>.</summary>
+    /// <summary>True when this was declared with record syntax: <c>type T = | field: Type | ...</c>.</summary>
     public bool IsRecord { get; init; }
 
     /// <summary>The standard traits requested by a trailing <c>deriving {Trait, ...}</c> clause,

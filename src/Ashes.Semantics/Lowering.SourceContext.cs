@@ -131,7 +131,7 @@ public sealed partial class Lowering
         int lineDelta = line - candidate.CombinedLine;
         int resolvedColumn = lineDelta == 0
             ? candidate.Anchor.Column + (column - candidate.CombinedColumn)
-            : column + 1;
+            : column + 1 + candidate.Anchor.ColumnOffset;
         resolved = (candidate.Anchor.FilePath, candidate.Anchor.Line + lineDelta, resolvedColumn);
         return true;
     }

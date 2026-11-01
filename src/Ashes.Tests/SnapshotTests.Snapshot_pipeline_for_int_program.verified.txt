@@ -117,7 +117,8 @@
         }
       },
       IsWhitespaceApplication: false
-    }
+    },
+    IsAwaitBinding: false
   },
   Ir: {
     EntryFunction: {

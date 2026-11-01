@@ -273,6 +273,7 @@ public sealed partial class Lowering
             _ => throw new InvalidOperationException($"Unsupported derived trait '{traitName}'."),
         };
         SetDerivedExpressionSpans(implementation, span);
+        _derivedSpans.Add(span);
 
         TraitImplementationMethodBinding binding = new(methodName, implementation);
         AstSpans.Set(binding, span);

@@ -1,5 +1,5 @@
 1:0 import -> -
-1:7 Geometry -> -
+1:7 Geometry -> `Geometry` module Geometry | *module*
 3:0 module -> -
 3:7 Geometry -> -
 4:4 export -> -
@@ -12,44 +12,44 @@
 4:54 module -> -
 4:61 Inner -> -
 5:4 type -> -
-5:9 Unit2 -> -
-6:10 Meter -> -
-7:10 Foot -> -
+5:9 Unit2 -> `Unit2` type Unit2 =     | Meter     | Foot | *algebraic data type*
+6:10 Meter -> `Meter` Meter | *constructor of `Unit2`* | type Unit2 =     | Meter     | Foot
+7:10 Foot -> `Foot` Foot | *constructor of `Unit2`* | type Unit2 =     | Meter     | Foot
 8:4 let -> -
-8:8 square -> -
-8:17 given -> -
-8:24 x -> -
-8:30 x -> -
-8:34 x -> -
+8:8 square -> `square` Geometry.square : a -> a requires {Ashes.Trait.Multiply(a)} | *function* | **Parameters** | - `x` : `a` | **Returns:** `a`
+8:17 given -> `given (x) -> x * x` a -> a | *function*
+8:24 x -> `x` x : Int | *parameter*
+8:30 x -> `x` x : Int | *parameter*
+8:34 x -> `x` x : Int | *parameter*
 9:4 let -> -
-9:8 cube -> -
-9:15 given -> -
-9:22 x -> -
-9:28 x -> -
+9:8 cube -> `cube` Geometry.cube : a -> a requires {Ashes.Trait.Multiply(a)} | *function* | **Parameters** | - `x` : `a` | **Returns:** `a`
+9:15 given -> `given (x) -> x * square(x)` a -> a | *function*
+9:22 x -> `x` x : a | *parameter*
+9:28 x -> `x` x : a | *parameter*
 9:32 square -> -
 9:39 x -> -
 10:4 module -> -
 10:11 Inner -> -
 11:8 let -> -
-11:12 half -> -
+11:12 half -> `half` Geometry.Inner.half : Int -> Int | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
 11:19 given -> -
-11:26 x -> -
-11:32 x -> -
-11:36 2 -> -
+11:26 x -> `x` x : Int | *parameter*
+11:32 x -> `x` x : Int | *parameter*
+11:36 2 -> `2` Int | *expression*
 13:0 let -> -
 13:4 viaQualified -> `viaQualified` viaQualified : Int | *value*
-13:19 Geometry -> `Geometry.square` Geometry.square : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
-13:28 square -> `Geometry.square` Geometry.square : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+13:19 Geometry -> `Geometry.square` Geometry.square : Int -> Int | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+13:28 square -> `Geometry.square` Geometry.square : Int -> Int | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
 13:35 3 -> `3` Int | *expression*
 14:0 let -> -
 14:4 viaNested -> `viaNested` viaNested : Int | *value*
-14:16 Geometry -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
-14:25 Inner -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
-14:31 half -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+14:16 Geometry -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+14:25 Inner -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
+14:31 half -> `Geometry.Inner.half` Geometry.Inner.half : Int -> Int | *function* | **Parameters** | - `x` : `Int` | **Returns:** `Int`
 14:36 10 -> `10` Int | *expression*
 15:0 let -> -
 15:4 viaSelector -> `viaSelector` viaSelector : Int | *value*
-15:18 cube -> `cube` cube : Int -> Int needs {ConsoleIO | a} | *function*
+15:18 cube -> `cube` cube : Int -> Int | *function*
 15:23 2 -> `2` Int | *expression*
 16:0 let -> -
 16:4 unit -> `unit` unit : Unit2 | *value*
@@ -58,7 +58,7 @@
 18:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
 18:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
 18:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
-18:15 square -> `square` square : Int -> Int needs {ConsoleIO | a} | *function*
+18:15 square -> `square` square : Int -> Int | *function*
 18:22 5 -> `5` Int | *expression*
 18:27 viaQualified -> `viaQualified` viaQualified : Int | *value*
 18:42 viaNested -> `viaNested` viaNested : Int | *value*

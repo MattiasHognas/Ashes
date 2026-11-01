@@ -68,6 +68,10 @@ and odd = given (n) -> if n == 0 then false else even(n - 1)
 - `in` starts its own line when either the value or body is multiline.
 - Nested `let ... in` expressions are preserved as written; the formatter does not
   flatten a nested `let ... in` pyramid into top-level declarations, nor the reverse.
+- A pattern binding (`let (a, b) = pair in a`) keeps its `let` form; it is not rewritten to the
+  `match` it means.
+- A chain of `let!` bindings keeps each `let!` on its own line at the same indentation, with a
+  single `in` after the last one; it is not rewritten to `let x = await ...`.
 
 Example:
 

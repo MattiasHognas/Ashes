@@ -488,10 +488,7 @@ public sealed partial class Lowering
             TypeRef.TList l => ($"List<{Pretty(l.Element, typeVarNames, parentPrecedence: precAtom)}>", precAtom),
             TypeRef.TTuple tuple => ($"({string.Join(", ", tuple.Elements.Select(e => Pretty(e, typeVarNames, parentPrecedence: 0)))})", precAtom),
             TypeRef.TVar v => (GetTypeVarName(v.Id, typeVarNames), precAtom),
-            TypeRef.TFun f => (
-                $"{Pretty(f.Arg, typeVarNames, parentPrecedence: precAtom)} -> {Pretty(f.Ret, typeVarNames, parentPrecedence: precArrow)}{PrettyRowSuffix(f.Row, typeVarNames)}",
-                precArrow
-            ),
+            TypeRef.TFun f => (PrettyArrow(f, typeVarNames, precArrow, precAtom), precArrow),
             TypeRef.TRow row => (PrettyRow(row, typeVarNames), precAtom),
             TypeRef.TCapability capability => (PrettyCapability(capability), precAtom),
             TypeRef.TPtr p => ($"*{Pretty(p.Pointee, typeVarNames, parentPrecedence: precAtom)}", precAtom),
@@ -504,6 +501,18 @@ public sealed partial class Lowering
         };
 
         return precedence < parentPrecedence ? $"({rendered})" : rendered;
+    }
+
+    // `needs` binds to the innermost arrow, so an arrow with a row whose result is itself an arrow
+    // parenthesizes that result: `A -> (B -> C needs {E}) needs {E}`, never `A -> B -> C needs {E}
+    // needs {E}`, which reads back as a different type.
+    private string PrettyArrow(TypeRef.TFun arrow, Dictionary<int, string> typeVarNames, int precArrow, int precAtom)
+    {
+        string argument = Pretty(arrow.Arg, typeVarNames, parentPrecedence: precAtom);
+        string row = PrettyRowSuffix(arrow.Row, typeVarNames);
+        int resultPrecedence = row.Length > 0 && Prune(arrow.Ret) is TypeRef.TFun ? precAtom : precArrow;
+        string result = Pretty(arrow.Ret, typeVarNames, parentPrecedence: resultPrecedence);
+        return $"{argument} -> {result}{row}";
     }
 
     /// <summary>
@@ -547,7 +556,7 @@ public sealed partial class Lowering
         // A binding's span covers its name, annotation, and value while its type is the body's (for
         // a top-level declaration, the rest of the file), so it would show an unrelated type over
         // every token of the binding that has no narrower hover of its own.
-        if (expr is Expr.Let or Expr.LetResult or Expr.LetRecursive or RecursiveGroupExpr)
+        if (expr is Expr.Let or Expr.LetResult or Expr.LetRecursive or RecursiveGroupExpr || _derivedSpans.Contains(GetSpan(expr)))
         {
             return;
         }
@@ -669,6 +678,53 @@ public sealed partial class Lowering
         }
 
         return position >= span.Start && position < span.End;
+    }
+
+    /// <summary>
+    /// The type to show for <paramref name="hover"/>. A use of a binding records that use's
+    /// instantiation, whose open capability rows have been unified with the caller's context; an
+    /// arrow the binding's own definition leaves pure is shown pure, so a pure helper used inside
+    /// `print(...)` does not read as needing <c>ConsoleIO</c>.
+    /// </summary>
+    public TypeRef GetHoverDisplayType(HoverTypeInfo hover)
+    {
+        if (hover.IsDefinition || hover.Name is not { } name)
+        {
+            return hover.Type;
+        }
+
+        string stitchedName = name.Replace('.', '_');
+        HoverTypeInfo? definition = null;
+        foreach (HoverTypeInfo candidate in _hoverTypes)
+        {
+            if (candidate.IsDefinition
+                && (string.Equals(candidate.Name, name, StringComparison.Ordinal)
+                    || string.Equals(candidate.Name, stitchedName, StringComparison.Ordinal))
+                && (definition is null || candidate.Span.Start <= hover.Span.Start))
+            {
+                definition = candidate;
+            }
+        }
+
+        return definition is { } found ? DropRowsAbsentFromDefinition(hover.Type, found.Type) : hover.Type;
+    }
+
+    private TypeRef DropRowsAbsentFromDefinition(TypeRef use, TypeRef definition)
+    {
+        use = Prune(use);
+        definition = Prune(definition);
+        if (use is not TypeRef.TFun useArrow || definition is not TypeRef.TFun definitionArrow)
+        {
+            return use;
+        }
+
+        bool definitionPure = definitionArrow.Row is null || NormalizeRow(definitionArrow.Row).Capabilities.Count == 0;
+        return new TypeRef.TFun(
+            DropRowsAbsentFromDefinition(useArrow.Arg, definitionArrow.Arg),
+            DropRowsAbsentFromDefinition(useArrow.Ret, definitionArrow.Ret))
+        {
+            Row = definitionPure ? null : useArrow.Row,
+        };
     }
 
     private static bool IsBetterHoverCandidate(HoverTypeInfo candidate, HoverTypeInfo current)

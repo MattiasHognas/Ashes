@@ -963,6 +963,12 @@ public static class Formatter
 
     private static void WriteLet(StringBuilder sb, Expr.Let l, int indent, int parentPrec, FormattingOptions options)
     {
+        if (l.IsAwaitBinding && l.Value is Expr.Await awaitValue)
+        {
+            WriteLetBang(sb, l, awaitValue, indent, parentPrec, options);
+            return;
+        }
+
         // Multiline canonical form:
         // let x = <value>
         // in <body>
@@ -1008,6 +1014,25 @@ public static class Formatter
     /// </summary>
     private static void WriteLetValueAndBody(StringBuilder sb, Expr value, Expr body, int indent, FormattingOptions options)
     {
+        WriteLetValue(sb, value, indent, options);
+        WriteIndent(sb, indent, options);
+        sb.Append("in ");
+        // Body can be multiline; if so, put it on next line indented
+        if (IsSingleLine(body, options))
+        {
+            WriteExprInline(sb, body, indent, 0, options);
+        }
+        else
+        {
+            sb.Append('\n');
+            WriteIndent(sb, indent + options.IndentSize, options);
+            WriteExpr(sb, body, indent + options.IndentSize, 0, options);
+        }
+    }
+
+    // The bound value of a let form, inline or indented on its own line, ending at a line break.
+    private static void WriteLetValue(StringBuilder sb, Expr value, int indent, FormattingOptions options)
+    {
         if (IsSingleLine(value, options))
         {
             WriteExprInline(sb, value, indent, 0, options);
@@ -1023,19 +1048,61 @@ public static class Formatter
                 sb.Append('\n');
             }
         }
+    }
 
-        WriteIndent(sb, indent, options);
-        sb.Append("in ");
-        // Body can be multiline; if so, put it on next line indented
-        if (IsSingleLine(body, options))
+    // `let! name = task`: consecutive bindings chain at the same indentation and only the last one
+    // carries `in`.
+    private static void WriteLetBang(StringBuilder sb, Expr.Let l, Expr.Await value, int indent, int parentPrec, FormattingOptions options)
+    {
+        var needsParens = parentPrec > PrecLetIfLambda;
+        if (needsParens)
         {
-            WriteExprInline(sb, body, indent, 0, options);
+            sb.Append('(');
         }
-        else
+
+        Expr.Let current = l;
+        Expr task = value.Task;
+        while (true)
         {
-            sb.Append('\n');
-            WriteIndent(sb, indent + options.IndentSize, options);
-            WriteExpr(sb, body, indent + options.IndentSize, 0, options);
+            sb.Append("let! ");
+            sb.Append(current.Name);
+            sb.Append(" = ");
+            if (current.Body is Expr.Let { IsAwaitBinding: true, Value: Expr.Await nextValue } next)
+            {
+                WriteLetValue(sb, task, indent, options);
+                WriteIndent(sb, indent, options);
+                current = next;
+                task = nextValue.Task;
+                continue;
+            }
+
+            WriteLetValueAndBody(sb, task, current.Body, indent, options);
+            break;
+        }
+
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    // `let pattern = value in body`, the source form of a one-arm match.
+    private static void WriteLetPattern(StringBuilder sb, Expr.Match match, int indent, int parentPrec, FormattingOptions options)
+    {
+        var needsParens = parentPrec > PrecLetIfLambda;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        sb.Append("let ");
+        WritePattern(sb, match.Cases[0].Pattern);
+        sb.Append(" = ");
+        WriteLetValueAndBody(sb, match.Value, match.Cases[0].Body, indent, options);
+
+        if (needsParens)
+        {
+            sb.Append(')');
         }
     }
 
@@ -1210,6 +1277,12 @@ public static class Formatter
 
     private static void WriteMatch(StringBuilder sb, Expr.Match match, int indent, int parentPrec, FormattingOptions options)
     {
+        if (match.IsLetPattern && match.Cases is [{ Guard: null }])
+        {
+            WriteLetPattern(sb, match, indent, parentPrec, options);
+            return;
+        }
+
         var needsParens = parentPrec > PrecLetIfLambda;
         if (needsParens)
         {

@@ -1665,10 +1665,63 @@ public static partial class DocumentService
 
         for (int index = 0; index < positions.Count; index++)
         {
-            hovers[index] = ResolveHover(context, hoverHeader, program, strippedProgram, lowering, positions[index]);
+            hovers[index] = positions[index] < hoverHeader.HeaderOffset
+                ? GetImportHover(source, hoverHeader.Imports, positions[index])
+                : ResolveHover(context, hoverHeader, program, strippedProgram, lowering, positions[index]);
         }
 
         return hovers;
+    }
+
+    // An import line: its module path, its selected binding or type, or its alias.
+    private static HoverItem? GetImportHover(string source, IReadOnlyList<ImportItem> imports, int position)
+    {
+        SourceTextIndex index = new(source);
+        foreach (ImportItem import in imports)
+        {
+            if (position < import.Span.Start || position >= import.Span.End)
+            {
+                continue;
+            }
+
+            int lineStart = index.ToUtf16Offset(import.Span.Start);
+            string line = source[lineStart..index.ToUtf16Offset(import.Span.End)];
+            int moduleStart = line.IndexOf(import.ModuleName, StringComparison.Ordinal);
+            int selectorStart = moduleStart + import.ModuleName.Length + 1;
+            int aliasStart = import.Alias is null ? -1 : line.LastIndexOf(import.Alias, StringComparison.Ordinal);
+            int offset = index.ToUtf16Offset(position) - lineStart;
+            string canonical = import.Selector is null ? import.ModuleName : $"{import.ModuleName}.{import.Selector}";
+            (int Start, int Length, string Markdown)? hover = null;
+            if (moduleStart >= 0 && offset >= moduleStart && offset < moduleStart + import.ModuleName.Length)
+            {
+                string kind = ProjectSupport.IsStdModule(import.ModuleName) ? "standard library module" : "module";
+                hover = (moduleStart, import.ModuleName.Length, $"```ashes\nmodule {import.ModuleName}\n```\n\n*{kind}*");
+            }
+            else if (import.Selector is { } selector && offset >= selectorStart && offset < selectorStart + selector.Length)
+            {
+                string kind = char.IsUpper(selector[0]) ? "imported type" : "imported binding";
+                string markdown = $"```ashes\n{canonical}\n```\n\n*{kind}*";
+                if (StandardLibraryDocumentation.TryGet(canonical, out StandardLibraryDocumentation.Entry documentation))
+                {
+                    markdown += $"\n\n---\n\n{documentation.Summary}\n\n[Open standard-library documentation]({documentation.Url})";
+                }
+
+                hover = (selectorStart, selector.Length, markdown);
+            }
+            else if (import.Alias is { } alias && aliasStart >= 0 && offset >= aliasStart && offset < aliasStart + alias.Length)
+            {
+                hover = (aliasStart, alias.Length, $"```ashes\n{alias}\n```\n\n*alias for `{canonical}`*");
+            }
+
+            return hover is { } found
+                ? new HoverItem(
+                    index.ToUtf8Offset(lineStart + found.Start),
+                    index.ToUtf8Offset(lineStart + found.Start + found.Length),
+                    found.Markdown)
+                : null;
+        }
+
+        return null;
     }
 
     private static HoverItem? ResolveHover(
@@ -1685,9 +1738,15 @@ public static partial class DocumentService
             return null;
         }
 
+        if (GetInlineModuleBindingNameHover(context, hoverHeader, lowering, position) is { } bindingHover)
+        {
+            return bindingHover;
+        }
+
         HoverItem? declarationHover = GetMappedTypeDeclarationHover(context, position, program)
             ?? GetMappedExternalDeclarationHover(context, position, program, lowering)
-            ?? GetMappedTraitHover(context, position, strippedProgram, lowering);
+            ?? GetMappedTraitHover(context, position, strippedProgram, lowering)
+            ?? GetMappedRecordFieldUseHover(context, position, program, lowering);
         if (declarationHover is not null)
         {
             return declarationHover;
@@ -1715,15 +1774,208 @@ public static partial class DocumentService
             return null;
         }
 
-        TypeScheme hoverScheme = new([], hover.Value.Type, hover.Value.Constraints ?? []);
+        Lowering.HoverTypeInfo shown = hover.Value with { Type = lowering.GetHoverDisplayType(hover.Value) };
+        TypeScheme hoverScheme = new([], shown.Type, shown.Constraints ?? []);
         string formattedType = lowering.FormatTypeScheme(hoverScheme);
         string? canonicalName = ResolveCanonicalHoverName(hover.Value.Name, hoverHeader.Imports);
-        string displayText = FormatHoverMarkdown(lowering, hover.Value, formattedType, canonicalName);
+        string displayText = FormatHoverMarkdown(lowering, shown, formattedType, canonicalName);
 
         return new HoverItem(
             mappedSpan.Value.Start + context.HeaderOffset,
             mappedSpan.Value.End + context.HeaderOffset,
             displayText);
+    }
+
+    // The name of a binding declared inside one of this file's inline modules. The stitched copy of
+    // the module renames the binding (`Geometry_square`) and anchors only its value, so the name is
+    // found through the stitched declaration.
+    private static HoverItem? GetInlineModuleBindingNameHover(
+        AnalysisContext context,
+        ImportHeaderInfo hoverHeader,
+        Lowering lowering,
+        int position)
+    {
+        int strippedPosition = position - context.HeaderOffset;
+        if (context.Layout is null || strippedPosition < 0
+            || FindIdentifierAtPosition(context.StrippedSource, strippedPosition) is not { } identifier)
+        {
+            return null;
+        }
+
+        SourceTextIndex strippedIndex = new(context.StrippedSource);
+        int nameStart = strippedIndex.ToUtf16Offset(identifier.Span.Start);
+        int lineStart = context.StrippedSource.LastIndexOf('\n', Math.Max(nameStart - 1, 0)) + 1;
+        string before = context.StrippedSource[lineStart..nameStart].Trim();
+        if (before is not ("let" or "let recursive" or "and"))
+        {
+            return null;
+        }
+
+        int line = strippedIndex.ToPosition(identifier.Span.Start, SourcePositionEncoding.UnicodeScalar).Line;
+        string? moduleName = FindEnclosingInlineModule(context.StrippedSource, line);
+        if (moduleName is null)
+        {
+            return null;
+        }
+
+        string stitchedName = $"{ProjectSupport.SanitizeModuleBindingName(moduleName)}_{identifier.Token.Text}";
+        int declaration = context.AnalysisSource.IndexOf(stitchedName + " = (", StringComparison.Ordinal);
+        if (declaration < 0)
+        {
+            declaration = context.AnalysisSource.IndexOf(stitchedName + " : ", StringComparison.Ordinal);
+        }
+
+        Lowering.HoverTypeInfo? hover = declaration < 0
+            ? null
+            : lowering.GetTypeAtPosition(new SourceTextIndex(context.AnalysisSource).ToUtf8Offset(declaration));
+        if (hover is not { } binding || !string.Equals(binding.Name, stitchedName, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        TypeScheme scheme = new([], binding.Type, binding.Constraints ?? []);
+        string markdown = FormatHoverMarkdown(
+            lowering,
+            binding,
+            lowering.FormatTypeScheme(scheme),
+            ResolveCanonicalHoverName($"{moduleName}.{identifier.Token.Text}", hoverHeader.Imports));
+        return new HoverItem(
+            identifier.Span.Start + context.HeaderOffset,
+            identifier.Span.End + context.HeaderOffset,
+            markdown);
+    }
+
+    // The innermost inline module whose block holds the zero-based stripped-source line.
+    private static string? FindEnclosingInlineModule(string strippedSource, int line)
+    {
+        if (!ProjectSupport.ContainsInlineModule(strippedSource))
+        {
+            return null;
+        }
+
+        try
+        {
+            return ProjectSupport.ExpandInlineModules(strippedSource, string.Empty, "<memory>").InlineModules
+                .Where(module => line >= module.LineOffset
+                    && line < module.LineOffset + module.Source.Split('\n').Length)
+                .OrderByDescending(module => module.LineOffset)
+                .Select(module => module.ModuleName)
+                .FirstOrDefault();
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    // A field name where a record is built (`Point(x = 1)`), updated (`p with x = 1`), or matched
+    // (`Point { x = h }`): the field's declaration in the record type the construct names or has.
+    private static HoverItem? GetMappedRecordFieldUseHover(
+        AnalysisContext context,
+        int position,
+        Frontend.Program program,
+        Lowering lowering)
+    {
+        int? analysisPosition = MapOriginalPositionToAnalysis(position, context);
+        (Token Token, TextSpan Span)? identifier = analysisPosition is null
+            ? null
+            : FindIdentifierAtPosition(context.AnalysisSource, analysisPosition.Value);
+        if (identifier is not { } field || !char.IsLower(field.Token.Text[0]))
+        {
+            return null;
+        }
+
+        string source = context.AnalysisSource;
+        SourceTextIndex index = new(source);
+        int after = index.ToUtf16Offset(field.Span.End);
+        while (after < source.Length && source[after] == ' ')
+        {
+            after++;
+        }
+
+        // A field is named after `(`, `,`, `{`, or `with`; a `let x =` binding is not a field.
+        int before = index.ToUtf16Offset(field.Span.Start);
+        while (before > 0 && char.IsWhiteSpace(source[before - 1]))
+        {
+            before--;
+        }
+
+        bool followsFieldOpener = before > 0 && source[before - 1] is '(' or ',' or '{'
+            || before >= 4 && source.AsSpan(before - 4, 4).SequenceEqual("with")
+                && (before == 4 || !char.IsLetterOrDigit(source[before - 5]));
+        if (!followsFieldOpener
+            || after >= source.Length || source[after] != '=' || (after + 1 < source.Length && source[after + 1] == '='))
+        {
+            return null;
+        }
+
+        string? typeName = FindRecordPatternTypeName(source, index.ToUtf16Offset(field.Span.Start));
+        if (typeName is null && lowering.GetTypeAtPosition(analysisPosition!.Value) is { } covering)
+        {
+            string formatted = lowering.FormatType(covering.Type);
+            int arguments = formatted.IndexOf('<', StringComparison.Ordinal);
+            typeName = arguments < 0 ? formatted : formatted[..arguments];
+        }
+
+        TypeDecl? record = program.TypeDecls.FirstOrDefault(candidate => candidate.IsRecord
+            && string.Equals(candidate.Name, typeName, StringComparison.Ordinal)
+            && candidate.Constructors.Any(constructor => constructor.FieldNames.Contains(field.Token.Text, StringComparer.Ordinal)));
+        string? branch = record is null ? null : FindDeclarationBranch(FormatTypeDeclaration(record), field.Token.Text);
+        return branch is null
+            ? null
+            : MapDeclarationHover(context, field.Span, $"```ashes\n{branch}\n```\n\n*field of record `{record!.Name}`*");
+    }
+
+    // The type named before the innermost unclosed `{` that encloses the offset, as in a record
+    // pattern `Point { x = h, y = _ }`.
+    private static string? FindRecordPatternTypeName(string source, int offset)
+    {
+        int depth = 0;
+        for (int index = offset - 1; index >= 0; index--)
+        {
+            char character = source[index];
+            if (character is '}' or ')' or ']')
+            {
+                depth++;
+            }
+            else if (character is '(' or '[')
+            {
+                if (depth == 0)
+                {
+                    return null;
+                }
+
+                depth--;
+            }
+            else if (character == '{')
+            {
+                if (depth > 0)
+                {
+                    depth--;
+                    continue;
+                }
+
+                int end = index;
+                while (end > 0 && source[end - 1] == ' ')
+                {
+                    end--;
+                }
+
+                int start = end;
+                while (start > 0 && (char.IsLetterOrDigit(source[start - 1]) || source[start - 1] == '_'))
+                {
+                    start--;
+                }
+
+                return start < end && char.IsUpper(source[start]) ? source[start..end] : null;
+            }
+            else if (character == '\n' && depth == 0 && index + 1 < source.Length && source[index + 1] != ' ')
+            {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     private static HoverItem? GetMappedTypeDeclarationHover(
@@ -1866,7 +2118,9 @@ public static partial class DocumentService
             ?? candidates.FirstOrDefault();
         if (declaration is null)
         {
-            return null;
+            return BuiltinConstructors.TryGetValue(name, out (string Signature, string Type) builtin)
+                ? $"```ashes\n{builtin.Signature}\n```\n\n*constructor of built-in `{builtin.Type}`*"
+                : null;
         }
 
         string formatted = FormatTypeDeclaration(declaration);
@@ -1896,6 +2150,14 @@ public static partial class DocumentService
             new Frontend.Program([new TopLevelItem.Capability(capability)], null)).Trim();
         return $"```ashes\n{formatted}\n```\n\n*capability*";
     }
+
+    private static readonly Dictionary<string, (string Signature, string Type)> BuiltinConstructors = new(StringComparer.Ordinal)
+    {
+        ["Some"] = ("Some(a)", "Maybe(a)"),
+        ["None"] = ("None", "Maybe(a)"),
+        ["Ok"] = ("Ok(a)", "Result(e, a)"),
+        ["Error"] = ("Error(e)", "Result(e, a)"),
+    };
 
     private static readonly HashSet<string> BuiltinTypeNames = new(StringComparer.Ordinal)
     {
@@ -2604,10 +2866,11 @@ public static partial class DocumentService
         }
 
         SourceTextIndex analysisIndex = new(context.AnalysisSource);
+        TextSpan? mapped = null;
         if (start >= context.EntryOffset && end <= analysisIndex.Utf8Length)
         {
             string entrySource = context.AnalysisSource[analysisIndex.ToUtf16Offset(context.EntryOffset)..];
-            TextSpan mapped = TextSpan.FromBounds(
+            mapped = TextSpan.FromBounds(
                 MapPositionByLineAndCharacter(
                     entrySource,
                     start - context.EntryOffset,
@@ -2616,20 +2879,39 @@ public static partial class DocumentService
                     entrySource,
                     end - context.EntryOffset,
                     context.StrippedSource));
-            // The entry keeps the file's lines, but a line the file leaves blank can carry
-            // generated text (an import's alias prelude); such a span has no source of its own.
-            SourceTextIndex strippedIndex = new(context.StrippedSource);
-            int analysisChar = analysisIndex.ToUtf16Offset(start);
-            int strippedChar = strippedIndex.ToUtf16Offset(mapped.Start);
-            bool sameText = analysisChar < context.AnalysisSource.Length
-                && strippedChar < context.StrippedSource.Length
-                && context.AnalysisSource[analysisChar] == context.StrippedSource[strippedChar];
-            return !requireSourceText || sameText || start == end ? mapped : null;
+        }
+        else if (MapHoistedDeclarationSpan(start, end, context, analysisIndex) is { } hoisted)
+        {
+            // A hoisted entry declaration is copied verbatim, so it maps back by fragment offset.
+            return hoisted;
+        }
+        else if (MapInlineModuleToOriginal(start, context, analysisIndex) is int inlineStart
+            && MapInlineModuleToOriginal(end, context, analysisIndex) is int inlineEnd
+            && inlineEnd >= inlineStart)
+        {
+            mapped = TextSpan.FromBounds(inlineStart, inlineEnd);
         }
 
-        // A hoisted entry declaration is copied verbatim, so it maps back by fragment offset. Every
-        // other span before the entry belongs to a stitched module (the standard library, an import,
-        // a lifted inline module) and has no position in this file.
+        // Every other span before the entry belongs to a stitched module (the standard library, an
+        // import) and has no position in this file. The entry keeps the file's lines, but a line the
+        // file leaves blank can carry generated text (an import's alias prelude), and a lifted
+        // inline module renames some identifiers; such a span has no source text of its own.
+        if (mapped is not { } span || !requireSourceText || start == end)
+        {
+            return mapped;
+        }
+
+        SourceTextIndex strippedIndex = new(context.StrippedSource);
+        int analysisChar = analysisIndex.ToUtf16Offset(start);
+        int strippedChar = strippedIndex.ToUtf16Offset(span.Start);
+        bool sameText = analysisChar < context.AnalysisSource.Length
+            && strippedChar < context.StrippedSource.Length
+            && context.AnalysisSource[analysisChar] == context.StrippedSource[strippedChar];
+        return sameText ? span : null;
+    }
+
+    private static TextSpan? MapHoistedDeclarationSpan(int start, int end, AnalysisContext context, SourceTextIndex analysisIndex)
+    {
         if (context.Layout?.EntryTypeDeclFragments is not { } fragments)
         {
             return null;
@@ -2645,6 +2927,87 @@ public static partial class DocumentService
                 return TextSpan.FromBounds(
                     strippedIndex.ToUtf8Offset(originalStart + (utf16Start - combinedStart)),
                     strippedIndex.ToUtf8Offset(originalStart + (utf16End - combinedStart)));
+            }
+        }
+
+        return null;
+    }
+
+    // The anchors of this file's own lifted inline modules: they are stitched ahead of the entry and
+    // name the entry file (the path of the region that holds the entry) rather than a module file.
+    private static IEnumerable<SourceLineAnchor> EntryInlineModuleAnchors(AnalysisContext context)
+    {
+        if (context.Layout is not { SourceLineAnchors: { } anchors } layout)
+        {
+            return [];
+        }
+
+        string? entryPath = layout.ModuleOffsets
+            .Where(region => layout.EntryOffset >= region.StartOffset && layout.EntryOffset < region.EndOffset)
+            .Select(region => region.FilePath)
+            .FirstOrDefault();
+        return entryPath is null
+            ? []
+            : anchors.Where(anchor => anchor.ColumnOffset > 0
+                && string.Equals(anchor.FilePath, entryPath, StringComparison.Ordinal));
+    }
+
+    // A position in a lifted inline module's stitched text, as an offset in the stripped file.
+    private static int? MapInlineModuleToOriginal(int analysisPosition, AnalysisContext context, SourceTextIndex analysisIndex)
+    {
+        int utf16Position = analysisIndex.ToUtf16Offset(analysisPosition);
+        foreach (SourceLineAnchor anchor in EntryInlineModuleAnchors(context))
+        {
+            if (utf16Position < anchor.CombinedStart || utf16Position > anchor.CombinedEnd)
+            {
+                continue;
+            }
+
+            (int anchorLine, int anchorCharacter) = analysisIndex.ToPosition(
+                analysisIndex.ToUtf8Offset(anchor.CombinedStart), SourcePositionEncoding.UnicodeScalar);
+            (int line, int character) = analysisIndex.ToPosition(analysisPosition, SourcePositionEncoding.UnicodeScalar);
+            int fileLine = anchor.Line - 1 + (line - anchorLine);
+            int fileCharacter = line == anchorLine
+                ? anchor.Column - 1 + (character - anchorCharacter)
+                : anchor.ColumnOffset + character;
+            return new SourceTextIndex(context.StrippedSource).FromPosition(fileLine, fileCharacter, SourcePositionEncoding.UnicodeScalar);
+        }
+
+        return null;
+    }
+
+    // An offset in the stripped file that falls inside a lifted inline module, as a position in
+    // the module's stitched text.
+    private static int? MapOriginalToInlineModule(int strippedPosition, AnalysisContext context)
+    {
+        SourceTextIndex analysisIndex = new(context.AnalysisSource);
+        (int line, int character) = new SourceTextIndex(context.StrippedSource)
+            .ToPosition(strippedPosition, SourcePositionEncoding.UnicodeScalar);
+        foreach (SourceLineAnchor anchor in EntryInlineModuleAnchors(context))
+        {
+            int start = analysisIndex.ToUtf8Offset(anchor.CombinedStart);
+            int end = analysisIndex.ToUtf8Offset(anchor.CombinedEnd);
+            (int anchorLine, int anchorCharacter) = analysisIndex.ToPosition(start, SourcePositionEncoding.UnicodeScalar);
+            (int endLine, _) = analysisIndex.ToPosition(end, SourcePositionEncoding.UnicodeScalar);
+            int relativeLine = line - (anchor.Line - 1);
+            if (relativeLine < 0 || relativeLine > endLine - anchorLine)
+            {
+                continue;
+            }
+
+            int targetCharacter = relativeLine == 0
+                ? anchorCharacter + (character - (anchor.Column - 1))
+                : character - anchor.ColumnOffset;
+            if (targetCharacter < (relativeLine == 0 ? anchorCharacter : 0))
+            {
+                continue;
+            }
+
+            int candidate = analysisIndex.FromPosition(anchorLine + relativeLine, targetCharacter, SourcePositionEncoding.UnicodeScalar);
+            if (candidate >= start && candidate < end
+                && analysisIndex.ToPosition(candidate, SourcePositionEncoding.UnicodeScalar).Line == anchorLine + relativeLine)
+            {
+                return candidate;
             }
         }
 
@@ -2720,6 +3083,11 @@ public static partial class DocumentService
                     return analysisIndex.ToUtf8Offset(combinedStart + (utf16Position - originalStart));
                 }
             }
+        }
+
+        if (MapOriginalToInlineModule(strippedPosition, context) is int inlinePosition)
+        {
+            return inlinePosition;
         }
 
         string entrySource = context.AnalysisSource[analysisIndex.ToUtf16Offset(context.EntryOffset)..];

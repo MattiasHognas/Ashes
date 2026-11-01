@@ -84,6 +84,9 @@ public sealed partial class Lowering
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
+    // Generated derived-implementation bodies carry their type declaration's span, so an expression
+    // hover with exactly that span is never recorded.
+    private readonly HashSet<TextSpan> _derivedSpans = [];
     private readonly Dictionary<int, IReadOnlyList<string>> _hoverParameterNamesByDefinitionStart = [];
     private readonly HashSet<int> _hoverParameterDefinitionStarts = [];
 

@@ -1,19 +1,19 @@
 1:0 import -> -
-1:7 Ashes -> -
-1:13 IO -> -
+1:7 Ashes -> `Ashes.IO` module Ashes.IO | *standard library module*
+1:13 IO -> `Ashes.IO` module Ashes.IO | *standard library module*
 2:0 import -> -
-2:7 Ashes -> -
-2:13 Collection -> -
-2:24 List -> -
+2:7 Ashes -> `Ashes.Collection.List` module Ashes.Collection.List | *standard library module*
+2:13 Collection -> `Ashes.Collection.List` module Ashes.Collection.List | *standard library module*
+2:24 List -> `Ashes.Collection.List` module Ashes.Collection.List | *standard library module*
 2:29 as -> -
-2:32 L -> -
+2:32 L -> `L` L | *alias for `Ashes.Collection.List`*
 3:0 import -> -
-3:7 Ashes -> -
-3:13 Core -> -
-3:18 Maybe -> -
-3:24 map -> -
+3:7 Ashes -> `Ashes.Core.Maybe` module Ashes.Core.Maybe | *standard library module*
+3:13 Core -> `Ashes.Core.Maybe` module Ashes.Core.Maybe | *standard library module*
+3:18 Maybe -> `Ashes.Core.Maybe` module Ashes.Core.Maybe | *standard library module*
+3:24 map -> `map` Ashes.Core.Maybe.map | *imported binding*
 3:28 as -> -
-3:31 mapMaybe -> -
+3:31 mapMaybe -> `mapMaybe` mapMaybe | *alias for `Ashes.Core.Maybe.map`*
 4:0 type -> -
 4:5 Color -> `Color` type Color =     | Red     | Green(Int)     | Blue(Str, Int) | *algebraic data type*
 5:6 Red -> `Red` Red | *constructor of `Color`* | type Color =     | Red     | Green(Int)     | Blue(Str, Int)
@@ -68,26 +68,26 @@
 31:14 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
 31:21 k -> `k` k : Int | *parameter*
 31:25 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
-31:31 x -> `Point(x = p.x * k, y = p.y * k)` Point | *expression*
+31:31 x -> `x` x: Int | *field of record `Point`*
 31:35 p -> `p.x` p.x : Int | *value*
 31:37 x -> `p.x` p.x : Int | *value*
 31:41 k -> `k` k : Int | *parameter*
-31:44 y -> `Point(x = p.x * k, y = p.y * k)` Point | *expression*
+31:44 y -> `y` y: Int | *field of record `Point`*
 31:48 p -> `p.y` p.y : Int | *value*
 31:50 y -> `p.y` p.y : Int | *value*
 31:54 k -> `k` k : Int | *parameter*
 33:0 let -> -
 33:4 origin -> `origin` origin : Point | *value*
 33:13 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
-33:19 x -> `Point(x = 0, y = 0)` Point | *expression*
+33:19 x -> `x` x: Int | *field of record `Point`*
 33:23 0 -> `0` Int | *expression*
-33:26 y -> `Point(x = 0, y = 0)` Point | *expression*
+33:26 y -> `y` y: Int | *field of record `Point`*
 33:30 0 -> `0` Int | *expression*
 35:0 let -> -
 35:4 moved -> `moved` moved : Point | *value*
 35:12 origin -> `origin` origin : Point | *value*
 35:19 with -> `origin with x = 3` Point | *expression*
-35:24 x -> `origin with x = 3` Point | *expression*
+35:24 x -> `x` x: Int | *field of record `Point`*
 35:28 3 -> `3` Int | *expression*
 37:0 let -> -
 37:4 pair -> `pair` pair : (Int, Str) | *value*
@@ -186,9 +186,9 @@
 72:0 let -> -
 72:4 piped -> `piped` piped : List<Int> | *value*
 72:12 nums -> `nums` nums : List<Int> | *value*
-72:20 L -> `L.map` Ashes.Collection.List.map : (Int -> Int needs {ConsoleIO | a}) -> List<Int> -> List<Int> needs {ConsoleIO | a} needs {ConsoleIO | a} | *function* | **Parameters** | - `f` : `Int -> Int needs {ConsoleIO | a}` | **Returns:** `List<Int> -> List<Int> needs {ConsoleIO | a}`
-72:22 map -> `L.map` Ashes.Collection.List.map : (Int -> Int needs {ConsoleIO | a}) -> List<Int> -> List<Int> needs {ConsoleIO | a} needs {ConsoleIO | a} | *function* | **Parameters** | - `f` : `Int -> Int needs {ConsoleIO | a}` | **Returns:** `List<Int> -> List<Int> needs {ConsoleIO | a}`
-72:26 lam -> `lam` lam : Int -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `z` : `Int` | **Returns:** `Int`
+72:20 L -> `L.map` Ashes.Collection.List.map : (Int -> Int) -> List<Int> -> List<Int> | *function* | **Parameters** | - `f` : `Int -> Int` | **Returns:** `List<Int> -> List<Int>`
+72:22 map -> `L.map` Ashes.Collection.List.map : (Int -> Int) -> List<Int> -> List<Int> | *function* | **Parameters** | - `f` : `Int -> Int` | **Returns:** `List<Int> -> List<Int>`
+72:26 lam -> `lam` lam : Int -> Int | *function* | **Parameters** | - `z` : `Int` | **Returns:** `Int`
 74:0 let -> -
 74:4 bits -> `bits` bits : Int | *value*
 74:11 answer -> `answer` answer : Int | *value*
@@ -246,23 +246,23 @@
 95:10 p -> `p` p : Point | *parameter*
 95:12 with -> `match p with         | Point { x = px, y...` Int | *expression*
 96:10 Point -> `Point` type Point =     | x: Int     | y: Int | *record type*
-96:18 x -> `match p with         | Point { x = px, y...` Int | *expression*
+96:18 x -> `x` x: Int | *field of record `Point`*
 96:22 px -> `px` px : Int | *value*
-96:26 y -> `match p with         | Point { x = px, y...` Int | *expression*
+96:26 y -> `y` y: Int | *field of record `Point`*
 96:30 _ -> `match p with         | Point { x = px, y...` Int | *expression*
 96:37 px -> `px` px : Int | *value*
 98:0 let -> -
 98:4 maybeDouble -> `maybeDouble` maybeDouble : Maybe<Int> | *value*
-99:4 mapMaybe -> `mapMaybe` Ashes.Core.Maybe.map : (Int -> Int needs {ConsoleIO | a}) -> Maybe<Int> -> Maybe<Int> needs {ConsoleIO | a} needs {ConsoleIO | a} | *function*
+99:4 mapMaybe -> `mapMaybe` Ashes.Core.Maybe.map : (Int -> Int) -> Maybe<Int> -> Maybe<Int> | *function*
 99:13 given -> `given (v) -> v * 2` Int -> Int needs {ConsoleIO | a} | *function*
 99:20 v -> `v` v : Int | *parameter*
 99:26 v -> `v` v : Int | *parameter*
 99:30 2 -> `2` Int | *expression*
-99:33 Some -> `Some(3)` Maybe<Int> | *expression*
+99:33 Some -> `Some` Some(a) | *constructor of built-in `Maybe(a)`*
 99:38 3 -> `3` Int | *expression*
 101:0 let -> -
 101:4 resultChain -> `resultChain` resultChain : Result<Str, Int> | *value*
-102:4 Ok -> `Ok(1)` Result<Str, Int> | *expression*
+102:4 Ok -> `Ok` Ok(a) | *constructor of built-in `Result(e, a)`*
 102:7 1 -> `1` Int | *expression*
 103:9 given -> `given (v) -> v + 1` Int -> Int needs {ConsoleIO | a} | *function*
 103:16 v -> `v` v : Int | *parameter*
@@ -274,13 +274,13 @@
 106:0 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
 106:6 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
 106:9 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
-106:15 add -> `add` add : Int -> Int -> Int needs {ConsoleIO | a} needs {ConsoleIO | b} | *function* | **Parameters** | - `a` : `Int` - `b` : `Int` | **Returns:** `Int`
+106:15 add -> `add` add : Int -> Int -> Int | *function* | **Parameters** | - `a` : `Int` - `b` : `Int` | **Returns:** `Int`
 106:19 answer -> `answer` answer : Int | *value*
-106:27 unwrap -> `unwrap` unwrap : UserId -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `id` : `UserId` | **Returns:** `Int`
+106:27 unwrap -> `unwrap` unwrap : UserId -> Int | *function* | **Parameters** | - `id` : `UserId` | **Returns:** `Int`
 106:34 uid -> `uid` uid : UserId | *value*
-106:42 sumList -> `sumList` sumList : List<Int> -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
+106:42 sumList -> `sumList` sumList : List<Int> -> Int | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
 106:50 more -> `more` more : List<Int> | *value*
 106:58 local -> `local` local : Int | *value*
-106:66 headOr -> `headOr` headOr : List<Int> -> Int needs {ConsoleIO | a} | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
+106:66 headOr -> `headOr` headOr : List<Int> -> Int | *function* | **Parameters** | - `xs` : `List<Int>` | **Returns:** `Int`
 106:73 piped -> `piped` piped : List<Int> | *value*
 106:82 bits -> `bits` bits : Int | *value*

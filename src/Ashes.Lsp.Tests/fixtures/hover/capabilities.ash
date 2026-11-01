@@ -11,6 +11,11 @@ provide Log =
 let stamp : Unit -> Int needs {Clock} =
     given (_) -> perform Clock.now(Unit) + 1
 
+let tick a =
+    (let t = Clock.now(Unit)
+    in
+        given (b) -> Clock.now(Unit) + t + a + b)
+
 let x =
     handle stamp(Unit) with
         | Clock.now(_) -> resume(42)

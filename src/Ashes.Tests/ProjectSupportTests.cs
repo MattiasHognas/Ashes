@@ -908,6 +908,24 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    [Arguments("type alias Name = Int")]
+    [Arguments("type alias Pair(a) =\n    (a, a)")]
+    [Arguments("type UserId = UserId(Int)")]
+    public void Layout_of_a_malformed_entry_keeps_a_leading_alias_or_zero_cost_type_whole(string declaration)
+    {
+        // The entry fails to parse, so its leading declarations are found by the token scanner; a
+        // declaration without `|` branches must not be cut at its `=`.
+        var original = declaration + "\nlet b = (1 ||| 2)\nb";
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(original, [], "<memory>");
+
+        var diag = new Diagnostics();
+        _ = new Parser(layout.Source, diag).ParseProgram();
+
+        diag.StructuredErrors.ShouldContain(error => error.Message.Contains("found Pipe", StringComparison.Ordinal));
+        diag.StructuredErrors.ShouldNotContain(error => error.Message.Contains("found Equals", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void MapDiagnosticsToOriginal_maps_entry_spans_after_an_inline_module_to_their_own_line()
     {
         var original = "module Geometry =\n    let square = given (x) -> x * x\n\nlet a = 1\nlet b = a + \"oops\"\n\nAshes.IO.print(b)";
