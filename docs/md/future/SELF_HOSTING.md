@@ -658,6 +658,19 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
      cycle (132), integer list cells (120), a record keyed by the input's name (114, possibly not a
      leak), the one-field cells of the qualified-identifier item above (109), then four classes of 78
      to 103 cells, none named. The other 75 classes add about 320 cells together.
+
+   **Round 8, 1 November.** Ten rules, each in both stages or a stage-1 port of a stage-0 rule. The
+   leak census runs 528 cases on stage 0 and stage 1 with none leaking, the first time the plain run
+   is empty: `capability.result-operation` is fixed by porting stage 0's perform-site result plan and
+   bracketing the inline `return` arm. The exit residual is 1,268, 1,297 and 1,335 cells per added
+   function at N=10, 40 and 80, down from 1,770, 1,801 and 1,843, still flat. The 48-byte pair class
+   was `IrCfgBlock` worklists of block indices left in the arena, and the 208-byte lowering state was
+   one `LoweredCorePattern` per tuple pattern field, a forwarded record result read only through bit
+   61; both are fixed. Also fixed: a closure call of unknown callee asks for an arena variant result,
+   a top-level helper's rebuilt closure keeps its adoption bit, stage 1 keeps a reuse
+   specialization's results in place and types a self call's arguments by the loop's declared
+   parameters (a crash), a `match` directly on `perform` owns its result under a live handler, and a
+   normalized match join whose arms own their references is newly produced.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction

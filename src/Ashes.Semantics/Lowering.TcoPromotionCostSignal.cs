@@ -458,9 +458,10 @@ public sealed partial class Lowering
     // whatever value the call was given, often a part of an earlier iteration's owned result, and
     // that result could then never be released. Placed on the reference-counted heap, the refill
     // is taken or copied at the back edge and the walk retains the tail it moves on to. Only a list
-    // of strings or of lists of strings (a worklist of paths): a head of either matched out of the
-    // list is protected wherever it escapes, where a head of any other heap type returned from the
-    // loop would be released with the list.
+    // of inline values (a worklist of block indices), whose heads need no protection, or of strings
+    // or of lists of strings (a worklist of paths): a head of either matched out of the list is
+    // protected wherever it escapes, where a head of any other heap type returned from the loop
+    // would be released with the list.
     private bool IsWalkedOrRefilledList(TcoContext tco, TcoParamStaticFacts facts, TypeRef.TList list)
         => GeneralRcEnabled
             && Environment.GetEnvironmentVariable("GRC_NO_WALKREFILL") is null
@@ -554,6 +555,7 @@ public sealed partial class Lowering
 
     private bool IsWalkedOrRefilledElement(TypeRef element)
         => element is TypeRef.TStr
+            || (Environment.GetEnvironmentVariable("GRC_NO_WALKREFILLSCALARS") is null && CanArenaReset(element))
             || (Environment.GetEnvironmentVariable("GRC_NO_WALKREFILLPATHS") is null
                 && element is TypeRef.TList inner
                 && Prune(inner.Element) is TypeRef.TStr);
@@ -651,11 +653,13 @@ public sealed partial class Lowering
                 || (flow.TryGetValue(siblingOrdinal, out HashSet<int>? sources) && sources.Contains(accumulatorOrdinal)));
 
     // A list of strings reaches a sibling only through its spine: a string head matched out of it
-    // is retained wherever it is kept, so the sibling holding one keeps a reference of its own.
+    // is retained wherever it is kept, so the sibling holding one keeps a reference of its own. A
+    // list of inline values does too: a head matched out of it is a copy.
     private Dictionary<int, HashSet<int>>? AccumulatorFlowFor(TcoContext tco, TypeRef accumulatorType)
         => Environment.GetEnvironmentVariable("GRC_NO_SPINEFLOW") is null
             && accumulatorType is TypeRef.TList { Element: var element }
-            && Prune(element) is TypeRef.TStr
+            && (Prune(element) is TypeRef.TStr
+                || (Environment.GetEnvironmentVariable("GRC_NO_INLINESPINEFLOW") is null && CanArenaReset(Prune(element))))
             && tco.SelfCallSpineFlow is { } spine
                 ? spine
                 : tco.SelfCallParameterFlow;

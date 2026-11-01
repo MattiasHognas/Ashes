@@ -1518,6 +1518,26 @@ type the first pass settled there, right after the call. The call then takes a c
 compiler lowers only the recursive group twice, from the state before the group, and only when the
 group's first lowering settled such a call.
 
+A call through a closure that no function or applied lambda names (a function parameter, say) whose
+result is a variant outside the contract with no fixed copy-out reads no returns bit and keeps the
+result as an arena value. A callee may still have normalized such a result onto the
+reference-counted heap (`match lookup(n) with | Some(r) -> r.name | None -> None` joins a field it
+read with a fresh `None`), which nothing would then release, so the call asks for an arena result
+the same way and the callee copies its result into the arena before releasing its own
+(`GRC_NO_UNKNOWNCALLEEARENA` switches this off). A lambda applied where it is written (`names |>
+(given (xs) -> keep(xs))`) is compiled under its own label just before its call, so its body
+verifies its reference-counted result the way a named callee's does, and the list consumed by the
+pipe is released with its heads rather than spine-only (`GRC_NO_APPLIEDLAMBDAVERIFIED`).
+
+A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
+as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry
+adopts it; for a callee it knows to normalize, the caller then gives the reference up. A body
+lowered where its top-level helpers are out of scope (a function inlined into a loop's body)
+rebuilds each helper's closure from its label, and that closure carries the helper's adoption bit
+as well. Without it the helper copies the argument while the caller has already let it go, and the
+fresh list piped or passed into the helper (`xs |> modulesOf |> dropFirst`) leaks
+(`GRC_NO_TOPREFADOPTION` switches this off).
+
 An arena cell never releases a fresh reference-counted child stored into it (an owned call result,
 or a tuple holding fresh lists). A constructor of the contract's types hands such a child to an
 owned slot, released once the result holds a reference of its own; any other constructor is placed
@@ -1618,6 +1638,16 @@ over whole, bit 62, says as much). Once the call returns, the forwarding functio
 on either bit, releases the owned values its result reached only through the call. A function that
 was not asked keeps them, as before.
 
+The caller that asked reads bit 61 too. A forwarding function asks its own callee for an arena
+result, and a function whose record result cannot be copied into the arena (one holding a recursive
+variant, say) keeps its reference-counted result and writes only bit 61. The value that reaches the
+caller is then that function's owned result, since a forwarder passes the request on only to a call
+it returns as it is, so a caller that named no parts and finds bit 61 on a reference-counted result
+of a record or variant type of the contract takes the result as its own owned value, as for bit 62.
+Copying it instead left the callee's reference unreleased: one lowering state record per tuple
+pattern field in stage 1, through `loadTuplePatternField` and its closure parameter.
+`GRC_NO_INDEPENDENTCOUNTEDRESULT` turns this off.
+
 A record successor written at the self-call (a record literal or a constructor application) holds
 the references its construction retained, so the back edge's copy releases them from the dying cell:
 exactly those, read back from the instructions that built the cell, so a child the construction only
@@ -1638,6 +1668,15 @@ element produced right there keeps an owner of its own, released after the copy,
 arena element (a contract record, say) was built with for loop-parameter reads are withdrawn as a
 copied record's are. Otherwise the element and the sibling parameter it read stayed behind the arena
 cell with nothing to release them (`GRC_NO_COPIEDLITERALSUCCESSOR` switches this off).
+
+Each self-call argument is lowered against the type of the parameter it replaces, as the lambda that
+binds the parameter declared it. Stage 0 knows these types before it lowers the body; stage 1 settles
+the recursive binding's own type only once the body is lowered, so it binds the self call's parameter
+types to the loop's declared ones before it lowers the arguments. Without that, an argument whose
+type comes from that parameter alone (`state |> lowerLoaded(name)(lower) |> lowerFields(rest)(lower)`,
+a generic helper ending in a call of the closure parameter `lower`) closed its call window on an
+unresolved type: it asked for an arena result and skipped the contract's owned-result protocol, and
+the loop then released the arena cell as a counted one.
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).
@@ -1666,6 +1705,10 @@ the binding only borrows from the tuple (`GRC_NO_OWNERPARTCHILD`).
 A join of such a normalized join and an arm handing over a value it just built (the parser's
 `if in then (items, Some(expression), state) else <normalized join>`) owns its value too, so the
 function's return takes it over instead of retaining it a second time (`GRC_NO_FRESHUNIFORMJOIN`).
+A normalized `match` join whose untouched arms each hand over a reference of their own (a value the
+arm just produced, a retain it took) is itself newly produced, not only owned: a consuming read such
+as a byte length releases it. Before, `match [fromInt(n), "a"] with | x :: _ -> x | [] -> ""` read
+inline by its caller left the copied head on the heap once per call (`GRC_NO_NORMALIZEDFRESHJOIN`).
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record
@@ -1735,7 +1778,14 @@ call's result, a worklist, is placed on the reference-counted heap. So is one us
 popped by its consumed tail (`| _top :: rest -> keep(tail)(rest)`) and pushed by a cons onto the
 parameter (`keep(tail)(head :: stack)`), with fresh lists of literals beside them, as a path
 normalizer does (`GRC_NO_WALKEDSTACK`). Left in the arena, each push retained its borrowed head for a
-cell nothing released; both stages place it so.
+cell nothing released; both stages place it so. A worklist of inline values (block indices) is
+placed the same way: its heads need no protection where they escape. A refill read out of a generic
+lookup's optional record (`match listAt(blocks)(current) with Some(Block { successors = next }) ->
+walk(append(next)(rest))`) otherwise left the earlier queue and the lookup's result unreleased, since
+an arena successor might still hold a part of either (`GRC_NO_WALKREFILLSCALARS`). A sibling consed
+from such a list's heads (`current :: reachable`) receives copies, not parts: the blocking-sibling
+check and the predecessor release follow a list of inline values only through its spine, as they
+do a list of strings (`GRC_NO_INLINESPINEFLOW`).
 
 ### Buffered standard output
 
@@ -2016,14 +2066,28 @@ with its own parameter normalizes that parameter into an owned reference-counted
 returns it). When the operation's result type has a complete copy-out layout (a string, bytes, a
 shallow-copyable ADT, or a list over such heads), the site reads that bit at the saturating
 call, keeps a reference-counted result as newly produced, and normalizes an arena result into a
-reference-counted copy; a result whose layout is still unresolved, or a site in a function that
-may execute inside a coroutine, asks the arm for the arena form through the ownership word
-instead. A `handle` whose body value is owned this way applies its `return` arm as a
+reference-counted copy. Every other result (one whose layout is still unresolved, or a heap shape
+with no flat copy-out such as a constructor or `Result` holding a string), and every result at a
+site in a function that may execute inside a coroutine, asks the arm for the arena form through
+bit 1 of the ownership word instead; the arm's epilogue copies a reference-counted result into
+the arena and releases the original, and does nothing when its result never was
+reference-counted. The self-hosted compiler's perform site follows the same plan (it has no
+coroutine bodies, so only the layout decides). A `handle` whose body value is owned this way applies its `return` arm as a
 continuation `given pattern -> body` under the same contract as a post: the value is retained
 only when the closure's entry adopts reference-counted arguments, the result is adopted or
 normalized by the closure's returns bit, and the original is released once the result cannot
 reach it. The posts fold applies each one-shot continuation the same way, so the handle's value
-stays reference-counted through every post and its caller releases it exactly once.
+stays reference-counted through every post and its caller releases it exactly once. The
+self-hosted compiler applies the `return` arm inline instead, as a `let` of the body value scoped
+over the arm and bracketed like a nested `let`: the binding adopts a newly produced body value and
+releases it when the arm's result does not hand it on.
+
+A function that installs a handler keeps its match scrutinees off the reference-counted owner
+path, because a pending post can leave a scope's result as a raw arena pointer. A perform result
+is the exception: the site adopts it into an owned reference-counted value on both of its
+branches, so a `match` directly on `perform` there lowers as a `let` binding of the result scoped
+over the match. The binding owns the value and releases it after the match, and the arms read its
+parts as views copied out of their scopes (`GRC_NO_PERFORMSCRUTINEE`).
 
 ### One-shot resumptive arms: the pre/post split
 

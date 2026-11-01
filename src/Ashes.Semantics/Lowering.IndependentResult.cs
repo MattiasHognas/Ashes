@@ -36,6 +36,46 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(skipLabel));
     }
 
+    private static bool IndependentCountedResultEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_INDEPENDENTCOUNTEDRESULT") is null;
+
+    /// <summary>
+    /// After a call that asked for a record or variant result of the contract's types and named no
+    /// parts: jumps to the owned path when the mask says the result is independent and the result is
+    /// reference-counted. Only a function of a contract result type writes that bit, and a function
+    /// in between forwards the request only to a call whose result it returns as it is, so the value
+    /// is that function's owned result. An arena result is the copy that function made when a
+    /// forwarder asked for one, and is copied as before.
+    /// </summary>
+    private void EmitJumpIfIndependentCountedResult(int maskTemp, int resultTemp, TypeRef resultType, TupleResultPartsRequest? request, string ownedLabel)
+    {
+        if (!IndependentCountedResultEnabled
+            || !IndependentResultSignalEnabled
+            || maskTemp < 0
+            || request is not { Parts.Length: 0 }
+            || Prune(resultType) is not TypeRef.TNamedType named
+            || !IsGeneralRcValueType(named))
+        {
+            return;
+        }
+
+        string copyLabel = NewLabel("independent_result_not_counted");
+        int bitTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(bitTemp, IndependentResultBit));
+        int independentTemp = NewTemp();
+        Emit(new IrInst.AndInt(independentTemp, maskTemp, bitTemp));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int signalledTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(signalledTemp, independentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(signalledTemp, copyLabel));
+        int countedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(countedTemp, resultTemp));
+        Emit(new IrInst.JumpIfFalse(countedTemp, copyLabel));
+        Emit(new IrInst.Jump(ownedLabel));
+        Emit(new IrInst.Label(copyLabel));
+    }
+
     /// <summary>
     /// After a forwarded call whose result is returned as it is: the owned slots out of the result's
     /// reach once that call's result is independent of its arguments, but not otherwise, released

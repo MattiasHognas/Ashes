@@ -3238,7 +3238,7 @@ public sealed partial class Lowering
             Expr.TupleLit tuple => LowerTupleLit(tuple, request),
             Expr.ListLit list => LowerListLit(list, request),
             Expr.Cons cons => LowerCons(cons, request),
-            Expr.Match match => LowerMatch(match, request),
+            Expr.Match match => LowerMatchOrPerformScrutineeBinding(match, request),
             Expr.Await awaitExpr => LowerAwait(awaitExpr),
             Expr.RecordLit rl => LowerRecordLit(rl, request),
             Expr.RecordUpdate ru => LowerRecordUpdate(ru, request),
@@ -3382,7 +3382,10 @@ public sealed partial class Lowering
             // closure environment, so reconstruct its closure directly from the label with a null env, and
             // instantiate its type scheme fresh for this use (polymorphic helpers unify against the
             // concrete call). Reached only when Lookup fails; normal top-level references resolve via the
-            // scope and never get here, so this cannot change well-scoped code.
+            // scope and never get here, so this cannot change well-scoped code. The rebuilt closure
+            // carries the helper's own adoption bit: a caller hands a fresh argument to a helper whose
+            // entry normalizes its parameter under that bit, so a closure without it would leave the
+            // argument with a caller that already gave it up.
             int envTemp = NewTemp();
             Emit(new IrInst.LoadConstInt(envTemp, 0));
             int closTemp = NewTemp();
@@ -3393,7 +3396,9 @@ public sealed partial class Lowering
                 0,
                 RuntimeManaged: request.EmitsRuntime(
                     LoweredValueRuntimeRepresentation.Closure),
-                ReturnsRuntimeManaged: _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label)));
+                ReturnsRuntimeManaged: _bodyRuntimeManagedByLabel.GetValueOrDefault(topRef.Label),
+                AcceptsRuntimeManagedArgument: TopLevelReferenceAdoptionRuleEnabled
+                    && _runtimeNormalizedFunctionArgumentLabels.Contains(topRef.Label)));
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
@@ -14032,7 +14037,8 @@ public sealed partial class Lowering
         currentTemp = LowerAppliedClosureCall(
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
-            RequestsArenaResult(funType.Ret),
+            RequestsArenaResult(funType.Ret)
+                || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, resultType, needsResultOwnership)),
             i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
@@ -14084,6 +14090,24 @@ public sealed partial class Lowering
     private bool RequestsArenaResult(TypeRef resultType)
         => Prune(resultType) is not TypeRef.TFun
             && ContainsUnresolvedLayoutType(resultType, []);
+
+    // A call through a closure no label resolves (a function parameter, say) whose result is a
+    // variant outside the contract with no fixed copy-out keeps that result as an arena value: it
+    // reads no returns bit and never releases it. A callee that normalized its result onto the
+    // reference-counted heap (a join of a fresh `None` beside a field it read) would hand over a
+    // reference nothing releases, so the call asks for an arena result, which such a callee
+    // deep-copies into the arena before releasing its own.
+    private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, TypeRef resultType, bool needsResultOwnership)
+        => Environment.GetEnvironmentVariable("GRC_NO_UNKNOWNCALLEEARENA") is null
+            && !needsResultOwnership
+            && rootExpr is not Expr.Lambda
+            && Prune(resultType) is TypeRef.TNamedType
+            && !CanArenaReset(Prune(resultType))
+            && !ContainsUnresolvedLayoutType(resultType, [])
+            && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None
+            && !IsGeneralRcValueType(resultType)
+            && CanNormalizeRuntimeManagedResultIntoArena(resultType)
+            && !TryResolveKnownFunctionLabel(rootExpr, out _);
 
     // The hidden ownership word carrying the arena-result request (bit 1) beside the argument
     // ownership flag (bit 0), when the call passes one.
@@ -14927,7 +14951,19 @@ public sealed partial class Lowering
     /// unresolved answer is never treated as a verified positive.
     /// </summary>
     private bool CalleeCompiledResultVerifiedRuntimeManaged(Expr rootExpr, int argumentCount)
-        => TryResolveKnownFunctionLabel(rootExpr, out string label)
+        => (TryResolveKnownFunctionLabel(rootExpr, out string label)
+                && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
+                && runtimeManaged)
+            || AppliedLambdaCompiledResultRuntimeManaged(rootExpr, argumentCount);
+
+    // A lambda applied where it is written (`value |> (given (x) -> ...)`) is compiled under its
+    // own label just before the call, so its body verifies its result the way a named callee's
+    // does. Without it, a list piped into such a lambda was released spine-only and every head
+    // the lambda's result did not keep leaked.
+    private bool AppliedLambdaCompiledResultRuntimeManaged(Expr rootExpr, int argumentCount)
+        => Environment.GetEnvironmentVariable("GRC_NO_APPLIEDLAMBDAVERIFIED") is null
+            && rootExpr is Expr.Lambda lambda
+            && _appliedLambdaLabels.TryGetValue(lambda, out string? label)
             && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
             && runtimeManaged;
 

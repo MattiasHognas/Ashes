@@ -151,6 +151,14 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConcatenatedExitBesideFreshStartTemplate());
         registry.Register(new CurriedStringParameterIntoAggregateTemplate());
         registry.Register(new HandedOnPipelineStepTemplate());
+        registry.Register(new PerformArmResultTemplate());
+        registry.Register(new WorklistOfIndicesWalkedAndRefilledTemplate());
+        registry.Register(new ForwardedIndependentResultTemplate());
+        registry.Register(new UnknownCalleeVariantResultTemplate());
+        registry.Register(new AppliedLambdaConsumedListTemplate());
+        registry.Register(new NamedHelperConsumedListTemplate());
+        registry.Register(new PerformScrutineeTemplate());
+        registry.Register(new NormalizedMatchJoinReadTemplate());
     }
 }
 

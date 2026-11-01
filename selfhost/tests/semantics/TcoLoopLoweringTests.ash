@@ -141,6 +141,27 @@ let expectLetBoundSelfCallIsAnOrdinaryCall unit =
             |> functionLines("[ClosureHelper from go]")
         in test.assertEqual((countLinesWith("Target=lambda_1_body")(expected), countLinesWith("CallClosure")(expected)))((countLinesWith("Target=lambda_1_body")(actual), countLinesWith("CallClosure")(actual))))
 
+// `state |> lowerLoaded(name)(lower) |> lowerFields(rest)(lower)`: the generic helper's result type
+// comes from the closure parameter alone, so the self call's argument is typed by the parameter
+// the loop's lambda declares (`result: Res`). The helper call closes its window under the general
+// contract, with stage 0's owned-result protocol, rather than as a value of unresolved type.
+let expectGenericHelperResultArgumentTakesOwnedResult unit =
+    (let fixture = "tco_generic_curried_helper_result_passed_to_self_call"
+    in
+        let expected =
+            fixture
+            |> stageZeroFixtureLines
+            |> functionLines("[ClosureHelper from lowerFields]")
+        in
+            let actual =
+                fixture
+                |> loweredFixtureLines
+                |> functionLines("[ClosureHelper from lowerFields]")
+            in
+                actual
+                |> countLinesWith("general_rc_result_")
+                |> test.assertEqual(countLinesWith("general_rc_result_")(expected)))
+
 let runTcoLoopLoweringTests unit =
     unit
     |> expectAccumulatorAppendIsAffine
@@ -152,4 +173,5 @@ let runTcoLoopLoweringTests unit =
     |> (given (_) -> expectListWalkLoopFunctionMatchesStageZero(Unit))
     |> (given (_) -> expectOperandSelfCallLoopMatchesCompiler(Unit))
     |> (given (_) -> expectLetBoundSelfCallIsAnOrdinaryCall(Unit))
+    |> (given (_) -> expectGenericHelperResultArgumentTakesOwnedResult(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted tco loop lowering tests passed"))
