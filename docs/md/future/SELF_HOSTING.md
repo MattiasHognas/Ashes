@@ -659,7 +659,7 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
      leak), the one-field cells of the qualified-identifier item above (109), then four classes of 78
      to 103 cells, none named. The other 75 classes add about 320 cells together.
 
-   **Round 8, 1 November.** Ten rules, each in both stages or a stage-1 port of a stage-0 rule. The
+   **Round 8, 1 November (#1145).** Ten rules, each in both stages or a stage-1 port of a stage-0 rule. The
    leak census runs 528 cases on stage 0 and stage 1 with none leaking, the first time the plain run
    is empty: `capability.result-operation` is fixed by porting stage 0's perform-site result plan and
    bracketing the inline `return` arm. The exit residual is 1,268, 1,297 and 1,335 cells per added
