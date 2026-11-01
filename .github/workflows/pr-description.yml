@@ -1,0 +1,29 @@
+# Rejects agent attribution in a pull request's description, the counterpart of
+# ci/hooks/commit-msg for text no git hook sees: the
+# `<!-- claude-projects-attribution ... -->` marker, a "Requested by **...**"
+# line, Co-Authored-By: / Claude-Session: trailers, and "Generated with" footers.
+name: pr-description
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject attribution lines
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          banned="$(printf '%s\n' "$BODY" | grep -nEi \
+            'claude-projects-attribution|^[[:space:]]*_?Requested by \*\*|^[[:space:]]*(Co-Authored-By|Claude-Session)[[:space:]]*:|Generated with \[?Claude' \
+            || true)"
+          if [ -n "$banned" ]; then
+            echo "The pull request description carries banned attribution line(s):"
+            printf '%s\n' "$banned" | sed 's/^/  /'
+            exit 1
+          fi
