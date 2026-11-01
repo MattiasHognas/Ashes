@@ -19912,6 +19912,19 @@ let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticTyp
                 | None -> (state, temp)
         | _ -> (state, temp)
 
+// Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
+// owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
+// loop's exit releases the parameter that owns it (`| ([], acc) -> acc` over a tuple parameter);
+// any other arm result transfers a scrutinee child or the arm's own binding.
+let transferArmResult (body: Expr) (temp: Int) (bodyType: SemanticType) (outerBindings: List(CoreBinding)) (owners: List(ArmOwner)) (state: CoreLoweringState) =
+    match transferBranchOwnerResult(body)(temp)(state) with
+        | (duplicated, duplicate) ->
+            if duplicate != temp
+            then (duplicated, duplicate)
+            else
+                match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(state) with
+                    | (transferred, resultTemp) -> (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
+
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armLabel: Str) resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
@@ -19926,10 +19939,9 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armL
                         | (typedState, None) ->
                             match normalizeParameterPassthroughBranch(body)(temp)(typedState) with
                                 | (normalizedState, normalizedTemp) ->
-                                    match transferScrutineeChildResult(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
+                                    match transferArmResult(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
                                         | (transferredState, resultTemp) ->
                                             match transferredState
-                                            |> transferArmBindingResult(body)(resultTemp)(outerBindings)
                                             |> emit(StoreLocal(resultSlot)(resultTemp))
                                             |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
                                                 | (closed, finalTemp) ->
