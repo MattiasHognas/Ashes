@@ -908,7 +908,7 @@ static async Task<byte[]?> CompileCliInputAsync(
     }
     catch (CompileDiagnosticException ex)
     {
-        PrintCompilerDiagnostics(ex, null, project.EntryPath);
+        PrintProjectCompilerDiagnostics(ex, project);
         return null;
     }
     catch (InvalidOperationException ex)
@@ -1468,6 +1468,27 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
     }
 
     return (imports, string.Join(lineEnding, sourceLines));
+}
+
+// A project's diagnostics map back to the entry file through the same layout the compilation ran
+// on, so they render with positions and a snippet like a single file's.
+static void PrintProjectCompilerDiagnostics(CompileDiagnosticException ex, AshesProject project)
+{
+    string entryPath = Path.GetFullPath(project.EntryPath);
+    string source;
+    CombinedCompilationLayout layout;
+    try
+    {
+        source = SourceTextIndex.ReadUtf8File(entryPath);
+        layout = ProjectSupport.BuildCompilationLayout(ProjectSupport.BuildCompilationPlan(project));
+    }
+    catch (Exception failure) when (failure is IOException or InvalidOperationException)
+    {
+        PrintCompilerDiagnostics(ex, null, project.EntryPath);
+        return;
+    }
+
+    PrintCompilerDiagnostics(ex, source, entryPath, layout);
 }
 
 static void PrintCompilerDiagnostics(CompileDiagnosticException ex, string? source, string displayPath, CombinedCompilationLayout? layout = null)

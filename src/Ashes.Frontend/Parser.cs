@@ -1629,7 +1629,7 @@ public sealed class Parser
             body = ParseExpressionCore();
         }
 
-        var letExpr = RegisterExpr(new Expr.Let(nameToken.Text, awaitValue, body), start, LastConsumedEnd);
+        var letExpr = RegisterExpr(new Expr.Let(nameToken.Text, awaitValue, body) { IsAwaitBinding = true }, start, LastConsumedEnd);
         AstSpans.SetLetName(letExpr, nameToken.Span);
         return letExpr;
     }
@@ -1696,7 +1696,7 @@ public sealed class Parser
 
         // Desugar: let pattern = value in body → match value with | pattern -> body
         var cases = new List<MatchCase> { new MatchCase(pattern, body) };
-        return RegisterExpr(new Expr.Match(value, cases, start), start, LastConsumedEnd);
+        return RegisterExpr(new Expr.Match(value, cases, start) { IsLetPattern = true }, start, LastConsumedEnd);
     }
 
     /// <summary>

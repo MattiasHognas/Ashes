@@ -1,0 +1,55 @@
+1:0 let -> -
+1:4 work -> `work` work : Task<Str, Int> | *value*
+2:4 async -> `async` async : a -> Task<Str, a> | *function*
+2:10 let -> `async(let a = await async 1     in      ...` Task<Str, Int> | *expression*
+2:14 a -> `a` a : Result<Str, Int> | *value*
+2:18 await -> `await async 1` Result<Str, Int> | *expression*
+2:24 async -> `async` async : a -> Task<Str, a> | *function*
+2:30 1 -> `1` Int | *expression*
+3:4 in -> `async(let a = await async 1     in      ...` Task<Str, Int> | *expression*
+4:8 let -> `async(let a = await async 1     in      ...` Task<Str, Int> | *expression*
+4:12 b -> `b` b : Result<Str, Int> | *value*
+4:16 await -> `await async 2` Result<Str, Int> | *expression*
+4:22 async -> `async` async : a -> Task<Str, a> | *function*
+4:28 2 -> `2` Int | *expression*
+5:8 in -> `async(let a = await async 1     in      ...` Task<Str, Int> | *expression*
+6:12 match -> `match (a, b) with                 | (Ok(...` Int | *expression*
+6:19 a -> `a` a : Result<Str, Int> | *value*
+6:22 b -> `b` b : Result<Str, Int> | *value*
+6:25 with -> `match (a, b) with                 | (Ok(...` Int | *expression*
+7:19 Ok -> `Ok` Ok(a) | *constructor of built-in `Result(e, a)`*
+7:22 x -> `x` x : Int | *value*
+7:26 Ok -> `Ok` Ok(a) | *constructor of built-in `Result(e, a)`*
+7:29 y -> `y` y : Int | *value*
+7:36 x -> `x` x : Int | *value*
+7:40 y -> `y` y : Int | *value*
+8:18 _ -> `match (a, b) with                 | (Ok(...` Int | *expression*
+8:23 0 -> `0` Int | *expression*
+10:0 let -> -
+10:4 checked -> `checked` checked : Result<a, Int> | *value*
+11:5 let -> -
+11:10 v -> `v` v : Int | *value*
+11:14 Ok -> `Ok` Ok(a) | *constructor of built-in `Result(e, a)`*
+11:17 3 -> `3` Int | *expression*
+12:4 in -> -
+12:7 Ok -> `Ok` Ok(a) | *constructor of built-in `Result(e, a)`*
+12:10 v -> `v` v : Int | *value*
+12:14 1 -> `1` Int | *expression*
+14:0 match -> `match Ashes.Task.run(work) with     | Ok...` Unit | *expression*
+14:6 Ashes -> `Ashes.Task.run` Ashes.Task.run : Task<a, b> -> Result<a, b> | *function*
+14:12 Task -> `Ashes.Task.run` Ashes.Task.run : Task<a, b> -> Result<a, b> | *function*
+14:17 run -> `Ashes.Task.run` Ashes.Task.run : Task<a, b> -> Result<a, b> | *function*
+14:21 work -> `work` work : Task<Str, Int> | *value*
+14:27 with -> `match Ashes.Task.run(work) with     | Ok...` Unit | *expression*
+15:6 Ok -> `Ok` Ok(a) | *constructor of built-in `Result(e, a)`*
+15:9 n -> `n` n : Int | *value*
+15:15 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+15:21 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+15:24 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+15:30 n -> `n` n : Int | *value*
+16:6 Error -> `Error` Error(e) | *constructor of built-in `Result(e, a)`*
+16:12 _ -> `match Ashes.Task.run(work) with     | Ok...` Unit | *expression*
+16:18 Ashes -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+16:24 IO -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+16:27 print -> `Ashes.IO.print` Ashes.IO.print : a -> Unit needs {ConsoleIO} | *function*
+16:33 0 -> `0` Int | *expression*

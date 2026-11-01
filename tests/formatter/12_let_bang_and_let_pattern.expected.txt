@@ -1,0 +1,10 @@
+let work =
+    async(let! a = async 1
+    let! b = async 2
+    in a)
+
+let local =
+    let (q, r) = (1, "one")
+    in q
+
+local

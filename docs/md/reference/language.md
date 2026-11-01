@@ -763,8 +763,7 @@ coercion.
 ### 4.3 Record Types
 
 Record types are single-constructor ADTs with named fields. Records use a
-brace-free syntax that mirrors ADT declarations and ordinary constructor calls;
-Ashes source never uses curly braces.
+brace-free syntax that mirrors ADT declarations and ordinary constructor calls.
 
 Syntax:
 
@@ -827,9 +826,11 @@ Rules:
   equivalent to `(base with x = 1) with y = 2`.
 - Records may be used in pattern matching like any ADT: `| Point(x, y) -> ...`.
 
-> Curly braces are not record syntax. A `{` where a record declaration
+> Curly braces are not record declaration, construction, or update syntax. A `{` where a record declaration
 > (`type T = { f: T }`), literal (`T { f = e }`), or update (`{ base with f = e }`)
-> might be written is rejected with a diagnostic pointing to the brace-free forms above.
+> might be written is rejected with a diagnostic pointing to the brace-free forms above. Record
+> *patterns* are the one record form that does use braces (`Point { x = h }`, §11.8), as do the
+> `needs {...}`, `requires {...}`, and `deriving {...}` sets.
 
 ## 5. Let Bindings
 

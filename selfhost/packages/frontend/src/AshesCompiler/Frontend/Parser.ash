@@ -373,7 +373,7 @@ let parserStartsArgument kind = kind == LParen || parserIsWhitespaceArgument(kin
 // nested `let`s whose `in` is still ahead: as in stage 0, a nested let's own value is governed by
 // its explicit `in` rather than by layout, so no boundary falls inside it, and that `in` is its own.
 let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens: List(Token)) =
-    (let recursive measure (remaining: List(Token)) count previousCallable (openers: List(Bool)) completesCall parenthesisDepth bracketDepth braceDepth openLets endsOperand =
+    (let recursive measure (remaining: List(Token)) count previousCallable (openers: List(Bool)) completesCall parenthesisDepth bracketDepth braceDepth openLets letBangLevel endsOperand =
         match remaining with
             | [] -> count
             | token :: tail ->
@@ -432,38 +432,57 @@ let parserTopLevelValueLength bytes declarationColumn splitBindingPipes (tokens:
                                             | RBrace -> parserNonNegativeDepth(braceDepth - 1)
                                             | _ -> braceDepth
                                     in
-                                        let nextOpenLets =
-                                            match token.kind with
-                                                | Let -> openLets + 1
-                                                | LetBang -> openLets + 1
-                                                | LetQuestion -> openLets + 1
-                                                | In -> parserNonNegativeDepth(openLets - 1)
-                                                | _ -> openLets
+                                        // A `let!` chain closes with one `in`: a `let!` that follows another at the
+                                        // chain's own level continues it rather than opening a let of its own.
+                                        let continuesLetBangChain = letBangLevel >= 0 && letBangLevel == openLets - 1
                                         in
-                                            match token.kind with
-                                                | LParen ->
-                                                    token.kind
-                                                    |> parserEndsOperand
-                                                    |> measure(tail)(count + 1)(false)(previousCallable :: openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
-                                                | RParen ->
-                                                    match openers with
-                                                        | callable :: outer ->
+                                            let nextOpenLets =
+                                                match token.kind with
+                                                    | Let -> openLets + 1
+                                                    | LetBang ->
+                                                        if continuesLetBangChain
+                                                        then openLets
+                                                        else openLets + 1
+                                                    | LetQuestion -> openLets + 1
+                                                    | In -> parserNonNegativeDepth(openLets - 1)
+                                                    | _ -> openLets
+                                            in
+                                                let nextLetBangLevel =
+                                                    match token.kind with
+                                                        | LetBang ->
+                                                            if continuesLetBangChain
+                                                            then letBangLevel
+                                                            else openLets
+                                                        | In ->
+                                                            if parserNonNegativeDepth(openLets - 1) == letBangLevel
+                                                            then -1
+                                                            else letBangLevel
+                                                        | _ -> letBangLevel
+                                                in
+                                                    match token.kind with
+                                                        | LParen ->
                                                             token.kind
                                                             |> parserEndsOperand
-                                                            |> measure(tail)(count + 1)(true)(outer)(callable)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
-                                                        | [] ->
+                                                            |> measure(tail)(count + 1)(false)(previousCallable :: openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)(nextLetBangLevel)
+                                                        | RParen ->
+                                                            match openers with
+                                                                | callable :: outer ->
+                                                                    token.kind
+                                                                    |> parserEndsOperand
+                                                                    |> measure(tail)(count + 1)(true)(outer)(callable)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)(nextLetBangLevel)
+                                                                | [] ->
+                                                                    token.kind
+                                                                    |> parserEndsOperand
+                                                                    |> measure(tail)(count + 1)(true)([])(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)(nextLetBangLevel)
+                                                        | Ident ->
                                                             token.kind
                                                             |> parserEndsOperand
-                                                            |> measure(tail)(count + 1)(true)([])(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
-                                                | Ident ->
-                                                    token.kind
-                                                    |> parserEndsOperand
-                                                    |> measure(tail)(count + 1)(true)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
-                                                | _ ->
-                                                    token.kind
-                                                    |> parserEndsOperand
-                                                    |> measure(tail)(count + 1)(false)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)
-    in measure(tokens)(0)(false)([])(false)(0)(0)(0)(0)(false))
+                                                            |> measure(tail)(count + 1)(true)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)(nextLetBangLevel)
+                                                        | _ ->
+                                                            token.kind
+                                                            |> parserEndsOperand
+                                                            |> measure(tail)(count + 1)(false)(openers)(false)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)(nextOpenLets)(nextLetBangLevel)
+    in measure(tokens)(0)(false)([])(false)(0)(0)(0)(0)(-1)(false))
 
 // The first `count` tokens, then an EOF at the position of the token after them (`0` past the end):
 // the tokens a top-level value is parsed from on its own.

@@ -1457,6 +1457,7 @@ public sealed partial class Lowering
                 LoweredValueRequest.None.WithExpectedType(expectedArmType));
             _loweringHandlerArmOwnResult = savedLoweringHandlerArmOwnResult;
             UnifyArmWithOperation(capability, opName, capabilityInstances[capability.Name], closureType, arm.Parameters.Count);
+            RecordResumeHovers(arm, expectedArmType, resultType);
             SubsumeCalleeRow(InnermostArrowRow(closureType, arm.Parameters.Count), GetSpan(handle));
             armClosures.Add((capability, OperationDeclIndex(capability, opName), closureTemp));
         }
@@ -2033,6 +2034,36 @@ public sealed partial class Lowering
         using (PushDiagnosticContext($"in handler arm '{capability.Name}.{opName}'"))
         {
             Unify(DetachRows(armClosureType), opType);
+        }
+    }
+
+    // `resume` is rewritten away before the arm is lowered, so each mention records the
+    // continuation's own type: the operation's result in, the handle expression's result out.
+    private void RecordResumeHovers(HandlerArm arm, TypeRef armType, TypeRef handleResultType)
+    {
+        TypeRef operationResult = Prune(armType);
+        for (int i = 0; i < arm.Parameters.Count && operationResult is TypeRef.TFun arrow; i++)
+        {
+            operationResult = Prune(arrow.Ret);
+        }
+
+        var resumeType = new TypeRef.TFun(operationResult, handleResultType);
+        var pending = new Stack<Expr>();
+        pending.Push(arm.Body);
+        while (pending.Count > 0)
+        {
+            Expr expression = pending.Pop();
+            if (expression is Expr.Var { Name: "resume" })
+            {
+                RecordHoverType(GetSpan(expression), "resume", resumeType);
+                continue;
+            }
+
+            IEnumerable<Expr> children = expression is Expr.Call call ? [call.Func, call.Arg] : EnumerateChildren(expression);
+            foreach (Expr child in children)
+            {
+                pending.Push(child);
+            }
         }
     }
 

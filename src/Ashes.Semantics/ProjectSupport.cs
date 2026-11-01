@@ -54,6 +54,10 @@ public sealed record ResolvedDependency(
     public string? EntryFile { get; init; }
 }
 
+/// <summary>Where a lifted inline module's source starts in its file: the zero-based line of its first body
+/// line and the indentation its body was dedented by.</summary>
+public readonly record struct InlineModuleOrigin(int LineOffset, int ColumnOffset);
+
 /// <summary>
 /// One source module participating in a compilation plan, with its imports already parsed out of the
 /// source. Both file-backed modules and lifted inline modules are represented uniformly here.
@@ -75,6 +79,10 @@ public sealed record ProjectModule(
 {
     /// <summary>The manifest-derived package identity used by coherence and orphan checks.</summary>
     public string PackageId { get; init; } = "standalone";
+
+    /// <summary>For a lifted inline module, where its dedented source sits in the enclosing file;
+    /// <see cref="FilePath"/> is then <c>file#Module</c>.</summary>
+    public InlineModuleOrigin? InlineOrigin { get; init; }
 }
 
 /// <summary>
@@ -163,12 +171,15 @@ public readonly record struct CombinedCompilationLayout(
 /// <param name="CombinedEnd">UTF-16 offset in the combined source just past the fragment's text.</param>
 /// <param name="Line">One-based line in the file where the fragment's text begins.</param>
 /// <param name="Column">One-based column (Unicode scalars) in the file where the fragment's text begins.</param>
+/// <param name="ColumnOffset">Columns to add to a position on any later line of the fragment: the
+/// indentation an inline module's body was dedented by, zero elsewhere.</param>
 public readonly record struct SourceLineAnchor(
     string FilePath,
     int CombinedStart,
     int CombinedEnd,
     int Line,
-    int Column
+    int Column,
+    int ColumnOffset = 0
 );
 
 /// <summary>Manifest package and module identity for one stitched source path.</summary>
@@ -207,7 +218,7 @@ public static class ProjectSupport
         TimeSpan.FromSeconds(1));
 
     /// <summary>A lifted inline module: its file-composed <see cref="ModuleName"/> and its (rewritten) block source.</summary>
-    private sealed record InlineModule(string ModuleName, string Source);
+    private sealed record InlineModule(string ModuleName, string Source, int LineOffset, int ColumnOffset);
 
     /// <summary>Whether a source contains an inline <c>module Name = ...</c> declaration header.</summary>
     public static bool ContainsInlineModule(string source)
@@ -1381,7 +1392,8 @@ public static class ProjectSupport
                 inline.Source,
                 [],
                 new Dictionary<string, string>(StringComparer.Ordinal),
-                []);
+                [])
+            { InlineOrigin = new InlineModuleOrigin(inline.LineOffset, inline.ColumnOffset) };
             children.Add(childModule);
             resolvedByModuleName[inline.ModuleName] = childModule;
         }
@@ -1660,7 +1672,7 @@ public static class ProjectSupport
                         [],
                         new Dictionary<string, string>(StringComparer.Ordinal),
                         [])
-                    { PackageId = plan.EntryModule.PackageId });
+                    { PackageId = plan.EntryModule.PackageId, InlineOrigin = new InlineModuleOrigin(inline.LineOffset, inline.ColumnOffset) });
                 }
 
                 orderedModules.Add(entryModule);
@@ -1685,7 +1697,7 @@ public static class ProjectSupport
                 [],
                 new Dictionary<string, string>(StringComparer.Ordinal),
                 [])
-            { PackageId = "standalone" })
+            { PackageId = "standalone", InlineOrigin = new InlineModuleOrigin(inline.LineOffset, inline.ColumnOffset) })
             .ToList();
     }
 
@@ -1912,6 +1924,17 @@ public static class ProjectSupport
         SourceTextIndex originalIndex = new(entryOriginalSource);
         var results = new List<MappedDiagnostic>(entries.Count);
 
+        // An entry-file position, as a span of the user's file.
+        MappedDiagnostic AtEntryPosition(DiagnosticEntry entry, int line, int column, int length)
+        {
+            var mappedStringStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+            var mappedStart = originalIndex.ToUtf8Offset(mappedStringStart);
+            return new MappedDiagnostic(
+                entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, originalIndex.Utf8Length)) },
+                entryFilePath,
+                HasPosition: true);
+        }
+
         foreach (var entry in entries)
         {
             var start = combinedIndex.ToUtf16Offset(entry.Span.Start);
@@ -1920,12 +1943,7 @@ public static class ProjectSupport
             if (start >= layout.EntryOffset)
             {
                 var (line, column) = OffsetToLineColumn(combined, layout.EntryOffset, start);
-                var mappedStringStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
-                var mappedStart = originalIndex.ToUtf8Offset(mappedStringStart);
-                results.Add(new MappedDiagnostic(
-                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, originalIndex.Utf8Length)) },
-                    entryFilePath,
-                    HasPosition: true));
+                results.Add(AtEntryPosition(entry, line, column, length));
                 continue;
             }
 
@@ -1937,21 +1955,35 @@ public static class ProjectSupport
                 continue;
             }
 
-            var filePath = entryFilePath;
-            foreach (var (path, regionStart, regionEnd) in layout.ModuleOffsets)
+            var (anchorPath, moduleLine, moduleColumn) = ResolveModuleRegionPosition(combined, layout.SourceLineAnchors, start);
+            // An inline module of the entry file resolves to a line of that file, which renders like
+            // any entry span.
+            if (string.Equals(anchorPath, entryFilePath, StringComparison.Ordinal)
+                && moduleLine is int anchoredLine
+                && moduleColumn is int anchoredColumn
+                && anchoredLine <= originalLineStarts.Length)
             {
-                if (start >= regionStart && start < regionEnd)
-                {
-                    filePath = path;
-                    break;
-                }
+                results.Add(AtEntryPosition(entry, anchoredLine, anchoredColumn, length));
+                continue;
             }
 
-            var (moduleLine, moduleColumn) = ResolveModuleRegionPosition(combined, layout.SourceLineAnchors, start);
-            results.Add(new MappedDiagnostic(entry, filePath, HasPosition: false, moduleLine, moduleColumn));
+            results.Add(new MappedDiagnostic(entry, anchorPath ?? FindModuleRegionPath(layout, start, entryFilePath), HasPosition: false, moduleLine, moduleColumn));
         }
 
         return results;
+    }
+
+    private static string FindModuleRegionPath(CombinedCompilationLayout layout, int start, string fallback)
+    {
+        foreach (var (path, regionStart, regionEnd) in layout.ModuleOffsets)
+        {
+            if (start >= regionStart && start < regionEnd)
+            {
+                return path;
+            }
+        }
+
+        return fallback;
     }
 
     /// <summary>Resolves <paramref name="start"/> (a UTF-16 offset into the combined source) to a
@@ -1961,12 +1993,12 @@ public static class ProjectSupport
     /// line-for-line copy of the owning file's text, so a position on the fragment's own first line
     /// offsets the anchor's column, and a position on any later line reuses that line's own column
     /// unchanged.</summary>
-    private static (int? Line, int? Column) ResolveModuleRegionPosition(
+    private static (string? FilePath, int? Line, int? Column) ResolveModuleRegionPosition(
         string combined, IReadOnlyList<SourceLineAnchor>? anchors, int start)
     {
         if (anchors is null)
         {
-            return (null, null);
+            return (null, null, null);
         }
 
         foreach (var anchor in anchors)
@@ -1978,11 +2010,11 @@ public static class ProjectSupport
 
             var (relativeLine, relativeColumn) = OffsetToLineColumn(combined, anchor.CombinedStart, start);
             return relativeLine == 1
-                ? (anchor.Line, anchor.Column + relativeColumn - 1)
-                : (anchor.Line + relativeLine - 1, relativeColumn);
+                ? (anchor.FilePath, anchor.Line, anchor.Column + relativeColumn - 1)
+                : (anchor.FilePath, anchor.Line + relativeLine - 1, anchor.ColumnOffset + relativeColumn);
         }
 
-        return (null, null);
+        return (null, null, null);
     }
 
     private static bool TryMapTypeDeclFragmentDiagnostic(
@@ -2359,7 +2391,7 @@ public static class ProjectSupport
                 prefix.Append(typeDecls);
                 EnsureEndsWithNewline(prefix);
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
-                AddTypeDeclarationAnchors(anchors, module.FilePath, shapes[module.ModuleName], start);
+                AddTypeDeclarationAnchors(anchors, module, shapes[module.ModuleName], start);
             }
         }
 
@@ -2370,7 +2402,7 @@ public static class ProjectSupport
             prefix.Append(entryShape.TypeDeclarationsSource);
             EnsureEndsWithNewline(prefix);
             moduleOffsets.Add((entryModule.FilePath, start, prefix.Length));
-            AddTypeDeclarationAnchors(anchors, entryModule.FilePath, entryShape, start);
+            AddTypeDeclarationAnchors(anchors, entryModule, entryShape, start);
         }
 
         return entryTypeDeclarationsStart;
@@ -3123,7 +3155,7 @@ public static class ProjectSupport
         prefix.Append(renderedValue);
         if (originIndex is not null && binding.ValueOrigin >= 0)
         {
-            anchors.Add(CreateAnchor(module.FilePath, originIndex, binding.ValueOrigin, valueStart, prefix.Length));
+            anchors.Add(CreateAnchor(module, originIndex, binding.ValueOrigin, valueStart, prefix.Length));
         }
 
         prefix.Append(')');
@@ -3131,9 +3163,10 @@ public static class ProjectSupport
 
     // The anchor's file position is the origin offset in the shaped source, whose line breaks are
     // the file's own; the combined offsets are the caller's to shift once the fragment's region is
-    // placed in the combined source.
+    // placed in the combined source. A lifted inline module's source is its block, dedented, so its
+    // positions shift back into the enclosing file.
     private static SourceLineAnchor CreateAnchor(
-        string filePath,
+        ProjectModule module,
         SourceTextIndex originIndex,
         int originOffset,
         int combinedStart,
@@ -3142,12 +3175,25 @@ public static class ProjectSupport
         (int line, int column) = originIndex.ToPosition(
             originIndex.ToUtf8Offset(originOffset),
             SourcePositionEncoding.UnicodeScalar);
-        return new SourceLineAnchor(filePath, combinedStart, combinedEnd, line + 1, column + 1);
+        if (module.InlineOrigin is { } origin)
+        {
+            int separator = module.FilePath.IndexOf('#', StringComparison.Ordinal);
+            string filePath = separator < 0 ? module.FilePath : module.FilePath[..separator];
+            return new SourceLineAnchor(
+                filePath,
+                combinedStart,
+                combinedEnd,
+                origin.LineOffset + line + 1,
+                origin.ColumnOffset + column + 1,
+                origin.ColumnOffset);
+        }
+
+        return new SourceLineAnchor(module.FilePath, combinedStart, combinedEnd, line + 1, column + 1);
     }
 
     private static void AddTypeDeclarationAnchors(
         List<SourceLineAnchor> anchors,
-        string filePath,
+        ProjectModule module,
         ModuleSourceShape shape,
         int combinedStart)
     {
@@ -3160,7 +3206,7 @@ public static class ProjectSupport
         foreach (var (fragmentStart, originalStart, length) in shape.TypeDeclFragments)
         {
             anchors.Add(CreateAnchor(
-                filePath, originIndex, originalStart,
+                module, originIndex, originalStart,
                 combinedStart + fragmentStart, combinedStart + fragmentStart + length));
         }
     }
@@ -3267,7 +3313,8 @@ public static class ProjectSupport
     {
         var importedOwners = new Dictionary<string, string>(StringComparer.Ordinal);
         var shortQualifierOwners = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var import in module.Imports.Reverse())
+        // A selector import (`import M.name`) lists M again beside a whole-module `import M`.
+        foreach (var import in module.Imports.Reverse().Distinct(StringComparer.Ordinal))
         {
             if (!exportedNames.TryGetValue(import, out var exportNames) || exportNames.Count == 0)
             {
@@ -4603,6 +4650,11 @@ public static class ProjectSupport
         while (tok.Kind == TokenKind.Type)
         {
             tok = lexer.Next();
+            if (tok.Kind == TokenKind.Ident && string.Equals(tok.Text, "alias", StringComparison.Ordinal))
+            {
+                tok = lexer.Next();
+            }
+
             tok = lexer.Next();
             if (tok.Kind == TokenKind.LParen)
             {
@@ -4610,6 +4662,13 @@ public static class ProjectSupport
             }
 
             tok = lexer.Next();
+
+            // A transparent alias or a zero-cost type has a bare right-hand side instead of `|`
+            // branches; it runs to the next line that starts at the left margin.
+            if (tok.Kind != TokenKind.Pipe)
+            {
+                tok = AdvanceToLeftMarginToken(lexer, source, tok);
+            }
 
             while (tok.Kind == TokenKind.Pipe)
             {
@@ -4672,6 +4731,17 @@ public static class ProjectSupport
         return TextSpan.FromBounds(
             index.ToUtf16Offset(byteSpan.Start),
             index.ToUtf16Offset(byteSpan.End));
+    }
+
+    private static Token AdvanceToLeftMarginToken(StringOffsetLexer lexer, string source, Token token)
+    {
+        while (token.Kind is not TokenKind.EOF and not TokenKind.Deriving
+            && !(token.Position > 0 && source[token.Position - 1] == '\n'))
+        {
+            token = lexer.Next();
+        }
+
+        return token;
     }
 
     private static Token AdvancePastBalancedParentheses(StringOffsetLexer lexer)
@@ -5200,20 +5270,23 @@ public static class ProjectSupport
         string source, string scopeModuleName, string displayPath)
     {
         var lifted = new List<InlineModule>();
-        var outer = ExpandInlineModulesCore(source, scopeModuleName, displayPath, lifted);
-        return (outer, lifted.Select(m => new InlineModuleInfo(m.ModuleName, m.Source)).ToList());
+        var outer = ExpandInlineModulesCore(source, scopeModuleName, displayPath, lifted, lineOffset: 0, columnOffset: 0);
+        return (outer, lifted.Select(m => new InlineModuleInfo(m.ModuleName, m.Source, m.LineOffset, m.ColumnOffset)).ToList());
     }
 
-    /// <summary>Public view of a lifted inline module for consumers outside this class (kept minimal).</summary>
-    public sealed record InlineModuleInfo(string ModuleName, string Source);
+    /// <summary>Public view of a lifted inline module for consumers outside this class (kept minimal).
+    /// <paramref name="LineOffset"/> is the zero-based line of the module's first body line in the expanded
+    /// source and <paramref name="ColumnOffset"/> the indentation its body was dedented by.</summary>
+    public sealed record InlineModuleInfo(string ModuleName, string Source, int LineOffset = 0, int ColumnOffset = 0);
 
     private static string ExpandInlineModulesCore(
-        string source, string scopeModuleName, string displayPath, List<InlineModule> lifted)
+        string source, string scopeModuleName, string displayPath, List<InlineModule> lifted, int lineOffset, int columnOffset)
     {
         var lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         var outer = new List<string>();
         var directChildren = new List<(string Name, List<string> Body)>();
         var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        var firstBodyLines = new List<int>();
 
         var i = 0;
         while (i < lines.Length)
@@ -5226,7 +5299,12 @@ public static class ProjectSupport
                 continue;
             }
 
-            i = CollectInlineModuleBlock(lines, i, header, displayPath, seenNames, directChildren);
+            // The block's lines stay behind as blank lines, so every later line of the outer source
+            // keeps its line number and diagnostics and editor positions map back by line.
+            var blockEnd = CollectInlineModuleBlock(lines, i, header, displayPath, seenNames, directChildren);
+            firstBodyLines.Add(i + 1);
+            outer.AddRange(Enumerable.Repeat(string.Empty, blockEnd - i));
+            i = blockEnd;
         }
 
         if (directChildren.Count == 0)
@@ -5242,13 +5320,16 @@ public static class ProjectSupport
         string Compose(string name) => scopeModuleName.Length == 0 ? name : $"{scopeModuleName}.{name}";
         string Rewrite(string s) => scopeModuleName.Length == 0 ? s : RewriteInlineQualifiers(s, childNames, scopeModuleName);
 
-        foreach (var (name, body) in directChildren)
+        for (int child = 0; child < directChildren.Count; child++)
         {
+            var (name, body) = directChildren[child];
             var composed = Compose(name);
+            int childLine = lineOffset + firstBodyLines[child];
+            int childColumn = columnOffset + MinimumIndent(body);
             var blockSource = Rewrite(Dedent(body));
             ValidateInlineModuleBody(blockSource, composed, displayPath);
-            var childOuter = ExpandInlineModulesCore(blockSource, composed, displayPath, lifted);
-            lifted.Add(new InlineModule(composed, childOuter));
+            var childOuter = ExpandInlineModulesCore(blockSource, composed, displayPath, lifted, childLine, childColumn);
+            lifted.Add(new InlineModule(composed, childOuter, childLine, childColumn));
         }
 
         return Rewrite(string.Join('\n', outer));
@@ -5323,6 +5404,18 @@ public static class ProjectSupport
     /// <summary>Removes the minimal common leading indentation from a block's non-blank lines so it parses as a top-level module.</summary>
     private static string Dedent(IReadOnlyList<string> lines)
     {
+        int minIndent = MinimumIndent(lines);
+        if (minIndent == 0)
+        {
+            return string.Join('\n', lines);
+        }
+
+        return string.Join('\n', lines.Select(line => line.Length >= minIndent ? line[minIndent..] : line));
+    }
+
+    // The common leading indentation of a block's non-blank lines; zero for a block with none.
+    private static int MinimumIndent(IReadOnlyList<string> lines)
+    {
         var minIndent = int.MaxValue;
         foreach (var line in lines)
         {
@@ -5334,12 +5427,7 @@ public static class ProjectSupport
             minIndent = Math.Min(minIndent, LeadingWhitespaceWidth(line));
         }
 
-        if (minIndent is int.MaxValue or 0)
-        {
-            return string.Join('\n', lines);
-        }
-
-        return string.Join('\n', lines.Select(line => line.Length >= minIndent ? line[minIndent..] : line));
+        return minIndent == int.MaxValue ? 0 : minIndent;
     }
 
     /// <summary>

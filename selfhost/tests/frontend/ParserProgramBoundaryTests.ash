@@ -72,6 +72,18 @@ let checkContinuationAfterCompletedCall unit =
                 | _ -> test.fail("expected the three flat declarations f, h, and z")
         | _ -> test.fail("a then/else or pipe line after a completed call must continue the declaration value")
 
+// A `let!` chain closes with one `in`, so the declaration holding it ends there and the next
+// line starts the trailing expression.
+let checkLetBangChainEndsItsDeclaration unit =
+    match "let work =\n    async (let! a = async 1\n    let! b = async 2\n    in a)\n\nwork"
+    |> parseProgram
+    |> expectNoDiagnostics with
+        | ProgramSyntax { items = first :: [], body = Some(_body) } ->
+            match ParserProgramTests.unspanTopLevel(first) with
+                | TopLevelLet(LetBindingSyntax { name = "work" }, false) -> Unit
+                | _ -> test.fail("expected the declaration work")
+        | _ -> test.fail("a let! chain must not run its declaration into the trailing expression")
+
 let run unit =
     unit
     |> checkLoneExpression
@@ -79,6 +91,7 @@ let run unit =
     |> checkNestedLetBody
     |> checkIndentedTrailingExpression
     |> checkContinuationAfterCompletedCall
+    |> checkLetBangChainEndsItsDeclaration
     |> (given (_) -> expectDiagnostics(""))
     |> (given (_) -> expectDiagnostics("and x = 1"))
     |> (given (_) -> expectDiagnostics("let x = 1 and y = 2"))

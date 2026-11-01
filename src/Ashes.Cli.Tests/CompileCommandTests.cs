@@ -34,6 +34,39 @@ public sealed class CompileCommandTests
     }
 
     [Test]
+    public async Task Project_compile_errors_render_at_their_entry_file_position()
+    {
+        string root = TempDir();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "src"));
+            File.WriteAllText(
+                Path.Combine(root, "ashes.json"),
+                "{\"name\":\"errors\",\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}\n");
+            File.WriteAllText(
+                Path.Combine(root, "src", "Main.ash"),
+                "module Geometry =\n    let one = 1\n    let square = given (x) ->\n        1 + \"s\"\n\nlet a = 1\nlet b = a + \"x\"\nAshes.IO.print(b)\n");
+
+            (int exitCode, string output) = await RunCliAsync(
+                root,
+                "compile",
+                "--project",
+                Path.Combine(root, "ashes.json"),
+                "-o",
+                Path.Combine(root, "out")).ConfigureAwait(false);
+
+            exitCode.ShouldBe(1, output);
+            output.ShouldContain("Main.ash:4:9 ASH002");
+            output.ShouldContain("Main.ash:7:9 ASH002");
+            output.ShouldNotContain("#Geometry");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Compile_debug_output_is_executable_on_unix()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())

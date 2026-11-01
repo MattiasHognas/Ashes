@@ -49,7 +49,7 @@ let recursive plannedInlineSource moduleName modules =
 
 let expectedInlineSource root =
     (let path = join(Unix)(root)("src/Geom.ash") + "#Geom.Vec"
-    in Some((path, "export (value answer)\nlet answer = 42")))
+    in Some((path, "\n\n    export (value answer)\n    let answer = 42")))
 
 let prepareReachableFixture root =
     root

@@ -171,6 +171,29 @@ let recursive formatterUnspanExpr : Expr -> Expr =
             | ExprAt(_span, inner) -> formatterUnspanExpr(inner)
             | _ -> expression
 
+// `let! name = task` parses to a let whose value is an `await` spanning exactly the task; a
+// written `await task` starts at its keyword instead.
+let formatterLetBangTask value =
+    match value with
+        | ExprAt(awaitSpan, ExprAwait(ExprAt(taskSpan, task))) ->
+            if awaitSpan == taskSpan
+            then
+                task
+                |> ExprAt(taskSpan)
+                |> Some
+            else None
+        | _ -> None
+
+// `let pattern = value in body` parses to a one-arm match whose pattern is written before its
+// scrutinee; a written match names its scrutinee first.
+let formatterLetPattern value cases =
+    match (value, cases) with
+        | (ExprAt(valueSpan, _), (PatternAt(patternSpan, pattern), body, None) :: []) ->
+            if patternSpan.start < valueSpan.start
+            then Some((PatternAt(patternSpan)(pattern), body))
+            else None
+        | _ -> None
+
 // Whether a record update occurs anywhere inside an expression. `with` takes every following
 // `name = value` pair as one of its own fields and binds looser than application, so an operand
 // that contains one (a call argument, a tuple or list element, a record-literal field value, a
@@ -599,18 +622,26 @@ and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
                                                 "given (" + parameter + ") -> " + formatterExpr(body)(0)(indent)(preferPipelines)
                                             )
                                 | ExprLet(name, value, body, parameters, annotation, requirements) ->
-                                    formatterLet(
-                                        parent,
-                                        indent,
-                                        "let ",
-                                        name,
-                                        value,
-                                        body,
-                                        parameters,
-                                        annotation,
-                                        requirements,
-                                        preferPipelines
-                                    )
+                                    match formatterLetBangTask(value) with
+                                        | Some(task) ->
+                                            formatterWrap(
+                                                parent,
+                                                1,
+                                                formatterLetBangChain(name)(task)(body)(indent)(preferPipelines)
+                                            )
+                                        | None ->
+                                            formatterLet(
+                                                parent,
+                                                indent,
+                                                "let ",
+                                                name,
+                                                value,
+                                                body,
+                                                parameters,
+                                                annotation,
+                                                requirements,
+                                                preferPipelines
+                                            )
                                 | ExprLetRecursive(name, value, body, parameters, annotation, requirements) ->
                                     formatterLet(
                                         parent,
@@ -636,11 +667,23 @@ and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
                                         ) + "\nin " + formatterExpr(body)(0)(indent)(preferPipelines)
                                     )
                                 | ExprMatch(value, cases, _position) ->
-                                    formatterWrap(
-                                        parent,
-                                        1,
-                                        "match " + formatterExpr(value)(formatterOperandPrecedence(value))(indent)(preferPipelines) + " with\n" + formatterCases(cases)(indent + 4)(preferPipelines)
-                                    )
+                                    match formatterLetPattern(value)(cases) with
+                                        | Some((pattern, body)) ->
+                                            formatterWrap(
+                                                parent,
+                                                1,
+                                                "let " + formatterPatternAt(pattern)(0) + " =" + formatterBranchSuffix(
+                                                    value,
+                                                    indent,
+                                                    preferPipelines
+                                                ) + "\nin " + formatterExpr(body)(0)(indent)(preferPipelines)
+                                            )
+                                        | None ->
+                                            formatterWrap(
+                                                parent,
+                                                1,
+                                                "match " + formatterExpr(value)(formatterOperandPrecedence(value))(indent)(preferPipelines) + " with\n" + formatterCases(cases)(indent + 4)(preferPipelines)
+                                            )
                                 | ExprHandle(body, arms) ->
                                     formatterWrap(
                                         parent,
@@ -746,6 +789,21 @@ and formatterMultilineExpressions : List(Expr) -> Int -> Bool -> Str =
                             indent,
                             preferPipelines
                         ) + ",\n" + formatterMultilineExpressions(tail)(indent)(preferPipelines)
+// A `let!` chain: consecutive bindings share one indentation and only the last carries `in`.
+and formatterLetBangChain : Str -> Expr -> Expr -> Int -> Bool -> Str =
+    given (name) ->
+        given (task) ->
+            given (body) ->
+                given (indent) ->
+                    given (preferPipelines) ->
+                        let head = "let! " + name + " =" + formatterBranchSuffix(task)(indent)(preferPipelines)
+                        in
+                            match formatterUnspanExpr(body) with
+                                | ExprLet(nextName, nextValue, nextBody, _parameters, _annotation, _requirements) ->
+                                    match formatterLetBangTask(nextValue) with
+                                        | Some(nextTask) -> head + "\n" + formatterLetBangChain(nextName)(nextTask)(nextBody)(indent)(preferPipelines)
+                                        | None -> head + "\nin " + formatterExpr(body)(0)(indent)(preferPipelines)
+                                | _ -> head + "\nin " + formatterExpr(body)(0)(indent)(preferPipelines)
 and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Maybe(TypeExpr) -> List(TraitConstraintSyntax) -> Bool -> Str =
     given (parent) ->
         given (indent) ->

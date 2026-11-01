@@ -267,6 +267,19 @@ source compiles to identical bytes with and without the option. See
 dotnet run --project src/Ashes.Lsp.Tests -- --no-progress
 ```
 
+`LspHoverSweepTests` hovers every word of each program under
+`src/Ashes.Lsp.Tests/fixtures/hover/` and compares the result with the checked-in
+`<fixture>.hover.txt`. A mismatch writes `<fixture>.hover.received.txt` beside it
+to diff against. After an intended hover change, regenerate the expected files and
+review their diff:
+
+```sh
+ASHES_ACCEPT_HOVER=1 dotnet run --project src/Ashes.Lsp.Tests -- --no-progress --treenode-filter "/*/*/LspHoverSweepTests/**"
+```
+
+A new language construct gets a line in one of these fixtures, or a new fixture
+listed in the test's `[Arguments]`.
+
 ### End-to-End Tests
 
 ```sh

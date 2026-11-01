@@ -220,9 +220,26 @@ let runSourceFormattingTests unit =
     |> expectFormatSourceKeepsCommentNearAMergedInLine
     |> expectFormatSourceReportsParseFailures
 
+// A `let!` chain and a pattern binding keep their written forms rather than the `await` and
+// `match` the parser desugars them to.
+let expectLetFormsKeepTheirSource unit =
+    (let formatted =
+        "let local =\n    let (q, r) = (1, 2)\n    in q\n\nlet work =\n    async (let! a = async 1\n    let! b = async 2\n    in a)\n\nlocal"
+        |> programFrom
+        |> formatProgram
+    in
+        if Ashes.Text.indexOf(formatted)("let (q, r) = (1, 2)") < 0 || Ashes.Text.indexOf(formatted)("let! a = async 1") < 0 || Ashes.Text.indexOf(formatted)("let! b = async 2") < 0 || Ashes.Text.indexOf(formatted)("await") >= 0 || Ashes.Text.indexOf(formatted)("match") >= 0
+        then test.fail("let forms were rewritten:\n" + formatted)
+        else
+            formatted
+            |> programFrom
+            |> formatProgram
+            |> test.assertEqual(formatted))
+
 let run unit =
     unit
     |> runSourceFormattingTests
+    |> expectLetFormsKeepTheirSource
     |> (given (_) -> assertProgram("let a = 1\n\nlet b = 2\n")("let a=1\nlet b=2"))
     |> (given (_) ->
         assertProgram(
