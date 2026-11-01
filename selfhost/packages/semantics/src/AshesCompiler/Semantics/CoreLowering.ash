@@ -28961,7 +28961,76 @@ let pinSpecializationType (callee: Str) (prepared: PreparedCoreRecursiveGroup) =
                                 | (_failedState, Some(_error)) -> prepared
         | _ -> prepared
 
-let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+// Stage 0's `SpecializationHandsResultOverCounted` gate on the callee's type: only a function whose
+// parameters and result are concrete, none of them a function, has its specialization checked; a
+// generic callee keeps routing to its specialization.
+let recursive specializationTypeIsConcrete (semanticType: SemanticType) =
+    match semanticType with
+        | SemVariable(_id) -> false
+        | SemFunction(_argument, _result, _row) -> false
+        | SemList(element) -> specializationTypeIsConcrete(element)
+        | SemTuple(elements) -> specializationTypesAreConcrete(elements)
+        | SemNamed(_symbolId, _typeName, arguments) -> specializationTypesAreConcrete(arguments)
+        | _ -> true
+and specializationTypesAreConcrete (types: List(SemanticType)) =
+    match types with
+        | [] -> true
+        | head :: rest ->
+            if specializationTypeIsConcrete(head)
+            then specializationTypesAreConcrete(rest)
+            else false
+
+let recursive specializationSignatureIsConcrete (argumentCount: Int) (functionType: SemanticType) =
+    if argumentCount <= 0
+    then specializationTypeIsConcrete(functionType)
+    else
+        match functionType with
+            | SemFunction(argument, result, _row) ->
+                if specializationTypeIsConcrete(argument)
+                then specializationSignatureIsConcrete(argumentCount - 1)(result)
+                else false
+            | _ -> false
+
+// Stage 0's `SpecializationHandsResultOverCounted`: a specialization whose generated body hands its
+// result over reference-counted keeps nothing it rebuilt in place, and the fresh cells its arms built
+// went into the never-reclaimed to-space.
+let specializationHandsResultOverCounted (label: Str) (argumentCount: Int) (state: CoreLoweringState) =
+    match state
+    |> stateFunctionReturnedClosureLabels
+    |> innermostStageLabel(argumentCount - 1)(label) with
+        | Some(stage) -> bodyReturnsRuntimeManaged(stage)(state)
+        | None -> false
+
+let restoreSpecializingInProgress (outer: CoreLoweringState) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state } ->
+            lowered with state = withStateSpecializingInProgress(stateSpecializingInProgress(outer))(state)
+
+// The call to a callee whose specialization hands its result over counted takes the ordinary call
+// path: the callee is marked in progress so the call does not route to the specialization again.
+let lowerCountedSpecializationCandidateCall (callee: Str) (arguments: List(Expr)) lower (state: CoreLoweringState) =
+    state
+    |> withStateSpecializingInProgress(callee :: stateSpecializingInProgress(state))
+    |> lower(specializedCallExpression(ExprVar(callee))(arguments))
+    |> restoreSpecializingInProgress(state)
+
+// The continuation of a freshly generated specialization's group. When the generated body hands its
+// result over counted, the call is lowered outside the group's binding of the callee, with the
+// specialization scope and the routed accumulators taken back; the callee is still in progress
+// there, so the call takes the ordinary path.
+let continueReuseSpecializedCall (label: Str) (argumentCount: Int) (concrete: Bool) outerBindings (unrouted: CoreLoweringState) lower (call: Expr) (state: CoreLoweringState) =
+    if concrete && specializationHandsResultOverCounted(label)(argumentCount)(state)
+    then
+        state
+        |> restoreBindings(outerBindings)
+        |> withStateSpecializationFreshInputs(stateSpecializationFreshInputs(unrouted))
+        |> withStateSpecializingLinearParam(stateSpecializingLinearParam(unrouted))
+        |> withStateSpecializingReuseLabel(stateSpecializingReuseLabel(unrouted))
+        |> withStateRoutedSpecializationAccumulators(stateRoutedSpecializationAccumulators(unrouted))
+        |> lower(call)
+    else lower(call)(state)
+
+let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (cacheKey: Str) (arguments: List(Expr)) (concrete: Bool) (unrouted: CoreLoweringState) lower (state: CoreLoweringState) =
     (let label =
         state
         |> stateReuseSpecializations
@@ -28980,7 +29049,7 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: Lis
                 |> withStateReuseSpecializations((cacheKey, label) :: stateReuseSpecializations(state)))
                 |> relabelReuseSpecialization(label)
                 |> pinSpecializationType(callee)
-                |> lowerPreparedRecursiveGroup([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(outerBindings)
+                |> lowerPreparedRecursiveGroupWith([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(continueReuseSpecializedCall(label)(coreListLength(arguments))(concrete)(outerBindings)(unrouted)(lower))(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
 
@@ -29001,13 +29070,21 @@ let recursive recordRoutedAccumulator (arguments: List(Expr)) (state: CoreLoweri
 let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(Str)) (value: Expr) (accumulatorType: SemanticType) (functionType: SemanticType) (arguments: List(Expr)) lower (state: CoreLoweringState) =
     (let cacheKey = reuseSpecializationCacheKey(callee)(functionType)(accumulatorType)
     in
-        let routed = recordRoutedAccumulator(arguments)(state)
+        let concrete =
+            functionType
+            |> resolveType(state)
+            |> specializationSignatureIsConcrete(coreListLength(arguments))
         in
-            match routed
-            |> stateReuseSpecializations
-            |> lookupReuseSpecialization(cacheKey) with
-                | Some(label) -> lowerCachedReuseSpecializedCall(callee)(label)(functionType)(arguments)(lower)(routed)
-                | None -> generateReuseSpecializedCall(callee)(parameter)(parameters)(value)(accumulatorType)(cacheKey)(arguments)(lower)(routed))
+            let routed = recordRoutedAccumulator(arguments)(state)
+            in
+                match routed
+                |> stateReuseSpecializations
+                |> lookupReuseSpecialization(cacheKey) with
+                    | Some(label) ->
+                        if concrete && specializationHandsResultOverCounted(label)(coreListLength(arguments))(state)
+                        then lowerCountedSpecializationCandidateCall(callee)(arguments)(lower)(state)
+                        else lowerCachedReuseSpecializedCall(callee)(label)(functionType)(arguments)(lower)(routed)
+                    | None -> generateReuseSpecializedCall(callee)(parameter)(parameters)(value)(accumulatorType)(cacheKey)(arguments)(concrete)(state)(lower)(routed))
 
 let lowerGeneralCall expression function argument lower state =
     match (isTailSelfCall(collectCallSpine(expression))(state), stateTcoLoopFrame(state), stateTcoLoop(state)) with

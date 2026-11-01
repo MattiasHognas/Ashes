@@ -1777,6 +1777,50 @@ public sealed partial class Lowering
         return (resultTemp, prepared.ResultType);
     }
 
+    // A specialization whose compiled body hands its result over reference-counted (a join that
+    // normalizes a passthrough parameter and the rebuilt arms onto the heap) keeps nothing it rebuilt
+    // in place: the join copies every cell out, and the fresh cells the body built in the persistent
+    // to-space are never reclaimed. A call to a function of concrete types generates its
+    // specialization before its arguments are lowered, and when that specialization hands its result
+    // over counted the call takes the ordinary path, whose cells live in the arena the caller
+    // reclaims and whose result the caller releases, like a reader that does not rebuild its
+    // accumulator.
+    private bool SpecializationHandsResultOverCounted(string name, TypeRef functionType, int argumentCount, Expr call)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_COUNTEDSPECRESULT") is not null)
+        {
+            return false;
+        }
+
+        List<TypeRef> parameterTypes = new(argumentCount);
+        TypeRef current = Prune(functionType);
+        for (int index = 0; index < argumentCount; index++)
+        {
+            if (current is not TypeRef.TFun function
+                || Prune(function.Arg) is TypeRef.TFun
+                || ValueTypeRemainsAbstract(function.Arg))
+            {
+                return false;
+            }
+
+            parameterTypes.Add(Prune(function.Arg));
+            current = Prune(function.Ret);
+        }
+
+        if (ValueTypeRemainsAbstract(current) || !AccumulatorLayoutIsPersistable(parameterTypes[^1]))
+        {
+            return false;
+        }
+
+        string label = GetOrCreateReuseSpecialization(
+            name,
+            BuildReuseSpecializationFunctionType(functionType, parameterTypes, 0),
+            parameterTypes,
+            call);
+        return TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
+            && runtimeManaged;
+    }
+
     // A specialization whose compiled body hands its result over reference-counted (a passthrough
     // parameter normalized onto the heap, say) gives the caller an owned value: recorded like any
     // known call's result, the caller releases it after its last use. Without it a caller that only

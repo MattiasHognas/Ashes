@@ -1741,6 +1741,14 @@ call's result handling. When that specialization's compiled body returns a refer
 call result and releases it after its last use. Before, a caller that only matched or counted the
 result (`match observe(xs)(initial(3)) with | [] -> 0 | _ -> 1`) left the whole list on the heap
 at every call (`GRC_NO_REUSESPECRESULT`).
+Such a specialization rebuilds nothing in place: the join copies every cell onto the heap, while the
+fresh cells its arms built (the `Some(shapeOf(argument))` element) went into the persistent to-space,
+which nothing reclaims, about 70 bytes per call of the passthrough shape. A call to a function of
+concrete types now generates the specialization before lowering its arguments, and when the
+specialization's body returns a reference-counted result the call takes the ordinary call path, whose
+fresh cells live in the arena and whose counted result the caller releases
+(`GRC_NO_COUNTEDSPECRESULT`). The specialization of a generic function is not generated early and
+keeps the rule above.
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record

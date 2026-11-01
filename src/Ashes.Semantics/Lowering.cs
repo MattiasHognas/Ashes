@@ -11434,7 +11434,8 @@ public sealed partial class Lowering
             return null;
         }
 
-        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(collectedArgs))
+        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(collectedArgs)
+            && !SpecializationHandsResultOverCounted(qualification.TargetFunction, qualification.FunctionType!, collectedArgs.Count, call))
         {
             return LowerReuseSpecializedCall(
                 qualification.TargetFunction,
