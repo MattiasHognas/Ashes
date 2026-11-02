@@ -6948,7 +6948,7 @@ let contractRecordAnswer (named: SemanticType) (name: Str) (facts: HeapLayoutFac
 let isGeneralRcNamedType (named: SemanticType) (state: CoreLoweringState) =
     match generalCopyPlanOf(named)(state) with
         | Some(NormalizerArgumentCopy(_type)) ->
-            !canRuntimeManageRecursiveCopyAdt(named)(state) && anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
+            programMayRunUnderLiveHandlerPost(state) == false && !canRuntimeManageRecursiveCopyAdt(named)(state) && anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
         | _ -> false
 
 // Stage 0's `ReachesGeneralRcNamedType`.
@@ -10011,7 +10011,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
 // it placed on the reference-counted heap. Each successor takes a reference of its own and the
 // predecessor is released, as the reset path does, only without the reset; the iteration's owned
 // drops follow the successors, which may borrow from them.
-let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && (!allArgumentsCompactable(arguments)(state) || compactionCopiesManagedList(arguments)(state))
+let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = generalRcEnabled(state) && anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && (!allArgumentsCompactable(arguments)(state) || compactionCopiesManagedList(arguments)(state))
 
 let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
@@ -11229,7 +11229,7 @@ let recursive withdrawnAskedFor (callTemp: Int) (requests: List((Int, Int, List(
 // call, beside whatever its word already passes; the mask the callee writes says whether it handed
 // anything over.
 let forwardTupleResultPartsRequestThroughGenericResult (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if isGenericResultForwardedAsIs(resultType)(state)
+    if generalRcEnabled(state) && isGenericResultForwardedAsIs(resultType)(state)
     then
         let callTemp =
             soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
@@ -16689,7 +16689,7 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
     if hasCallCopyOut(resultType)(state)
     then (state, true, false)
     else
-        if capturedSelfListResultOwnedAtRunTime(context)(resultType)(state)
+        if generalRcEnabled(state) && capturedSelfListResultOwnedAtRunTime(context)(resultType)(state)
         then (state, true, false)
         else
             if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
@@ -16968,7 +16968,7 @@ let ownsGenericStringArgument (argumentType: SemanticType) (resultType: Semantic
         | SemString ->
             match finalApplicationResult(resultType)(arity - 1)(state) with
                 | Some(SemFunction(_argument, _result, _row)) -> false
-                | Some(finalType) -> canTestRepresentation && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
                 | None -> false
         | _ -> false
 
@@ -17623,7 +17623,7 @@ let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp:
     match valueType with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            if policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
+            if generalRcEnabled(state) == false || policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
             then state
             else
                 match freshLocal(state) with
@@ -18932,7 +18932,7 @@ let transferBranchOwnerResult (branch: Expr) (temp: Int) (state: CoreLoweringSta
 // walk would instead read the shared result slot, which the unreachable no-match default wrote
 // last.
 let recordJoinRepresentation (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
-    if joinIsRuntimeManaged(arms)
+    if generalRcEnabled(state) && joinIsRuntimeManaged(arms)
     then recordDecidedRepresentation(resultTemp)(false)(true)(state)
     else state
 
@@ -19110,7 +19110,7 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
             in
                 match joinArmTally(arms)(0)(0) with
                     | (reaching, owned) ->
-                        if !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+                        if generalRcEnabled(state) == false || !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
                         then (state, arms)
                         else
                             match joinNormalizationPlanOf(resultType)(state) with
@@ -22490,7 +22490,7 @@ let recordArenaParameterCopy (arenaCell: Bool) (element: Expr) (source: Int) (lo
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match (unspanArgument(element), loopParameterReadSlot(element)(state)) with
                 | (ExprVar(_name), Some(slot)) ->
-                    if arenaCell && temp != source && newestIsParameterRetainMarker(temp)(source)(state) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state))
+                    if arenaCell && generalRcEnabled(state) && temp != source && newestIsParameterRetainMarker(temp)(source)(state) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state))
                     then lowered with state = withStateArenaParameterCopies((temp, source, slot, semanticType) :: stateArenaParameterCopies(state))(state)
                     else lowered
                 | _ -> lowered
@@ -22788,10 +22788,10 @@ let recursive demoteTupleElements (runtimeOnly: Bool) (elements: List(Expr)) (te
 let demoteArenaTupleElements (elements: List(Expr)) (holdsReferenceCounted: Bool) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match stateSpecializationFreshInputs(state) with
         | None ->
-            if anyUnresolvedLayout(semanticTypes)(state)
+            if generalRcEnabled(state) && anyUnresolvedLayout(semanticTypes)(state)
             then demoteTupleElements(false)(elements)(temps)(semanticTypes)(state)
             else
-                if holdsReferenceCounted
+                if holdsReferenceCounted && generalRcEnabled(state)
                 then demoteTupleElements(true)(elements)(temps)(semanticTypes)(state)
                 else (state, temps, [])
         | Some(_inputs) -> (state, temps, [])
@@ -23269,7 +23269,9 @@ let duplicatePatternOwnerConsParts (headExpression: Expr) (tailExpression: Expr)
 // an owner of its own, released once the successor holds its references, as a `let` binding of it
 // would be. The cell only borrows it and the copy takes a reference of its own.
 let keepCopiedCellFreshHeadOwned (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
-    match (unspanArgument(headExpression), runtimeTempStateOf(headTemp)(state)) with
+    match (unspanArgument(headExpression), if generalRcEnabled(state)
+    then runtimeTempStateOf(headTemp)(state)
+    else None) with
         | (ExprVar(_name), _) -> state
         | (ExprQualifiedVar(_owner, _field), _) -> state
         | (_, Some(RuntimeNewlyProduced)) ->
@@ -23372,7 +23374,7 @@ let cellRequestOf (request: ConsumerRequest) = request with runtimeList = true
 let ownHeadOfCellOverFreshTail (request: ConsumerRequest) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
-            if canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshProducedTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
+            if generalRcEnabled(tailState) && canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshProducedTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
             then
                 if headType
                 |> resolveType(tailState)
@@ -23447,7 +23449,7 @@ let noteListHeadCell (tailExpression: Expr) (head: LoweredCoreValue) (tail: Lowe
                         in
                             match (definitionOfTemp(cellTemp)(state.reversedInstructions), closureOfCallResult(headCall)(1000000)(state.reversedInstructions)) with
                                 | (Some(Alloc(_target, _size, false)), Some(closureTemp)) ->
-                                    if generic && headCall >= 0 && tailCall != -2
+                                    if generalRcEnabled(state) && generic && headCall >= 0 && tailCall != -2
                                     then cell with state = withStateListHeadCells((cellTemp, headTemp, closureTemp, tailCall) :: stateListHeadCells(state))(state)
                                     else cell
                                 | _ -> cell
@@ -23752,7 +23754,7 @@ let ownBorrowedHeadForProducerCell (producerCell: Bool) (request: ConsumerReques
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match resolveType(state)(semanticType) with
                 | SemTuple(_elements) as tuple ->
-                    if producerCell && requestsRuntimeList(request) && !isRuntimeManageableListElement(headExpression)(temp)(tuple)(state)
+                    if producerCell && generalRcEnabled(state) && requestsRuntimeList(request) && !isRuntimeManageableListElement(headExpression)(temp)(tuple)(state)
                     then
                         match generalCopyPlanOf(tuple)(state) with
                             | Some(plan) ->
@@ -25607,7 +25609,7 @@ let loadUnchangedRecordField targetTemp targetSlot index tagless fieldType state
 let handUpdatedFieldToOwnedSlot (expression: Expr) (fieldType: SemanticType) (handsOver: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = state, temps = temp :: _rest, error = None } ->
-            if handsOver
+            if handsOver && generalRcEnabled(state)
             then
                 lowered with state = handFreshChildToOwnedSlot(expression)(temp)(resolveType(state)(fieldType))(state)
             else lowered
