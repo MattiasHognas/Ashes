@@ -185,6 +185,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ArenaConstructorFreshStringTemplate());
         registry.Register(new ArenaConstructorFreshListTemplate());
         registry.Register(new EscapingCellRetainedTailTemplate());
+        registry.Register(new MutualGroupFreshOptionCellTemplate());
     }
 }
 

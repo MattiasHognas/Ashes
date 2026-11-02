@@ -23271,12 +23271,22 @@ let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (
 // callee's result may reach) is the only holder of a value produced right there, a fresh tuple
 // consed onto an accumulator passed to a recursive call, and an arena cell releases nothing. The
 // value goes to an owned slot, released once the function's result holds references of its own.
+// Stage 0's `IsCopiedOutFreshHeadType`: a list, tuple or data type the function's result copies out
+// rather than owns is copied before the owned slots are released, so such a head is kept the same
+// way.
+let isCopiedOutFreshHeadType (semanticType: SemanticType) (state: CoreLoweringState) =
+    match semanticType with
+        | SemList(_element) -> true
+        | SemTuple(_elements) -> true
+        | SemNamed(_symbolId, name, _typeArguments) -> !isResourceTypeNameIn(name)(state)
+        | _ -> false
+
 let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, error = None } ->
             let resolved = resolveType(state)(headType)
             in
-                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && isGeneralRcValueType(resolved)(state)
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state))
                 then
                     match freshLocal(state) with
                         | FreshLocal { state = allocated, local = ownedSlot } ->

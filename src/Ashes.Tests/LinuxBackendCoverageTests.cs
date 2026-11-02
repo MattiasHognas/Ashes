@@ -21326,4 +21326,75 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop rebuilding list of lists onto matched inner lists", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildMutualGroupFreshOptionCellProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Pick(Node, List(Str))
+                | Apply(Node, List(Node))
+                | Lam(Str, Node)
+
+            let recursive binders (acc: List(Str)) (xs: List(Str)) =
+                match xs with
+                    | [] -> acc
+                    | x :: rest -> binders(x :: acc)(rest)
+
+            let recursive derive (nodes: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match nodes with
+                    | [] -> ds
+                    | Pick(_value, ns) :: rest -> derive(rest)(Some(binders([])(ns)) :: ds)
+                    | Apply(root, arguments) :: rest ->
+                        ds
+                        |> applied(root)(arguments)
+                        |> derive(rest)
+                    | _other :: rest -> derive(rest)(ds)
+            and applied (root: Node) (arguments: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match (root, arguments) with
+                    | (Lam(_parameter, body), _argument :: rest) -> applied(body)(rest)(None :: ds)
+                    | _ -> ds
+
+            let recursive count (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> count(rest)(k + 1)
+
+            let recursive total (ds: List(Maybe(List(Str)))) (k: Int) =
+                match ds with
+                    | [] -> k
+                    | Some(ns) :: rest -> total(rest)(count(ns)(k))
+                    | None :: rest -> total(rest)(k)
+
+            let probe (n: Int) = total(derive([Pick(Leaf("a"), ["x", Ashes.Text.fromInt(n)]), Leaf("c"), Pick(Leaf("b"), [Ashes.Text.fromInt(n)])])([]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_mutual_group_fresh_option_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The group's self call conses `Some` of a helper's list into an arena cell, which never
+        // releases its head; the `Some`, a type the result copies out, now goes to an owned slot.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMutualGroupFreshOptionCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual group fresh option cell", samples, maxRssKb: 16_000);
+    }
 }

@@ -18074,13 +18074,21 @@ public sealed partial class Lowering
     // recursive call) is that value's only holder, and an arena cell releases nothing. The value
     // goes to an owned slot instead, released once the function's result holds references of its
     // own, as a retained child of an escaping arena tuple does.
+    // A list, tuple or data type the function's result copies out rather than owns (`List(Str)`, a
+    // `Some` over one) is copied before the owned slots are released, so such a head is kept the same
+    // way.
+    private static bool IsCopiedOutFreshHeadType(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLCOPYHEAD") is null
+            && (type is TypeRef.TList or TypeRef.TTuple
+                || (type is TypeRef.TNamedType named && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)));
+
     private void KeepEscapingArenaCellFreshHeadOwned(LoweredValue head)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
-            || !IsGeneralRcValueType(head.Type))
+            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
         {
             return;
         }

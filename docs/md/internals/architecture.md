@@ -1586,6 +1586,9 @@ An arena cons cell built as a call's argument that the callee's result may reach
 a fresh reference-counted head: in a mutually recursive group the self call is a closure call, not
 a loop, so `derive(rest)((value, binders([])(names)) :: derivations)` builds that argument in the
 arena, and the fresh tuple goes to an owned slot (`GRC_NO_ESCAPINGCELLFRESHHEAD`, both stages).
+A head of a type the function's result copies out rather than owns (`Some(binders([])(names))` in a
+`List(Maybe(List(Str)))`) goes to the slot the same way, since the result is copied before the slots
+are released (`GRC_NO_ESCAPINGCELLCOPYHEAD`, both stages).
 The retain such a cell takes of its tail goes to an owned slot too when no call collects it: a
 function returning `label :: applied` over a list a match bound from a call keeps that list in the
 arena cell after the match releases it, and the slot is released once the result is copied out
