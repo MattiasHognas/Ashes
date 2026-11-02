@@ -26688,8 +26688,11 @@ let recursive isCoreZeroExpression expression =
 // not be defaulted eagerly: the operands are unified with each other, an `AddInt` is emitted
 // speculatively and recorded under its target temp (temps survive `pruneDeadCaptures`, positions
 // do not), the shared variable flows on as the result type, and `buildProgram` swaps the
-// instruction for the resolved type's real form once the substitution is final. Every other
-// operand shape still resolves immediately through `resolvedCoreBinary`.
+// instruction for the resolved type's real form once the substitution is final. The variable also
+// joins the body's unresolved call results, as the deferred `==` does, so a body that resolves it
+// is lowered again against the resolved type: a string `+` lowered against the open types is an
+// arena concatenation that does not release the counted copy of an operand read from a call result.
+// Every other operand shape still resolves immediately through `resolvedCoreBinary`.
 let emitDeferredCoreAdd binary =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = left, leftType = leftType, rightTemp = right, rightType = rightType, error = None } ->
@@ -26699,8 +26702,11 @@ let emitDeferredCoreAdd binary =
                     match freshTemp(typedState) with
                         | FreshTemp { state = targetState, temp = target } ->
                             match targetState with
-                                | CoreLoweringState { functionState = CoreFunctionState { pendingOperatorDefaults = pending } } ->
-                                    let recorded = withStatePendingOperatorDefaults((target, Ashes.Internal.deepCopy(leftType)) :: pending)(targetState)
+                                | CoreLoweringState { functionState = CoreFunctionState { pendingOperatorDefaults = pending }, ownerState = CoreOwnerState { unresolvedCallResults = unresolved } } ->
+                                    let recorded =
+                                        targetState
+                                        |> withStatePendingOperatorDefaults((target, Ashes.Internal.deepCopy(leftType)) :: pending)
+                                        |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(leftType) :: unresolved)
                                     in
                                         recorded
                                         |> emit(AddInt(target)(left)(right))

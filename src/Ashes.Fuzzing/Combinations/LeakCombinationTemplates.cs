@@ -179,6 +179,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new PatternOwnerInCallArgumentCellTemplate());
         registry.Register(new GenericStringArgumentTemplate());
         registry.Register(new ClosureInEscapingAggregateTemplate());
+        registry.Register(new DeferredGenericStringAddTemplate());
     }
 }
 
