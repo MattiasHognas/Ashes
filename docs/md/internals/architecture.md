@@ -1582,6 +1582,10 @@ and the slots released (`GRC_NO_CTORFIELDLESS` switches this off).
 A callee that takes a trait dictionary is called outside the ordinary call path, and a fresh
 reference-counted argument it only borrows (a call's owned result as a generic lookup's key) goes
 to an owned slot the same way (`GRC_NO_DICTFRESHARG`).
+An arena cons cell built as a call's argument that the callee's result may reach does the same with
+a fresh reference-counted head: in a mutually recursive group the self call is a closure call, not
+a loop, so `derive(rest)((value, binders([])(names)) :: derivations)` builds that argument in the
+arena, and the fresh tuple goes to an owned slot (`GRC_NO_ESCAPINGCELLFRESHHEAD`, stage 0).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that

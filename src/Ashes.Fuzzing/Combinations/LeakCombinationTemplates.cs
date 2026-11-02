@@ -180,6 +180,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new GenericStringArgumentTemplate());
         registry.Register(new ClosureInEscapingAggregateTemplate());
         registry.Register(new DeferredGenericStringAddTemplate());
+        registry.Register(new MutualGroupFreshTupleCellTemplate());
     }
 }
 

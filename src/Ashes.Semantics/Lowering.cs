@@ -17960,6 +17960,7 @@ public sealed partial class Lowering
             int ownTailTemp = tailTemp;
             tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
             _ = RecordCallArgumentArenaRetain(ownTailTemp, tailTemp, tailType);
+            KeepEscapingArenaCellFreshHeadOwned(head);
         }
         MarkResourceArgMoved(cons.Head);
         MarkResourceArgMoved(cons.Tail);
@@ -18024,6 +18025,27 @@ public sealed partial class Lowering
         MarkRuntimeManagedTemp(ownedTemp, type: headType);
         _patternOwnerNormalizedTemps.Add(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    // An arena cell that escapes (a call's argument the callee's result may reach) holding a value
+    // produced right there (a fresh reference-counted tuple consed onto an accumulator passed to a
+    // recursive call) is that value's only holder, and an arena cell releases nothing. The value
+    // goes to an owned slot instead, released once the function's result holds references of its
+    // own, as a retained child of an escaping arena tuple does.
+    private void KeepEscapingArenaCellFreshHeadOwned(LoweredValue head)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
+            || !IsNewlyProducedRcTemp(head.Temp)
+            || ContainsUnresolvedLayoutType(Prune(head.Type), [])
+            || !IsGeneralRcValueType(head.Type))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
 
     private bool IsInnermostLoopChainCell(Expr.Cons cons)

@@ -20923,4 +20923,77 @@ public sealed class LinuxBackendCoverageTests
 
         return total;
     }
+
+    private static string BuildMutualGroupFreshTupleCellProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Pick(Node, List(Str))
+                | Apply(Node, List(Node))
+                | Lam(Str, Node)
+
+            let recursive binders (acc: List(Str)) (xs: List(Str)) =
+                match xs with
+                    | [] -> acc
+                    | x :: rest -> binders(x :: acc)(rest)
+
+            let recursive derive (nodes: List(Node)) (ds: List((Node, List(Str)))) =
+                match nodes with
+                    | [] -> ds
+                    | Pick(value, ns) :: rest -> derive(rest)((value, binders([])(ns)) :: ds)
+                    | Apply(root, arguments) :: rest ->
+                        ds
+                        |> applied(root)(arguments)
+                        |> derive(rest)
+                    | _other :: rest -> derive(rest)(ds)
+            and applied (root: Node) (arguments: List(Node)) (ds: List((Node, List(Str)))) =
+                match (root, arguments) with
+                    | (Lam(parameter, body), argument :: rest) -> applied(body)(rest)((argument, [parameter]) :: ds)
+                    | _ -> ds
+
+            let recursive count (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> count(rest)(k + 1)
+
+            let recursive total (ds: List((Node, List(Str)))) (k: Int) =
+                match ds with
+                    | [] -> k
+                    | (_v, ns) :: rest -> total(rest)(count(ns)(k))
+
+            let probe (n: Int) =
+                total(derive([Pick(Leaf("a"), ["x", Ashes.Text.fromInt(n)]), Apply(Lam("p", Leaf("q")), [Leaf("r")]), Leaf("c"), Pick(Leaf(Ashes.Text.fromInt(n)), ["y"])])([]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_mutual_group_fresh_tuple_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // In a mutually recursive group the self call is a closure call, so the cell consing a fresh
+        // tuple onto the accumulator it passes is an arena cell, which never releases its head. The
+        // tuple now goes to an owned slot, released once the function's result holds its own
+        // references.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMutualGroupFreshTupleCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual group fresh tuple cell", samples, maxRssKb: 16_000);
+    }
 }
