@@ -1597,6 +1597,16 @@ The retain such a cell takes of its tail goes to an owned slot too when no call 
 function returning `label :: applied` over a list a match bound from a call keeps that list in the
 arena cell after the match releases it, and the slot is released once the result is copied out
 (`GRC_NO_ESCAPINGCELLTAILSLOT`, both stages).
+A fresh argument handed to a closure parameter whose result has no layout in a generic body
+(`block |> positionBuilderAtEnd(builder) |> body |> ...`, a foreign call's Unit or a helper's record
+passed to `body`) goes to an owned slot when the closure does not adopt it: the slot is released at
+the return when the function's own result is out of that call's reach, and kept when the body
+forwards the call's result (`GRC_NO_UNRESOLVEDHANDEDSLOT`, both stages).
+A function holding owned values whose result the arena has no copy for (a `Maybe(Int)`) and that
+none of them reaches keeps the result where it is rather than normalizing it onto the
+reference-counted heap, and releases the owned values behind it: its own self-calls, lowered before
+its return decided the result's placement, never take such a copy as owned, so each one leaked a
+cell (`GRC_NO_UNREACHEDRESULTINPLACE`, both stages).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that

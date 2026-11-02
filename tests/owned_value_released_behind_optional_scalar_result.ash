@@ -1,7 +1,7 @@
 // A function that owns a call's result and returns an optional integer computed from it: a variant
-// whose fields are all inline is neither one of the contract's types nor, being generic, a type
-// with a fixed copy-out, so the result is detached by the normalization helper and the owned value
-// released behind it.
+// whose fields are all inline cannot hold the owned value, and the arena has no copy for it, so the
+// result stays where it is: a copy normalized onto the reference-counted heap would be owned by no
+// caller. The owned value is released behind it.
 // expect: 344
 type Tree =
     | Leaf(Str)
