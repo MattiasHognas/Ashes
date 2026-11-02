@@ -188,6 +188,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new MutualGroupFreshOptionCellTemplate());
         registry.Register(new ArenaTupleFreshElementTemplate());
         registry.Register(new MutualGroupSiblingResultPipedTemplate());
+        registry.Register(new FreshArgumentToClosureOfUnresolvedResultTemplate());
+        registry.Register(new SelfCallResultKeptInPlaceTemplate());
     }
 }
 
