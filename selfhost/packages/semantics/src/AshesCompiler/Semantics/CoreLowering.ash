@@ -10695,6 +10695,12 @@ let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state:
         in
             length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
 
+// Stage 0's `KeepsUnreachedResultInPlace`: a result the arena has no copy for, that no owned value
+// reaches, stays where it is. Normalized onto the reference-counted heap it would be owned by
+// callers that cannot know it, a self-call lowered before this return among them, and leak there.
+// The owned slots are released behind it all the same, since none of them is in its reach.
+let keepsUnreachedResultInPlace (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) = !isRuntimeTemp(bodyTemp)(state) && !resultReachesOwnedSlots(bodyTemp)(bodyType)(state)
+
 // Stage 0's `MovesOwnedPartsIntoTupleResult`: a tuple result that holds a part of an owned value
 // is placed on the reference-counted heap at the return, each element the owned values hold
 // retained into it and the others copied, so the owned slots are released behind it and their
@@ -11837,6 +11843,7 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
 
 let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
+        | (true, Some(OwnedResultCopy(_plan))) when keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state) -> emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state)
         | (true, Some(copy)) ->
             match emitIndependentResultCopy(copy)(bodyTemp)(state) with
                 | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
@@ -11901,7 +11908,7 @@ let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state
     isRuntimeTemp(bodyTemp)(state) || (match (isGeneralRcValueType(bodyType)(state), generalCopyPlanOf(bodyType)(state)) with
         | (true, Some(_plan)) -> true
         | _ -> false) || !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
-        | Some(OwnedResultCopy(_plan)) -> true
+        | Some(OwnedResultCopy(_plan)) -> !keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state)
         | Some(ArenaResultCopy(_copyOut)) -> false
         | None ->
             match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
@@ -17648,12 +17655,14 @@ let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (
 // callee's result to keep, where the result is an arena value that may hold the argument and that
 // the caller does not copy at the call, goes to an owned slot the function releases once its
 // result or the loop's successors hold references of their own; a callee that adopted the
-// reference consumed it, so the slot is left empty.
+// reference consumed it, so the slot is left empty. A result of unresolved layout (a closure
+// parameter applied in a generic body) may hold the argument as anything, so the slot is released
+// only where the function's own result is out of that call's reach.
 let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
     match valueType with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            if generalRcEnabled(state) == false || policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
+            if generalRcEnabled(state) == false || policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
             then state
             else
                 match freshLocal(state) with
