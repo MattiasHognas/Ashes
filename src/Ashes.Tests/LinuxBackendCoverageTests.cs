@@ -21547,4 +21547,127 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("mutual group sibling result piped", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildFreshArgumentToClosureOfUnresolvedResultProgram(int rounds)
+        => $$"""
+            external absOf(Int) -> Int = "abs@libc.so.6"
+
+            type Box =
+                | Box(Int)
+
+            let positionAt builder block = Box(absOf(builder + block))
+
+            let branch builder target = absOf(builder - target)
+
+            let emitArm builder block continueBlock body =
+                block
+                |> positionAt(builder)
+                |> body
+                |> (given (_) -> branch(builder)(continueBlock))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + emitArm(n)(2)(n)(given (_) -> n + 7))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_fresh_argument_to_closure_of_unresolved_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic body hands a helper's fresh record to a closure parameter whose result has no
+        // layout there and returns something else: the closure does not adopt the record, so the
+        // body releases it once its own result is out of that call's reach.
+        int[] roundCounts = [50000, 200000, 800000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildFreshArgumentToClosureOfUnresolvedResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh argument to a closure of unresolved result", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildSelfCallResultKeptInPlaceProgram(int rounds)
+        => $$"""
+            type Tree =
+                | TAt(Tree)
+                | TLeaf(Str)
+                | TCall(Tree, Tree)
+                | TIf(Tree, Tree, Tree)
+
+            let firstSome (first: Maybe(Int)) (second: Maybe(Int)) =
+                match first with
+                    | Some(_found) -> first
+                    | None -> second
+
+            let recursive unspan (t: Tree) =
+                match t with
+                    | TAt(inner) -> unspan(inner)
+                    | other -> other
+
+            let recursive passing (expression: Tree) (name: Str) =
+                match expression with
+                    | TCall(function, argument) ->
+                        name
+                        |> passing(argument)
+                        |> firstSome(passing(function)(name))
+                        |> firstSome(match unspan(argument) with
+                            | TLeaf(passed) ->
+                                if passed == name
+                                then Some(1)
+                                else None
+                            | _ -> None)
+                    | TIf(c, t, e) ->
+                        name
+                        |> passing(e)
+                        |> firstSome(passing(t)(name))
+                        |> firstSome(passing(c)(name))
+                    | _ -> None
+
+            let check (n: Int) =
+                match passing(TIf(TLeaf("c"), TLeaf("d"), TLeaf(Ashes.Text.fromInt(n))))("y") with
+                    | None -> 1
+                    | Some(found) -> found + 1
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + check(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_self_call_result_kept_in_place_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A recursive function holding an owned call result returns a Maybe(Int) the arena has no
+        // copy for and that cannot hold it: the result stays where it is, since the self-calls,
+        // lowered before the return, never take a reference-counted copy of it as owned.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildSelfCallResultKeptInPlaceProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("self-call result kept in place", samples, maxRssKb: 16_000);
+    }
 }
