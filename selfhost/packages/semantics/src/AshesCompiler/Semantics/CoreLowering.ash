@@ -23247,10 +23247,25 @@ let referenceOrCopyUnplacedLetTail (applies: Bool) (tailExpression: Expr) (tailT
             |> emitArgumentCopyByCopy(tailTemp))(state)
         | _ -> (state, tailTemp)
 
+// A list bound out of a pattern is whatever the matched value's lists are, and the matched value may
+// be released before the cell (a loop's predecessor at its back edge): the cell takes a reference
+// of its own when the list is reference-counted and a copy when it is not (stage 0's
+// `PatternBoundTailsOwnedEnabled` branch of `PrepareRuntimeRcConsTail`).
+let isPatternBoundTail (tailExpression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(tailExpression) with
+        | ExprVar(name) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) -> true
+                | None -> false
+        | _ -> false
+
 let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
     match loopExitCellSlot(request)(tailExpression)(state) with
         | Some(_slot) -> referenceOrCopyLoopExitTail(tailTemp)(tailType)(state)
-        | None -> prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(state)
+        | None ->
+            if isPatternBoundTail(tailExpression)(state)
+            then referenceOrCopyUnplacedLetTail(true)(tailExpression)(tailTemp)(tailType)(state)
+            else prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(state)
 
 // Stage 0's `KeepEscapingArenaCellFreshHeadOwned`: an escaping arena cell (a call's argument the
 // callee's result may reach) is the only holder of a value produced right there, a fresh tuple

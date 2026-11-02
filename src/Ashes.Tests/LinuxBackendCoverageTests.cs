@@ -21274,4 +21274,56 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("escaping cell retained tail", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildLoopRebuildsListOfListsProgram(int rounds)
+        => $$"""
+            let recursive recordCall (arguments: List(Int)) (flow: List(List(Int))) =
+                match (arguments, flow) with
+                    | (argument :: restArguments, sources :: restFlow) -> (argument :: sources) :: recordCall(restArguments)(restFlow)
+                    | _ -> flow
+
+            let recursive countNodes (nodes: List(Int)) (flow: List(List(Int))) =
+                match nodes with
+                    | [] -> flow
+                    | node :: rest -> countNodes(rest)(recordCall([node, node + 1, node + 2])(flow))
+
+            let recursive cells (lists: List(List(Int))) (acc: Int) =
+                match lists with
+                    | [] -> acc
+                    | first :: rest ->
+                        match first with
+                            | [] -> cells(rest)(acc)
+                            | _ :: inner -> cells(inner :: rest)(acc + 1)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + cells(countNodes([n, n + 1])([[], [], []]))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_rebuilding_list_of_lists_onto_matched_inner_lists_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A tail-modulo-constructor rebuild conses onto an inner list matched out of the loop
+        // parameter. The reference-counted cell takes a reference of its own to that inner list: it
+        // stored the pattern-bound list as it was, and the caller's back edge freed it under the cell.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopRebuildsListOfListsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{6L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop rebuilding list of lists onto matched inner lists", samples, maxRssKb: 16_000);
+    }
 }

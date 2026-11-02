@@ -18096,6 +18096,8 @@ public sealed partial class Lowering
 
     // The tail of a reference-counted cell: a recursive producer's result is retained, and an
     // unplaced let-bound one takes a reference when it is reference-counted or a copy when it is not.
+    private static bool PatternBoundTailsOwnedEnabled => Environment.GetEnvironmentVariable("GRC_NO_PATTERNTAILOWNED") is null;
+
     private int PrepareRuntimeRcConsTail(Expr tail, int tailTemp, TypeRef tailType, LoweredValueRequest request)
     {
         // A back edge's cell takes the accumulator over from the iteration it replaces. The cell the
@@ -18106,6 +18108,20 @@ public sealed partial class Lowering
         {
             int parameterTemp = tailTemp;
             return EmitReferenceOrCopy(parameterTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(parameterTemp, exitList));
+        }
+
+        // A list bound out of a pattern is whatever the matched value's lists are, and the matched value
+        // may be released before the cell (a loop's predecessor at its back edge): the cell takes a
+        // reference of its own when the list is reference-counted and a copy when it is not.
+        if (PatternBoundTailsOwnedEnabled
+            && request.RuntimeListTailBinding is null
+            && CanTestRepresentation
+            && IsPerceusPatternOwnerRead(tail)
+            && !IsRuntimeManagedResultTemp(tailTemp)
+            && Prune(tailType) is TypeRef.TList patternList)
+        {
+            int patternTemp = tailTemp;
+            return EmitReferenceOrCopy(patternTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(patternTemp, patternList));
         }
 
         tailTemp = PrepareRuntimeRcListTail(tail, tailTemp, request);
