@@ -672,7 +672,7 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    parameters (a crash), a `match` directly on `perform` owns its result under a live handler, and a
    normalized match join whose arms own their references is newly produced.
 
-   **Round 9, 2 November.** Eight rules over five fixes. A tuple scrutinee's list tail walked beside a
+   **Round 9, 2 November.** Seven rules over five fixes. A tuple scrutinee's list tail walked beside a
    heap parameter is released, and an accumulator of mixed-size scalar constructors stays in the arena.
    A cons onto the function's own recursive result takes that result over: the exit census's top
    class, lists of `Some(TcoOtherShape)` from stage 1's TCO shape walk, went from 285 to 65 cells per
