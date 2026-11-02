@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Ashes.Backend.Backends;
 using Ashes.Frontend;
 using Ashes.Semantics;
@@ -236,11 +237,14 @@ public sealed class GenericParameterHeapValueUafTests
         dump.ShouldContain("SetAdtField", Case.Insensitive);
     }
 
-    // The protective copy lives at each call site, not inside setTree: a caller passing a Str to
-    // setTree's generic `value` parameter copies it into the persistent to-space/blob region first,
-    // since setTree's own body has no static layout to do that itself.
+    // The protection lives at each call site, not inside setTree: setTree's own body has no static
+    // layout to normalize its generic `value` parameter, so a caller passing a Str hands it an owned
+    // reference-counted reference (a retain, or a reference-counted copy of an arena string) instead
+    // of the borrowed arena value that used to dangle, and releases that reference once the call's
+    // result is settled if the callee did not adopt it. It no longer copies the string into the
+    // persistent to-space/blob region, which nothing reclaims. The churn tests above run the shape.
     [Test]
-    public void Call_site_copies_a_str_argument_to_setTrees_generic_parameter_into_tospace()
+    public void Call_site_hands_a_str_argument_to_setTrees_generic_parameter_as_an_owned_reference()
     {
         Diagnostics diagnostics = new();
         var program = new Parser(MinimalSetTreeStrSource, diagnostics).ParseProgram();
@@ -254,7 +258,19 @@ public sealed class GenericParameterHeapValueUafTests
             IrOptimizer.Optimize(ir), IrDumpStage.Final, filter: null);
         string dump = string.Join('\n', entryIr);
 
-        dump.ShouldContain("CopyOutArenaToSpace", Case.Insensitive);
+        dump.ShouldNotContain("CopyOutArenaToSpace", Case.Insensitive);
+        int entryStart = dump.IndexOf("[ProgramEntry]", StringComparison.Ordinal);
+        entryStart.ShouldBeGreaterThanOrEqualTo(0);
+        string entry = dump[entryStart..];
+        Match handedOver = Regex.Match(
+            entry,
+            @"RcDup +Target=\d+ SourceTemp=(?<literal>\d+) RuntimeManaged=true[\s\S]*?CopyOutArena +DestTemp=\d+ SrcTemp=\k<literal> RuntimeManaged=true Purpose=RcNormalization[\s\S]*?LoadLocal +Target=(?<owned>\d+) Slot=\d+[\s\S]*?CallKnown +Target=\d+ FuncLabel=\w+ EnvTemp=\d+ ArgTemp=\k<owned> ",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(5));
+        handedOver.Success.ShouldBeTrue("the Str argument should be passed as an owned reference-counted reference");
+        string owned = handedOver.Groups["owned"].Value;
+        entry.ShouldContain("rc_handed_over_not_adopted");
+        entry.ShouldContain($"RcDrop                SourceTemp={owned} TypeName=String RuntimeManaged=true");
     }
 
     private const string MinimalSetTreeStrSource = """
