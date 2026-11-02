@@ -12151,6 +12151,20 @@ let recursive loadedSlotOf (temp: Int) (instructions: List(IrInstruction)) =
             else loadedSlotOf(temp)(rest)
         | _ :: rest -> loadedSlotOf(temp)(rest)
 
+// The slot `temp` was loaded from, through the borrows taken of the load.
+let recursive loadedSlotThroughBorrows (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then slot
+            else loadedSlotThroughBorrows(temp)(rest)
+        | IrInstruction { instruction = Borrow(target, source) } :: rest ->
+            if target == temp
+            then loadedSlotThroughBorrows(source)(rest)
+            else loadedSlotThroughBorrows(temp)(rest)
+        | _ :: rest -> loadedSlotThroughBorrows(temp)(rest)
+
 // The sources of every store into a local slot.
 let recursive slotStoreSources (slot: Int) (instructions: List(IrInstruction)) (sources: List(Int)) =
     match instructions with
@@ -22574,7 +22588,7 @@ let isPromotableCellMarker (temp: Int) (state: CoreLoweringState) =
     match findElementDuplicate(temp)(state.reversedInstructions) with
         | None -> false
         | Some(source) ->
-            (isPatternOwnerSiteSlot(loadedSlotOf(source)(state.reversedInstructions))(statePatternOwnerSites(state)) || isTcoParameterRetainSite(temp)(stateTcoParameterRetainSites(state))) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state)) && !isArenaParameterCopy(temp)(stateArenaParameterCopies(state))
+            (isPatternOwnerSiteSlot(loadedSlotThroughBorrows(source)(state.reversedInstructions))(statePatternOwnerSites(state)) || isTcoParameterRetainSite(temp)(stateTcoParameterRetainSites(state))) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state)) && !isArenaParameterCopy(temp)(stateArenaParameterCopies(state))
 
 // Stage 0's `EmitRuntimeManagedTcoTupleSuccessorCopy`: a literal nested in a tuple successor (a
 // cons, a record, a record update) that stays in the arena is copied into the tuple with
@@ -22693,6 +22707,23 @@ let recursive cloneNormalizedStringParameterElements (runtimeTuple: Bool) (eleme
                     | (cloned, rest) -> (cloned, temp :: rest)
         | _ -> (state, temps)
 
+// Whether the back edge copies the tuple successor being lowered: its loop parameter is on the
+// reference-counted heap, so the arena tuple is copied with references of its own.
+let backEdgeCopiesTupleSuccessor (successor: Bool) (state: CoreLoweringState) =
+    match (successor, stateBackEdgeArgumentSlot(state), stateTcoLoop(state), stateTcoLoopFrame(state)) with
+        | (true, Some(slot), Some(loop), Some(frame)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+        | _ -> false
+
+// An arena tuple successor the back edge copies: the literals nested in it borrow what they
+// store, as they do in a reference-counted tuple successor that copies them while it is built.
+let recursive withdrawCopiedTupleLiterals (elements: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (elements, temps) with
+        | (element :: restElements, temp :: restTemps) ->
+            state
+            |> withdrawSuccessorLiteralMarkers(true)(element)(temp)
+            |> withdrawCopiedTupleLiterals(restElements)(restTemps)
+        | _ -> state
+
 let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -22704,7 +22735,12 @@ let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfe
                         match normalizeTupleSiblings(successor)(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
                             | (normalizedState, temps, normalized) -> finishPlacedTuple(elements)(temps)(semanticTypes)(normalized)(tupleTemp)(true)(transfers)(normalizedState)
                     else
-                        match demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes)(reservedState) with
+                        match reservedState
+                        |> (given (arenaState) ->
+                            if backEdgeCopiesTupleSuccessor(successor)(arenaState)
+                            then withdrawCopiedTupleLiterals(elements)(loweredTemps)(arenaState)
+                            else arenaState)
+                        |> demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes) with
                             | (demotedState, temps, demoted) ->
                                 match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
                                     | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)
