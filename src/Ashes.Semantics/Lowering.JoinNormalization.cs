@@ -797,6 +797,10 @@ public sealed partial class Lowering
     private static bool NormalizedElementOwnsItsReference
         => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDELEMENTRETAIN") is null;
 
+    // A normalized if join whose every branch now holds a reference of its own is fresh, as a normalized
+    // match join is, so a reading builtin consuming it releases it.
+    private static bool NormalizedIfJoinFreshEnabled => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDIFFRESH") is null;
+
     // An if's join: owned when both branches are, or once a mixed pair is normalized.
     private void MarkIfJoinResult(
         int resultTemp,
@@ -820,7 +824,7 @@ public sealed partial class Lowering
         if (NormalizeMixedJoinArms(arms, resultType))
         {
             RecordNormalizedJoinTemp(resultTemp);
-            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: true, allBranchesNewlyProduced: false);
+            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: true, allBranchesNewlyProduced: NormalizedIfJoinFreshEnabled && NormalizedArmsAllOwnTheirReference(arms));
             return;
         }
 

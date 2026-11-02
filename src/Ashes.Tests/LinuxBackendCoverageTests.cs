@@ -21670,4 +21670,50 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("self-call result kept in place", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildReadOfFreshValueOrLoopParameterJoinProgram(int rounds)
+        => $$"""
+            let recursive widen (n: Int) (text: Str) =
+                if n == 0
+                then text
+                else widen(n - 1)(text + text)
+
+            let recursive loop (n: Int) (text: Str) (total: Int) =
+                if n == 0
+                then total
+                else
+                    loop(n - 1)(text)(total + Ashes.Text.byteLength(if n % 2 == 0
+                    then widen(6)(Ashes.Text.fromInt(n))
+                    else text))
+
+            let recursive rounds (k: Int) (acc: Int) =
+                if k == 0
+                then acc
+                else rounds(k - 1)(acc + loop(10)("ab" + Ashes.Text.fromInt(k))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_read_of_join_between_fresh_value_and_loop_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An if join of a fresh string and the loop's own parameter is normalized: the parameter
+        // branch takes a reference of its own. The join is then fresh, as a normalized match join
+        // is, so the read releases it; counted as merely owned, nothing released it.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildReadOfFreshValueOrLoopParameterJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("read of join between fresh value and loop parameter", samples, maxRssKb: 16_000);
+    }
 }
