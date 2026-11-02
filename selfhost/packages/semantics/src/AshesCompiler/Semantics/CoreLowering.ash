@@ -5200,6 +5200,35 @@ let releaseCellTailDuplicateAfterCopy copyOut (resultType: SemanticType) (cellTe
             else state
         | _ -> state
 
+// Whether `temp` is a reference-counted retain already, rather than an identity marker the loop's
+// finalize may still place.
+let recursive retainedAsRuntimeValue (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else retainedAsRuntimeValue(temp)(rest)
+        | _ :: rest -> retainedAsRuntimeValue(temp)(rest)
+
+// Stage 0's `ReleaseCopiedRetainedPatternOwnerResult`: an arm returning a pattern binding retains it
+// for the join, so a scope copy-out that replaces the value with its copy releases that retain when
+// the original is reference-counted. With a capability in the program the copy-out may be skipped
+// while a post is pending, so the retain is kept there.
+let releaseCopiedRetainedPatternOwnerResult (resultType: SemanticType) (resultTemp: Int) (state: CoreLoweringState) =
+    if stateCapabilityGlobalCount(state) == 0 && containsInt(resultTemp)(statePatternOwnerResultTemps(state)) && retainedAsRuntimeValue(resultTemp)(state.reversedInstructions)
+    then
+        match freshTemp(state) with
+            | FreshTemp { state = allocated, temp = referenceCountedTemp } ->
+                match freshLabel("rc_copied_owner_result_kept")(allocated) with
+                    | FreshLabel { state = labelled, label = skipLabel } ->
+                        labelled
+                        |> emit(IsReferenceCounted(referenceCountedTemp)(resultTemp))
+                        |> emit(JumpIfFalse(referenceCountedTemp)(skipLabel))
+                        |> emit(RcDrop(resultTemp)(patternOwnerTypeName(resolveType(labelled)(resultType))(labelled))(-1)(true)(false)(None))
+                        |> emit(Label(skipLabel))
+    else state
+
 // Restores the arena, copies the result past the reset into a fresh runtime-managed temp, and
 // reclaims the chunks, stage 0's `TryEmitScopeCopyOut` with the RC-normalizing copy.
 let emitUnguardedScopeCopyOut copyOut (resultType: SemanticType) resultTemp cursorSlot endSlot preRestoreSlot state =
@@ -5212,6 +5241,7 @@ let emitUnguardedScopeCopyOut copyOut (resultType: SemanticType) resultTemp curs
             |> markCopyRuntime(ordinaryRcPlacementAllowed(restored))(copyTemp)
             |> releaseCellTailDuplicateAfterCopy(copyOut)(resultType)(resultTemp)
             |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+            |> releaseCopiedRetainedPatternOwnerResult(resultType)(resultTemp)
             |> (given (closed) -> (closed, copyTemp))
 
 // With a capability in the program the copy-out runs only while no one-shot post is pending: the

@@ -21397,4 +21397,45 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("mutual group fresh option cell", samples, maxRssKb: 16_000);
     }
+
+
+    private static string BuildLoopReturnsMatchedLastElementProgram(int rounds)
+        => $$"""
+            let recursive lastPiece (pieces: List(Str)) =
+                match pieces with
+                    | [] -> ""
+                    | last :: [] -> last
+                    | _ :: rest -> lastPiece(rest)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + Ashes.Text.byteLength(lastPiece(["rc", "drop", Ashes.Text.fromInt(1000000 + n)])))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_returning_element_matched_with_nested_empty_pattern_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An arm returning a pattern binding retains it for the match result, and the arm's nested
+        // `[]` subpattern gives it a scope whose copy-out replaces the value with a copy: the retain of
+        // the original is released after the copy, or every call keeps one string.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopReturnsMatchedLastElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{7L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop returning element matched with nested empty pattern", samples, maxRssKb: 16_000);
+    }
 }

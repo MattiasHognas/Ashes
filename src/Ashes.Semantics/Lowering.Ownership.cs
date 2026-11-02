@@ -2410,6 +2410,7 @@ public sealed partial class Lowering
             else if (hadAliveOwned && resultTemp >= 0
                 && TryEmitScopeCopyOut(resultType, resultTemp, cursorSlot, endSlot, preRestoreEndSlot, out int copiedResultTemp))
             {
+                ReleaseCopiedRetainedPatternOwnerResult(resultTemp, resultType);
                 return copiedResultTemp;
             }
             // else: heap type that cannot be copy-outed, or no owned values to reclaim.
@@ -2418,6 +2419,32 @@ public sealed partial class Lowering
 
         PopTrackedOwnershipScope();
         return resultTemp;
+    }
+
+    // An arm returning a pattern binding retains it for the join, so a scope copy-out that replaces the
+    // value with its copy releases that retain: a reference-counted original would otherwise keep it.
+    // With a capability in the program the copy-out may be skipped while a post is pending, leaving the
+    // original as the result, so the retain is kept there.
+    private void ReleaseCopiedRetainedPatternOwnerResult(int resultTemp, TypeRef resultType)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_COPIEDOWNERRESULT") is not null
+            || CapabilityGlobalCount > 0
+            || !_retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
+            || !temps.Contains(resultTemp))
+        {
+            return;
+        }
+
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, resultTemp));
+        string skipLabel = NewLabel("rc_copied_owner_result_kept");
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, skipLabel));
+        Emit(new IrInst.RcDrop(
+            resultTemp,
+            TcoRuntimeManagedTypeName(resultType),
+            OwnerSlot: -1,
+            RuntimeManaged: true));
+        Emit(new IrInst.Label(skipLabel));
     }
 
     /// <summary>
