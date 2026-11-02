@@ -3527,6 +3527,77 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_returned_closure_applied_at_once_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `make(n)("a")` applies the reference-counted closure `make` returns where it is made; the
+        // call releases it, and the owner it took over, once its result is settled.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let make (n: Int) = let s = tag(n) in given (x) -> x + s
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(make(n)("a")))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("returned closure applied at once", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_if_between_capturing_closures_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each `if` returns one of two closures: `pick`'s both take its reference-counted `let` owner
+        // over, `only`'s else branch alone does. The branch whose closure does not take the owner
+        // releases it.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let pick (n: Int) = let s = tag(n) in if n % 2 == 0 then (given (x) -> x + s) else (given (x) -> s + x)
+
+                let only (n: Int) = let s = tag(n) in if n % 2 == 0 then (given (x) -> x + "?") else (given (x) -> s + x)
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(pick(n)("a")) + Ashes.Text.byteLength(only(n)("a")))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 11 / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("if between capturing closures", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_closure_in_escaping_aggregate_keeps_its_captured_let_owner()
     {
         if (!OperatingSystem.IsLinux())

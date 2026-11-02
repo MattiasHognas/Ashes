@@ -1444,6 +1444,10 @@ its environment takes the owner over and an arena-owned capture beside it is cop
 by its dropper. An arena environment would borrow an owner whose release runs first
 (`GRC_NO_ESCAPINGCLOSUREOWNS`). The self-hosted compiler makes no RC closures yet, so it still borrows
 the owner in both escapes.
+Such a closure applied where it is made (`make(n)("a")`) is lowered as the `let` it stands for
+(`let f = make(n) in f("a")`), whose release follows the use (`GRC_NO_APPLIEDCLOSURELET`). An `if`
+choosing between closures that take the same owner over moves it on both branches, and the branch
+whose closure does not take it releases it (`GRC_NO_IFBRANCHCLOSUREMOVE`).
 The same holds for such a closure stored into an aggregate the function returns. A reference-counted
 tuple, record or single-constructor value takes the RC closure as a child it releases; an arena
 aggregate (a generic `Option` or a list cell whose layout refuses a closure child, and a tuple inside

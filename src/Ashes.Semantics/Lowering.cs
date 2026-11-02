@@ -7251,6 +7251,7 @@ public sealed partial class Lowering
         request = WithReconcilableFreshStringJoinRequest(iff, request);
         bool normalizeStaticStringBranches = ShouldNormalizeStaticStringIfBranches(iff, request);
 
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>? releaseKindsAtIf = SnapshotForClosureBranches(request);
         int slot = NewLocal();
         EnterGeneralRcBranch(endLabel, 0);
         var (tTemp, thenType) = LowerIfBranchIntoSlot(iff.Then, iff.Else, request, null, normalizeStaticStringBranches, slot, out IrInst.StoreLocal thenStore);
@@ -7261,11 +7262,13 @@ public sealed partial class Lowering
 
         _reuseTokens.Clear();
         _reuseTokens.AddRange(reuseTokensAtIf);
+        ClosureBranchMoves? closureMoves = UndoClosureMovesForElse(releaseKindsAtIf, _inst.Count - 2);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         EnterGeneralRcBranch(endLabel, 1);
         var (eTemp, elseType) = LowerIfBranchIntoSlot(iff.Else, iff.Then, request, thenType, normalizeStaticStringBranches, slot, out IrInst.StoreLocal elseStore);
         LeaveGeneralRcBranch();
+        SettleClosureBranchMoves(closureMoves, endLabel);
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();
@@ -11401,7 +11404,59 @@ public sealed partial class Lowering
             return builtinResult;
         }
 
-        return LowerCallGeneral(call, rootExpr, collectedArgs, request);
+        return TryLowerAppliedClosureAsLet(call, rootExpr, collectedArgs, request) ?? LowerCallGeneral(call, rootExpr, collectedArgs, request);
+    }
+
+    // A known function's reference-counted closure result applied where it is made (`make(n)("a")`)
+    // is lowered as the `let` it stands for (`let f = make(n) in f("a")`): the binding owns the
+    // closure and releases it once its use is settled, whatever the use returns.
+    private (int, TypeRef)? TryLowerAppliedClosureAsLet(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
+    {
+        if (!EscapingClosureOwnsCapturesEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_APPLIEDCLOSURELET") is not null
+            || rootExpr is not Expr.Var)
+        {
+            return null;
+        }
+
+        for (int applied = 1; applied < collectedArgs.Count; applied++)
+        {
+            if (ResolveUncopyableResultRuntimeManaged(
+                    rootExpr, applied, new TypeRef.TFun(NewTypeVar(), NewTypeVar()), CopyOutKind.None, runtimeManagedResult: false))
+            {
+                return LowerExpr(AppliedClosureLet(call, rootExpr, collectedArgs, applied), request).AsPair();
+            }
+        }
+
+        return null;
+    }
+
+    private static Expr.Let AppliedClosureLet(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs, int applied)
+    {
+        TextSpan span = GetSpan(call);
+        string name = $"__applied_closure_{span.Start}_{applied}";
+        Expr closure = rootExpr;
+        for (int i = 0; i < applied; i++)
+        {
+            closure = new Expr.Call(closure, collectedArgs[i]);
+            AstSpans.Set(closure, span);
+        }
+
+        Expr body = new Expr.Var(name);
+        AstSpans.Set(body, span);
+        for (int i = applied; i < collectedArgs.Count; i++)
+        {
+            body = new Expr.Call(body, collectedArgs[i]);
+            AstSpans.Set(body, span);
+        }
+
+        Expr.Let let = new(name, closure, body);
+        AstSpans.Set(let, span);
+        return let;
     }
 
     private (int, TypeRef)? LowerCallDirectNamedBinding(
@@ -12152,6 +12207,120 @@ public sealed partial class Lowering
         foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in snapshot)
         {
             info.ReleaseKind = releaseKind;
+        }
+    }
+
+    // An `if` asked for a reference-counted closure chooses between closures that may each take the
+    // same owner over (`if c then (given (x) -> x + s) else (given (x) -> s + x)`). Only one branch
+    // runs, so the else branch takes the owner over as the then branch did, instead of retaining a
+    // reference the owner's moved release never balances.
+    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>? SnapshotForClosureBranches(LoweredValueRequest request)
+        => request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            && EscapingClosureOwnsCapturesEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_IFBRANCHCLOSUREMOVE") is null
+                ? SnapshotOwnershipReleaseKinds()
+                : null;
+
+    // The owners the then branch's closure took over, their release kinds undone so the else branch
+    // can take them over too; the snapshot the else branch's own moves are found against; and the
+    // index of the then branch's jump to the join.
+    private sealed record ClosureBranchMoves(
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> Snapshot,
+        List<OwnershipInfo> MovedByThen,
+        int ThenJumpIndex);
+
+    private static ClosureBranchMoves? UndoClosureMovesForElse(
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>? snapshot,
+        int thenJumpIndex)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        List<OwnershipInfo> moved = [];
+        foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in snapshot)
+        {
+            if (releaseKind != ResourceReleaseKind.Moved
+                && info.ReleaseKind == ResourceReleaseKind.Moved
+                && info.CapturedByClosure
+                && info.RuntimeManaged)
+            {
+                info.ReleaseKind = releaseKind;
+                moved.Add(info);
+            }
+        }
+
+        return new ClosureBranchMoves(snapshot, moved, thenJumpIndex);
+    }
+
+    // An owner one branch's closure took over is released on the other branch, so it stays moved
+    // after the join on both: the else branch releases what only the then branch's closure took over
+    // at its end, and the then branch's jump to the join goes through a block releasing what only the
+    // else branch's closure took over.
+    private void SettleClosureBranchMoves(ClosureBranchMoves? moves, string endLabel)
+    {
+        if (moves is null)
+        {
+            return;
+        }
+
+        List<OwnershipInfo> movedByElseOnly = [];
+        foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in moves.Snapshot)
+        {
+            if (releaseKind != ResourceReleaseKind.Moved
+                && info.ReleaseKind == ResourceReleaseKind.Moved
+                && info.CapturedByClosure
+                && info.RuntimeManaged
+                && !moves.MovedByThen.Contains(info))
+            {
+                movedByElseOnly.Add(info);
+            }
+        }
+
+        foreach (OwnershipInfo info in moves.MovedByThen)
+        {
+            if (info.ReleaseKind != ResourceReleaseKind.Moved)
+            {
+                EmitBranchOwnerRelease(info);
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
+
+        if (movedByElseOnly.Count == 0 || _inst[moves.ThenJumpIndex] is not IrInst.Jump thenJump)
+        {
+            return;
+        }
+
+        string releaseLabel = NewLabel("if_then_closure_move_release");
+        _inst[moves.ThenJumpIndex] = thenJump with { Target = releaseLabel };
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(releaseLabel));
+        movedByElseOnly.ForEach(EmitBranchOwnerRelease);
+        Emit(new IrInst.Jump(endLabel));
+    }
+
+    // Releases an owner on the one branch that did not move it, at a place precise placement keeps.
+    private void EmitBranchOwnerRelease(OwnershipInfo info)
+    {
+        int sourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(sourceTemp, info.Slot));
+        TypeRef type = info.Type is null ? new TypeRef.TStr() : Prune(info.Type);
+        if (type is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(sourceTemp, list.Element);
+        }
+        else if (type is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+        }
+        else if (type is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(sourceTemp, named);
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(sourceTemp, TcoRuntimeManagedTypeName(type), OwnerSlot: -1, RuntimeManaged: true));
         }
     }
 
