@@ -17416,6 +17416,7 @@ public sealed partial class Lowering
         CopyFreshElementsIntoArenaTuple(elements, request);
         bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request, out bool[] normalized);
         RecordLateCopiedHeadTupleDuplicates(tuple, duplicates, runtimeManaged);
+        RecordCallArgumentTupleOwnerDuplicates(tuple, duplicates, runtimeManaged, copiedSuccessor);
         if (copiedSuccessor && runtimeManaged)
         {
             DuplicatePatternOwnerElements(tuple, elements);

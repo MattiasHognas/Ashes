@@ -190,6 +190,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new MutualGroupSiblingResultPipedTemplate());
         registry.Register(new FreshArgumentToClosureOfUnresolvedResultTemplate());
         registry.Register(new SelfCallResultKeptInPlaceTemplate());
+        registry.Register(new LoopHeadBindersInArgumentTupleTemplate());
     }
 }
 

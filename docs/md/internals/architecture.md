@@ -1607,6 +1607,13 @@ none of them reaches keeps the result where it is rather than normalizing it ont
 reference-counted heap, and releases the owned values behind it: its own self-calls, lowered before
 its return decided the result's placement, never take such a copy as owned, so each one leaked a
 cell (`GRC_NO_UNREACHEDRESULTINPLACE`, both stages).
+An arena tuple built in a call's argument from pattern owners (a loop's
+`| Item(name, value) :: rest -> walk(rest)(prepare([(name, value)])(total))`) holds the duplicate
+each owner took for it, and the arena cell never releases them. They are released after the call
+unless the callee's result may reach the argument and does not own itself. A duplicate taken
+behind a branch of the argument keeps its reference. The duplicate and its release are markers
+promoted together with the owner (`GRC_NO_ARGUMENTTUPLEOWNERDUP`, stage 0; stage 1's
+`prepareRecursiveGroup([(name, value)])` kept every recursive function's syntax tree).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that

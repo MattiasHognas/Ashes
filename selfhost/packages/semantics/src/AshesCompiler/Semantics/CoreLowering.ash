@@ -18584,6 +18584,34 @@ let recursive emitCallArgumentRetainReleases (retains: List((Int, Int, SemanticT
 
 let callResultOwnsItself (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || isRuntimeTemp(temp)(state) || isGeneralRcValueType(semanticType)(state)
 
+// The frame's entries for the pattern-owner duplicates an arena tuple of an argument stored: slot
+// -2 when the callee's result may reach the argument, -3 when it may not.
+let isTupleOwnerDuplicateEntry (slot: Int) = slot == -2 || slot == -3
+
+let recursive callArgumentRecordRetainsOnly (retains: List((Int, Int, SemanticType))) =
+    match retains with
+        | [] -> []
+        | (temp, slot, semanticType) :: rest ->
+            if isTupleOwnerDuplicateEntry(slot)
+            then callArgumentRecordRetainsOnly(rest)
+            else (temp, slot, semanticType) :: callArgumentRecordRetainsOnly(rest)
+
+// Stage 0's `LeaveCallArgumentRetainFrame` for the duplicates of `RecordCallArgumentTupleOwnerDuplicates`:
+// each is released after the call unless the callee's result may reach the argument and does not
+// own itself. The release is a marker promoted together with the duplicate, so a root that stays
+// in the arena keeps neither.
+let recursive emitCallArgumentTupleOwnerDuplicateReleases (retains: List((Int, Int, SemanticType))) (resultOwnsItself: Bool) (state: CoreLoweringState) =
+    match retains with
+        | [] -> state
+        | (temp, slot, semanticType) :: rest ->
+            if (slot == -3 || slot == -2 && resultOwnsItself) && !containsInt(temp)(stateReleasedPatternOwnerDuplicates(state))
+            then
+                state
+                |> emit(RcDrop(temp)(patternOwnerTypeName(resolveType(state)(semanticType))(state))(-1)(false)(false)(None))
+                |> withStateReleasedPatternOwnerDuplicates(temp :: stateReleasedPatternOwnerDuplicates(state))
+                |> emitCallArgumentTupleOwnerDuplicateReleases(rest)(resultOwnsItself)
+            else emitCallArgumentTupleOwnerDuplicateReleases(rest)(resultOwnsItself)(state)
+
 let leaveCallArgumentRetainFrame (outerRetains: List((Int, Int, SemanticType))) (outerCollecting: Bool) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
@@ -18591,10 +18619,18 @@ let leaveCallArgumentRetainFrame (outerRetains: List((Int, Int, SemanticType))) 
                 match stateCallArgumentRecordRetains(state) with
                     | [] -> state
                     | retains ->
-                        if callResultOwnsItself(temp)(semanticType)(state)
-                        then
-                            emitCallArgumentRetainReleases(reverse(retains))(state)
-                        else state
+                        let resultOwnsItself = callResultOwnsItself(temp)(semanticType)(state)
+                        in
+                            state
+                            |> emitCallArgumentTupleOwnerDuplicateReleases(reverse(retains))(resultOwnsItself)
+                            |> (given (duplicatesReleased: CoreLoweringState) ->
+                                match callArgumentRecordRetainsOnly(retains) with
+                                    | [] -> duplicatesReleased
+                                    | recordRetains ->
+                                        if resultOwnsItself
+                                        then
+                                            emitCallArgumentRetainReleases(reverse(recordRetains))(duplicatesReleased)
+                                        else duplicatesReleased)
             in lowered with state = withCallArgumentRetainFrame(outerRetains)(outerCollecting)(released)
         | LoweredCoreValue { state = state } -> lowered with state = withCallArgumentRetainFrame(outerRetains)(outerCollecting)(state)
 
@@ -22954,6 +22990,37 @@ let arenaCellFields (types: List(SemanticType)) (runtimeManaged: Bool) (temps: L
     then (state, temps)
     else arenaCellFieldTemps(types)(temps)([])(state)
 
+// Stage 0's `RecordCallArgumentTupleOwnerDuplicates`: an arena tuple built inside a call's argument
+// holds the duplicates its pattern owners took, and the arena cell never releases them, so the
+// call's frame releases each after the call. Only on the argument's straight-line path, outside a
+// loop's successor.
+let recursive tupleOwnerDuplicateEntries (temps: List(Int)) (semanticTypes: List(SemanticType)) (slot: Int) (state: CoreLoweringState) (entries: List((Int, Int, SemanticType))) =
+    match (temps, semanticTypes) with
+        | (temp :: restTemps, semanticType :: restTypes) ->
+            if isDuplicateMarker(temp)(state.reversedInstructions)
+            then tupleOwnerDuplicateEntries(restTemps)(restTypes)(slot)(state)((temp, slot, semanticType) :: entries)
+            else tupleOwnerDuplicateEntries(restTemps)(restTypes)(slot)(state)(entries)
+        | _ -> entries
+
+let recordCallArgumentTupleOwnerDuplicates (successor: Bool) (temps: List(Int)) (semanticTypes: List(SemanticType)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = None } ->
+            match stateBackEdgeArgumentSlot(state) with
+                | Some(_slot) -> lowered
+                | None ->
+                    if backEdgeCopiesTupleSuccessor(successor)(state) || state.nextLabelId != stateCallArgumentLabelStart(state)
+                    then lowered
+                    else
+                        let slot =
+                            if stateCollectingCallArgumentRetains(state)
+                            then -2
+                            else -3
+                        in
+                            lowered with state = withCallArgumentRetainFrame(state
+                            |> stateCallArgumentRecordRetains
+                            |> tupleOwnerDuplicateEntries(temps)(semanticTypes)(slot)(state))(stateCollectingCallArgumentRetains(state))(state)
+        | _ -> lowered
+
 let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -22978,7 +23045,10 @@ let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfe
                                 |> demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes) with
                                     | (demotedState, temps, demoted) ->
                                         match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
-                                            | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)
+                                            | (clonedState, clonedTemps) ->
+                                                clonedState
+                                                |> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)
+                                                |> recordCallArgumentTupleOwnerDuplicates(successor)(clonedTemps)(semanticTypes)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with

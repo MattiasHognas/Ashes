@@ -22,6 +22,10 @@ public sealed partial class Lowering
         public bool Collecting { get; set; }
 
         public int ArgumentStart { get; set; }
+
+        // The pattern-owner duplicates an arena tuple of an argument stored, each with whether the
+        // callee's result may reach the argument it was taken for.
+        public List<(int Temp, TypeRef Type, bool ResultMayReach)> PatternOwnerDuplicates { get; } = [];
     }
 
     private CallArgumentRetainFrame? _callArgumentRetainFrame;
@@ -86,6 +90,40 @@ public sealed partial class Lowering
 
         frame.Retains.Add((retainedTemp, Prune(elementType), retain.RuntimeManaged ? -1 : pendingSlot));
         return true;
+    }
+
+    /// <summary>
+    /// An arena tuple built inside a call's argument holds the duplicates its pattern owners took
+    /// (DuplicatePerceusPatternOwnerForAggregate), and the arena cell never releases them. Each is
+    /// released after the call: the duplicate and its release are markers promoted together with the
+    /// owner, so a root that stays in the arena keeps neither. A duplicate taken behind a branch of
+    /// the argument does not dominate the release and keeps its reference.
+    /// </summary>
+    private void RecordCallArgumentTupleOwnerDuplicates(Expr.TupleLit tuple, List<(int Temp, TypeRef Type)> duplicates, bool runtimeManaged, bool copiedSuccessor)
+    {
+        if (runtimeManaged
+            || copiedSuccessor
+            || duplicates.Count == 0
+            || Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTTUPLEOWNERDUP") is not null
+            || _backEdgeLateCopiedHeadTuples.Contains(tuple)
+            || _callArgumentRetainFrame is not { } frame
+            || !ReferenceEquals(frame.Body, _inst))
+        {
+            return;
+        }
+
+        for (int i = frame.ArgumentStart; i < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.Label)
+            {
+                return;
+            }
+        }
+
+        foreach ((int temp, TypeRef type) in duplicates)
+        {
+            frame.PatternOwnerDuplicates.Add((temp, Prune(type), frame.Collecting));
+        }
     }
 
     private static bool RecordsPendingParameterRetain(int pendingSlot)
@@ -282,7 +320,7 @@ public sealed partial class Lowering
         _callArgumentRetainFrame = outer;
         if (result is not { } finished
             || frame is null
-            || frame.Retains.Count == 0
+            || frame.Retains.Count == 0 && frame.PatternOwnerDuplicates.Count == 0
             || !ReferenceEquals(frame.Body, _inst))
         {
             return;
@@ -292,7 +330,15 @@ public sealed partial class Lowering
         bool resultOwnsItself = CanArenaReset(pruned)
             || IsRuntimeManagedResultTemp(finished.Temp)
             || IsGeneralRcValueType(pruned);
-        if (!resultOwnsItself)
+        foreach ((int temp, TypeRef type, bool resultMayReach) in frame.PatternOwnerDuplicates)
+        {
+            if ((!resultMayReach || resultOwnsItself) && _releasedPatternOwnerDuplicates.Add(temp))
+            {
+                Emit(new IrInst.RcDrop(temp, GetOwnedTypeName(type) ?? "PatternBinding"));
+            }
+        }
+
+        if (!resultOwnsItself || frame.Retains.Count == 0)
         {
             return;
         }

@@ -21716,4 +21716,63 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("read of join between fresh value and loop parameter", samples, maxRssKb: 16_000);
     }
+
+
+    private static string BuildLoopHeadBindersInArgumentTupleProgram(int rounds)
+        => $$"""
+            type Item =
+                | ItemLet(Str, Str)
+
+            let recursive measure (bindings: List((Str, Str))) (total: Int) =
+                match bindings with
+                    | [] -> total
+                    | (name, value) :: rest -> measure(rest)(total + Ashes.Text.byteLength(name) + Ashes.Text.byteLength(value))
+
+            let recursive lowerItems (items: List(Item)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | ItemLet(name, value) :: rest -> lowerItems(rest)(measure([(name, value)])(total))
+
+            let recursive itemsOf (k: Int) (n: Int) =
+                if k == 0
+                then []
+                else ItemLet(Ashes.Text.fromInt(n), Ashes.Text.fromInt(n + 1)) :: itemsOf(k - 1)(n)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + lowerItems(itemsOf(2)(n))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_head_binders_in_argument_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The binders of a loop's list head, put in a tuple of a list literal passed to a call, each
+        // took a duplicate the arena tuple never released. The duplicates are now released after the
+        // call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += 2L * (n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + (n + 1).ToString(System.Globalization.CultureInfo.InvariantCulture).Length);
+            }
+
+            IrProgram ir = LowerProgram(BuildLoopHeadBindersInArgumentTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop head binders in an argument tuple", samples, maxRssKb: 16_000);
+    }
 }
