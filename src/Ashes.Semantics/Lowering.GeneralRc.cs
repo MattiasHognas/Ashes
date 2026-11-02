@@ -1092,7 +1092,7 @@ public sealed partial class Lowering
             && _generalRcOwnedSlots.Count > 0
             && !CanArenaReset(pruned)
             && !ContainsUnresolvedLayoutType(pruned, [])
-            && (CanNormalizeIntoOwnedRuntimeValue(pruned) || HasFixedArenaCopyOut(pruned));
+            && (CanNormalizeIntoOwnedRuntimeValue(pruned) || HasFixedArenaCopyOut(pruned)) && !KeepsUnreachedResultInPlace(bodyTemp, pruned);
         int resultTemp = bodyTemp;
         // Any other result is copied into the arena, where the caller takes it like any fresh
         // result: a copy on the reference-counted heap would be owned by a caller that does not
@@ -1132,6 +1132,19 @@ public sealed partial class Lowering
 
         return HandOverListBuilderHeads(label, resultTemp, pruned);
     }
+
+    // A result the arena has no copy for, that no owned value reaches, stays where it is: normalized
+    // onto the reference-counted heap it would be owned by callers that cannot know it, a self-call
+    // lowered before this return among them, and leak there. The owned slots are released behind it
+    // all the same, since none of them is in its reach.
+    private bool KeepsUnreachedResultInPlace(int bodyTemp, TypeRef resultType)
+        => UnreachedResultInPlaceRuleEnabled
+            && !IsRuntimeManagedResultTemp(bodyTemp)
+            && GetCallCopyOutKind(resultType, out _, out _) is not (CopyOutKind.Shallow or CopyOutKind.List or CopyOutKind.DeepAdt)
+            && OwnedSlotsOutOfResultReach(bodyTemp, resultType, _generalRcOwnedSlots).Count == _generalRcOwnedSlots.Count;
+
+    private static bool UnreachedResultInPlaceRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_UNREACHEDRESULTINPLACE") is null;
 
     // A result that holds its own references releases every owned slot behind it. Any other result
     // (a closure, a tuple) may still point into the owned values: only the ones no value flowing
