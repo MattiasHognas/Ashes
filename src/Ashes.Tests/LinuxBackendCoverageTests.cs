@@ -21098,4 +21098,60 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("arena constructor holding a perform result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildLoopChoiceConsumingCallProgram(int rounds)
+        => $$"""
+            let recursive addNew (candidates: List(Str)) (names: List(Str)) =
+                match candidates with
+                    | [] -> names
+                    | candidate :: rest -> addNew(rest)(candidate :: names)
+
+            let recursive derivePass (derivations: List(Str)) (names: List(Str)) =
+                match derivations with
+                    | [] -> names
+                    | value :: rest ->
+                        derivePass(rest)(if value == "a"
+                        then addNew([value])(names)
+                        else names)
+
+            let recursive count (xs: List(Str)) (n: Int) =
+                match xs with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let probe (n: Int) =
+                count(derivePass(["a", "b" + Ashes.Text.fromInt(n), "a"])(["x"]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_choice_between_parameter_and_consuming_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A tail self-call argument choosing between the loop parameter itself and a call consuming
+        // it: the parameter is placed on the reference-counted heap as a choice accumulator, and the
+        // arm handing it on takes a reference of its own beside the call's owned result. Retained
+        // without that placement, the back edge never released the predecessor.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopChoiceConsumingCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop choice between parameter and consuming call", samples, maxRssKb: 16_000);
+    }
 }

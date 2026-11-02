@@ -123,6 +123,7 @@ public sealed partial class Lowering
         if (joinArms is not null)
         {
             RecordNeutralJoin(resultTemp, joinArms);
+            uniform &= !OwnedArmBesideBorrowedParameter(joinArms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList());
             uniform |= ReachingArmsAllReferenceCounted(joinArms);
         }
 

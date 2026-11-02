@@ -19016,6 +19016,22 @@ let recursive normalizeUnownedJoinArms (slot: Int) (consedElementPlan: Maybe(Arg
                 |> normalizeUnownedJoinArms(slot)(consedElementPlan)(plan)(rest) with
                     | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = arm.armJoinsSelfConsingArms) :: restArms)
 
+// Stage 0's `OwnedArmBesideBorrowedParameter`: an owned arm beside one borrowing a loop parameter. The
+// join is reference-counted on every path but owned on only some, so the borrowing arm takes a
+// reference of its own; a loop parameter the join hands to the next iteration is released as the
+// predecessor at the back edge.
+let recursive anyOwnedJoinArm (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && (arm.armOwned || arm.armRetainedOwner) && !arm.armBorrowsLoopParameter || anyOwnedJoinArm(rest)
+
+let recursive anyParameterBorrowingJoinArm (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && arm.armBorrowsLoopParameter || anyParameterBorrowingJoinArm(rest)
+
+let ownedArmBesideBorrowedParameter (arms: List(MatchArmResult)) = anyOwnedJoinArm(arms) && anyParameterBorrowingJoinArm(arms)
+
 // The arms that reach the join, and how many of them hand it a reference-counted value: one of
 // their own, or a reference a pattern owner retained (stage 0's `IsReferenceCountedJoinArm`).
 let recursive joinArmTally (arms: List(MatchArmResult)) (reaching: Int) (owned: Int) =
@@ -19110,7 +19126,7 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
             in
                 match joinArmTally(arms)(0)(0) with
                     | (reaching, owned) ->
-                        if !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+                        if !outsideSpecialization || joinIsRuntimeManaged(arms) && !ownedArmBesideBorrowedParameter(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching && !ownedArmBesideBorrowedParameter(arms) || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
                         then (state, arms)
                         else
                             match joinNormalizationPlanOf(resultType)(state) with

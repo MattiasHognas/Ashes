@@ -511,6 +511,20 @@ let recursive shapeObserveResets (arguments: List(Expr)) (index: Int) (shadowed:
         | (argument :: restArguments, reset :: restResets) -> shapeObserveReset(argument)(index)(shadowed)(tailOwners)(parameters)(reset) :: shapeObserveResets(restArguments)(index + 1)(shadowed)(tailOwners)(parameters)(restResets)
         | _ -> resets
 
+// Stage 0's `IsCallConsumingParameter`: a call handed the parameter as its last argument, its other
+// arguments and its callee reading no loop parameter, consumes the parameter and returns the list
+// it is to become.
+let recursive shapeCallFunctionReadsNoLoopParameter (function: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(function) with
+        | ExprVar(callee) -> shapeResolveParameter(callee)(shadowed)(parameters) == None
+        | ExprCall(inner, argument, _isSugar, _layout) -> !shapeReadsLoopParameter(argument)(shadowed)(parameters) && shapeCallFunctionReadsNoLoopParameter(inner)(shadowed)(parameters)
+        | _ -> false
+
+let shapeIsCallConsumingParameter (function: Expr) (argument: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(argument) with
+        | ExprVar(passed) -> shapeResolveParameter(passed)(shadowed)(parameters) == Some(index) && shapeCallFunctionReadsNoLoopParameter(function)(shadowed)(parameters)
+        | _ -> false
+
 // Stage 0's `IsAccumulatorEdgeArm` and `IsBranchingAccumulatorEdge`: an arm hands the parameter at
 // `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list,
 // a literal or cells consed onto nil, none of whose elements reads one (nil resets the
@@ -525,6 +539,7 @@ let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadow
                 | ExprVar(tailName) -> shapeResolveParameter(tailName)(shadowed)(parameters) == Some(index) && !shapeReadsLoopParameter(head)(shadowed)(parameters)
                 | _ -> shapeIsResetList(arm)(shadowed)(parameters)
         | ExprList(elements, _isMultiline) -> shapeElementsReadNoLoopParameter(elements)(shadowed)(parameters)
+        | ExprCall(function, argument, _isSugar, _layout) -> shapeIsCallConsumingParameter(function)(argument)(index)(shadowed)(parameters)
         | other -> shapeIsChoiceEdge(other)(index)(name)(shadowed)(parameters)
 and shapeIsChoiceEdge (expression: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(expression) with
