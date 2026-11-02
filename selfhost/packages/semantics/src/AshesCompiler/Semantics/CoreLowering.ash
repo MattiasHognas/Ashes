@@ -1427,6 +1427,11 @@ let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandle
 // result's placement.
 let escapingRcPlacementAllowed (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) || stateHandlerArmOwnResult(state)
 
+// Stage 0's `GeneralRcEnabled` as far as the live-handler context decides it: the function may place
+// ordinary values on the reference-counted heap and no function of the program may run while a
+// one-shot post is pending.
+let generalRcEnabled (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && programMayRunUnderLiveHandlerPost(state) == false
+
 let statePendingClosureNormalizers (state: CoreLoweringState) =
     (let group = state.functionState
     in group.pendingClosureNormalizers)
@@ -24717,7 +24722,7 @@ let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resu
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> lowered
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
+            if generalRcEnabled(state) == false || runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
             then lowered
             else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
         | _ -> lowered
@@ -24772,12 +24777,13 @@ let recursive normalizePlacedConstructorFields (request: ConsumerRequest) (argum
 // Stage 0's `PlaceConstructorOwningFreshChild`: an arena cell never releases what it holds, so a
 // constructor storing a fresh reference-counted value, or a reference taken for the cell, is built
 // on the reference-counted heap instead, owning that value outright and a reference of its own to
-// every other heap field. Answers the arguments and whether the cell is placed there.
+// every other heap field. Answers the arguments and whether the cell is placed there. Without general
+// reference counting the cell stays in the arena.
 let placeConstructorOwningFreshChild (layout: CoreConstructorLayout) arguments (request: ConsumerRequest) (resultType: SemanticType) (runtimeManaged: Bool) (stackAllocate: Bool) lowered =
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> (lowered, runtimeManaged)
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyCellOwnedArgument(request)(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
+            if generalRcEnabled(state) == false || runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyCellOwnedArgument(request)(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
             then (lowered, runtimeManaged)
             else
                 match normalizePlacedConstructorFields(request)(arguments)(temps)(semanticTypes)(state)([]) with
