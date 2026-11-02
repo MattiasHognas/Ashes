@@ -5,7 +5,7 @@
       "namespace": "AshesCompiler.Frontend",
       "version": "0.1.0",
       "source": "registry+https://pkg.ashes-lang.org",
-      "hash": "ash1:ca98e6408c3a99529c98b7453ddabeff49f187c0e200f900899cd2629a28a709",
+      "hash": "ash1:1a90f8b5b26c94f89f6d104b369d6ac4b0a6d70c1b1576e8b385f17cc48d2f3d",
       "dependencies": []
     }
   ]

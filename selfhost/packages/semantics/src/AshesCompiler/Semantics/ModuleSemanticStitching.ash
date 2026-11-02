@@ -921,10 +921,36 @@ let recursive resolveShippedTypeIn name (scopes: List(StitchedModuleScope)) =
 
 let resolveStitchedShippedType name (project: StitchedSemanticProject) = resolveShippedTypeIn(name)(project.scopes)
 
+// A file reaches its own inline modules by qualified path with no import (`Geometry.area` in the
+// file that declares `module Geometry =`). Their scopes are named `<file>#<module>`.
+let resolveOwnInlineModuleExport (referencing: StitchedModuleScope) qualifier kind name (project: StitchedSemanticProject) =
+    match findModule(qualifier)(project.scopes) with
+        | None -> None
+        | Some(target) ->
+            let separator = Ashes.Text.indexOf(referencing.sourcePath)("#")
+            in
+                let file =
+                    if separator < 0
+                    then referencing.sourcePath
+                    else Ashes.Text.take(referencing.sourcePath)(separator)
+                in
+                    if target.sourcePath == file + "#" + qualifier
+                    then
+                        match findExportedDefinition(name)(kind)(target.definitions) with
+                            | None -> None
+                            | Some(definition) ->
+                                definition
+                                |> deepCopy
+                                |> Some
+                    else None
+
 let resolveStitchedQualified moduleName qualifier kind name (project: StitchedSemanticProject) =
     match findModule(moduleName)(project.scopes) with
         | None -> None
         | Some(moduleScope) ->
             match resolveImported(name)(Some(qualifier))(kind)(moduleScope.imports) with
                 | Some(definition) -> Some(definition)
-                | None -> resolveShippedModuleExport(qualifier)(kind)(name)(project)
+                | None ->
+                    match resolveShippedModuleExport(qualifier)(kind)(name)(project) with
+                        | Some(definition) -> Some(definition)
+                        | None -> resolveOwnInlineModuleExport(moduleScope)(qualifier)(kind)(name)(project)

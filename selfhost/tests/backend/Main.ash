@@ -3243,6 +3243,19 @@ let testRunStaticExecutableForShippedListLengthModule shipped unit =
 let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
     assertProgramPrints(buildShippedListLengthSelectorModule(shipped))("selfhostBackendRunShippedListLengthSelector")("selfhost_backend_shipped_list_length_selector_e2e")("4")
 
+// A single file declaring its own inline modules, imported whole and through a selector, and
+// reached through a nested qualified path.
+let buildInlineModuleSingleFileModule shipped name context = codegenShippedSource(shipped)("import Geometry\nimport Geometry.cube as cubed\n\nmodule Geometry =\n    let square = given (x) -> x * x\n    let cube = given (x) -> x * square(x)\n    module Inner =\n        let half = given (x) -> x / 2\n\nAshes.IO.print(square(2) + cubed(2) + Geometry.Inner.half(10))")(name)(context)
+
+let testRunStaticExecutableForInlineModuleSingleFileModule shipped unit =
+    assertProgramPrints(buildInlineModuleSingleFileModule(shipped))("selfhostBackendRunInlineModuleSingleFile")("selfhost_backend_inline_module_single_file_e2e")("17")
+
+// The file reaches its own inline module by qualified path alone, with no import.
+let buildInlineModuleQualifiedOnlyModule shipped name context = codegenShippedSource(shipped)("module Geometry =\n    let one = 1\n\nAshes.IO.print(Geometry.one + 1)")(name)(context)
+
+let testRunStaticExecutableForInlineModuleQualifiedOnlyModule shipped unit =
+    assertProgramPrints(buildInlineModuleQualifiedOnlyModule(shipped))("selfhostBackendRunInlineModuleQualifiedOnly")("selfhost_backend_inline_module_qualified_only_e2e")("2")
+
 // `codegenShippedSource` with the leak check on: the program counts its reference-counted cells
 // and reports the live ones on standard error at its end.
 let codegenShippedSourceLeakChecked shipped source name context =
@@ -5841,6 +5854,8 @@ let run shipped =
     |> testRunStaticExecutableForRealIrPrintBoolFalseModule
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
+    |> testRunStaticExecutableForInlineModuleSingleFileModule(shipped)
+    |> testRunStaticExecutableForInlineModuleQualifiedOnlyModule(shipped)
     |> testLeakCheckReportsTheSameLiveCellsAtOneRoundAndTwo(shipped)
     |> testShippedTypeAnnotationLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBackEdgeHelperCallingABuiltinLeavesNothingPerRound(shipped)

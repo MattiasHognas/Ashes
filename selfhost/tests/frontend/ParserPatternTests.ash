@@ -48,10 +48,20 @@ let checkRefutableLetPattern unit =
     match parseExpression("let (Some(value), other) = item in value") with
         | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
             test.assertEqual(
-                "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns.",
+                "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, record, as) are allowed — use 'match' for refutable patterns.",
                 diagnostic.message
             )
         | _ -> test.fail("expected refutable let-pattern diagnostic")
+
+// A list may be empty and a `let` never fails at run time, so a cons pattern is refused there.
+let checkConsLetPatternIsRefutable unit =
+    match parseExpression("let first :: rest = items in first") with
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
+            test.assertEqual(
+                "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, record, as) are allowed — use 'match' for refutable patterns.",
+                diagnostic.message
+            )
+        | _ -> test.fail("expected refutable cons let-pattern diagnostic")
 
 let run unit =
     unit
@@ -59,3 +69,4 @@ let run unit =
     |> checkComplexPattern
     |> checkLetPattern
     |> checkRefutableLetPattern
+    |> checkConsLetPatternIsRefutable
