@@ -169,6 +169,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new EscapingClosureCaptureTemplate());
         registry.Register(new OneShotPostOwnedFoldTemplate());
         registry.Register(new PerformResultElementTemplate());
+        registry.Register(new AccumulatorAppendPerformResultTemplate());
         registry.Register(new TupleHeadOwnersAtBackEdgeTemplate());
         registry.Register(new ConsInTupleSuccessorTemplate());
         registry.Register(new UpdateFieldMatchJoinTemplate());

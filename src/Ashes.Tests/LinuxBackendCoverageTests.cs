@@ -20794,4 +20794,62 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("unnamed predecessor in arena loop", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildAccumulatorAppendPerformResultProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            let recursive gather (i: Int) (acc: Str) =
+                if i == 0
+                then acc
+                else gather(i - 1)(acc + perform Cap.get(Unit))
+
+            let probe (n: Int) =
+                Ashes.Text.byteLength(handle gather(3)(Ashes.Text.fromInt(n)) with
+                    | Cap.get(u) -> let x = resume("lit") in x + "s"
+                    | return(r) -> r + "r")
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_accumulator_append_of_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop appends a perform's adopted result string to its accumulator in place. The append
+        // copies the result's bytes, so it releases the result; keeping it leaks one string per
+        // append.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildAccumulatorAppendPerformResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{AccumulatorAppendPerformResultLength(rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("accumulator append of perform result", samples, maxRssKb: 16_000);
+    }
+
+    private static long AccumulatorAppendPerformResultLength(int rounds)
+    {
+        long total = 0;
+        for (int n = 1; n <= rounds; n++)
+        {
+            total += n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 13;
+        }
+
+        return total;
+    }
 }

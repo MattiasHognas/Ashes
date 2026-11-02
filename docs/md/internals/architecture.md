@@ -2206,6 +2206,10 @@ branches, so a `match` directly on `perform` there lowers as a `let` binding of 
 over the match. The binding owns the value and releases it after the match, and the arms read its
 parts as views copied out of their scopes (`GRC_NO_PERFORMSCRUTINEE`).
 
+An adopted perform result appended to a loop's string accumulator in place (`ConcatStrTip`) is
+released once its bytes are copied, as a plain concatenation releases its operands
+(`GRC_NO_TIPRIGHTRELEASE`, both compilers).
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the
