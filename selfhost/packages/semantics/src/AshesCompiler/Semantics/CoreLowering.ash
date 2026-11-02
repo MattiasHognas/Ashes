@@ -653,6 +653,10 @@ type CoreFunctionState =
     // lowered: it may run while a one-shot handler's post is pending, so its values stay off the
     // reference-counted heap. A nested function takes its enclosing function's answer.
     | underLiveHandlerPost: Bool
+    // Stage 0's `_loweringHandlerArmOwnResult`: an operation arm closure is being lowered, whose own
+    // escaping result may reach the reference-counted heap under a live handler post, since the
+    // perform site always asks for its arena form and releases the original.
+    | handlerArmOwnResult: Bool
     | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
     | resourceStates: List((Int, ResourceReleaseKind))
     | recursiveDeclarationSpan: Maybe(TextSpan)
@@ -1083,6 +1087,10 @@ let stateLiveHandlerFunctions (state: CoreLoweringState) =
     (let group = state.programState
     in group.liveHandlerFunctions)
 
+let stateEntryRunsUnderLiveHandlerPost (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.entryRunsUnderLiveHandlerPost)
+
 // Stage 0's `ProgramMayRunUnderLiveHandlerPost`: a capability in the program and some function, or
 // the entry, that may run while a one-shot post is pending. The general reference-counting
 // contract is one calling convention for the whole program, so such a program keeps it off.
@@ -1402,6 +1410,22 @@ let stateUnderLiveHandlerPost (state: CoreLoweringState) =
 let withStateUnderLiveHandlerPost value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with underLiveHandlerPost = value))
+
+let stateHandlerArmOwnResult (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.handlerArmOwnResult)
+
+let withStateHandlerArmOwnResult value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with handlerArmOwnResult = value))
+
+// Stage 0's `AllowsOrdinaryRcPlacement`: the function being lowered cannot run while a one-shot
+// post is pending, so its values may be placed on the reference-counted heap.
+let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandlerPost(state) == false
+
+// Stage 0's `AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult`, the gate of an escaping
+// result's placement.
+let escapingRcPlacementAllowed (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) || stateHandlerArmOwnResult(state)
 
 let statePendingClosureNormalizers (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2554,6 +2578,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             pendingSourceFunction = None,
             activeFunctionOrigin = None,
             underLiveHandlerPost = false,
+            handlerArmOwnResult = false,
             pendingClosureNormalizers = [],
             resourceStates = [],
             recursiveDeclarationSpan = None,
@@ -5119,10 +5144,22 @@ let scopeCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
                 | _ -> None
         | _ -> None
 
-let scopeCopyOutInstruction copyOut copyTemp resultTemp =
-    match copyOut with
-        | ShallowScopeCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(true)(RcNormalization)(None)
-        | ListScopeCopyOut -> CopyOutList(copyTemp)(resultTemp)(InlineListHead)(true)(RcNormalization)
+// The copy is reference-counted, or an arena copy where the function may run under a live handler
+// post (stage 0's `normalizeToRuntimeOwnership`).
+let scopeCopyOutInstruction copyOut (runtime: Bool) copyTemp resultTemp =
+    (let purpose =
+        if runtime
+        then RcNormalization
+        else ArenaScopeBoundary
+    in
+        match copyOut with
+            | ShallowScopeCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(runtime)(purpose)(None)
+            | ListScopeCopyOut -> CopyOutList(copyTemp)(resultTemp)(InlineListHead)(runtime)(purpose))
+
+let markCopyRuntime (runtime: Bool) (temp: Int) (state: CoreLoweringState) =
+    if runtime
+    then markRuntimeTemp(temp)(RuntimeNewlyProduced)(state)
+    else state
 
 // Whether this function built `cellTemp` as an arena cell (a cons or tuple allocation).
 let recursive allocatesCell (cellTemp: Int) (instructions: List(IrInstruction)) =
@@ -5166,8 +5203,8 @@ let emitUnguardedScopeCopyOut copyOut (resultType: SemanticType) resultTemp curs
     |> freshTemp with
         | FreshTemp { state = restored, temp = copyTemp } ->
             restored
-            |> emit(scopeCopyOutInstruction(copyOut)(copyTemp)(resultTemp))
-            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+            |> emit(scopeCopyOutInstruction(copyOut)(ordinaryRcPlacementAllowed(restored))(copyTemp)(resultTemp))
+            |> markCopyRuntime(ordinaryRcPlacementAllowed(restored))(copyTemp)
             |> releaseCellTailDuplicateAfterCopy(copyOut)(resultType)(resultTemp)
             |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
             |> (given (closed) -> (closed, copyTemp))
@@ -5197,7 +5234,7 @@ let emitScopeCopyOut copyOut (resultType: SemanticType) resultTemp cursorSlot en
                                     | FreshTemp { state = joined, temp = reloadTemp } ->
                                         joined
                                         |> emit(LoadLocal(reloadTemp)(guardSlot))
-                                        |> markRuntimeTemp(reloadTemp)(RuntimeNewlyProduced)
+                                        |> markCopyRuntime(ordinaryRcPlacementAllowed(joined))(reloadTemp)
                                         |> (given (closed) -> (closed, Some(reloadTemp)))
 
 // The closing reset of a scope that owned and released a binding, stage 0's `PopOwnershipScope`:
@@ -10057,6 +10094,16 @@ let renameInstructionTemps (renames: List((Int, Int))) (instruction: IrInstructi
         | _ ->
             instruction with instruction = mapInstructionTemps(renamedTemp(renames))(instruction.instruction)
 
+// Stage 0's `LowerCallCopyOutResult` copy: reference-counted, or an arena copy where the function may
+// run under a live handler post.
+let plainCallCopyOutInstruction (copyOut: CallCopyOut) (runtime: Bool) (copyTemp: Int) (resultTemp: Int) =
+    if runtime
+    then callCopyOutInstruction(copyOut)(copyTemp)(resultTemp)
+    else
+        match copyOut with
+            | ShallowCallCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(false)(ArenaCallBoundary)(None)
+            | ListCallCopyOut(headCopy) -> CopyOutList(copyTemp)(resultTemp)(headCopy)(false)(ArenaCallBoundary)
+
 // Stage 0's `LowerCallCopyOutResult` for a deferred block: the window reset, the copy of the
 // resolved kind, and the reclaim, all unlocated. The conditional variant never reaches here: a
 // result whose type was unresolved at the call read no returns flag.
@@ -10066,8 +10113,8 @@ let emitUnguardedCallCopyOut copyOut (resultTemp: Int) cursorSlot endSlot preRes
     |> freshTemp with
         | FreshTemp { state = restored, temp = copiedTemp } ->
             (restored
-            |> unlocatedInstruction(callCopyOutInstruction(copyOut)(copiedTemp)(resultTemp))
-            |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+            |> unlocatedInstruction(plainCallCopyOutInstruction(copyOut)(ordinaryRcPlacementAllowed(restored))(copiedTemp)(resultTemp))
+            |> markCopyRuntime(ordinaryRcPlacementAllowed(restored))(copiedTemp)
             |> unlocatedInstruction(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false)), copiedTemp)
 
 // With a capability in the program the copy-out runs only while no one-shot post is pending: the
@@ -10331,10 +10378,11 @@ let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state:
 // Stage 0's `IsGeneralRcValueType`: a resolved type that reaches a named type only the
 // normalization helper expresses and has no fixed copy-out. A value of it follows the contract:
 // passed borrowed, returned owned. A reuse specialization keeps its values in the persistent
-// region and takes no part in it.
+// region and takes no part in it, nor does a program where a function may run under a
+// live handler post.
 let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState) =
     match (stateSpecializationFreshInputs(state), callCopyOutOf(semanticType)(state)) with
-        | (None, None) -> !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
+        | (None, None) -> programMayRunUnderLiveHandlerPost(state) == false && !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
         | _ -> false
 
 let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
@@ -12078,7 +12126,7 @@ let isPlainFunctionBody (state: CoreLoweringState) =
 // Stage 0's `ResolvePassthroughParameter`: the parameter of a plain function whose body returns
 // it on some arms and a fresh value on the others; the direct argument lives in local slot 1.
 let withPassthroughParameter (parameter: Str) (body: Expr) (parameterType: SemanticType) (state: CoreLoweringState) =
-    if isPlainFunctionBody(state) && returnsParameterOrFreshValue(given (arm: Expr) -> producesFreshValue(arm)(state))(parameter)(body)
+    if ordinaryRcPlacementAllowed(state) && isPlainFunctionBody(state) && returnsParameterOrFreshValue(given (arm: Expr) -> producesFreshValue(arm)(state))(parameter)(body)
     then withStatePassthroughParameter(Some((parameter, 1, parameterType)))(state)
     else withStatePassthroughParameter(None)(state)
 
@@ -13043,8 +13091,12 @@ let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
             |> Ashes.Collection.Map.setStr(name)(label))(state)
         | None -> state
 
-// Stage 0's `LowerEscapingResult` at a function body, from an empty request.
-let functionBodyRequest (body: Expr) (state: CoreLoweringState) = escapingResultRequest(body)(emptyConsumerRequest)(state)
+// Stage 0's `LowerEscapingResult` at a function body, from an empty request; a function that may
+// run under a live handler post lowers its body plainly, as stage 0 does.
+let functionBodyRequest (body: Expr) (state: CoreLoweringState) =
+    if escapingRcPlacementAllowed(state)
+    then escapingResultRequest(body)(emptyConsumerRequest)(state)
+    else emptyConsumerRequest
 
 // Stage 0's `EmitRuntimeManagedTcoArgumentNormalization`: bit 0 of the hidden ownership word says
 // whether the caller handed over a retained reference; a borrowed argument is copied into an
@@ -13531,6 +13583,8 @@ let recursive parameterOrdinalOf (name: Str) (names: List(Str)) (ordinal: Int) =
 // Stage 0's `TcoPlacementReason.ReuseAccumulator`: a linear reuse root keeps the arena, its
 // matched cells being rebuilt in place, so the resolved back edge never places it on the
 // reference-counted heap.
+// Stage 0's `TcoPlacementReason.DynamicCapabilityBoundary` keeps every parameter of a loop that
+// may run under a live handler post in the arena the same way.
 let loopParameterIsLinearReuseRoot (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopParameterNameAt(ordinal)(loop.parameterNames) with
         | Some(name) ->
@@ -13542,7 +13596,7 @@ let loopParameterIsLinearReuseRoot (ordinal: Int) (loop: CoreTcoLoop) (state: Co
 let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (slots, shapes) with
         | (slot :: restSlots, shape :: restShapes) ->
-            (let linearReuse = loopParameterIsLinearReuseRoot(ordinal)(loop)(state)
+            (let linearReuse = ordinaryRcPlacementAllowed(state) == false || loopParameterIsLinearReuseRoot(ordinal)(loop)(state)
             in
                 let strManaged = !linearReuse && containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
                 in
@@ -14351,7 +14405,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
 // (`EvaluateTcoListRcEligibility`, `facts.FreshRebuiltList`), so such a parameter gets its active
 // flag at the loop entry like a grown or consumed one, and its placement follows from its type
 // rather than waiting for the body.
-let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && (isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals))
 
 // Stage 0 places a loop parameter on the reference-counted heap only once its type has a
 // resolved layout (`ResolvedLayoutEligible`), so a parameter whose type is still a variable at
@@ -14866,7 +14920,7 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
 let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
-        | Some(shape) -> isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+        | Some(shape) -> ordinaryRcPlacementAllowed(state) && (isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals))
         | None -> false
 
 // A non-resource ADT whose whole cell has no shallow copy and that the contract does not govern:
@@ -16033,7 +16087,7 @@ let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTc
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
             let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
-            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            in ordinaryRcPlacementAllowed(state) && (tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state))
         | None -> false
 
 // The loop parameter an aggregate child reads: the parameter itself, or a record field read out
@@ -16501,8 +16555,9 @@ let calleeCompiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: C
 
 // Stage 0's `TryResolveKnownFunctionResultOwnership`: a saturated call to a callee whose result
 // the provenance classification proved RC-eligible, of a type runtime RC holds, whose lowered
-// body produced a reference-counted result.
-let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeSaturatedAndEligible(facts) && isRuntimeManageableResultType(resultType)(state) && calleeCompiledResultRuntimeManaged(facts)(state)
+// body produced a reference-counted result, read only where this function may place ordinary values on
+// the reference-counted heap.
+let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && calleeSaturatedAndEligible(facts) && isRuntimeManageableResultType(resultType)(state) && calleeCompiledResultRuntimeManaged(facts)(state)
 
 // Stage 0's `IsDirectRuntimeManagedFunctionCall` with `ResolveUncopyableResultRuntimeManaged`:
 // the known result ownership, or a lowered body's reference-counted result of a type runtime RC
@@ -16516,7 +16571,7 @@ let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: Semant
 let appliedLambdaResultRuntimeManaged (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match context.appliedLambdaLabel with
         | Some(label) ->
-            resultSurvivesReset(resultType)(state) == false && isRuntimeManageableResultType(resultType)(state) && (match state
+            ordinaryRcPlacementAllowed(state) && resultSurvivesReset(resultType)(state) == false && isRuntimeManageableResultType(resultType)(state) && (match state
             |> stateFunctionReturnedClosureLabels
             |> innermostStageLabel(context.argumentCount - 1)(label) with
                 | Some(stage) ->
@@ -19194,7 +19249,7 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStr
 // value on the reference-counted heap and the literal branches copy theirs, and the join is
 // uniformly runtime-managed wherever it flows.
 let withReconcilableFreshStringJoinRequest (join: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
-    if request.runtimeString == false && isReconcilableFreshStringJoin(join)(state)
+    if ordinaryRcPlacementAllowed(state) && request.runtimeString == false && isReconcilableFreshStringJoin(join)(state)
     then request with runtimeString = true
     else request
 
@@ -19261,11 +19316,12 @@ let isNullaryConstructorPatternName (name: Str) state =
 
 // The pattern owner fact a binder under the span key `key` carries inside the active loop body:
 // the loop function's classified fact for that binder, when it needs a protective reference. A
-// binder the syntax tree carries no span for (key -1) matches no fact.
+// binder the syntax tree carries no span for (key -1) matches no fact, nor does any binder of a
+// function that may run under a live handler post (stage 0 tracks no pattern owner there).
 let patternOwnerFactFor (key: Int) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(_frame), Some(loop)) ->
-            if key < 0
+            if key < 0 || ordinaryRcPlacementAllowed(state) == false
             then None
             else
                 match lookupPatternBindingFact(key)(loop.patternFacts) with
@@ -19830,7 +19886,7 @@ let emitScrutineeListRelease (ownerSlot: Int) (state: CoreLoweringState) =
 // walk, and a tuple, a named type, or a list over heap elements through the inline structural
 // walk of its release plan.
 let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
-    if scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
+    if ordinaryRcPlacementAllowed(state) && scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
     then
         match resolveType(state)(valueType) with
             | SemString -> Some(MatchScrutineeOwner(scrutineeTypeName = "String", scrutineeIsList = false, scrutineeType = valueType))
@@ -21628,11 +21684,13 @@ let withScrutineeOwner (scrutinee: Expr) (plan: CoreMatchPlan) =
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType } -> plan with scrutineeOwner = scrutineeOwnerOf(scrutinee)(valueTemp)(valueType)(state), scrutineeParameterSlots = scrutineeParameterSlotsOf(scrutinee)(state)
 
+// Stage 0's `ShouldNormalizeStaticStringMatchJoin`: a function that may run under a live handler
+// post normalizes its literal arms only for a consumer that asked for a reference-counted string.
 let withStaticStringNormalization cases (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
-        | CoreMatchPlan { state = state } ->
-            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
+        | CoreMatchPlan { state = state, armRequest = ConsumerRequest { runtimeString = requested } } ->
+            plan with normalizeStaticStrings = (ordinaryRcPlacementAllowed(state) || requested) && shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
 
 // Stage 0's `PatternBindsHeapValue`: whether `pattern`, matched against a value of
 // `semanticType`, may bind a value that is not a copy type; any shape it cannot see through counts
@@ -27759,6 +27817,15 @@ let recursive lowerOperationArmParameters patterns armBody placeholderBody lower
             |> UnsupportedOperationArmResume(capName)
             |> failure(state)
 
+// Lowers an operation arm closure with its own escaping result admitted to the reference-counted
+// heap, restoring the enclosing answer after it.
+let withArmOwnResult build (state: CoreLoweringState) =
+    match state
+    |> withStateHandlerArmOwnResult(true)
+    |> build with
+        | LoweredCoreValue { state = built } as lowered ->
+            lowered with state = withStateHandlerArmOwnResult(stateHandlerArmOwnResult(state))(built)
+
 // A bare tail `resume(e)` (the arm's whole unwrapped body, no let/letrec prefix) reuses the plain
 // closure/match lowering machinery via buildArmParameterExpr, which — unlike
 // lowerOperationArmParameters — also supports non-variable operation parameters (synthetic name +
@@ -27788,7 +27855,7 @@ let recursive installOperationArmClosures capName ops opArms frameTemp globalCou
                 match findCapabilityOperationIndex(opName)(ops) with
                     | None -> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
                     | Some(opIndex) ->
-                        match buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount)(state) with
+                        match withArmOwnResult(buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount))(state) with
                             | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                             | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } ->
                                 closureState
@@ -32249,7 +32316,7 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateMoveFunctionTable(functionTable)
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
         |> withStateLiveHandlerFunctions(programLiveHandlerFunctions(functionTable)(program.body))
-        |> (given (seeded: CoreLoweringState) -> withStateUnderLiveHandlerPost(seeded.programState.entryRunsUnderLiveHandlerPost)(seeded))
+        |> (given (seeded: CoreLoweringState) -> withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))
         |> withReachSummaries(programReachSummaries(program)))
 
