@@ -103,10 +103,10 @@ Function: __deepcopy_list_12
 
 Function: collect [lambda_9]
   Operations
-    dup:                  14
+    dup:                  19
     drop:                 6
     uniqueness checks:    4
-    allocations:          10
+    allocations:          12
     reused allocations:   0
     reuse tokens:         0
     copies:               0
