@@ -24210,28 +24210,54 @@ let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(S
 // A live token of the rebuilt constructor's layout is consumed whatever the consumer's own
 // placement request: the token was published by the arm that matched this same constructor
 // (`reuseCaseSafe`), and its cell keeps the matched value's reference-counted placement.
+// Stage 0's `CopyFreshStringFieldsIntoArenaCell`: without general reference counting (a program where
+// a function may run while a handler's one-shot post is pending) an arena constructor cell releases
+// nothing it holds, so a newly produced reference-counted string field is stored as an arena copy
+// and the original is released right away, as an arena cons cell does with such a head.
+let recursive arenaCellFieldTemps (types: List(SemanticType)) (temps: List(Int)) (copied: List(Int)) (state: CoreLoweringState) =
+    match (types, temps) with
+        | (fieldType :: restTypes, temp :: restTemps) ->
+            match (resolveType(state)(fieldType), runtimeTempStateOf(temp)(state)) with
+                | (SemString, Some(RuntimeNewlyProduced)) ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = copyTemp } ->
+                            allocated
+                            |> emit(CopyOutArena(copyTemp)(temp)(-1)(false)(IndependentClone)(None))
+                            |> releaseConsumedOperand(temp)
+                            |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
+                | _ -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
+        | _ ->
+            (state, append(reverse(copied))(temps))
+
+let arenaCellFields (types: List(SemanticType)) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+    if runtimeManaged || programMayRunUnderLiveHandlerPost(state) == false
+    then (state, temps)
+    else arenaCellFieldTemps(types)(temps)([])(state)
+
 let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (stackAllocate: Bool) (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     (let fieldCount = coreListLength(temps)
     in
-        match if stackAllocate
-        then None
-        else reuseConsumeToken(ctorName)(fieldCount)(tagless)(state) with
-            | Some((token, consumedState)) -> allocateReusedConstructorCell(arguments)(argumentTypes)(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
-            | None ->
-                match freshTemp(state) with
-                    | FreshTemp { state = allocatedState, temp = resultTemp } ->
-                        // `runtimeManaged` is the consumer's placement request: the dead top-level
-                        // `let` path's flag carried by the constructor shape, or a request the
-                        // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
-                        // without one the cell is arena-placed.
-                        match allocatedState
-                        |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(stackAllocate)(runtimeManaged)(tagless)
-                        |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(temps) with
-                            | (materializedState, materializedTemps) ->
-                                materializedState
-                                |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
-                                |> markAggregateRuntimeManaged(resultTemp)(stackAllocate == false && specializationCellsArePersistent(state) == false && runtimeManaged)
-                                |> success(resultTemp)(resolveType(materializedState)(resultType)))
+        match arenaCellFields(argumentTypes)(runtimeManaged)(temps)(state) with
+            | (fieldState, fieldTemps) ->
+                match if stackAllocate
+                then None
+                else reuseConsumeToken(ctorName)(fieldCount)(tagless)(fieldState) with
+                    | Some((token, consumedState)) -> allocateReusedConstructorCell(arguments)(argumentTypes)(token)(tag)(fieldCount)(tagless)(layout)(resultType)(fieldTemps)(consumedState)
+                    | None ->
+                        match freshTemp(fieldState) with
+                            | FreshTemp { state = allocatedState, temp = resultTemp } ->
+                                // `runtimeManaged` is the consumer's placement request: the dead top-level
+                                // `let` path's flag carried by the constructor shape, or a request the
+                                // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
+                                // without one the cell is arena-placed.
+                                match allocatedState
+                                |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(stackAllocate)(runtimeManaged)(tagless)
+                                |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(fieldTemps) with
+                                    | (materializedState, materializedTemps) ->
+                                        materializedState
+                                        |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
+                                        |> markAggregateRuntimeManaged(resultTemp)(stackAllocate == false && specializationCellsArePersistent(state) == false && runtimeManaged)
+                                        |> success(resultTemp)(resolveType(materializedState)(resultType)))
 
 let finishConstructorAllocation arguments (stackAllocate: Bool) layout resultType runtimeManaged lowered =
     match (layout, lowered) with
@@ -28190,7 +28216,9 @@ let loweredTailSelfCallArguments (state: CoreLoweringState) (reversedTemps: List
 // The request a tail self-call argument is lowered under: the loop function's parameter type,
 // the children transfer, and — for a parameter every self-call grows by one cons cell (stage 0's
 // `AffineConsList` request, `OwnedRuntime(List)`) — a runtime list, so the cell is allocated on
-// the reference-counted heap owning its head when the head is runtime-manageable.
+// the reference-counted heap owning its head when the head is runtime-manageable. A loop that may
+// run while a handler's one-shot post is pending keeps those cells in the arena with its parameter
+// (stage 0's `BuildsRuntimeCellsOutsideHandlerContext`).
 // A `Str` parameter placed by type takes a reference-counted successor only when the successor's
 // concatenation reads the parameter itself (`text + suffix`): stage 0 promotes a concatenation
 // its runtime-managed parameter reaches, so the back edge stores it as the parameter's own value;
@@ -28227,7 +28255,7 @@ let isReleasableAffineConsElement (parameterType: SemanticType) (state: CoreLowe
         | _ -> true
 
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
-    (let grownCons = shape == TcoGrownConsShape && isReleasableAffineConsElement(parameterType)(state)
+    (let grownCons = shape == TcoGrownConsShape && isReleasableAffineConsElement(parameterType)(state) && ordinaryRcPlacementAllowed(state)
     in
         withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = grownCons, runtimeString = runtimeString, runtimeTcoListTailSlot = (if grownCons
         then tailSlot
@@ -32316,7 +32344,8 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateMoveFunctionTable(functionTable)
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
         |> withStateLiveHandlerFunctions(programLiveHandlerFunctions(functionTable)(program.body))
-        |> (given (seeded: CoreLoweringState) -> withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
+        |> (given (seeded: CoreLoweringState) ->
+            withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))
         |> withReachSummaries(programReachSummaries(program)))
 
