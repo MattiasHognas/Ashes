@@ -15733,7 +15733,10 @@ public sealed partial class Lowering
     // never releases what it holds, so the reference goes to an owned slot instead, released once
     // the function's result or the loop's successors hold references of their own (a successor
     // copied at the back edge, a result normalized at the return). A callee that adopted the
-    // reference consumed it, so the slot is left empty.
+    // reference consumed it, so the slot is left empty. A result of unresolved layout (a closure
+    // parameter applied in a generic body) may hold the argument as anything, so the slot is
+    // released only where the function's own result is out of that call's reach: a body that
+    // forwards the call's result keeps the reference to the end.
     private void HandOverArgumentKeptByArenaResultToOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp, TypeRef resultType, bool resultVerifiedRuntimeManaged)
     {
         if (!GeneralRcEnabled
@@ -15741,7 +15744,7 @@ public sealed partial class Lowering
             || resultVerifiedRuntimeManaged
             || valueType is TypeRef.TFun
             || ContainsUnresolvedLayoutType(valueType, [])
-            || ContainsUnresolvedLayoutType(Prune(resultType), [])
+            || (ContainsUnresolvedLayoutType(Prune(resultType), []) && !UnresolvedResultHandedSlotRuleEnabled)
             || !CallResultMayContainArgumentType(resultType, valueType, new HashSet<string>(StringComparer.Ordinal)))
         {
             return;
@@ -15757,6 +15760,9 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(keptLabel));
         RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
     }
+
+    private static bool UnresolvedResultHandedSlotRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_UNRESOLVEDHANDEDSLOT") is null;
 
     // A reference handed over for the callee's result to keep is not in a result whose type has no
     // place for a value of the argument's type: a callee that did not adopt it left it with the
