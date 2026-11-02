@@ -409,6 +409,10 @@ public sealed partial class Lowering
     /// </summary>
     private int PostRegisterIndex => CapabilityGlobalCount;
 
+    // Counts the reference-counted posts lowered so far; a handle whose arms lowered one releases
+    // each post its fold has run.
+    private int _referenceCountedPostCount;
+
     /// <summary>
     /// Index of the live-posts counter global: the number of collected post-resume continuations
     /// not yet folded by their handle. While it is non-zero, every arena restore/reclaim is
@@ -513,7 +517,13 @@ public sealed partial class Lowering
         LoweredValueRequest request)
     {
         var (valueTemp, valueType) = LowerExpr(post.Value, request);
-        var (postTemp, postType) = LowerExpr(post.PostLambda);
+        LoweredValueRequest postRequest = PostLambdaRequest(post.PostLambda);
+        if (postRequest.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure))
+        {
+            _referenceCountedPostCount++;
+        }
+
+        var (postTemp, postType) = LowerExpr(post.PostLambda, postRequest);
 
         // The post runs after its handle exits, transforming the handle's result: R -> R. Its
         // capabilities belong to the enclosing context (the ambient row the arm is lowered under).
@@ -527,6 +537,16 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreCapabilityHandler(PostRegisterIndex, postTemp));
         return (valueTemp, valueType);
     }
+
+    // A post runs at the fold, after the arm's `let` prefix has released its owners, so a post
+    // capturing a reference-counted owner of that prefix is a reference-counted closure whose
+    // environment takes the owner over; the fold releases the post once it has run.
+    private LoweredValueRequest PostLambdaRequest(Expr postLambda)
+        => LoweredValueRequest.None.AddRuntime(
+            AllowsAsyncIndependentRcPlacement
+                && ClosureCapturesRuntimeManagedHeapValue(postLambda)
+                && IsRuntimeRcCopyClosureProducer(postLambda, escapes: true),
+            LoweredValueRuntimeRepresentation.Closure);
 
     /// <summary>The operation's slot index inside a handler frame for its capability (declaration order).</summary>
     private static int OperationDeclIndex(CapabilitySymbol capability, string opName)
@@ -1360,7 +1380,9 @@ public sealed partial class Lowering
 
         // 3. Lower the operation arms to closures (in the enclosing context: an arm belongs
         // lexically outside the handle and its capabilities flow to the enclosing row).
+        int referenceCountedPostsBefore = _referenceCountedPostCount;
         var armClosures = LowerHandleLowerArmClosures(handle, opArms, capabilityInstances, resultType);
+        bool armsMakeReferenceCountedPosts = _referenceCountedPostCount != referenceCountedPostsBefore;
         if (armClosures is null)
         {
             return ReturnNeverWithDummyTemp();
@@ -1381,7 +1403,7 @@ public sealed partial class Lowering
             handle, returnArm, bodyTemp, bodyType, resultType, request);
 
         // 8. Fold the collected one-shot post-resume continuations over the result.
-        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp, resultType);
+        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp, resultType, armsMakeReferenceCountedPosts);
         return (finalResultTemp, resultType);
     }
 
@@ -1634,7 +1656,7 @@ public sealed partial class Lowering
     // handle owns as a reference-counted value is handed to each post under the owned-argument
     // contract, so the fold's slot holds an owned reference-counted value before and after every
     // post and the final value is reference-counted.
-    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp, TypeRef resultType)
+    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp, TypeRef resultType, bool releasesReferenceCountedPosts)
     {
         int foldId = _nextCapabilitySiteId++;
         string foldLoopLabel = $"posts_fold_{foldId}";
@@ -1672,6 +1694,7 @@ public sealed partial class Lowering
         }
 
         Emit(new IrInst.StoreLocal(foldResultSlot, foldOutTemp));
+        EmitReleaseReferenceCountedPost(postClosureTemp, foldId, releasesReferenceCountedPosts);
         int nextCellTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(nextCellTemp, headTemp, 8));
         Emit(new IrInst.StoreLocal(foldHeadSlot, nextCellTemp));
@@ -1686,6 +1709,23 @@ public sealed partial class Lowering
         }
 
         return finalResultTemp;
+    }
+
+    // A post that owns a captured reference-counted value (see PostLambdaRequest) is the fold's
+    // only reference, released once the post has run; an arena post is reclaimed with its arena.
+    private void EmitReleaseReferenceCountedPost(int postClosureTemp, int foldId, bool armsMakeReferenceCountedPosts)
+    {
+        if (!armsMakeReferenceCountedPosts || !EscapingClosureOwnsCapturesEnabled)
+        {
+            return;
+        }
+
+        string skipLabel = $"posts_fold_{foldId}_arena_post";
+        int isCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(isCountedTemp, postClosureTemp));
+        Emit(new IrInst.JumpIfFalse(isCountedTemp, skipLabel));
+        Emit(new IrInst.RcDrop(postClosureTemp, "Function", RuntimeManaged: true));
+        Emit(new IrInst.Label(skipLabel));
     }
 
     // The ownership word of a post call whose fold slot holds an arena value: bit 1 asks the post

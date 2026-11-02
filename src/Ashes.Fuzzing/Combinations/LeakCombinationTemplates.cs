@@ -166,6 +166,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ReuseSpecializedResultReadByScalarCallerTemplate());
         registry.Register(new OneShotPostResultTemplate());
         registry.Register(new OneShotPostInCallWindowTemplate());
+        registry.Register(new EscapingClosureCaptureTemplate());
     }
 }
 

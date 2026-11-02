@@ -4083,7 +4083,7 @@ public sealed partial class Lowering
         bool runtimeManagedBigInt = placementAllowsRuntimeRc && IsRuntimeRcBigIntProducer(body);
         bool runtimeManagedTuple = placementAllowsRuntimeRc && ProducesFreshTuple(body);
         bool runtimeManagedRecord = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableRecord(body);
-        bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body);
+        bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body, escapes: true);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
             && !runtimeManagedBytes && !runtimeManagedBigInt
@@ -4922,7 +4922,7 @@ public sealed partial class Lowering
         if (_collectInferredTraitElaboration
             || !AllowsAsyncIndependentRcPlacement
             || !AllowsOrdinaryRcPlacement
-            || !IsRuntimeRcCopyClosureProducer(let.Value))
+            || !IsRuntimeRcCopyClosureProducer(let.Value, escapes: IsDirectBindingResult(let.Body, let.Name)))
         {
             lowered = default;
             return false;
@@ -4946,13 +4946,13 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool IsRuntimeRcCopyClosureProducer(Expr expression)
+    private bool IsRuntimeRcCopyClosureProducer(Expr expression, bool escapes = false)
     {
         return expression switch
         {
-            Expr.Lambda lambda => LambdaCapturesOnlyBorrowSafeValues(lambda),
-            Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then)
-                && IsRuntimeRcCopyClosureProducer(conditional.Else),
+            Expr.Lambda lambda => LambdaCapturesOnlyBorrowSafeValues(lambda, escapes),
+            Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then, escapes)
+                && IsRuntimeRcCopyClosureProducer(conditional.Else, escapes),
             _ => false,
         };
     }
@@ -5058,11 +5058,16 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda)
+    // A closure that escapes the scope of a reference-counted owner it captures (the result of its
+    // function or let chain, or a post an operation arm stores) is made reference-counted so its
+    // environment takes the owner over, whatever its body returns: an arena closure would keep a
+    // borrow the owner's release frees before the closure runs.
+    private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda, bool escapes = false)
     {
         HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
         HashSet<string> free = FreeVars(lambda.Body, bound);
         bool capturesOwnedValue = false;
+        bool capturesOnlyRuntimeManagedOwners = true;
         foreach (string name in free)
         {
             OwnershipInfo? owned = LookupOwnedValue(name);
@@ -5088,9 +5093,37 @@ public sealed partial class Lowering
                 return false;
             }
             capturesOwnedValue = true;
+            capturesOnlyRuntimeManagedOwners &= owned.RuntimeManaged
+                || owned.Type is { } ownedType && CanRuntimeNormalizeClosureCapture(ownedType);
         }
 
-        return !capturesOwnedValue || IsKnownCopyClosureResult(lambda.Body);
+        return !capturesOwnedValue
+            || IsKnownCopyClosureResult(lambda.Body)
+            || escapes && capturesOnlyRuntimeManagedOwners && EscapingClosureOwnsCapturesEnabled;
+    }
+
+    private static bool EscapingClosureOwnsCapturesEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCLOSUREOWNS") is null;
+
+    // An arena-owned capture of a reference-counted closure: the arena it lives in is reclaimed
+    // before the closure runs, so the environment holds a reference-counted copy its dropper
+    // releases. Null for a capture the closure borrows or takes over as it is.
+    private int NormalizeArenaCapture(string capture, int captureTemp, LoweredValueRequest request)
+        => NormalizedArenaCaptureType(capture, request) is { } arenaCaptureType
+            ? EmitRuntimeManagedTcoDeepCopy(captureTemp, arenaCaptureType)
+            : captureTemp;
+
+    private TypeRef? NormalizedArenaCaptureType(string capture, LoweredValueRequest request)
+    {
+        if (!EscapingClosureOwnsCapturesEnabled
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            || LookupOwnedValue(capture) is not { RuntimeManaged: false, IsResource: false, IsResourceBearing: false, Type: { } type })
+        {
+            return null;
+        }
+
+        TypeRef captureType = Prune(type);
+        return !CanArenaReset(captureType) && CanRuntimeNormalizeClosureCapture(captureType) ? captureType : null;
     }
 
     private bool IsKnownCopyClosureResult(Expr expression)
@@ -9303,7 +9336,7 @@ public sealed partial class Lowering
                     _suppressTraitConstraintCollection = wasSuppressingTraitConstraints;
                 }
                 // store capTemp into [envPtr + i*8]
-                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capture.capTemp));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, NormalizeArenaCapture(captures[i], capture.capTemp, request)));
                 // Constrain types: the captured binding type should match capTy; already does.
                 fillRanges.Add(new CaptureFillRange(rangeStart, _inst.Count));
             }
@@ -10957,6 +10990,10 @@ public sealed partial class Lowering
                 owned.CapturedByClosure = true;
                 owned.ReleaseKind = ResourceReleaseKind.Moved;
                 runtimeManagedCaptures.Add((ci * 8, owned.Type));
+            }
+            else if (NormalizedArenaCaptureType(captures[ci], request) is { } arenaCaptureType)
+            {
+                runtimeManagedCaptures.Add((ci * 8, arenaCaptureType));
             }
             else if (runtimeManagedClosure
                 && owned is null

@@ -3355,6 +3355,81 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_closure_outliving_its_captured_let_owner_keeps_the_owner()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each closure captures a reference-counted `let` owner and runs after the owner's scope
+        // released it: an operation arm's post under the arm's `let` prefix, and a closure returned
+        // from its function, beside an arena-owned capture. Their environments take the owners over.
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            capability Cap =
+                | get : Unit -> Str
+
+            let tag (n: Int) = Ashes.Text.fromInt(n) + "q"
+
+            let probe (n: Int) =
+                handle perform Cap.get(Unit) with
+                    | Cap.get(u) -> let s = tag(n) in let x = resume("lit") in x + s
+
+            let make (n: Int) = let s = tag(n) in let t = Ashes.Text.fromInt(n) in given (x) -> x + s + t
+
+            let use (n: Int) = let f = make(n) in f("arg")
+
+            let recursive loop (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n) + use(n) + ",")
+
+            Ashes.IO.print(loop(3)(""))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("lit3qarg3q3,lit2qarg2q2,lit1qarg1q1,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_post_owning_its_captured_let_owner_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A post that takes over the arm's reference-counted `let` owner is a reference-counted
+        // closure; the fold releases it, and the owner with it, once the post has run.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                capability Cap =
+                    | get : Unit -> Str
+
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let probe (n: Int) =
+                    handle perform Cap.get(Unit) with
+                        | Cap.get(u) -> let s = tag(n) in let x = resume("lit") in x + s
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("post owning its captured let owner", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

@@ -1432,6 +1432,12 @@ RC copy of a closure (`CopyOutClosure`) runs the closure's environment
 normalizer, which copies each capture into an owned value and attaches the
 dropper to the copy; an arena copy of a reference-counted closure shares the
 captures the original still owns and carries no dropper.
+A closure that outlives the scope of a reference-counted `let` owner it captures (the result of
+its function or `let` chain, or an operation arm's post) is an RC closure whatever its body returns:
+its environment takes the owner over and an arena-owned capture beside it is copied in, both released
+by its dropper. An arena environment would borrow an owner whose release runs first
+(`GRC_NO_ESCAPINGCLOSUREOWNS`). The self-hosted compiler makes no RC closures yet, so it still borrows
+the owner in both escapes.
 
 The IR makes every remaining copy operation declare its purpose:
 
@@ -2163,7 +2169,10 @@ normalization, the generic list deep copy, and the general-RC result) are guarde
 perform in a call's argument, or inside its callee, pushes its post into that call's window, and
 the restore and reclaim are skipped while it is pending, with the result's copy into
 reference-counted storage still made on both paths (`GRC_NO_CALLRESULTPOSTGUARD`). The
-self-hosted compiler guards the same four exits. Programs that declare no capabilities compile byte-for-byte as before — the
+self-hosted compiler guards the same four exits. A post capturing a reference-counted owner of its
+arm's `let` prefix is an RC closure that owns it (see the closure representation above), and the
+fold releases such a post once it has run. The fold emits that release only for a handle whose arms
+lowered such a post. Programs that declare no capabilities compile byte-for-byte as before — the
 guards are only emitted when capabilities exist.
 
 The IR surface is two instructions, `LoadEffectHandler` and `StoreEffectHandler` (see
