@@ -1487,10 +1487,12 @@ public sealed partial class Lowering
 
     // Without general reference counting (code that may run while a handler's one-shot post is
     // pending) an arena constructor cell releases nothing it holds, so a newly produced
-    // reference-counted string stored into a field (a perform's adopted result) would outlive every
-    // reader. The cell stores an arena copy, and the original is released right away, as an arena
-    // cons cell does with such a head.
-    private void CopyFreshStringFieldsIntoArenaCell(List<int> argumentTemps, IReadOnlyList<TypeRef> argumentTypes)
+    // reference-counted value stored into a field (a perform's adopted result, or a call's owned
+    // result) would outlive every reader. The cell stores an arena copy, and the original is
+    // released right away, as an arena cons cell does with such a head. A string is copied flat; a
+    // list, tuple, record or variant is copied deep when every value it reaches can be, and is left
+    // in place otherwise.
+    private void CopyFreshFieldsIntoArenaCell(List<int> argumentTemps, IReadOnlyList<TypeRef> argumentTypes)
     {
         if (GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ARENACTORFRESHFIELD") is not null)
@@ -1500,16 +1502,41 @@ public sealed partial class Lowering
 
         for (int i = 0; i < argumentTemps.Count; i++)
         {
-            if (Prune(argumentTypes[i]) is not TypeRef.TStr || !IsNewlyProducedRcTemp(argumentTemps[i]))
+            if (!IsNewlyProducedRcTemp(argumentTemps[i]))
             {
                 continue;
             }
 
-            int copiedTemp = NewTemp();
-            Emit(new IrInst.CopyOutArena(copiedTemp, argumentTemps[i], -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
-            ReleaseConsumedOwnedOperand(argumentTemps[i]);
-            argumentTemps[i] = copiedTemp;
+            TypeRef fieldType = Prune(argumentTypes[i]);
+            if (fieldType is TypeRef.TStr)
+            {
+                int copiedTemp = NewTemp();
+                Emit(new IrInst.CopyOutArena(copiedTemp, argumentTemps[i], -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+                ReleaseConsumedOwnedOperand(argumentTemps[i]);
+                argumentTemps[i] = copiedTemp;
+            }
+            else if (IsArenaCopiedFreshAggregateField(fieldType))
+            {
+                argumentTemps[i] = EmitArenaCopyOfFreshAggregate(argumentTemps[i], fieldType);
+            }
         }
+    }
+
+    private bool IsArenaCopiedFreshAggregateField(TypeRef fieldType)
+        => Environment.GetEnvironmentVariable("GRC_NO_ARENACTORFRESHAGGREGATE") is null
+            && fieldType is TypeRef.TList or TypeRef.TTuple or TypeRef.TNamedType
+            && !(fieldType is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name))
+            && IsDeepCopyOutSafeType(fieldType);
+
+    private int EmitArenaCopyOfFreshAggregate(int sourceTemp, TypeRef type)
+    {
+        int copiedTemp = EmitDeepCopy(sourceTemp, type);
+        EmitRuntimeManagedChildDrop(sourceTemp, type);
+        _tempOwnershipFacts[sourceTemp] = _tempOwnershipFacts[sourceTemp] with
+        {
+            Ownership = LoweredTempOwnershipKind.Transferred,
+        };
+        return copiedTemp;
     }
 
     private void PrepareConstructorArgumentOwnership(
@@ -1522,7 +1549,7 @@ public sealed partial class Lowering
         RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps, runtimeManagedCandidate);
         if (!runtimeManagedCandidate)
         {
-            CopyFreshStringFieldsIntoArenaCell(argumentTemps, argumentTypes);
+            CopyFreshFieldsIntoArenaCell(argumentTemps, argumentTypes);
             return;
         }
 

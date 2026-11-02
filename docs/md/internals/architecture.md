@@ -2230,7 +2230,10 @@ An arena constructor cell built without general reference counting treats a fiel
 cell treats its head: a newly produced reference-counted string stored there
 (`Item(perform Cap.get(Unit), i)`) is replaced by an arena copy, and the original is released
 before the cell is built (`GRC_NO_ARENACTORFRESHFIELD`, stage 0; stage 1 does not leak on this
-shape and needs no counterpart).
+shape and needs no counterpart). A newly produced list, tuple, record or variant field is replaced
+by an arena deep copy when every value it reaches can be copied, and the original is released the
+same way, so `Item(perform Cap.get(Unit), i)` with a `List(Str)` result no longer strands the list
+(`GRC_NO_ARENACTORFRESHAGGREGATE`, stage 0; stage 1 does not leak on this shape either).
 
 ### One-shot resumptive arms: the pre/post split
 

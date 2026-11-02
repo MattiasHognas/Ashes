@@ -21154,4 +21154,71 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop choice between parameter and consuming call", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildArenaConstructorFreshListProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> List(Str)
+
+            capability Name =
+                | get : Unit -> Str
+
+            type Item =
+                | Item(List(Str), Int)
+
+            let twice (s: Str) = [s + "!", s]
+
+            let make (i: Int) = Item(perform Cap.get(Unit), i)
+
+            let helped (i: Int) = Item(twice(perform Name.get(Unit)), i)
+
+            let recursive count (ws: List(Str)) (n: Int) =
+                match ws with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let size (it: Item) =
+                match it with
+                    | Item(ws, k) -> count(ws)(0)
+
+            let probe (n: Int) =
+                let performed =
+                    size(handle make(n) with
+                        | Cap.get(u) -> resume(["lit", Ashes.Text.fromInt(n)]))
+                in
+                    performed + size(handle helped(n) with
+                        | Name.get(u) -> resume(Ashes.Text.fromInt(n)))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_constructor_holding_fresh_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The functions run inside the handle, so their constructor cells stay in the arena, which
+        // never releases what it holds. The perform's list, and the list a helper builds from a
+        // perform's string, stored into a field outlived every reader; the cell now stores an arena
+        // deep copy and the original is released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaConstructorFreshListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena constructor holding a fresh list", samples, maxRssKb: 16_000);
+    }
 }
