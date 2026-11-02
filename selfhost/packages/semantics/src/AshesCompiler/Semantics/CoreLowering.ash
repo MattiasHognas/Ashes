@@ -23085,6 +23085,27 @@ let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (
         | Some(_slot) -> referenceOrCopyLoopExitTail(tailTemp)(tailType)(state)
         | None -> prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(state)
 
+// Stage 0's `KeepEscapingArenaCellFreshHeadOwned`: an escaping arena cell (a call's argument the
+// callee's result may reach) is the only holder of a value produced right there, a fresh tuple
+// consed onto an accumulator passed to a recursive call, and an arena cell releases nothing. The
+// value goes to an owned slot, released once the function's result holds references of its own.
+let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headType: SemanticType) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = None } ->
+            let resolved = resolveType(state)(headType)
+            in
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && isGeneralRcValueType(resolved)(state)
+                then
+                    match freshLocal(state) with
+                        | FreshLocal { state = allocated, local = ownedSlot } ->
+                            let kept =
+                                allocated
+                                |> emit(StoreLocal(ownedSlot)(headTemp))
+                                |> registerGeneralRcOwnedSlot(ownedSlot)(resolved)
+                            in lowered with state = kept
+                else lowered
+        | _ -> lowered
+
 // The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
 // it exactly like an escaping tuple element, and is retained. A recursive producer result stored
 // in a runtime cell also needs its own reference when an existing local owns the tail.
@@ -23109,6 +23130,7 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                                             | (ownedState, ownedTemp) -> success(ownedTemp)(tailType)(ownedState))
                                     |> retainLoopParameterChild(tailExpression)(preparedTemp)
                                     |> recordArenaCellParameterRetain(!managed)(tailExpression)(preparedTemp)
+                                    |> keepEscapingArenaCellFreshHeadOwned(transfers && !managed)(headTemp)(headType)
                         else tail with state = preparedState, temp = preparedTemp
         | _ -> tail
 
