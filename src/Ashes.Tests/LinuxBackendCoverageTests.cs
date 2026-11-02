@@ -20270,4 +20270,62 @@ public sealed class LinuxBackendCoverageTests
         long MaxRssKb,
         double CpuMilliseconds);
     private readonly record struct MemoryExecutionResult(string Stdout, long MaxRssKb);
+
+    private static string BuildPerformResultElementProgram(int rounds)
+        => $$"""
+            capability Fetch =
+                | get : Unit -> List(Str)
+
+            let first (xs: List(Str)) =
+                match xs with
+                    | [] -> ","
+                    | h :: _ -> h
+
+            let probe (n: Int) =
+                handle first(perform Fetch.get(Unit)) with
+                    | Fetch.get(u) -> resume([Ashes.Text.fromInt(n) + "h", "b"])
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_perform_result_passed_to_element_returning_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A perform's result list goes straight to a callee that returns its head. The string result
+        // is copied out on the arena branch of the call's ownership flag, sharing nothing with the
+        // list, so the caller releases the list with its heads there and each round's fresh head is
+        // freed.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildPerformResultElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{PerformResultElementLength(rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("perform result passed to element-returning call", samples, maxRssKb: 16_000);
+    }
+
+    private static long PerformResultElementLength(int rounds)
+    {
+        long total = 0;
+        for (int n = 1; n <= rounds; n++)
+        {
+            total += n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 1;
+        }
+
+        return total;
+    }
 }

@@ -1539,7 +1539,12 @@ the same way and the callee copies its result into the arena before releasing it
 (`GRC_NO_UNKNOWNCALLEEARENA` switches this off). A lambda applied where it is written (`names |>
 (given (xs) -> keep(xs))`) is compiled under its own label just before its call, so its body
 verifies its reference-counted result the way a named callee's does, and the list consumed by the
-pipe is released with its heads rather than spine-only (`GRC_NO_APPLIEDLAMBDAVERIFIED`).
+pipe is released with its heads rather than spine-only (`GRC_NO_APPLIEDLAMBDAVERIFIED`). A call
+whose result takes a shallow copy-out (a string, or a cell of scalar fields) behind its returns bit
+releases a consumed argument with its parts on the bit's arena branch, as a head-copying list
+copy-out does: the copy shares nothing with the argument, so a perform's list passed straight to a
+callee that returns one of its heads (`first(perform Fetch.get(Unit))`) no longer keeps that head
+(`GRC_NO_SHALLOWCOPYPARTS`). The owned branch keeps the spine-only release.
 
 A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
 as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry

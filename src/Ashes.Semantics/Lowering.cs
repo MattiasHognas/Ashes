@@ -13483,7 +13483,7 @@ public sealed partial class Lowering
             resultNormalized,
             resultDeepCopied,
             GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false },
-            resultCopyCopiesElements ? runtimeManagedResultFlagTemp : -1,
+            ResultCopyBranchFlagTemp(resultCopyCopiesElements, callResultType, callResultCopyKind, runtimeManagedResult || stableReuseResult, runtimeManagedResultFlagTemp),
             resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0,
             resultCopySeversArgumentReferences,
             resultCopyFlagTemp,
@@ -13619,6 +13619,32 @@ public sealed partial class Lowering
             && !CanArenaReset(callResultType)
             && callResultCopyKind == CopyOutKind.List
             && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
+
+    // The result-ownership flag whose arena branch copies the whole result, so a consumed
+    // argument's parts are released with it there (-1 when there is no such branch). A list copy
+    // that copies its heads is one; a shallow copy behind the flag (a string, or a cell of scalar
+    // fields) is another, sharing nothing with any argument once copied. The flag's copy runs even
+    // while a one-shot post is pending, unlike the unconditional copy-out, so a shallow result
+    // without a flag keeps the child-preserving release.
+    private int ResultCopyBranchFlagTemp(
+        bool resultCopyCopiesElements,
+        TypeRef callResultType,
+        CopyOutKind callResultCopyKind,
+        bool resultSkipsCopy,
+        int runtimeManagedResultFlagTemp)
+    {
+        if (resultCopyCopiesElements)
+        {
+            return runtimeManagedResultFlagTemp;
+        }
+
+        bool shallowCopySevers = Environment.GetEnvironmentVariable("GRC_NO_SHALLOWCOPYPARTS") is null
+            && !resultSkipsCopy
+            && runtimeManagedResultFlagTemp >= 0
+            && callResultCopyKind == CopyOutKind.Shallow
+            && !CanArenaReset(callResultType);
+        return shallowCopySevers ? runtimeManagedResultFlagTemp : -1;
+    }
 
     // A result normalized into an owned value on both of its branches holds a handed-over argument
     // only as itself, so it severs every other reference, and the release is guarded by the result.

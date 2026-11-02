@@ -17476,17 +17476,19 @@ let releaseCallSpineArguments (context: CoreCallContext) (elementCopyingFlagTemp
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } as closed } -> closed
         | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as closed } -> closed with state = releaseConsumedArguments(context)(semanticType)(elementCopyingFlagTemp)(stage)(state)
 
-// Stage 0's `arenaBranchCopiesElements`: the call's result-ownership flag when its result takes
-// the conditional list copy-out and that copy-out copies the heads on its arena branch, so the
-// consumed arguments' release can follow the same branch; -1 otherwise.
-let elementCopyingFlagOf (stage: CoreCallStage) =
+// Stage 0's `ResultCopyBranchFlagTemp`: the call's result-ownership flag when its result takes
+// a conditional copy-out that copies the whole result on its arena branch, a list copy-out that
+// copies the heads or a shallow copy (a string, or a cell of scalar fields), so the consumed
+// arguments' release can follow the same branch; -1 otherwise.
+let elementCopyingFlagOf (context: CoreCallContext) (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp } ->
-            if flagTemp >= 0 && isRuntimeTemp(temp)(state) == false && resultSurvivesReset(semanticType)(state) == false
+            if flagTemp >= 0 && isRuntimeTemp(temp)(state) == false && resultSurvivesReset(semanticType)(state) == false && specializationSelfReuseCall(context)(state) == false
             then
                 match callCopyOutOf(semanticType)(state) with
                     | Some(ListCallCopyOut(InlineListHead)) -> -1
                     | Some(ListCallCopyOut(_headCopy)) -> flagTemp
+                    | Some(ShallowCallCopyOut(_sizeBytes)) -> flagTemp
                     | _ -> -1
             else -1
         | _ -> -1
@@ -18426,7 +18428,7 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 stage
                                 |> closeCallWindow(context)(cursorSlot)(endSlot)
                                 |> ownResultBeforeArgumentRelease(context)
-                                |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage))
+                                |> releaseCallSpineArguments(context)(elementCopyingFlagOf(context)(stage))
                                 |> withCallResultType(applied))
 
 let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
