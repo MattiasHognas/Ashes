@@ -20996,4 +20996,56 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("mutual group fresh tuple cell", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildHandlerContextListAccumulatorProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            let recursive gather (i: Int) (acc: List(Str)) =
+                if i == 0
+                then acc
+                else gather(i - 1)(perform Cap.get(Unit) :: acc)
+
+            let recursive count (xs: List(Str)) (n: Int) =
+                match xs with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let probe (n: Int) =
+                count(handle gather(3)([Ashes.Text.fromInt(n)]) with
+                    | Cap.get(u) -> let x = resume("lit") in "s" :: x
+                    | return(r) -> r)(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_handler_context_list_accumulator_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The loop runs inside the handle, so its list accumulator gets no reference-counted
+        // placement, and its successor cells stay in the arena with it. A counted successor cell
+        // made the accumulator a counted list that the caller copied and nothing released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildHandlerContextListAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{7L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handler-context list accumulator", samples, maxRssKb: 16_000);
+    }
 }

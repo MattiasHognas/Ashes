@@ -181,6 +181,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ClosureInEscapingAggregateTemplate());
         registry.Register(new DeferredGenericStringAddTemplate());
         registry.Register(new MutualGroupFreshTupleCellTemplate());
+        registry.Register(new HandlerContextListAccumulatorTemplate());
     }
 }
 

@@ -12448,6 +12448,14 @@ public sealed partial class Lowering
         return (newArgTemps, newArgTypes);
     }
 
+    // A loop that may run while a handler's one-shot post is pending gets no reference-counted
+    // placement for its list parameter, so its successor cells stay in the arena too: a counted cell
+    // consed onto that parameter would make the parameter a counted list nothing releases, returned
+    // under an arena result and copied by the caller.
+    private bool BuildsRuntimeCellsOutsideHandlerContext
+        => AllowsOrdinaryRcPlacement
+            || Environment.GetEnvironmentVariable("GRC_NO_HANDLERCONTEXTARENACELL") is not null;
+
     private (int Temp, TypeRef Type) LowerCallTcoEvalArg(
         TcoContext tco,
         Expr argument,
@@ -12459,7 +12467,8 @@ public sealed partial class Lowering
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
             && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument))
-            && IsReleasableAffineConsElement(tco, index);
+            && IsReleasableAffineConsElement(tco, index)
+            && BuildsRuntimeCellsOutsideHandlerContext;
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild

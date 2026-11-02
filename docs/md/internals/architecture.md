@@ -2218,6 +2218,14 @@ An adopted perform result appended to a loop's string accumulator in place (`Con
 released once its bytes are copied, as a plain concatenation releases its operands
 (`GRC_NO_TIPRIGHTRELEASE`, both compilers).
 
+A tail-recursive loop that may run while a handler's one-shot post is pending gets no
+reference-counted placement for its list accumulator, so the successor cells it conses onto that
+accumulator stay in the arena with it and the loop takes the compacting back edge. A counted
+successor cell (its head a perform's adopted result) made the accumulator a counted list that
+nothing released: the loop returned it under an arena result flag and the caller copied it
+(`GRC_NO_HANDLERCONTEXTARENACELL`, stage 0). Stage 1 needs no counterpart: it places that
+accumulator on the reference-counted heap by its own design and returns it as an owned result.
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the
