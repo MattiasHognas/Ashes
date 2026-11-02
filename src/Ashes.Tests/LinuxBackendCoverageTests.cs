@@ -21221,4 +21221,57 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("arena constructor holding a fresh list", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildEscapingCellRetainedTailProgram(int rounds)
+        => $$"""
+            type Context =
+                | name: Str
+                | count: Int
+
+            let contextOf (n: Int) = Context(name = Ashes.Text.fromInt(n) + "!", count = n)
+
+            let stage (c: Context) (state: List(Str)) = c.name :: state
+
+            let lowerIn (n: Int) (state: List(Str)) =
+                (let c = contextOf(n)
+                in
+                    match stage(c)(state) with
+                        | applied -> Ashes.Text.fromInt(c.count) :: applied)
+
+            let recursive count (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> count(rest)(k + 1)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + count(lowerIn(n)(["s"]))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_escaping_cell_retained_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The function's result is an arena cell consed onto a list a match bound, so the cell
+        // retains the list before the match releases it, and an arena cell releases nothing. The
+        // retain now goes to an owned slot, released once the result is copied out.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildEscapingCellRetainedTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("escaping cell retained tail", samples, maxRssKb: 16_000);
+    }
 }

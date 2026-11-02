@@ -1585,7 +1585,11 @@ to an owned slot the same way (`GRC_NO_DICTFRESHARG`).
 An arena cons cell built as a call's argument that the callee's result may reach does the same with
 a fresh reference-counted head: in a mutually recursive group the self call is a closure call, not
 a loop, so `derive(rest)((value, binders([])(names)) :: derivations)` builds that argument in the
-arena, and the fresh tuple goes to an owned slot (`GRC_NO_ESCAPINGCELLFRESHHEAD`, stage 0).
+arena, and the fresh tuple goes to an owned slot (`GRC_NO_ESCAPINGCELLFRESHHEAD`, both stages).
+The retain such a cell takes of its tail goes to an owned slot too when no call collects it: a
+function returning `label :: applied` over a list a match bound from a call keeps that list in the
+arena cell after the match releases it, and the slot is released once the result is copied out
+(`GRC_NO_ESCAPINGCELLTAILSLOT`, both stages).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that

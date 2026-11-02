@@ -22463,9 +22463,41 @@ let recordCallArgumentTransferRetain (original: Int) (retained: Int) (semanticTy
     then withCallArgumentRetainFrame((retained, -1, semanticType) :: stateCallArgumentRecordRetains(state))(true)(state)
     else state
 
+let newestIsRuntimeRetain (retained: Int) (state: CoreLoweringState) =
+    match state.reversedInstructions with
+        | IrInstruction { instruction = RcDup(target, _source, true, _mayBeEmpty) } :: _rest -> target == retained
+        | _ -> false
+
+// Stage 0's `KeepEscapingArenaCellTailRetainOwned`: the retain an escaping arena cell took of its
+// tail, when no call argument frame collects it (the cell is a function's result), goes to an owned
+// slot, released once the function's result holds references of its own; the arena cell never
+// releases it.
+let keepArenaCellTailRetainOwned (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(element) ->
+            if retained != original && newestIsRuntimeRetain(retained)(state) && !containsUnresolvedLayout(SemList(element))(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownedSlot } ->
+                        allocated
+                        |> emit(StoreLocal(ownedSlot)(retained))
+                        |> registerGeneralRcOwnedSlot(ownedSlot)(SemList(element))
+            else state
+        | _ -> state
+
 let recordArenaCellTransferRetain (arenaCell: Bool) (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     if arenaCell
     then recordCallArgumentTransferRetain(original)(retained)(semanticType)(state)
+    else state
+
+// An escaping arena cell's tail retain: collected for the call the cell is an argument of, or else
+// kept in an owned slot.
+let recordArenaCellTailRetain (arenaCell: Bool) (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if arenaCell
+    then
+        if retained != original && stateCollectingCallArgumentRetains(state) && state.nextLabelId == stateCallArgumentLabelStart(state)
+        then recordCallArgumentTransferRetain(original)(retained)(semanticType)(state)
+        else keepArenaCellTailRetainOwned(original)(retained)(semanticType)(state)
     else state
 
 // Whether the newest instruction is the loop-parameter retain marker `retainLoopParameterChild` just
@@ -23258,7 +23290,7 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                             match retainAggregateChildTemp(tailExpression)(preparedTemp)(tailType)(preparedState) with
                                 | (retained, retainedTemp) ->
                                     retained
-                                    |> recordArenaCellTransferRetain(!managed)(preparedTemp)(retainedTemp)(tailType)
+                                    |> recordArenaCellTailRetain(!managed)(preparedTemp)(retainedTemp)(tailType)
                                     |> referenceOrCopyUnplacedLetTail(managed && retainedTemp == preparedTemp)(tailExpression)(retainedTemp)(tailType)
                                     |> (given (owned: (CoreLoweringState, Int)) ->
                                         match owned with

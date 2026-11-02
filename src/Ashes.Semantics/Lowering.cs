@@ -17966,9 +17966,7 @@ public sealed partial class Lowering
         {
             // An arena cell that escapes carries a runtime-managed tail (an owned binding or a loop
             // parameter) out of the scope that owns it, exactly like an escaping arena tuple element.
-            int ownTailTemp = tailTemp;
-            tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
-            _ = RecordCallArgumentArenaRetain(ownTailTemp, tailTemp, tailType);
+            tailTemp = RetainEscapingArenaCellTail(cons.Tail, tailTemp, tailType);
             KeepEscapingArenaCellFreshHeadOwned(head);
         }
         MarkResourceArgMoved(cons.Head);
@@ -18034,6 +18032,41 @@ public sealed partial class Lowering
         MarkRuntimeManagedTemp(ownedTemp, type: headType);
         _patternOwnerNormalizedTemps.Add(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
+    }
+
+    // The retain an escaping arena cell takes of its tail is recorded for the call it is an argument
+    // of; any other one (the cell is a function's result) goes to an owned slot, as an escaping arena
+    // tuple's retained child does, since the arena cell never releases it.
+    private int RetainEscapingArenaCellTail(Expr tail, int tailTemp, TypeRef tailType)
+    {
+        int retainedTemp = RetainRuntimeManagedAggregateChild(tail, tailTemp, tailType);
+        if (!RecordCallArgumentArenaRetain(tailTemp, retainedTemp, tailType)
+            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSLOT") is null)
+        {
+            KeepEscapingArenaCellTailRetainOwned(tailTemp, retainedTemp, tailType);
+        }
+
+        return retainedTemp;
+    }
+
+    // Any list type qualifies, not only the contract's: a list the function's result copies out (a
+    // `List(Str)`) is copied before the owned slots are released, so the copy holds its own cells.
+    private void KeepEscapingArenaCellTailRetainOwned(int tailTemp, int retainedTemp, TypeRef tailType)
+    {
+        if (retainedTemp == tailTemp
+            || !GeneralRcEnabled
+            || _inst.Count == 0
+            || _inst[^1] is not IrInst.RcDup { RuntimeManaged: true } retain
+            || retain.Target != retainedTemp
+            || Prune(tailType) is not TypeRef.TList
+            || ContainsUnresolvedLayoutType(Prune(tailType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(tailType));
     }
 
     // An arena cell that escapes (a call's argument the callee's result may reach) holding a value

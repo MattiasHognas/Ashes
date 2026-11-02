@@ -52,11 +52,11 @@ Function: prefixed
     result fresh: yes
   perceus [lambda_3]
     dup:                  2
-    drop:                 4
-    uniqueness checks:    1
+    drop:                 7
+    uniqueness checks:    2
   representation [lambda_3]
     conservative unknown: 2
-    region:               3
+    region:               4
     runtime rc:           8
     copy value:           2
 
