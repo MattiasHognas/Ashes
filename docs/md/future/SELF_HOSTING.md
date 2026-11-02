@@ -671,6 +671,17 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    specialization's results in place and types a self call's arguments by the loop's declared
    parameters (a crash), a `match` directly on `perform` owns its result under a live handler, and a
    normalized match join whose arms own their references is newly produced.
+
+   **Round 9, 2 November.** Eight rules over five fixes. A tuple scrutinee's list tail walked beside a
+   heap parameter is released, and an accumulator of mixed-size scalar constructors stays in the arena.
+   A cons onto the function's own recursive result takes that result over: the exit census's top
+   class, lists of `Some(TcoOtherShape)` from stage 1's TCO shape walk, went from 285 to 65 cells per
+   function. A record update nested in a loop's literal successor is released field by field, against
+   the retains its construction took (stage 0 only; stage 1 did not leak). A reuse-specialized call's
+   counted result is owned by its caller, including a cons built over the matched parameter's own
+   cell, and a specialization that hands its result over counted takes the ordinary call path instead
+   of leaving its fresh elements in to-space. The census runs 543 cases with none leaking, plain and
+   poisoned, and the exit residual is 1,240, 1,269 and 1,307 cells per added function.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
