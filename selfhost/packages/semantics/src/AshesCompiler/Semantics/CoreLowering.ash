@@ -18932,7 +18932,7 @@ let transferBranchOwnerResult (branch: Expr) (temp: Int) (state: CoreLoweringSta
 // walk would instead read the shared result slot, which the unreachable no-match default wrote
 // last.
 let recordJoinRepresentation (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
-    if generalRcEnabled(state) && joinIsRuntimeManaged(arms)
+    if joinIsRuntimeManaged(arms)
     then recordDecidedRepresentation(resultTemp)(false)(true)(state)
     else state
 
@@ -19110,7 +19110,7 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
             in
                 match joinArmTally(arms)(0)(0) with
                     | (reaching, owned) ->
-                        if generalRcEnabled(state) == false || !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+                        if !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
                         then (state, arms)
                         else
                             match joinNormalizationPlanOf(resultType)(state) with
