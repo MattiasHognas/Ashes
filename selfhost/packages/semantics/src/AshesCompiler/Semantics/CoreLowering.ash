@@ -25683,11 +25683,11 @@ let markConcatResult (target: Int) (runtimeManaged: Bool) (state: CoreLoweringSt
 
 // Stage 0's `LowerStringAdd`: an armed affine accumulator append grows the accumulator's
 // reservation in place (`ConcatStrTip`; the extend and fallback paths live in the backend, and
-// the fallback releases the reference it replaces, so no operand is released here; the
-// runtime-managed flag is decided with the parameter's placement once the body is lowered); any
-// other concatenation is placed on the reference-counted heap when its consumer asked for a
-// runtime string, its result then newly produced, and a newly produced operand is released
-// right after the use.
+// the fallback releases the reference it replaces, so only a newly produced right operand is
+// released here, its bytes copied on both paths; the runtime-managed flag is decided with the
+// parameter's placement once the body is lowered); any other concatenation is placed on the
+// reference-counted heap when its consumer asked for a runtime string, its result then newly
+// produced, and a newly produced operand is released right after the use.
 let emitCoreConcat binary =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
@@ -25697,6 +25697,7 @@ let emitCoreConcat binary =
                         | Some((reservationStart, reservationEnd)) ->
                             targetState
                             |> emit(ConcatStrTip(target)(left)(right)(reservationStart)(reservationEnd)(false))
+                            |> releaseConcatRightOperand(left)(right)
                             |> success(target)(SemString)
                         | None ->
                             targetState

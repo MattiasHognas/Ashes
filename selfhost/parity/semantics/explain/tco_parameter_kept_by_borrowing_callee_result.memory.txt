@@ -66,7 +66,7 @@ Function: joinAll
     result fresh: no
   perceus [lambda_17]
     dup:                  5
-    drop:                 11
+    drop:                 12
     uniqueness checks:    6
   perceus [lambda_16]
     dup:                  0
@@ -74,7 +74,7 @@ Function: joinAll
     uniqueness checks:    0
   perceus [lambda_17__scalarenv0]
     dup:                  5
-    drop:                 11
+    drop:                 12
     uniqueness checks:    6
   representation [lambda_17]
     conservative unknown: 15

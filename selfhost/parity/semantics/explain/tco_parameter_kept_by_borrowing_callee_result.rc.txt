@@ -164,7 +164,7 @@ Function: build
 Function: joinAll [lambda_17]
   Operations
     dup:                  5
-    drop:                 11
+    drop:                 12
     uniqueness checks:    6
     allocations:          2
     reused allocations:   0
@@ -184,7 +184,7 @@ Function: joinAll
 Function: joinAll [lambda_17__scalarenv0]
   Operations
     dup:                  5
-    drop:                 11
+    drop:                 12
     uniqueness checks:    6
     allocations:          2
     reused allocations:   0

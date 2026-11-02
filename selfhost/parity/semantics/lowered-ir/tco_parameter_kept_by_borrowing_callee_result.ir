@@ -1306,6 +1306,7 @@ function lambda_17  [ClosureHelper from joinAll]
   match_end_126:
     LoadLocal             Target=65 Slot=23   (tco_parameter_kept_by_borrowing_callee_result.ash:24:5)
     ConcatStrTip          Target=66 Left=12 Right=65 ResvStartSlot=6 ResvEndSlot=7 RuntimeManaged=true   (tco_parameter_kept_by_borrowing_callee_result.ash:33:42)
+    RcDrop                SourceTemp=65 TypeName=String RuntimeManaged=true
     LoadConstStr          Target=67 StrLabel=str_3   (tco_parameter_kept_by_borrowing_callee_result.ash:33:66)
     ConcatStrTip          Target=68 Left=66 Right=67 ResvStartSlot=6 ResvEndSlot=7 RuntimeManaged=true   (tco_parameter_kept_by_borrowing_callee_result.ash:33:42)
     RcDup                 Target=69 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
