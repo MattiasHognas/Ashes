@@ -2909,6 +2909,7 @@ public sealed partial class Lowering
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression)
             || IsFreshCopyListExpression(expression)
             || expression is Expr.TupleLit tuple && IsFreshGenericTupleExpression(tuple)
+            || ClosureOwnsEscapingCaptures(expression)
             || TryGetEnclosingTcoLoopParameterLocal(expression, out Binding.Local genericListLocal)
                 && Prune(genericListLocal.Type) is TypeRef.TList genericList
                 && CanArenaReset(Prune(genericList.Element));

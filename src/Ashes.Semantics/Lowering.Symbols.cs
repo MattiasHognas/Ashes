@@ -1886,7 +1886,10 @@ public sealed partial class Lowering
             fieldType,
             runtimeManagedParent,
             parentRequest);
-        LoweredValue loweredValue = LowerExpr(argument, request);
+        LoweredValue loweredValue = LowerArenaAggregateElement(
+            argument,
+            request,
+            !runtimeManagedParent && EscapesArenaParent(parentRequest));
         if (runtimeManagedParent && fieldType is TypeRef.TBytes)
         {
             loweredValue = NormalizeRuntimeManagedBytesValue(loweredValue);
@@ -1959,6 +1962,12 @@ public sealed partial class Lowering
         };
     }
 
+    // An arena parent built for an escaping position: a function result, or a value whose
+    // reference-counted representation was asked for and its layout refused.
+    private static bool EscapesArenaParent(LoweredValueRequest parentRequest)
+        => parentRequest.TransfersRuntimeManagedChildren
+            || parentRequest.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple);
+
     // The representation a constructor field's producer may emit: a fresh producer of the field's
     // type stores an owned value straight into a runtime-managed parent.
     private LoweredValueRequest BuildRuntimeManagedConstructorArgumentRequest(
@@ -2003,8 +2012,8 @@ public sealed partial class Lowering
                 LoweredValueRuntimeRepresentation.Tuple)
             .AddRuntime(
                 runtimeManagedParent
-                    && fieldType is TypeRef.TFun
-                    && IsRuntimeRcOwningClosureExpression(argument),
+                    && (fieldType is TypeRef.TFun && IsRuntimeRcOwningClosureExpression(argument)
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam && ClosureOwnsEscapingCaptures(argument)),
                 LoweredValueRuntimeRepresentation.Closure)
             .WithRuntimeAdtContext(parentRequest.RuntimeAdtChildBindings);
     }

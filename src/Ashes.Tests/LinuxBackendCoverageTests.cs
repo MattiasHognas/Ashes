@@ -3527,6 +3527,91 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_closure_in_escaping_aggregate_keeps_its_captured_let_owner()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each closure captures a reference-counted `let` owner and leaves its function inside an
+        // aggregate: a reference-counted tuple takes a reference-counted closure that owns the
+        // owner, an arena Option or list keeps an arena closure holding an arena copy of it, and two
+        // closures sharing one owner each hold a reference.
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let tag (n: Int) = Ashes.Text.fromInt(n) + "q"
+
+            let inTuple (n: Int) = let s = tag(n) in (given (x) -> x + s, n)
+
+            let inOption (n: Int) = let s = tag(n) in Some((given (x) -> x + s, n))
+
+            let inList (n: Int) = let s = tag(n) in [given (x) -> x + s]
+
+            let shared (n: Int) = let s = tag(n) in let t = tag(n + 1) in (given (x) -> x + s, given (y) -> t + y + s)
+
+            let probe (n: Int) =
+                let a = match inTuple(n) with
+                    | (f, m) -> f("lit")
+                in let b = match inOption(n) with
+                    | Some((f, m)) -> f("lit")
+                    | None -> ""
+                in let c = match inList(n) with
+                    | f :: _ -> f("lit")
+                    | [] -> ""
+                in let d = match shared(n) with
+                    | (f, g) -> f("a") + g("b")
+                in a + b + c + d + ","
+
+            let recursive loop (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop(2)(""))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("lit2qlit2qlit2qa2q3qb2q,lit1qlit1qlit1qa1q2qb1q,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_closure_in_escaping_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A reference-counted tuple owns its closures and they own the captured owner: the caller's
+        // release of the tuple releases all of them.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let shared (n: Int) = let s = tag(n) in let t = tag(n + 1) in (given (x) -> x + s, given (y) -> t + y + s)
+
+                let probe (n: Int) =
+                    match shared(n) with
+                        | (f, g) -> f("a") + g("b")
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 8}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("closure in escaping tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_contract_parameter_returned_as_is_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())

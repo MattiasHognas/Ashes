@@ -1444,6 +1444,12 @@ its environment takes the owner over and an arena-owned capture beside it is cop
 by its dropper. An arena environment would borrow an owner whose release runs first
 (`GRC_NO_ESCAPINGCLOSUREOWNS`). The self-hosted compiler makes no RC closures yet, so it still borrows
 the owner in both escapes.
+The same holds for such a closure stored into an aggregate the function returns. A reference-counted
+tuple, record or single-constructor value takes the RC closure as a child it releases; an arena
+aggregate (a generic `Option` or a list cell whose layout refuses a closure child, and a tuple inside
+one, which then stays in the arena too) keeps an arena closure whose environment holds an arena copy
+of the owner, living as long as the aggregate. A second RC closure taking over an owner the first
+already took retains it, so each dropper releases its own reference.
 
 The IR makes every remaining copy operation declare its purpose:
 

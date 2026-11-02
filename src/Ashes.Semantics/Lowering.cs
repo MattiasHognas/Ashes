@@ -5043,6 +5043,11 @@ public sealed partial class Lowering
     // the closure's last reference goes; the aggregate storing the closure releases it as a child.
     private bool IsRuntimeRcOwningClosureExpression(Expr expression)
     {
+        if (ClosureOwnsEscapingCaptures(expression))
+        {
+            return true;
+        }
+
         if (expression is Expr.If conditional)
         {
             return IsRuntimeRcOwningClosureExpression(conditional.Then)
@@ -5074,6 +5079,14 @@ public sealed partial class Lowering
 
         return ownsNormalizedParameter;
     }
+
+    // A closure stored into a reference-counted aggregate that captures reference-counted `let` owners:
+    // the aggregate outlives the owners' scope, so the closure is reference-counted and its
+    // environment takes the owners over, as a closure escaping on its own does.
+    private bool ClosureOwnsEscapingCaptures(Expr expression)
+        => EscapingClosureOwnsCapturesEnabled
+            && ClosureCapturesRuntimeManagedHeapValue(expression)
+            && IsRuntimeRcCopyClosureProducer(expression, escapes: true);
 
     private bool ClosureCapturesRuntimeManagedHeapValue(Expr expression)
     {
@@ -5188,10 +5201,106 @@ public sealed partial class Lowering
     // An arena-owned capture of a reference-counted closure: the arena it lives in is reclaimed
     // before the closure runs, so the environment holds a reference-counted copy its dropper
     // releases. Null for a capture the closure borrows or takes over as it is.
-    private int NormalizeArenaCapture(string capture, int captureTemp, LoweredValueRequest request)
-        => NormalizedArenaCaptureType(capture, request) is { } arenaCaptureType
-            ? EmitRuntimeManagedTcoDeepCopy(captureTemp, arenaCaptureType)
-            : captureTemp;
+    private int NormalizeArenaCapture(Expr.Lambda lambda, string capture, int captureTemp, LoweredValueRequest request)
+    {
+        if (TakesOverMovedCapture(capture, request) && LookupOwnedValue(capture) is { } movedOwner)
+        {
+            // The owner stays live while this closure's body lowers, so the body borrows it as
+            // the first closure's did; the capture classification moves it again afterwards.
+            movedOwner.ReleaseKind = ResourceReleaseKind.None;
+            int retainedTemp = NewTemp();
+            Emit(new IrInst.RcDup(retainedTemp, captureTemp, RuntimeManaged: true));
+            return retainedTemp;
+        }
+
+        if (NormalizedArenaCaptureType(capture, request) is { } arenaCaptureType)
+        {
+            return EmitRuntimeManagedTcoDeepCopy(captureTemp, arenaCaptureType);
+        }
+
+        return _arenaElementClosures.Contains(lambda)
+            && !request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            && LookupOwnedValue(capture) is { RuntimeManaged: true, Type: { } ownedType }
+                ? EmitDeepCopy(captureTemp, Prune(ownedType))
+                : captureTemp;
+    }
+
+    // An owner an earlier reference-counted closure already took over: this closure's dropper
+    // releases its capture too, so its environment holds a reference of its own.
+    private bool TakesOverMovedCapture(string capture, LoweredValueRequest request)
+        => EscapingClosureOwnsCapturesEnabled
+            && request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            && LookupOwnedValue(capture) is { RuntimeManaged: true, CapturedByClosure: true, ReleaseKind: ResourceReleaseKind.Moved, IsResource: false, IsResourceBearing: false };
+
+    // Closures stored into an arena aggregate that escapes the scope of a reference-counted `let`
+    // owner they capture. The arena aggregate cannot release a reference-counted closure, so each
+    // such closure stays in the arena and its environment holds an arena copy of the owner, which
+    // lives as long as the aggregate does.
+    private readonly HashSet<Expr.Lambda> _arenaElementClosures = new(ReferenceEqualityComparer.Instance);
+
+    private LoweredValue LowerArenaAggregateElement(Expr element, LoweredValueRequest request, bool escapingArenaParent)
+    {
+        List<Expr.Lambda> closures = [];
+        if (escapingArenaParent)
+        {
+            CollectArenaElementClosures(element, closures);
+        }
+
+        // A tuple holding such a closure stays in the arena with its parent: a reference-counted
+        // tuple there would be released by nothing.
+        if (closures.Count > 0 && element is Expr.TupleLit)
+        {
+            request = request with
+            {
+                RuntimeRepresentation = request.RuntimeRepresentation & ~LoweredValueRuntimeRepresentation.Tuple,
+            };
+        }
+
+        foreach (Expr.Lambda closure in closures)
+        {
+            _arenaElementClosures.Add(closure);
+        }
+
+        try
+        {
+            return LowerExpr(element, request);
+        }
+        finally
+        {
+            foreach (Expr.Lambda closure in closures)
+            {
+                _arenaElementClosures.Remove(closure);
+            }
+        }
+    }
+
+    private void CollectArenaElementClosures(Expr element, List<Expr.Lambda> closures)
+    {
+        if (element is Expr.TupleLit tuple)
+        {
+            foreach (Expr child in tuple.Elements)
+            {
+                CollectArenaElementClosures(child, closures);
+            }
+        }
+        else if (ClosureOwnsEscapingCaptures(element))
+        {
+            CollectTerminalLambdas(element, closures);
+        }
+    }
+
+    private static void CollectTerminalLambdas(Expr expression, List<Expr.Lambda> lambdas)
+    {
+        if (expression is Expr.If conditional)
+        {
+            CollectTerminalLambdas(conditional.Then, lambdas);
+            CollectTerminalLambdas(conditional.Else, lambdas);
+        }
+        else if (expression is Expr.Lambda lambda)
+        {
+            lambdas.Add(lambda);
+        }
+    }
 
     private TypeRef? NormalizedArenaCaptureType(string capture, LoweredValueRequest request)
     {
@@ -9309,6 +9418,7 @@ public sealed partial class Lowering
         }
 
         var (envPtrTemp, captureAllocIndex, captureFillRanges) = LowerLambdaCoreBuildEnvAllocation(
+            lam,
             captures,
             recursiveGroup,
             stackAllocateClosure,
@@ -9360,6 +9470,7 @@ public sealed partial class Lowering
     }
 
     private (int EnvPtrTemp, int CaptureAllocIndex, List<CaptureFillRange>? CaptureFillRanges) LowerLambdaCoreBuildEnvAllocation(
+        Expr.Lambda lam,
         IReadOnlyList<string> captures,
         RecursiveGroupContext? recursiveGroup,
         bool stackAllocateClosure,
@@ -9416,7 +9527,7 @@ public sealed partial class Lowering
                     _suppressTraitConstraintCollection = wasSuppressingTraitConstraints;
                 }
                 // store capTemp into [envPtr + i*8]
-                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, NormalizeArenaCapture(captures[i], capture.capTemp, request)));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, NormalizeArenaCapture(lam, captures[i], capture.capTemp, request)));
                 // Constrain types: the captured binding type should match capTy; already does.
                 fillRanges.Add(new CaptureFillRange(rangeStart, _inst.Count));
             }
@@ -16893,7 +17004,10 @@ public sealed partial class Lowering
         {
             elementRequest = elementRequest.WithCallerReportedExpectedType(expectedElementType);
         }
-        LoweredValue lowered = LowerExpr(element, elementRequest);
+        LoweredValue lowered = LowerArenaAggregateElement(
+            element,
+            elementRequest,
+            runtimeManagedList || listRequest.TransfersRuntimeManagedChildren);
         if (runtimeManagedList)
         {
             lowered = NormalizeRuntimeManagedBytesValue(lowered);
@@ -17325,8 +17439,14 @@ public sealed partial class Lowering
                 LoweredValueRuntimeRepresentation.Adt)
             .AddRuntime(
                 runtimeManagedTuple && element is Expr.RecordLit,
-                LoweredValueRuntimeRepresentation.Record);
-        LoweredValue lowered = LowerExpr(element, elementRequest);
+                LoweredValueRuntimeRepresentation.Record)
+            .AddRuntime(
+                runtimeManagedTuple && ClosureOwnsEscapingCaptures(element),
+                LoweredValueRuntimeRepresentation.Closure);
+        LoweredValue lowered = LowerArenaAggregateElement(
+            element,
+            elementRequest,
+            !runtimeManagedTuple && tupleRequest.TransfersRuntimeManagedChildren);
         if (OwnsKeptPiece(2) && IsNormalizedAlwaysReturnedParameterRead(element))
         {
             MarkRuntimeManagedTemp(lowered.Temp, type: lowered.Type);
@@ -17359,7 +17479,8 @@ public sealed partial class Lowering
                 == LoweredTempRepresentation.RuntimeRc
                 && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
                     || pruned is TypeRef.TList
-                    || pruned is TypeRef.TNamedType);
+                    || pruned is TypeRef.TNamedType
+                    || pruned is TypeRef.TFun && EscapingClosureOwnsCapturesEnabled);
     }
 
     private bool EscapingTupleElementNeedsOwnedCopy(
