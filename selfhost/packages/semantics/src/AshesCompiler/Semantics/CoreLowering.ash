@@ -9363,6 +9363,23 @@ let emitBackEdgeGeneralRcOwnedSlotDrops (reset: CoreTcoReset) (arguments: List(T
                             |> emitFreshGeneralRcSlots(reset.generalRcSlotFacts)(releasedFact)(reset)(arguments)(tmc)(normalized)
             in released with currentSpan = state.currentSpan)
 
+// The reset and its reclaim, each skipped while a one-shot post is pending; the reference-counted
+// successors' stores between them run either way.
+let emitGuardedRuntimeManagedTcoRestore (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuardBy(unlocatedInstruction)(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> unlocatedInstruction(RestoreArenaState(reset.fixedCursorSlot)(reset.fixedEndSlot)(preRestoreSlot)(false))
+            |> emitReservationZeroing(arguments)
+            |> endLivePostsGuardBy(unlocatedInstruction)(skipLabel)
+
+let emitGuardedRuntimeManagedTcoReclaim (reset: CoreTcoReset) preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuardBy(unlocatedInstruction)(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> unlocatedInstruction(ReclaimArenaChunks(reset.fixedEndSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuardBy(unlocatedInstruction)(skipLabel)
+
 let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
@@ -9376,10 +9393,9 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     |> emitLateCopiedCellHeadDrops(reverse(reset.lateCopiedCellHeads))(arguments)
                     |> emitResolvedOwnedDrops(reset.ownedDrops)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
-                    |> unlocatedInstruction(RestoreArenaState(reset.fixedCursorSlot)(reset.fixedEndSlot)(preRestoreSlot)(false))
-                    |> emitReservationZeroing(arguments)
+                    |> emitGuardedRuntimeManagedTcoRestore(reset)(arguments)(preRestoreSlot)
                     |> emitRuntimeManagedBackEdgeStores(stores)
-                    |> unlocatedInstruction(ReclaimArenaChunks(reset.fixedEndSlot)(preRestoreSlot)(false))
+                    |> emitGuardedRuntimeManagedTcoReclaim(reset)(preRestoreSlot)
 
 // What carries an arena loop parameter's successor across the back edge's reset, stage 0's
 // `GetTcoCopyOutKind`: a string copies by its length, a big integer by its limb count, a

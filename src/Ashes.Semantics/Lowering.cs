@@ -1519,11 +1519,16 @@ public sealed partial class Lowering
 
         int resetCursorSlot = info.FixedCursorSlot >= 0 ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = info.FixedEndSlot >= 0 ? info.FixedEndSlot : info.ArenaEndSlot;
+
+        // The reset and its reclaim are skipped while a one-shot post is pending; the successors
+        // are reference-counted, so their stores in between run either way.
+        string? resetSkipLabel = RuntimeManagedTcoResetPostGuardEnabled ? BeginLivePostsGuard() : null;
         TcoBackEdgeEmitResetAndZeroReservations(
             info,
             resetCursorSlot,
             resetEndSlot,
             tcoPreRestoreEndSlot);
+        EndLivePostsGuard(resetSkipLabel);
         for (int i = 0; i < normalizedTemps.Length; i++)
         {
             if (normalizedTemps[i] >= 0)
@@ -1543,9 +1548,15 @@ public sealed partial class Lowering
                 }
             }
         }
+
+        string? reclaimSkipLabel = RuntimeManagedTcoResetPostGuardEnabled ? BeginLivePostsGuard() : null;
         Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot));
+        EndLivePostsGuard(reclaimSkipLabel);
         return true;
     }
+
+    private static bool RuntimeManagedTcoResetPostGuardEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_RCTCORESETGUARD") is null;
 
     private int[] TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs(PendingTcoReset info)
     {
