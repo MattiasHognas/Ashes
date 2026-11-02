@@ -11409,7 +11409,9 @@ public sealed partial class Lowering
 
     // A known function's reference-counted closure result applied where it is made (`make(n)("a")`)
     // is lowered as the `let` it stands for (`let f = make(n) in f("a")`): the binding owns the
-    // closure and releases it once its use is settled, whatever the use returns.
+    // closure and releases it once its use is settled, whatever the use returns. Only a call
+    // whose result is a value the closure hands over qualifies: a task or a closure it returns can
+    // still read the environment the release frees.
     private (int, TypeRef)? TryLowerAppliedClosureAsLet(
         Expr.Call call,
         Expr rootExpr,
@@ -11425,7 +11427,8 @@ public sealed partial class Lowering
 
         for (int applied = 1; applied < collectedArgs.Count; applied++)
         {
-            if (ResolveUncopyableResultRuntimeManaged(
+            if (AppliedClosureResultIsSettled(rootExpr, collectedArgs.Count)
+                && ResolveUncopyableResultRuntimeManaged(
                     rootExpr, applied, new TypeRef.TFun(NewTypeVar(), NewTypeVar()), CopyOutKind.None, runtimeManagedResult: false))
             {
                 return LowerExpr(AppliedClosureLet(call, rootExpr, collectedArgs, applied), request).AsPair();
@@ -11433,6 +11436,32 @@ public sealed partial class Lowering
         }
 
         return null;
+    }
+
+    private bool AppliedClosureResultIsSettled(Expr rootExpr, int argumentCount)
+    {
+        if (rootExpr is not Expr.Var variable || Lookup(variable.Name) is not { } binding)
+        {
+            return false;
+        }
+
+        TypeRef type = Prune(binding.Type);
+        for (int i = 0; i < argumentCount; i++)
+        {
+            if (type is not TypeRef.TFun function)
+            {
+                return false;
+            }
+
+            type = Prune(function.Ret);
+        }
+
+        return type switch
+        {
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool or TypeRef.TStr or TypeRef.TList or TypeRef.TTuple => true,
+            TypeRef.TNamedType named => !string.Equals(named.Symbol.Name, "Task", StringComparison.Ordinal),
+            _ => false,
+        };
     }
 
     private static Expr.Let AppliedClosureLet(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs, int applied)
