@@ -18,9 +18,9 @@ public sealed partial class Lowering
     // recorded before that body's own recursive calls walk it.
     private (string Label, Expr Body)? _curryStage;
 
-    private sealed record PassthroughParameter(string Name, int Slot, TypeRef Type);
+    private sealed record PassthroughParameter(string Name, int Slot, TypeRef Type, string Label);
 
-    private PassthroughParameter? ResolvePassthroughParameter(Expr.Lambda lambda, int argumentSlot, TypeRef parameterType)
+    private PassthroughParameter? ResolvePassthroughParameter(Expr.Lambda lambda, string label, int argumentSlot, TypeRef parameterType)
     {
         if (_tcoCtx is not null
             || _inCoroutineBody
@@ -33,7 +33,7 @@ public sealed partial class Lowering
             return null;
         }
 
-        return new PassthroughParameter(lambda.ParamName, argumentSlot, parameterType);
+        return new PassthroughParameter(lambda.ParamName, argumentSlot, parameterType, label);
     }
 
     private bool ReturnsParameterOrFreshValue(Expr body, string parameterName)
@@ -144,6 +144,17 @@ public sealed partial class Lowering
             result = let.Body;
         }
 
+        if (ConsOntoSelfResultRuleEnabled
+            && IsConsChainOntoSelfCall(result, parameter.Label)
+            && Prune(parameter.Type) is TypeRef.TList list
+            && IsPassthroughNormalizableParameterType(list))
+        {
+            int ownedSlot = ConsChainTailOwnedSlot(branchTemp);
+            int movedTemp = EmitRuntimeManagedTcoListDeepCopyByCopy(branchTemp, list.Element, shareReferenceCountedSuffix: true, moveSharedSuffix: ownedSlot != -2, takenOverSlot: ownedSlot);
+            MarkRuntimeManagedTemp(movedTemp, LoweredTempOwnershipReason.CopyOutNormalization, type: list);
+            return movedTemp;
+        }
+
         if (result is not Expr.Var variable
             || !string.Equals(variable.Name, parameter.Name, StringComparison.Ordinal)
             || Lookup(variable.Name) is not Binding.Local { Slot: int slot }
@@ -159,6 +170,131 @@ public sealed partial class Lowering
         }
 
         return EmitOwnedPassthroughCopy(branchTemp, parameterType);
+    }
+
+    private static bool ConsOntoSelfResultRuleEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_CONSONTOSELFRESULT") is null;
+
+    // A branch consing arena cells onto the function's own full recursive call: that call's result
+    // was promised reference-counted, so the last cell holds an owned reference nothing else
+    // releases. The branch copies its cells onto the heap and links that result as their tail,
+    // taking the reference over, so the join is owned on every branch and copied no further.
+    private bool IsConsChainOntoSelfCall(Expr expression, string label)
+    {
+        Expr tail = expression;
+        if (tail is not Expr.Cons)
+        {
+            return false;
+        }
+
+        while (tail is Expr.Cons cons)
+        {
+            tail = cons.Tail;
+        }
+
+        if (tail is not Expr.Call call)
+        {
+            return false;
+        }
+
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(call, arguments);
+        if (root is not Expr.Var callee)
+        {
+            return false;
+        }
+
+        Binding? binding = Lookup(callee.Name);
+        string? selfLabel = binding is Binding.Self self
+            ? self.FuncLabel
+            : binding is not null && _selfCaptureLabels.TryGetValue(binding, out string? captured) ? captured : null;
+        return selfLabel is not null && CurryStagesTo(selfLabel, label) == arguments.Count;
+    }
+
+    // Where the reference a cons chain's last arena cell holds to its tail is kept: the owned slot
+    // keeping the recursive call's result, which the function's end releases when its result no
+    // longer reaches it; -1 when the tail is a call result or a read of a slot nothing releases; -2
+    // when the chain or its tail is not recognized, and the reference is retained rather than taken
+    // over.
+    private int ConsChainTailOwnedSlot(int valueTemp)
+    {
+        HashSet<int> ownedSlots = [.. _generalRcOwnedSlots.Select(owned => owned.Slot)];
+        int current = ArenaCellOf(valueTemp);
+        for (int hops = 0; hops < 64 && current >= 0; hops++)
+        {
+            int tailTemp = -1;
+            for (int i = _inst.Count - 1; i >= 0; i--)
+            {
+                if (_inst[i] is IrInst.StoreMemOffset { OffsetBytes: 8 } store && store.BasePtr == current)
+                {
+                    tailTemp = store.Source;
+                    break;
+                }
+            }
+
+            switch (tailTemp < 0 ? null : DefinitionOf(tailTemp))
+            {
+                case IrInst.LoadLocal load when ownedSlots.Contains(load.Slot):
+                    return load.Slot;
+                case IrInst.LoadLocal:
+                    return -1;
+                case IrInst.CallClosure or IrInst.CallKnown:
+                    return _inst.OfType<IrInst.StoreLocal>().FirstOrDefault(store => store.Source == tailTemp && ownedSlots.Contains(store.Slot))?.Slot ?? -1;
+                case var cell when IsConsChainCell(cell):
+                    current = tailTemp;
+                    break;
+                default:
+                    return -2;
+            }
+        }
+
+        return -2;
+    }
+
+    // A cons cell the chain builds here: an arena cell, or a list cell built over a reuse token
+    // (the matched parameter's own cell), which is fresh whether the token's cell was on the
+    // arena or the heap.
+    private static bool IsConsChainCell(IrInst? definition)
+        => definition is IrInst.Alloc { RuntimeManaged: false }
+            || (definition is IrInst.AllocReusing { ListCell: true, RuntimeManaged: false }
+                && Environment.GetEnvironmentVariable("GRC_NO_REUSEDCONSCELL") is null);
+
+    // The arena cell a value is, directly or through the one store of the local it is read from.
+    private int ArenaCellOf(int temp)
+    {
+        switch (DefinitionOf(temp))
+        {
+            case var cell when IsConsChainCell(cell):
+                return temp;
+            case IrInst.LoadLocal load:
+                List<IrInst.StoreLocal> stores = [.. _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == load.Slot)];
+                return stores.Count == 1 && IsConsChainCell(DefinitionOf(stores[0].Source)) ? stores[0].Source : -1;
+            default:
+                return -1;
+        }
+    }
+
+    // The number of curried stages from `selfLabel` up to and including `label`, or -1 when the
+    // chain of returned closures from `selfLabel` does not reach it.
+    private int CurryStagesTo(string selfLabel, string label)
+    {
+        string current = selfLabel;
+        for (int stages = 1; stages <= 64; stages++)
+        {
+            if (string.Equals(current, label, StringComparison.Ordinal))
+            {
+                return stages;
+            }
+
+            if (!_functionReturnedClosureLabels.TryGetValue(current, out string? next))
+            {
+                return -1;
+            }
+
+            current = next;
+        }
+
+        return -1;
     }
 
     private int EmitOwnedPassthroughCopy(int sourceTemp, TypeRef type)

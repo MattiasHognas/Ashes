@@ -2,7 +2,7 @@ IR (lowered)
 ============
 
 function lambda_1  [ClosureHelper from reverseOnto]
-  locals=21 temps=25
+  locals=21 temps=24
     LoadEnv               Target=0 Index=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
     StoreLocal            Slot=2 Source=0   (inline_annotation_type_variable_generic_loop.ash:3:1)
     SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
@@ -36,21 +36,21 @@ function lambda_1  [ClosureHelper from reverseOnto]
     Borrow                Target=11 SourceTemp=10
     LoadLocal             Target=12 Slot=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
     Borrow                Target=13 SourceTemp=12
-    LoadLocal             Target=15 Slot=1   (inline_annotation_type_variable_generic_loop.ash:6:53)
-    RcDup                 Target=16 SourceTemp=13
+    LoadLocal             Target=14 Slot=1   (inline_annotation_type_variable_generic_loop.ash:6:53)
+    RcDup                 Target=15 SourceTemp=13
     RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=16
-    Alloc                 Target=17 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
-    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
-    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=15   (inline_annotation_type_variable_generic_loop.ash:6:45)
-    LoadLocal             Target=18 Slot=2   (inline_annotation_type_variable_generic_loop.ash:6:27)
-    LoadLocal             Target=19 Slot=1   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    Alloc                 Target=16 SizeBytes=16   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=14   (inline_annotation_type_variable_generic_loop.ash:6:45)
+    LoadLocal             Target=17 Slot=2   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    LoadLocal             Target=18 Slot=1   (inline_annotation_type_variable_generic_loop.ash:6:27)
     StoreLocal            Slot=2 Source=11   (inline_annotation_type_variable_generic_loop.ash:6:27)
     RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
-    StoreLocal            Slot=1 Source=17   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    StoreLocal            Slot=1 Source=16   (inline_annotation_type_variable_generic_loop.ash:6:27)
     RestoreStackPointer   Slot=8   (inline_annotation_type_variable_generic_loop.ash:6:27)
     Jump                  Target=lambda_1_body   (inline_annotation_type_variable_generic_loop.ash:6:27)
-    LoadConstInt          Target=20 Value=0   (inline_annotation_type_variable_generic_loop.ash:6:27)
-    StoreLocal            Slot=9 Source=20   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    LoadConstInt          Target=19 Value=0   (inline_annotation_type_variable_generic_loop.ash:6:27)
+    StoreLocal            Slot=9 Source=19   (inline_annotation_type_variable_generic_loop.ash:4:5)
     RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=18
     Jump                  Target=match_end_0   (inline_annotation_type_variable_generic_loop.ash:4:5)
@@ -59,11 +59,11 @@ function lambda_1  [ClosureHelper from reverseOnto]
     ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
     Jump                  Target=match_none_1   (inline_annotation_type_variable_generic_loop.ash:4:5)
   match_none_1:
-    LoadConstInt          Target=23 Value=0   (inline_annotation_type_variable_generic_loop.ash:4:5)
-    StoreLocal            Slot=9 Source=23   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    LoadConstInt          Target=22 Value=0   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    StoreLocal            Slot=9 Source=22   (inline_annotation_type_variable_generic_loop.ash:4:5)
   match_end_0:
-    LoadLocal             Target=24 Slot=9   (inline_annotation_type_variable_generic_loop.ash:4:5)
-    Return                Source=24   (inline_annotation_type_variable_generic_loop.ash:3:1)
+    LoadLocal             Target=23 Slot=9   (inline_annotation_type_variable_generic_loop.ash:4:5)
+    Return                Source=23   (inline_annotation_type_variable_generic_loop.ash:3:1)
 
 function lambda_0  [SourceFunction from reverseOnto]
   locals=2 temps=5

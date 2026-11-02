@@ -73,10 +73,10 @@ Function: __deepcopy_list_7
 
 Function: mark
   Operations
-    dup:                  6
+    dup:                  8
     drop:                 7
     uniqueness checks:    3
-    allocations:          5
+    allocations:          6
     reused allocations:   0
     reuse tokens:         0
     copies:               0

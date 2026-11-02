@@ -2268,8 +2268,11 @@ public sealed partial class Lowering
 
     // With `shareReferenceCountedSuffix` the copy stops at the first reference-counted cell and
     // links it, retained, as the tail: a reference-counted cell's tail is reference-counted, so
-    // everything from there on is already owned whole.
-    private int EmitRuntimeManagedTcoListDeepCopyByCopy(int sourceTemp, TypeRef elementType, bool shareReferenceCountedSuffix = false)
+    // everything from there on is already owned whole. With `moveSharedSuffix` the link takes over
+    // the reference the source's last arena cell held instead of retaining the suffix; when that
+    // reference is kept in `takenOverSlot`, the slot is cleared, and a suffix the slot does not hold
+    // is retained.
+    private int EmitRuntimeManagedTcoListDeepCopyByCopy(int sourceTemp, TypeRef elementType, bool shareReferenceCountedSuffix = false, bool moveSharedSuffix = false, int takenOverSlot = -1)
     {
         int currentSlot = NewLocal();
         int firstSlot = NewLocal();
@@ -2290,7 +2293,7 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
         if (shareReferenceCountedSuffix)
         {
-            EmitRuntimeManagedTcoListShareSuffix(currentTemp, firstSlot, lastSlot, zeroTemp, endLabel);
+            EmitRuntimeManagedTcoListShareSuffix(currentTemp, firstSlot, lastSlot, zeroTemp, endLabel, moveSharedSuffix, takenOverSlot);
         }
 
         int headTemp = NewTemp();
@@ -2326,18 +2329,52 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    private void EmitRuntimeManagedTcoListShareSuffix(int currentTemp, int firstSlot, int lastSlot, int zeroTemp, string endLabel)
+    private void EmitRuntimeManagedTcoListShareSuffix(int currentTemp, int firstSlot, int lastSlot, int zeroTemp, string endLabel, bool moveSharedSuffix, int takenOverSlot)
     {
         int referenceCountedTemp = NewTemp();
         Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, currentTemp));
         string copyCellLabel = NewLabel("rc_normalize_list_cell");
         Emit(new IrInst.JumpIfFalse(referenceCountedTemp, copyCellLabel));
-        int retainedTemp = NewTemp();
-        Emit(new IrInst.RcDup(retainedTemp, currentTemp, RuntimeManaged: true));
-        EmitRuntimeManagedTcoListAppendCell(firstSlot, lastSlot, zeroTemp, retainedTemp);
+        int linkedTemp = currentTemp;
+        if (!moveSharedSuffix)
+        {
+            linkedTemp = NewTemp();
+            Emit(new IrInst.RcDup(linkedTemp, currentTemp, RuntimeManaged: true));
+        }
+        else if (takenOverSlot >= 0)
+        {
+            linkedTemp = EmitTakeOverOwnedSlotSuffix(currentTemp, takenOverSlot, zeroTemp);
+        }
+
+        EmitRuntimeManagedTcoListAppendCell(firstSlot, lastSlot, zeroTemp, linkedTemp);
         Emit(new IrInst.Jump(endLabel));
         Emit(new IrInst.Label(copyCellLabel));
         RecordPossiblySharedChild();
+    }
+
+    // The suffix taken over from the owned slot that holds it, the slot cleared so its release skips
+    // it; a suffix the slot does not hold is retained instead.
+    private int EmitTakeOverOwnedSlotSuffix(int suffixTemp, int ownedSlot, int zeroTemp)
+    {
+        int linkedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(linkedSlot, suffixTemp));
+        int heldTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(heldTemp, ownedSlot));
+        int heldHereTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(heldHereTemp, heldTemp, suffixTemp));
+        string retainLabel = NewLabel("rc_normalize_list_retain_suffix");
+        string linkLabel = NewLabel("rc_normalize_list_link_suffix");
+        Emit(new IrInst.JumpIfFalse(heldHereTemp, retainLabel));
+        Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+        Emit(new IrInst.Jump(linkLabel));
+        Emit(new IrInst.Label(retainLabel));
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(retainedTemp, suffixTemp, RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(linkedSlot, retainedTemp));
+        Emit(new IrInst.Label(linkLabel));
+        int linkedTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(linkedTemp, linkedSlot));
+        return linkedTemp;
     }
 
     private void EmitRuntimeManagedTcoListAppendCell(
@@ -2597,6 +2634,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (sourceExpression is Expr.RecordUpdate update
+            && TryEmitRuntimeManagedTcoRecordUpdateChildrenRelease(childTemp, childType, update, storedTemp))
+        {
+            return;
+        }
+
         // A child whose retain finalization left without effect is only borrowed by the cell.
         if (storedTemp is int stored
             && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCHILDKEEP") is null
@@ -2620,6 +2663,68 @@ public sealed partial class Lowering
         Emit(new IrInst.JumpIfFalse(referenceCountedTemp, arenaLabel));
         EmitRuntimeManagedTcoSourceChildDrop(childTemp, Prune(childType));
         Emit(new IrInst.Label(arenaLabel));
+    }
+
+    /// <summary>
+    /// Releases the references a record update built into the dying successor as a child holds.
+    /// The update is an arena cell like a literal's, so its references are released field by field,
+    /// each only where the construction took one: a field updated to a fresh literal through that
+    /// literal, and any other field only when the construction retained what it stored. A field read
+    /// out of a borrowed record, unchanged or bound to a name and stored back, is only borrowed by
+    /// the cell. True when <paramref name="storedTemp"/> names the cell as this function built it.
+    /// </summary>
+    private bool TryEmitRuntimeManagedTcoRecordUpdateChildrenRelease(int cellTemp, TypeRef type, Expr.RecordUpdate update, int? storedTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_NESTEDUPDATERELEASE") is not null
+            || storedTemp is not int cell
+            || Prune(type) is not TypeRef.TNamedType { Symbol.Constructors: [ConstructorSymbol constructor] } named
+            || !IsDefinedBy<IrInst.AllocAdt>(cell))
+        {
+            return false;
+        }
+
+        Dictionary<string, Expr> updated = new(StringComparer.Ordinal);
+        foreach ((string name, Expr value) in update.Updates)
+        {
+            updated.TryAdd(name, value);
+        }
+
+        foreach (OrdinaryHeapLayoutChild child in GetOwnedOrdinaryHeapChildren(named, constructor))
+        {
+            if (ConstructionFieldSource(cell, child.Index) is not int stored)
+            {
+                continue;
+            }
+
+            _ = updated.TryGetValue(constructor.DeclaringSyntax.FieldNames[child.Index], out Expr? value);
+            bool isFreshLiteral = value is not null && IsFreshAggregateLiteral(value);
+            if (!isFreshLiteral && !IsDefinedBy<IrInst.RcDup>(stored))
+            {
+                continue;
+            }
+
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, cellTemp, child.Index, IsTaglessConstructor(constructor)));
+            EmitRuntimeManagedTcoSourceChildRelease(childTemp, child.Type, value, stored);
+        }
+
+        return true;
+    }
+
+    // True when the last instruction defining temp is a T.
+    private bool IsDefinedBy<T>(int temp)
+        where T : IrInst
+    {
+        int index = FindLastInstruction(instruction => instruction switch
+        {
+            IrInst.AllocAdt allocation => allocation.Target == temp,
+            IrInst.RcDup duplicate => duplicate.Target == temp,
+            IrInst.GetAdtField field => field.Target == temp,
+            IrInst.LoadLocal load => load.Target == temp,
+            IrInst.Alloc allocation => allocation.Target == temp,
+            _ => false,
+        });
+        return index >= 0 && _inst[index] is T;
     }
 
     private void EmitRuntimeManagedTcoSourceChildDrop(int childTemp, TypeRef pruned)
@@ -7883,7 +7988,7 @@ public sealed partial class Lowering
         _normalizedAlwaysReturnedParameter = NormalizesAlwaysReturnedParameter(lam, label, paramTy)
             ? (lam.ParamName, argSlot, paramTy)
             : null;
-        _passthroughParameter = ResolvePassthroughParameter(lam, argSlot, paramTy);
+        _passthroughParameter = ResolvePassthroughParameter(lam, label, argSlot, paramTy);
         PredictRuntimeManagedResult(label, paramTy);
         BeginCurryStage(label, lam);
         bool outerParameterMoved = _normalizedParameterMovedIntoAggregate;
@@ -11329,7 +11434,8 @@ public sealed partial class Lowering
             return null;
         }
 
-        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(collectedArgs))
+        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(collectedArgs)
+            && !SpecializationHandsResultOverCounted(qualification.TargetFunction, qualification.FunctionType!, collectedArgs.Count, call))
         {
             return LowerReuseSpecializedCall(
                 qualification.TargetFunction,
@@ -11915,7 +12021,8 @@ public sealed partial class Lowering
         bool affineConsList = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
-            && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument));
+            && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument))
+            && IsReleasableAffineConsElement(tco, index);
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild
@@ -11968,6 +12075,17 @@ public sealed partial class Lowering
             ClearBackEdgeCopiedCells();
         }
     }
+
+    // An accumulator argument consing onto its parameter builds reference-counted cells only for an
+    // element a caller can release as part of a reference-counted list: a list of mixed-size scalar
+    // constructors (`TyInt | TyVar(Int)`) is not one, so its callers reclaim the result with the
+    // arena and the cells stay there.
+    private bool IsReleasableAffineConsElement(TcoContext tco, int index)
+        => Environment.GetEnvironmentVariable("GRC_NO_RELEASABLEAFFINECONS") is not null
+            || !tco.ParamTypes.TryGetValue(index, out TypeRef? parameterType)
+            || Prune(parameterType) is not TypeRef.TList list
+            || CanRuntimeManageTcoListElement(list.Element)
+            || IsGeneralRcTcoListElement(list.Element);
 
     private void ClearBackEdgeCopiedCells()
     {

@@ -1062,7 +1062,13 @@ iteration was given (`GRC_NO_TUPLETAILOWNER` switches the tuple form off). A lis
 elements walked by its consumed tail otherwise stays in the arena, which reclaims it; in such a tuple
 beside a parameter that owns heap parts it takes the consumed-tail placement as well, since the
 tuple is built on the reference-counted heap and retains the tail it binds
-(`GRC_NO_INLINETUPLETAIL` switches that off). Closure promotion
+(`GRC_NO_INLINETUPLETAIL` switches that off). A list of general reference-counted values, or of
+constructors of different sizes holding only scalars (`TyInt | TyVar(Int)`), walked by its consumed
+tail out of such a tuple takes the same placement for the same reason (`GRC_NO_GENERALTUPLETAIL`).
+A `GrownCons` argument builds its cell on the reference-counted heap only when the list's element is
+one a caller releases as part of a reference-counted list (a loop-placeable element or a value of the
+general contract): a list of mixed-size scalar constructors is reclaimed by its callers with the
+arena, so its cells stay there (`GRC_NO_RELEASABLEAFFINECONS` switches that off). Closure promotion
 also requires a resolved `TFun`, and each concrete edge still applies the closure-producer and
 capture-safety checks before requesting runtime-RC allocation. Identity-sensitive edge shapes are
 rechecked against resolved local slots. When body inference resolves an unannotated closure
@@ -1661,6 +1667,15 @@ of it. A retain is withdrawn only when the cell holds its sole reference and the
 is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
 child's root there).
 
+A record update written as a child of such a literal (`Step(state = (state with items = n ::
+state.items), error = None)`) is an arena cell like the literal, and the copy of the literal copies
+it too, so the references its construction took are released from the dying cell field by field: a
+field updated to a fresh literal through that literal, and any other field only when the
+construction retained what it stored. A field read out of a borrowed record and stored back,
+unchanged or through a name, is only borrowed by the update, and releasing it like a literal's child
+frees what the record still holds. Left unreleased, the update's cons kept its retain of the old
+tail, one list cell per iteration (`GRC_NO_NESTEDUPDATERELEASE`).
+
 A list literal of heap elements written as the successor of a list parameter on the
 reference-counted heap (`go([(other, [k])])`) has its arena cells copied at the back edge like a
 cons's, the copy taking a reference of its own to each element. Its cells are copied cells: an
@@ -1709,6 +1724,31 @@ A normalized `match` join whose untouched arms each hand over a reference of the
 arm just produced, a retain it took) is itself newly produced, not only owned: a consuming read such
 as a byte length releases it. Before, `match [fromInt(n), "a"] with | x :: _ -> x | [] -> ""` read
 inline by its caller left the copied head on the heap once per call (`GRC_NO_NORMALIZEDFRESHJOIN`).
+A function that returns its list parameter on one arm and conses onto its own full recursive call on
+another (`| x :: rest -> f(x) :: self(rest) | _ -> xs`) has a promised reference-counted result, so
+the cons arm's last arena cell holds an owned reference to that result that nothing else releases.
+The join copies that arm's arena cells onto the heap and links the recursive result as their tail,
+taking that reference over instead of retaining it, so the join is owned on every arm and the
+function's result normalization copies it no further. Before, every such call left the recursive
+result's cells on the heap: stage 1's shape walk kept 285 cells of `Some(...)` lists per compiled
+function at exit (`GRC_NO_CONSONTOSELFRESULT`). A cell the arm builds over a reuse token (the matched
+parameter's own cell, in the function's reuse specialization) is such a cell too, whether the token's
+cell was on the arena or the heap; before, the arm retained the recursive result it was built over
+(`GRC_NO_REUSEDCONSCELL`).
+A call handed a fresh argument runs as the callee's reuse specialization, which bypasses the ordinary
+call's result handling. When that specialization's compiled body returns a reference-counted result
+(a passthrough parameter normalized onto the heap, say), the caller records the result as an owned
+call result and releases it after its last use. Before, a caller that only matched or counted the
+result (`match observe(xs)(initial(3)) with | [] -> 0 | _ -> 1`) left the whole list on the heap
+at every call (`GRC_NO_REUSESPECRESULT`).
+Such a specialization rebuilds nothing in place: the join copies every cell onto the heap, while the
+fresh cells its arms built (the `Some(shapeOf(argument))` element) went into the persistent to-space,
+which nothing reclaims, about 70 bytes per call of the passthrough shape. A call to a function of
+concrete types now generates the specialization before lowering its arguments, and when the
+specialization's body returns a reference-counted result the call takes the ordinary call path, whose
+fresh cells live in the arena and whose counted result the caller releases
+(`GRC_NO_COUNTEDSPECRESULT`). The specialization of a generic function is not generated early and
+keeps the rule above.
 A tuple placed on the reference-counted heap normalizes each element of the contract's types it does
 not already hold counted, a retain or a copy that is the tuple's own reference. Such an element is not
 retained again as a loop parameter or a transferred binding the tuple keeps: a loop returning its record

@@ -42,6 +42,9 @@ type MatchArmResult =
     // parameter, or a pattern binding taken out of it), and whether it builds its value itself.
     | armBorrowsLoopParameter: Bool
     | armFreshCell: Bool
+    // Whether the arm conses cells onto the function's own full recursive call, whose owned
+    // result only the last cell holds.
+    | armConsesOntoSelfResult: Bool
 
 let recursive unspanned (expression: Expr) =
     match expression with

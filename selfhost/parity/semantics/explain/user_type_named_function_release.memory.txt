@@ -44,11 +44,11 @@ Function: mark
     functions: consumed, move-safe yes
     result fresh: no
   perceus [lambda_6]
-    dup:                  6
+    dup:                  8
     drop:                 7
     uniqueness checks:    3
   representation [lambda_6]
-    conservative unknown: 14
+    conservative unknown: 13
     region:               9
-    runtime rc:           15
+    runtime rc:           23
 
