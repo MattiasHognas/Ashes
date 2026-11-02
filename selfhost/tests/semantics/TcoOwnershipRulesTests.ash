@@ -626,15 +626,12 @@ let expectReadBuiltinReleasesFreshCallResult unit =
     |> (given (_) -> expectReadReleasesConsumedFreshResult("direct")(readBuiltinDirectSource))
     |> (given (_) -> expectReadReleasesConsumedFreshResult("join")(readBuiltinJoinSource))
 
-// A join with one borrowed branch (the loop's own parameter) is a transferred value the read
-// must not release, and a let-bound result is owned by its scope, whose exit release covers it.
+// A join with one borrowed branch (the loop's own parameter) beside a fresh one takes a reference of
+// its own in the borrowed branch, so the read releases the join like a fresh result; a let-bound
+// result is owned by its scope, whose exit release covers it.
 let expectReadBuiltinKeepsOwnedResults unit =
     Unit
-    |> (given (_) ->
-        readBuiltinBorrowedJoinSource
-        |> loopLines("[ClosureHelper from loop]")
-        |> lineAfter("TextByteLength")
-        |> (given (line) -> check("a borrowed branch keeps the join unreleased")(Ashes.Text.contains(line)("RcDrop") == false)))
+    |> (given (_) -> expectReadReleasesConsumedFreshResult("borrowed join")(readBuiltinBorrowedJoinSource))
     |> (given (_) ->
         readBuiltinLetScopeSource
         |> loopLines("[ClosureHelper from loop]")
