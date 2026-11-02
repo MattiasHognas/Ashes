@@ -553,6 +553,11 @@ type CoreProgramState =
     | moveFunctionTable: List((Str, List(Str), Expr))
     | moveCallSites: List(MoveCallSite)
     | moveNullaryConstructors: List(Str)
+    // Stage 0's `_maFunctionsMayExecuteUnderLiveHandlerPost`: the top-level functions that may run
+    // while a one-shot handler's post is pending, and whether the entry scope may.
+    | liveHandlerFunctions: MapTree(Str, Bool)
+    | entryRunsUnderLiveHandlerPost: Bool
+    | anyRunsUnderLiveHandlerPost: Bool
     | patternOwnerSites: List(PatternOwnerSite)
     // The binders matched out of a reference-counted tuple scrutinee at a loop parameter's own
     // position, each with that parameter's slot (stage 0's `_tupleBinderParameterSlots`).
@@ -644,6 +649,10 @@ type CoreFunctionState =
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
+    // Stage 0's `OwnershipPlacementContext.MayExecuteUnderLiveHandlerPost` of the function being
+    // lowered: it may run while a one-shot handler's post is pending, so its values stay off the
+    // reference-counted heap. A nested function takes its enclosing function's answer.
+    | underLiveHandlerPost: Bool
     | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
     | resourceStates: List((Int, ResourceReleaseKind))
     | recursiveDeclarationSpan: Maybe(TextSpan)
@@ -1064,6 +1073,23 @@ let withStateMoveCallSites value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with moveCallSites = value))
 
+let withStateLiveHandlerFunctions value (state: CoreLoweringState) =
+    match value with
+        | (functions, entryLive, anyLive) ->
+            let group = state.programState
+            in state with programState = (group with liveHandlerFunctions = functions, entryRunsUnderLiveHandlerPost = entryLive, anyRunsUnderLiveHandlerPost = anyLive)
+
+let stateLiveHandlerFunctions (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.liveHandlerFunctions)
+
+// Stage 0's `ProgramMayRunUnderLiveHandlerPost`: a capability in the program and some function, or
+// the entry, that may run while a one-shot post is pending. The general reference-counting
+// contract is one calling convention for the whole program, so such a program keeps it off.
+let programMayRunUnderLiveHandlerPost (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.capabilityGlobalCount > 0 && group.anyRunsUnderLiveHandlerPost)
+
 let stateMoveNullaryConstructors (state: CoreLoweringState) =
     (let group = state.programState
     in group.moveNullaryConstructors)
@@ -1368,6 +1394,14 @@ let stateActiveFunctionOrigin (state: CoreLoweringState) =
 let withStateActiveFunctionOrigin value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with activeFunctionOrigin = value))
+
+let stateUnderLiveHandlerPost (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.underLiveHandlerPost)
+
+let withStateUnderLiveHandlerPost value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with underLiveHandlerPost = value))
 
 let statePendingClosureNormalizers (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2477,6 +2511,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             moveFunctionTable = [],
             moveCallSites = [],
             moveNullaryConstructors = [],
+            liveHandlerFunctions = Ashes.Collection.Map.empty,
+            entryRunsUnderLiveHandlerPost = false,
+            anyRunsUnderLiveHandlerPost = false,
             patternOwnerSites = [],
             tupleBinderParameters = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
@@ -2516,6 +2553,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             sealedOperatorDefaults = [],
             pendingSourceFunction = None,
             activeFunctionOrigin = None,
+            underLiveHandlerPost = false,
             pendingClosureNormalizers = [],
             resourceStates = [],
             recursiveDeclarationSpan = None,
@@ -2997,8 +3035,26 @@ let lambdaOriginFor (label: Str) (parameter: Str) (state: CoreLoweringState) =
         | None ->
             closureHelperOrigin(label)(parameter)(stateActiveFunctionOrigin(state))(state)
 
+// A top-level function takes its own live-handler answer; any other function keeps the answer
+// of the function it is lowered inside, stage 0's fallback to the enclosing context.
+let functionUnderLiveHandlerPost (origin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match origin.sourceOrigin with
+        | Some(SourceFunctionOrigin { functionSourceName = name }) ->
+            match state
+            |> stateTopLevelNames
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(_) ->
+                    match state
+                    |> stateLiveHandlerFunctions
+                    |> Ashes.Collection.Map.getStr(name) with
+                        | Some(_) -> true
+                        | None -> false
+                | None -> stateUnderLiveHandlerPost(state)
+        | None -> stateUnderLiveHandlerPost(state)
+
 let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) =
     state
+    |> withStateUnderLiveHandlerPost(functionUnderLiveHandlerPost(origin)(state))
     |> withStatePendingSourceFunction(None)
     |> withStatePendingStackClosure(false)
     |> withStateActiveFunctionOrigin(Some(origin))
@@ -31925,6 +31981,266 @@ let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState
     |> withStateReachByIdentity(reachSummariesByIdentity(summaries)(Ashes.Collection.Map.empty))
     |> withStateReachByName(reachSummariesByName(summaries)(Ashes.Collection.Map.empty))
 
+// Stage 0's live-handler effects (`ComputeLiveHandlerEffects`): what one function's body tells the
+// analysis. The functions it calls by name, the functions it names as values (which may escape
+// and be called anywhere), whether it installs a handler, and whether it calls a local value,
+// a callee the analysis cannot name.
+type HandlerEffectScan =
+    | callees: List(Str)
+    | references: List(Str)
+    | containsHandle: Bool
+    | dynamicCall: Bool
+
+let emptyHandlerEffectScan = HandlerEffectScan(callees = [], references = [], containsHandle = false, dynamicCall = false)
+
+let isLambdaValue (value: Expr) =
+    match unspanArgument(value) with
+        | ExprLambda(_, _, _) -> true
+        | _ -> false
+
+let bindsLetValue (parameters: List(Str)) (value: Expr) =
+    match parameters with
+        | [] -> isLambdaValue(value) == false
+        | _ -> false
+
+let isProgramFunction (functions: MapTree(Str, Bool)) (name: Str) =
+    match Ashes.Collection.Map.getStr(name)(functions) with
+        | Some(_) -> true
+        | None -> false
+
+let recursive scanHandlerEffects (functions: MapTree(Str, Bool)) (locals: List(Str)) (expression: Expr) (scan: HandlerEffectScan) =
+    match expression with
+        | ExprAt(_span, inner) -> scanHandlerEffects(functions)(locals)(inner)(scan)
+        | ExprVar(name) ->
+            if isProgramFunction(functions)(name)
+            then scan with references = name :: scan.references
+            else scan
+        | ExprCall(function, argument, _isSugar, _layout) ->
+            scan
+            |> scanHandlerEffectCallee(functions)(locals)(function)
+            |> scanHandlerEffects(functions)(locals)(argument)
+        | ExprLambda(parameter, body, _annotation) -> scanHandlerEffects(functions)(parameter :: locals)(body)(scan)
+        | ExprLet(name, value, body, parameters, _annotation, _traits) ->
+            scanHandlerEffectLet(functions)(locals)(name)(value)(body)(bindsLetValue(parameters)(value))(scan)
+        | ExprLetRecursive(name, value, body, parameters, _annotation, _traits) ->
+            scanHandlerEffectLet(functions)(locals)(name)(value)(body)(bindsLetValue(parameters)(value))(scan)
+        | ExprLetResult(name, value, body) -> scanHandlerEffectLet(functions)(locals)(name)(value)(body)(true)(scan)
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(condition)
+            |> scanHandlerEffects(functions)(locals)(thenBranch)
+            |> scanHandlerEffects(functions)(locals)(elseBranch)
+        | ExprMatch(scrutinee, arms, _defaultArm) ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(scrutinee)
+            |> scanHandlerEffectArms(functions)(locals)(arms)
+        | ExprHandle(body, arms) ->
+            (scan with containsHandle = true)
+            |> scanHandlerEffects(functions)(locals)(body)
+            |> scanHandlerEffectOperationArms(functions)(locals)(arms)
+        | ExprTuple(elements) -> scanHandlerEffectList(functions)(locals)(elements)(scan)
+        | ExprList(elements, _isMultiline) -> scanHandlerEffectList(functions)(locals)(elements)(scan)
+        | ExprCons(head, tail) -> scanHandlerEffectList(functions)(locals)([head, tail])(scan)
+        | ExprRecord(_constructor, fields, _isMultiline) -> scanHandlerEffectFields(functions)(locals)(fields)(scan)
+        | ExprRecordUpdate(record, fields) ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(record)
+            |> scanHandlerEffectFields(functions)(locals)(fields)
+        | ExprAdd(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprSubtract(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprMultiply(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprDivide(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprModulo(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseAnd(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseOr(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseXor(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprShiftLeft(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprShiftRight(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLogicalAnd(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLogicalOr(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprGreaterThan(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLessThan(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprGreaterOrEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLessOrEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprNotEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprResultPipe(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprResultMapErrorPipe(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseNot(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | ExprLogicalNot(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | ExprAwait(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | ExprPerform(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | _ -> scan
+// The callee position of a call spine: a program function named there is a call, not an escape,
+// and a local value named there is a call the analysis cannot follow.
+and scanHandlerEffectCallee (functions: MapTree(Str, Bool)) (locals: List(Str)) (callee: Expr) (scan: HandlerEffectScan) =
+    match unspanArgument(callee) with
+        | ExprCall(function, argument, _isSugar, _layout) ->
+            scan
+            |> scanHandlerEffectCallee(functions)(locals)(function)
+            |> scanHandlerEffects(functions)(locals)(argument)
+        | ExprVar(name) ->
+            if containsName(name)(locals)
+            then scan with dynamicCall = true
+            else
+                if isProgramFunction(functions)(name)
+                then scan with callees = name :: scan.callees
+                else scan
+        | other -> scanHandlerEffects(functions)(locals)(other)(scan)
+and scanHandlerEffectLet (functions: MapTree(Str, Bool)) (locals: List(Str)) (name: Str) (value: Expr) (body: Expr) (bindsValue: Bool) (scan: HandlerEffectScan) =
+    (let bodyLocals =
+        if bindsValue
+        then name :: locals
+        else locals
+    in
+        scan
+        |> scanHandlerEffects(functions)(locals)(value)
+        |> scanHandlerEffects(functions)(bodyLocals)(body))
+and scanHandlerEffectList (functions: MapTree(Str, Bool)) (locals: List(Str)) (expressions: List(Expr)) (scan: HandlerEffectScan) =
+    match expressions with
+        | [] -> scan
+        | expression :: rest ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(expression)
+            |> scanHandlerEffectList(functions)(locals)(rest)
+and scanHandlerEffectFields (functions: MapTree(Str, Bool)) (locals: List(Str)) (fields: List((Str, Expr))) (scan: HandlerEffectScan) =
+    match fields with
+        | [] -> scan
+        | (_field, value) :: rest ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(value)
+            |> scanHandlerEffectFields(functions)(locals)(rest)
+and scanHandlerEffectArms (functions: MapTree(Str, Bool)) (locals: List(Str)) (arms: List((Pattern, Expr, Maybe(Expr)))) (scan: HandlerEffectScan) =
+    match arms with
+        | [] -> scan
+        | (pattern, body, guard) :: rest ->
+            let armLocals = patternBoundNames(pattern)(locals)
+            in
+                let guarded =
+                    match guard with
+                        | Some(condition) -> scanHandlerEffects(functions)(armLocals)(condition)(scan)
+                        | None -> scan
+                in
+                    guarded
+                    |> scanHandlerEffects(functions)(armLocals)(body)
+                    |> scanHandlerEffectArms(functions)(locals)(rest)
+and scanHandlerEffectOperationArms (functions: MapTree(Str, Bool)) (locals: List(Str)) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (scan: HandlerEffectScan) =
+    match arms with
+        | [] -> scan
+        | (_capability, _operation, patterns, body) :: rest ->
+            scan
+            |> scanHandlerEffects(functions)(patternsBoundNames(patterns)(locals))(body)
+            |> scanHandlerEffectOperationArms(functions)(locals)(rest)
+
+let recursive programFunctionSet (table: List((Str, List(Str), Expr))) (functions: MapTree(Str, Bool)) =
+    match table with
+        | [] -> functions
+        | (_name, [], _body) :: rest -> programFunctionSet(rest)(functions)
+        | (name, _parameters, _body) :: rest ->
+            functions
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> programFunctionSet(rest)
+
+// Each function's scan, and the entry scope's: the trailing expression and every parameterless
+// top-level binding's right-hand side, which stage 0 counts as one scope.
+let recursive scanProgramHandlerEffects (functions: MapTree(Str, Bool)) (table: List((Str, List(Str), Expr))) (entry: HandlerEffectScan) (scans: List((Str, HandlerEffectScan))) =
+    match table with
+        | [] -> (entry, scans)
+        | (_name, [], body) :: rest ->
+            scanProgramHandlerEffects(functions)(rest)(scanHandlerEffects(functions)([])(body)(entry))(scans)
+        | (name, parameters, body) :: rest -> scanProgramHandlerEffects(functions)(rest)(entry)((name, scanHandlerEffects(functions)(parameters)(body)(emptyHandlerEffectScan)) :: scans)
+
+let recursive addLiveFunctions (names: List(Str)) (live: MapTree(Str, Bool)) (changed: Bool) =
+    match names with
+        | [] -> (live, changed)
+        | name :: rest ->
+            if isProgramFunction(live)(name)
+            then addLiveFunctions(rest)(live)(changed)
+            else
+                addLiveFunctions(rest)(Ashes.Collection.Map.setStr(name)(true)(live))(true)
+
+let recursive seedLiveFunctions (scans: List((Str, HandlerEffectScan))) (live: MapTree(Str, Bool)) =
+    match scans with
+        | [] -> live
+        | (name, scan) :: rest ->
+            if scan.containsHandle
+            then
+                live
+                |> Ashes.Collection.Map.setStr(name)(true)
+                |> seedLiveFunctions(rest)
+            else seedLiveFunctions(rest)(live)
+
+let recursive anyInstallsHandler (scans: List((Str, HandlerEffectScan))) =
+    match scans with
+        | [] -> false
+        | (_name, scan) :: rest -> scan.containsHandle || anyInstallsHandler(rest)
+
+let recursive escapedFunctions (scans: List((Str, HandlerEffectScan))) (escaped: List(Str)) =
+    match scans with
+        | [] -> escaped
+        | (_name, scan) :: rest ->
+            escaped
+            |> append(scan.references)
+            |> escapedFunctions(rest)
+
+// One pass of `PropagateLiveHandlerEffects`: every live function's callees, and every escaped
+// function when it calls a value the analysis cannot name.
+let recursive propagateLiveFunctions (scans: List((Str, HandlerEffectScan))) (escaped: List(Str)) (live: MapTree(Str, Bool)) (changed: Bool) =
+    match scans with
+        | [] -> (live, changed)
+        | (name, scan) :: rest ->
+            if isProgramFunction(live)(name)
+            then
+                match addLiveFunctions(scan.callees)(live)(changed) with
+                    | (withCallees, calleesChanged) ->
+                        if scan.dynamicCall
+                        then
+                            match addLiveFunctions(escaped)(withCallees)(calleesChanged) with
+                                | (withEscaped, escapedChanged) -> propagateLiveFunctions(rest)(escaped)(withEscaped)(escapedChanged)
+                        else propagateLiveFunctions(rest)(escaped)(withCallees)(calleesChanged)
+            else propagateLiveFunctions(rest)(escaped)(live)(changed)
+
+let recursive liveFunctionsFixpoint (scans: List((Str, HandlerEffectScan))) (escaped: List(Str)) (live: MapTree(Str, Bool)) =
+    match propagateLiveFunctions(scans)(escaped)(live)(false) with
+        | (next, true) -> liveFunctionsFixpoint(scans)(escaped)(next)
+        | (next, false) -> next
+
+let entryHandlerEffectScan (functions: MapTree(Str, Bool)) (body: Maybe(Expr)) =
+    match body with
+        | Some(expression) -> scanHandlerEffects(functions)([])(expression)(emptyHandlerEffectScan)
+        | None -> emptyHandlerEffectScan
+
+// The functions the entry scope makes live when it installs a handler itself: its callees, and
+// every escaped function when it calls a value the analysis cannot name.
+let entryLiveFunctions (entry: HandlerEffectScan) (escaped: List(Str)) (live: MapTree(Str, Bool)) =
+    if entry.containsHandle
+    then
+        match addLiveFunctions(entry.callees)(live)(false) with
+            | (withCallees, _changed) ->
+                if entry.dynamicCall
+                then
+                    match addLiveFunctions(escaped)(withCallees)(false) with
+                        | (withEscaped, _escapedChanged) -> withEscaped
+                else withCallees
+    else live
+
+// Stage 0's `ComputeLiveHandlerEffects`: the top-level functions that may run while a one-shot
+// handler's post is pending, the least fixpoint from every function installing a handler through
+// its callees, and whether the entry scope installs one. A function nested in a top-level one is
+// counted as part of it.
+let programLiveHandlerFunctions (table: List((Str, List(Str), Expr))) (body: Maybe(Expr)) =
+    (let functions = programFunctionSet(table)(Ashes.Collection.Map.empty)
+    in
+        match scanProgramHandlerEffects(functions)(table)(entryHandlerEffectScan(functions)(body))([]) with
+            | (entry, scans) ->
+                let escaped = escapedFunctions(scans)(entry.references)
+                in
+                    Ashes.Collection.Map.empty
+                    |> seedLiveFunctions(scans)
+                    |> entryLiveFunctions(entry)(escaped)
+                    |> liveFunctionsFixpoint(scans)(escaped)
+                    |> (given (live) -> (live, entry.containsHandle, entry.containsHandle || anyInstallsHandler(scans))))
+
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
     (let functionTable = topLevelFunctions(program)
     in
@@ -31932,6 +32248,8 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateProgramParameterOwnership(inferProgramParameterOwnership(functionTable))
         |> withStateMoveFunctionTable(functionTable)
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
+        |> withStateLiveHandlerFunctions(programLiveHandlerFunctions(functionTable)(program.body))
+        |> (given (seeded: CoreLoweringState) -> withStateUnderLiveHandlerPost(seeded.programState.entryRunsUnderLiveHandlerPost)(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))
         |> withReachSummaries(programReachSummaries(program)))
 
