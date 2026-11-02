@@ -2831,6 +2831,24 @@ let endLivePostsGuardBy place (skipLabel: Maybe(Str)) (state: CoreLoweringState)
 
 let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) = endLivePostsGuardBy(emit)(skipLabel)(state)
 
+// Stage 0's `EmitLivePostsAdjust`: adds `delta` to the live-posts counter, which a perform site
+// raises when it pushes a one-shot post and the posts fold lowers when it has run one, so every
+// live-posts guard sees the post as pending until its fold.
+let emitLivePostsAdjust (delta: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = counterState, temp = counterTemp } ->
+            match freshTemp(counterState) with
+                | FreshTemp { state = deltaState, temp = deltaTemp } ->
+                    match freshTemp(deltaState) with
+                        | FreshTemp { state = adjustedState, temp = adjustedTemp } ->
+                            adjustedState
+                            |> emit(state
+                            |> livePostsIndex
+                            |> LoadCapabilityHandler(counterTemp))
+                            |> emit(LoadConstInt(deltaTemp)(delta))
+                            |> emit(AddInt(adjustedTemp)(counterTemp)(deltaTemp))
+                            |> emit(StoreCapabilityHandler(livePostsIndex(state))(adjustedTemp))
+
 // An arena restore and its reclaim under the live-posts guard, the shape of every scope, call and
 // back-edge reset stage 0 skips while a one-shot post is pending.
 let emitGuardedRestoreAndReclaimBy place cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
@@ -27072,8 +27090,8 @@ let recursive emitSnapshotGlobals currentK globalCount frameTemp state =
 // already manage) a one-shot-resume arm stores its post continuation into
 // (buildOperationArmClosure's one-shot-let path). When non-zero, conses it onto the handler
 // frame's posts list (the same 16-byte head/tail cell shape allocateListCell already builds for
-// ordinary list cons) and resets the register to zero so a later, unrelated perform site never
-// mistakes a stale value for its own post.
+// ordinary list cons), counts it live, and resets the register to zero so a later, unrelated
+// perform site never mistakes a stale value for its own post.
 let collectCapabilityPost globalCount capabilityIndex state =
     match freshTemp(state) with
         | FreshTemp { state = regState, temp = postRegTemp } ->
@@ -27113,6 +27131,7 @@ let collectCapabilityPost globalCount capabilityIndex state =
                                                                                     cellState
                                                                                     |> emit(StoreMemOffset(postsHeadAddrTemp)(0)(cellTemp))
                                                                                     |> emit(StoreCapabilityHandler(globalCount)(zeroTemp))
+                                                                                    |> emitLivePostsAdjust(1)
                                                                                     |> emit(Label(skipLabel))
                                                                                     |> success(-1)(SemNever)
 
@@ -27755,6 +27774,7 @@ and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal initialRes
                                                                 nextCellState
                                                                 |> emit(LoadMemOffset(nextCellTemp)(cellTemp)(8))
                                                                 |> emit(StoreLocal(cellLocal)(nextCellTemp))
+                                                                |> emitLivePostsAdjust(-1)
                                                                 |> emit(Jump(loopLabel))
                                                                 |> emit(Label(doneLabel))
                                                                 |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
