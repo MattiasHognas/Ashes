@@ -21438,4 +21438,51 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop returning element matched with nested empty pattern", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildArenaTupleFreshElementProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            let make (i: Int) = (perform Cap.get(Unit), i)
+
+            let size (p: (Str, Int)) =
+                match p with
+                    | (s, a) -> Ashes.Text.byteLength(s) + a
+
+            let probe (n: Int) =
+                size(handle make(1) with
+                    | Cap.get(u) -> resume("lit"))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_handled_tuple_of_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Without general reference counting the tuple was placed on the reference-counted heap to
+        // own the perform's string, and the caller, taking the handle's value as an arena value,
+        // released neither. The string is now copied into the arena, so the tuple stays there too.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaTupleFreshElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handled tuple of a perform result", samples, maxRssKb: 16_000);
+    }
 }

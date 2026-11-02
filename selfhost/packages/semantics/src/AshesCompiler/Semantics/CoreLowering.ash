@@ -22921,26 +22921,55 @@ let recursive withdrawCopiedTupleLiterals (elements: List(Expr)) (temps: List(In
             |> withdrawCopiedTupleLiterals(restElements)(restTemps)
         | _ -> state
 
+// Stage 0's `CopyFreshStringFieldsIntoArenaCell`: without general reference counting (a program where
+// a function may run while a handler's one-shot post is pending) an arena constructor cell releases
+// nothing it holds, so a newly produced reference-counted string field is stored as an arena copy
+// and the original is released right away, as an arena cons cell does with such a head.
+let recursive arenaCellFieldTemps (types: List(SemanticType)) (temps: List(Int)) (copied: List(Int)) (state: CoreLoweringState) =
+    match (types, temps) with
+        | (fieldType :: restTypes, temp :: restTemps) ->
+            match (resolveType(state)(fieldType), runtimeTempStateOf(temp)(state)) with
+                | (SemString, Some(RuntimeNewlyProduced)) ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = copyTemp } ->
+                            allocated
+                            |> emit(CopyOutArena(copyTemp)(temp)(-1)(false)(IndependentClone)(None))
+                            |> releaseConsumedOperand(temp)
+                            |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
+                | _ -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
+        | _ ->
+            (state, append(reverse(copied))(temps))
+
+let arenaCellFields (types: List(SemanticType)) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+    if runtimeManaged || programMayRunUnderLiveHandlerPost(state) == false
+    then (state, temps)
+    else arenaCellFieldTemps(types)(temps)([])(state)
+
 let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValues { state = state, temps = loweredTemps, semanticTypes = semanticTypes, error = None } ->
-            match (freshTemp(state), holdsReferenceCountedElement(elements)(loweredTemps)(semanticTypes)(state)) with
-                | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
-                    if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
-                    then
-                        match normalizeTupleSiblings(successor)(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
-                            | (normalizedState, temps, normalized) -> finishPlacedTuple(elements)(temps)(semanticTypes)(normalized)(tupleTemp)(true)(transfers)(normalizedState)
-                    else
-                        match reservedState
-                        |> (given (arenaState) ->
-                            if backEdgeCopiesTupleSuccessor(successor)(arenaState)
-                            then withdrawCopiedTupleLiterals(elements)(loweredTemps)(arenaState)
-                            else arenaState)
-                        |> demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes) with
-                            | (demotedState, temps, demoted) ->
-                                match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
-                                    | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)
+        | LoweredCoreValues { state = loweredState, temps = freshTemps, semanticTypes = semanticTypes, error = None } ->
+            // Stage 0's `CopyFreshElementsIntoArenaTuple`: without general reference counting a fresh
+            // reference-counted string element is replaced by an arena copy first, so the tuple stays
+            // in the arena its caller takes it as.
+            match arenaCellFields(semanticTypes)(runtimeTuple)(freshTemps)(loweredState) with
+                | (state, loweredTemps) ->
+                    match (freshTemp(state), holdsReferenceCountedElement(elements)(loweredTemps)(semanticTypes)(state)) with
+                        | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
+                            if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
+                            then
+                                match normalizeTupleSiblings(successor)(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
+                                    | (normalizedState, temps, normalized) -> finishPlacedTuple(elements)(temps)(semanticTypes)(normalized)(tupleTemp)(true)(transfers)(normalizedState)
+                            else
+                                match reservedState
+                                |> (given (arenaState) ->
+                                    if backEdgeCopiesTupleSuccessor(successor)(arenaState)
+                                    then withdrawCopiedTupleLiterals(elements)(loweredTemps)(arenaState)
+                                    else arenaState)
+                                |> demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes) with
+                                    | (demotedState, temps, demoted) ->
+                                        match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
+                                            | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with
@@ -24320,30 +24349,6 @@ let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(S
 // A live token of the rebuilt constructor's layout is consumed whatever the consumer's own
 // placement request: the token was published by the arm that matched this same constructor
 // (`reuseCaseSafe`), and its cell keeps the matched value's reference-counted placement.
-// Stage 0's `CopyFreshStringFieldsIntoArenaCell`: without general reference counting (a program where
-// a function may run while a handler's one-shot post is pending) an arena constructor cell releases
-// nothing it holds, so a newly produced reference-counted string field is stored as an arena copy
-// and the original is released right away, as an arena cons cell does with such a head.
-let recursive arenaCellFieldTemps (types: List(SemanticType)) (temps: List(Int)) (copied: List(Int)) (state: CoreLoweringState) =
-    match (types, temps) with
-        | (fieldType :: restTypes, temp :: restTemps) ->
-            match (resolveType(state)(fieldType), runtimeTempStateOf(temp)(state)) with
-                | (SemString, Some(RuntimeNewlyProduced)) ->
-                    match freshTemp(state) with
-                        | FreshTemp { state = allocated, temp = copyTemp } ->
-                            allocated
-                            |> emit(CopyOutArena(copyTemp)(temp)(-1)(false)(IndependentClone)(None))
-                            |> releaseConsumedOperand(temp)
-                            |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
-                | _ -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
-        | _ ->
-            (state, append(reverse(copied))(temps))
-
-let arenaCellFields (types: List(SemanticType)) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
-    if runtimeManaged || programMayRunUnderLiveHandlerPost(state) == false
-    then (state, temps)
-    else arenaCellFieldTemps(types)(temps)([])(state)
-
 let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (stackAllocate: Bool) (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     (let fieldCount = coreListLength(temps)
     in

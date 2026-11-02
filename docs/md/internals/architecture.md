@@ -2241,6 +2241,10 @@ shape and needs no counterpart). A newly produced list, tuple, record or variant
 by an arena deep copy when every value it reaches can be copied, and the original is released the
 same way, so `Item(perform Cap.get(Unit), i)` with a `List(Str)` result no longer strands the list
 (`GRC_NO_ARENACTORFRESHAGGREGATE`, stage 0; stage 1 does not leak on this shape either).
+An arena tuple literal does the same with its elements before it is placed: without the copy, a
+fresh reference-counted string element (`(perform Cap.get(Unit), i)`) put the tuple on the
+reference-counted heap to own it, and a caller without the contract took the handle's value as an
+arena value and released neither (`GRC_NO_ARENATUPLEFRESHELEMENT`, both stages).
 
 ### One-shot resumptive arms: the pre/post split
 

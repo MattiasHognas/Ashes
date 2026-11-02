@@ -17407,6 +17407,7 @@ public sealed partial class Lowering
         List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor, duplicates);
 
         int tupleTemp = NewTemp();
+        CopyFreshElementsIntoArenaTuple(elements, request);
         bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request, out bool[] normalized);
         RecordLateCopiedHeadTupleDuplicates(tuple, duplicates, runtimeManaged);
         if (copiedSuccessor && runtimeManaged)

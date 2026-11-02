@@ -1492,6 +1492,31 @@ public sealed partial class Lowering
     // released right away, as an arena cons cell does with such a head. A string is copied flat; a
     // list, tuple, record or variant is copied deep when every value it reaches can be, and is left
     // in place otherwise.
+    // A tuple built without general reference counting would be placed on the reference-counted heap
+    // to own a newly produced reference-counted element (a perform's adopted result in
+    // `(perform Cap.get(Unit), i)`), but its caller, without the contract, takes the result as an
+    // arena value and releases nothing: the tuple and the element leaked. The element is replaced by
+    // an arena copy first, as an arena constructor cell's field is, so the tuple stays in the arena.
+    private void CopyFreshElementsIntoArenaTuple(List<LoweredValue> elements, LoweredValueRequest request)
+    {
+        if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENATUPLEFRESHELEMENT") is not null)
+        {
+            return;
+        }
+
+        List<int> temps = elements.ConvertAll(element => element.Temp);
+        List<TypeRef> types = elements.ConvertAll(element => element.Type);
+        CopyFreshFieldsIntoArenaCell(temps, types);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            if (temps[i] != elements[i].Temp)
+            {
+                elements[i] = CreateLoweredValue(temps[i], elements[i].Type);
+            }
+        }
+    }
+
     private void CopyFreshFieldsIntoArenaCell(List<int> argumentTemps, IReadOnlyList<TypeRef> argumentTypes)
     {
         if (GeneralRcEnabled
