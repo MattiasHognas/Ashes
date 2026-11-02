@@ -21048,4 +21048,54 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("handler-context list accumulator", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildArenaConstructorPerformedStringProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            type Item =
+                | Item(Str, Int)
+
+            let make (i: Int) = Item(perform Cap.get(Unit), i)
+
+            let size (it: Item) =
+                match it with
+                    | Item(s, k) -> k
+
+            let probe (n: Int) =
+                size(handle make(1) with
+                    | Cap.get(u) -> resume("lit"))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_constructor_holding_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The function runs inside the handle, so its constructor cell stays in the arena, which
+        // never releases what it holds. The perform's reference-counted string stored into the field
+        // outlived every reader; the cell now stores an arena copy and the original is released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaConstructorPerformedStringProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena constructor holding a perform result", samples, maxRssKb: 16_000);
+    }
 }

@@ -2226,6 +2226,12 @@ nothing released: the loop returned it under an arena result flag and the caller
 (`GRC_NO_HANDLERCONTEXTARENACELL`, stage 0). Stage 1 needs no counterpart: it places that
 accumulator on the reference-counted heap by its own design and returns it as an owned result.
 
+An arena constructor cell built without general reference counting treats a field as an arena cons
+cell treats its head: a newly produced reference-counted string stored there
+(`Item(perform Cap.get(Unit), i)`) is replaced by an arena copy, and the original is released
+before the cell is built (`GRC_NO_ARENACTORFRESHFIELD`, stage 0; stage 1 does not leak on this
+shape and needs no counterpart).
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the

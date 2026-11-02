@@ -1485,6 +1485,33 @@ public sealed partial class Lowering
         return (ptrTemp, resultType);
     }
 
+    // Without general reference counting (code that may run while a handler's one-shot post is
+    // pending) an arena constructor cell releases nothing it holds, so a newly produced
+    // reference-counted string stored into a field (a perform's adopted result) would outlive every
+    // reader. The cell stores an arena copy, and the original is released right away, as an arena
+    // cons cell does with such a head.
+    private void CopyFreshStringFieldsIntoArenaCell(List<int> argumentTemps, IReadOnlyList<TypeRef> argumentTypes)
+    {
+        if (GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENACTORFRESHFIELD") is not null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < argumentTemps.Count; i++)
+        {
+            if (Prune(argumentTypes[i]) is not TypeRef.TStr || !IsNewlyProducedRcTemp(argumentTemps[i]))
+            {
+                continue;
+            }
+
+            int copiedTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(copiedTemp, argumentTemps[i], -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+            ReleaseConsumedOwnedOperand(argumentTemps[i]);
+            argumentTemps[i] = copiedTemp;
+        }
+    }
+
     private void PrepareConstructorArgumentOwnership(
         IReadOnlyList<Expr> arguments,
         IReadOnlyList<TypeRef> argumentTypes,
@@ -1495,6 +1522,7 @@ public sealed partial class Lowering
         RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps, runtimeManagedCandidate);
         if (!runtimeManagedCandidate)
         {
+            CopyFreshStringFieldsIntoArenaCell(argumentTemps, argumentTypes);
             return;
         }
 
