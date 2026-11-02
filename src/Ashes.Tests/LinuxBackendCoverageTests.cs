@@ -21485,4 +21485,66 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("handled tuple of a perform result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildMutualGroupSiblingResultPipedProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Pick(Node, List(Str))
+                | Apply(Node, List(Node))
+                | Lam(Str, Node)
+
+            let recursive derive (nodes: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match nodes with
+                    | [] -> ds
+                    | Pick(_value, ns) :: rest -> derive(rest)(Some(ns) :: ds)
+                    | Apply(root, arguments) :: rest ->
+                        ds
+                        |> applied(root)(arguments)
+                        |> derive(rest)
+                    | _other :: rest -> derive(rest)(ds)
+            and applied (root: Node) (arguments: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match (root, arguments) with
+                    | (Lam(_parameter, body), _argument :: rest) -> applied(body)(rest)(None :: ds)
+                    | _ -> ds
+
+            let recursive total (ds: List(Maybe(List(Str)))) (k: Int) =
+                match ds with
+                    | [] -> k
+                    | Some(_ns) :: rest -> total(rest)(k + 1)
+                    | None :: rest -> total(rest)(k + 2)
+
+            let probe (n: Int) = total(derive([Pick(Leaf("a"), ["x", Ashes.Text.fromInt(n)]), Apply(Lam("p", Leaf("q")), [Leaf("r")]), Leaf("c")])([]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_mutual_group_sibling_result_piped_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A group sibling lowered after its caller had no known result placement, so its owned
+        // result, piped straight into the caller's next call, was never released; it is now read at
+        // run time as a captured self's is.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMutualGroupSiblingResultPipedProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual group sibling result piped", samples, maxRssKb: 16_000);
+    }
 }

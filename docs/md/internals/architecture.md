@@ -1589,6 +1589,10 @@ arena, and the fresh tuple goes to an owned slot (`GRC_NO_ESCAPINGCELLFRESHHEAD`
 A head of a type the function's result copies out rather than owns (`Some(binders([])(names))` in a
 `List(Maybe(List(Str)))`) goes to the slot the same way, since the result is copied before the slots
 are released (`GRC_NO_ESCAPINGCELLCOPYHEAD`, both stages).
+A group sibling lowered after its caller (`applied` in `ds |> applied(root)(arguments) |> derive(rest)`)
+has no compiled result placement yet, so its list result is read at run time as a captured self's
+is, and the caller owns it on both paths (`GRC_NO_UNCOMPILEDSIBLINGRESULT`, stage 0; stage 1 already
+reads any recursive group member's list result at run time).
 The retain such a cell takes of its tail goes to an owned slot too when no call collects it: a
 function returning `label :: applied` over a list a match bound from a call keeps that list in the
 arena cell after the match releases it, and the slot is released once the result is copied out

@@ -49,14 +49,22 @@ public sealed partial class Lowering
         {
             if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
             {
-                return false;
+                return IsUncompiledGroupSibling(label);
             }
 
             label = nextLabel;
         }
 
-        return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal);
+        return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal) || IsUncompiledGroupSibling(label);
     }
+
+    // A sibling of a recursive group whose body is lowered after this call's (`applied` called from
+    // `derive` in `let recursive derive ... and applied ...`) has no compiled placement or curried
+    // stages yet either, so its result is read at run time the same way: taken unread, an owned
+    // reference-counted result piped into the next call was never released.
+    private bool IsUncompiledGroupSibling(string label)
+        => Environment.GetEnvironmentVariable("GRC_NO_UNCOMPILEDSIBLINGRESULT") is null
+            && !_bodyRuntimeManagedByLabel.ContainsKey(label);
 
     private (int Temp, TypeRef Type) LowerConsTailValue(
         Expr.Cons cons,
