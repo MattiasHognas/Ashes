@@ -13781,6 +13781,7 @@ public sealed partial class Lowering
         List<Expr> collectedArgs,
         LoweredValueRequest request)
     {
+        NoteDiscardedResultArgument(rootExpr, collectedArgs);
         // Keep call-chain intermediates in an independent reclaimable arena window.
         int callWmCursorSlot = NewLocal();
         int callWmEndSlot = NewLocal();
@@ -13828,7 +13829,8 @@ public sealed partial class Lowering
                 currentTemp,
                 currentType,
                 consumedRuntimeArguments,
-                runtimeManagedResultFlagTemp);
+                runtimeManagedResultFlagTemp,
+                _discardedResultCalls.Contains(call));
             return result.Value;
         }
         finally
@@ -13850,7 +13852,8 @@ public sealed partial class Lowering
         int currentTemp,
         TypeRef currentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments,
-        int runtimeManagedResultFlagTemp)
+        int runtimeManagedResultFlagTemp,
+        bool resultDiscarded = false)
     {
         UnifyExpectedType(currentType, request);
         RecordOrPinCallResultType(rootExpr, collectedArgs.Count, currentType);
@@ -13903,7 +13906,8 @@ public sealed partial class Lowering
             resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0,
             resultCopySeversArgumentReferences,
             resultCopyFlagTemp,
-            normalizedOwnedResultTemp);
+            normalizedOwnedResultTemp,
+            resultDiscarded);
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -15679,7 +15683,8 @@ public sealed partial class Lowering
         bool resultCopiedWithElements = false,
         bool resultCopySeversArgumentReferences = false,
         int resultCopyFlagTemp = -1,
-        int normalizedOwnedResultTemp = -1)
+        int normalizedOwnedResultTemp = -1,
+        bool resultDiscarded = false)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -15698,6 +15703,12 @@ public sealed partial class Lowering
 
             if (argument.AdoptionFlagTemp >= 0)
             {
+                if (resultDiscarded && DiscardedResultReleaseRuleEnabled && ContainsUnresolvedLayoutType(Prune(resultType), []) && valueType is not TypeRef.TFun)
+                {
+                    EmitHandedOverArgumentRelease(temp, valueType, argument.AdoptionFlagTemp, -1);
+                    continue;
+                }
+
                 if (resultCopySeversArgumentReferences)
                 {
                     EmitHandedOverArgumentRelease(
@@ -15767,6 +15778,26 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(keptLabel));
         RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
     }
+
+    // A call whose result an applied lambda discards (`body(x) |> (given (_) -> ...)`): nothing reads
+    // the result, so a reference handed over for it to keep is released right after the call when
+    // the callee did not adopt it, whatever the result's layout. Owned slots, which wait for the
+    // function's result, exist only under the general contract; this release holds without it.
+    private readonly HashSet<Expr> _discardedResultCalls = new(ReferenceEqualityComparer.Instance);
+
+    private void NoteDiscardedResultArgument(Expr rootExpr, List<Expr> collectedArgs)
+    {
+        if (DiscardedResultReleaseRuleEnabled
+            && collectedArgs.Count == 1
+            && rootExpr is Expr.Lambda { ParamName: "_" }
+            && StripOrSelf(collectedArgs[0]) is Expr.Call discarded)
+        {
+            _discardedResultCalls.Add(discarded);
+        }
+    }
+
+    private static bool DiscardedResultReleaseRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_DISCARDEDRESULTRELEASE") is null;
 
     private static bool UnresolvedResultHandedSlotRuleEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_UNRESOLVEDHANDEDSLOT") is null;
