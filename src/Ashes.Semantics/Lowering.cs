@@ -14418,6 +14418,12 @@ public sealed partial class Lowering
 
     private bool TryResolveKnownFunctionLabel(Expr expression, out string label)
     {
+        if (expression is Expr.QualifiedVar qualified
+            && TryGetExportedQualifiedBindingName(qualified, out string exportedBindingName))
+        {
+            return TryResolveKnownFunctionLabel(exportedBindingName, out label);
+        }
+
         if (expression is not Expr.Var variable)
         {
             label = "";

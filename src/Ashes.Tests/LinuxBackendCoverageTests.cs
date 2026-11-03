@@ -21157,6 +21157,76 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("loop choice between parameter and consuming call", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildQualifiedCalleeFreshListArgumentProgram(int rounds)
+        => $$"""
+            let recursive rev (pairs: List((Str, Int))) (acc: List((Str, Int))) =
+                match pairs with
+                    | [] -> acc
+                    | pair :: rest -> rev(rest)(pair :: acc)
+
+            let recursive Names_collect (items: List(Str)) (acc: List((Str, Int))) =
+                match items with
+                    | [] -> rev(acc)([])
+                    | item :: rest -> Names_collect(rest)((item, 1) :: acc)
+
+            let collected = Names.collect
+
+            let recursive overlay (proven: Int) (pairs: List((Str, Int))) =
+                match pairs with
+                    | (name, _n) :: rest ->
+                        if proven > 0
+                        then (name, 2) :: overlay(proven - 1)(rest)
+                        else pairs
+                    | [] -> []
+
+            let pick (flag: Bool) (pairs: List((Str, Int))) =
+                if flag
+                then overlay(1)(pairs)
+                else pairs
+
+            let recursive count (pairs: List((Str, Int))) =
+                match pairs with
+                    | [] -> 0
+                    | (_name, n) :: rest -> n + count(rest)
+
+            let probe (n: Int) =
+                (let s = Ashes.Text.fromInt(n)
+                in count(pick(n > 0)(collected(["a", "b" + s, "c"])([]))) + count(pick(n < 0)(Names.collect(["d" + s, "e"])([]))))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_qualified_callee_fresh_list_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A fresh list another module's function returns, reached as `Names.collect` or through the
+        // `let collected = Names.collect` alias a selector import stitches in, is handed to a call
+        // whose result may be that list or a new one over its elements. The qualified callee resolves
+        // to its function label, so the caller knows the argument is reference-counted and releases
+        // it after the call; unresolved, the list stayed with nobody.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildQualifiedCalleeFreshListArgumentProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{6L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("qualified callee fresh list argument", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildArenaConstructorFreshListProgram(int rounds)
         => $$"""
             capability Cap =

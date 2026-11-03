@@ -2288,6 +2288,13 @@ arena value and released neither (`GRC_NO_ARENATUPLEFRESHELEMENT`, both stages).
 A tuple the cell asked for on the reference-counted heap that still ends up in the arena, because it
 cannot own one of its elements, copies its fresh elements the same way: a recursive producer's
 `(Ashes.Text.fromInt(n + k), build(3)(n)) :: rest` asks for a reference-counted name and keeps it.
+A call through another module's export (`Names.collect(...)`, or the `let collected = Names.collect`
+alias a selector import stitches in) resolves to the stitched binding's function label the way a
+call by the binding's own name does. Unresolved, the caller could not see that the callee's compiled
+result is reference-counted, so a fresh list it returned and the caller handed to a further call
+(`pick(flag)(Names.collect(items)([]))`, whose result is the list or a new one over its elements)
+was released by nobody: stage 1's `classifyParameterOwnership` list behind every callee's facts
+(`GRC_NO_QUALIFIEDCALLEELABEL`, stage 0).
 
 ### One-shot resumptive arms: the pre/post split
 

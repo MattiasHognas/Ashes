@@ -196,6 +196,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConstrainedCallOfUnresolvedResultTemplate());
         registry.Register(new DiscardedResultArgumentUnderHandlerTemplate());
         registry.Register(new ProducerTupleFreshElementTemplate());
+        registry.Register(new QualifiedCalleeResultArgumentTemplate());
     }
 }
 
