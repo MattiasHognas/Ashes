@@ -16722,6 +16722,19 @@ let capturedSelfListResultOwnedAtRunTime (context: CoreCallContext) (resultType:
                 | None -> false)
         | _ -> false)
 
+// Stage 0's `LoopSelfCallAdtResultOwnedAtRunTime`: a loop's own non-tail self call reaches a body
+// still being lowered, whose exit may yet place its result on the reference-counted heap. For an
+// ADT the runtime can copy into an owned value but no fixed copy-out covers, the call reads the
+// returns bit and owns the result on both paths.
+let loopSelfCallAdtResultOwnedAtRunTime (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
+    context.selfCallee && insideTcoLoop(state) && calleeCompiledResultRuntimeManaged(context.facts)(state) == false && containsUnresolvedLayout(resultType)(state) == false && resultSurvivesReset(resultType)(state) == false && isGeneralRcValueType(resultType)(state) == false && (match resolveType(state)(resultType) with
+        | SemNamed(_symbolId, _name, _arguments) ->
+            match ownedResultPlanOf(resultType)(state) with
+                | Some(ScalarArgumentCopy) -> false
+                | Some(_plan) -> true
+                | None -> false
+        | _ -> false)
+
 let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     if hasCallCopyOut(resultType)(state)
     then (state, true, false)
@@ -16729,11 +16742,14 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
         if generalRcEnabled(state) && capturedSelfListResultOwnedAtRunTime(context)(resultType)(state)
         then (state, true, false)
         else
-            if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
-            then (state, false, false)
+            if generalRcEnabled(state) && loopSelfCallAdtResultOwnedAtRunTime(context)(resultType)(state)
+            then (state, true, true)
             else
-                match isNormalizableUncoveredRecord(resultType)(state) with
-                    | (asked, normalizable) -> (asked, normalizable, normalizable)
+                if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
+                then (state, false, false)
+                else
+                    match isNormalizableUncoveredRecord(resultType)(state) with
+                        | (asked, normalizable) -> (asked, normalizable, normalizable)
 
 // The last application of a spine reads the callee's returns bit when the result's ownership
 // is not statically known and its type is read at run time, stage 0's `needsResultOwnership`.

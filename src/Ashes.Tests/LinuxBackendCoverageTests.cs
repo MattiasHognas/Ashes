@@ -22396,4 +22396,64 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("perform result consed into arena cell", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildLoopSelfCallMaybeResultProgram(int rounds)
+        => $$"""
+            type Ex =
+                | ExAt(Int, Ex)
+                | ExVar(Str)
+                | ExLet(Str, Ex, Ex)
+                | ExOther
+
+            let recursive tailForwarded (body: Ex) =
+                match body with
+                    | ExAt(_span, inner) -> tailForwarded(inner)
+                    | ExVar(name) -> Some(name)
+                    | ExLet(nested, _value, nestedBody) ->
+                        match tailForwarded(nestedBody) with
+                            | Some(name) ->
+                                if name == nested
+                                then None
+                                else Some(name)
+                            | None -> None
+                    | _ -> None
+
+            let probe (n: Int) =
+                let name = Ashes.Text.fromInt(n)
+                in
+                    match tailForwarded(ExAt(1, ExLet("y", ExOther, ExAt(2, ExVar(name))))) with
+                        | Some(_found) -> 1
+                        | None -> 0
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_self_call_maybe_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop matches the Maybe its own non-tail self call returns. The call was lowered before
+        // the loop's exit placed that result on the reference-counted heap, so the result was left
+        // in the call's window and never released. The call now reads the returns bit and owns it.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildLoopSelfCallMaybeResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop self call maybe result", samples, maxRssKb: 16_000);
+    }
 }

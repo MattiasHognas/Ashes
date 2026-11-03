@@ -30,6 +30,26 @@ public sealed partial class Lowering
     /// callee's returns bit: a reference-counted result is taken over as it is, an arena one is
     /// copied, and the caller owns the result on both paths.
     /// </summary>
+    /// <summary>
+    /// A loop's own non-tail self call reaches a body still being lowered, whose exit may yet place
+    /// its result on the reference-counted heap. For an ADT the runtime can copy into an owned value
+    /// but no fixed copy-out covers (a `Maybe(Str)`), the call reads the returns bit: a
+    /// reference-counted result is taken over, an arena one is copied, and the caller owns it on both
+    /// paths. Unread, the reference-counted result was left in the call's open window and never
+    /// released.
+    /// </summary>
+    private bool LoopSelfCallAdtResultOwnedAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
+        => GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_LOOPSELFADTRESULT") is null
+            && _tcoCtx is { } tco
+            && IsTcoSelfCallRoot(rootExpr, tco)
+            && Prune(resultType) is TypeRef.TNamedType named
+            && !CanArenaReset(named)
+            && !ContainsUnresolvedLayoutType(named, [])
+            && !IsGeneralRcValueType(named)
+            && CanNormalizeIntoOwnedRuntimeValue(named)
+            && !CompiledResultRuntimeManaged(rootExpr, argumentCount);
+
     private bool CapturedSelfListResultOwnedAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
     {
         if (!GeneralRcEnabled

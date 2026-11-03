@@ -14728,7 +14728,8 @@ public sealed partial class Lowering
                     && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
                     && !CompiledResultRuntimeManaged(rootExpr, argumentCount))
                 || IsSpecializedListResultOwnedAtRunTime(rootExpr, argumentCount, resultType)
-                || CapturedSelfListResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
+                || CapturedSelfListResultOwnedAtRunTime(rootExpr, argumentCount, resultType)
+                || LoopSelfCallAdtResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
             _ => false,
         };
 

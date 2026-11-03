@@ -202,6 +202,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new DeferredCallCopyOutRecordFieldTemplate());
         registry.Register(new ArenaCellFreshHeadTemplate());
         registry.Register(new SelfCallResultArgumentTemplate());
+        registry.Register(new LoopSelfCallAdtResultTemplate());
     }
 }
 

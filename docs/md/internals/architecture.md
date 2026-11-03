@@ -1562,6 +1562,15 @@ copy-out does: the copy shares nothing with the argument, so a perform's list pa
 callee that returns one of its heads (`first(perform Fetch.get(Unit))`) no longer keeps that head
 (`GRC_NO_SHALLOWCOPYPARTS`). The owned branch keeps the spine-only release.
 
+A loop's own non-tail self call reaches a body that is still being lowered, and the loop's exit
+may yet place its result on the reference-counted heap. A loop matching such a result (`match
+tailForwarded(nestedBody) with | Some(name) -> ...` inside a function whose other arm calls itself
+in tail position) left a variant with no fixed copy-out, a `Maybe(Str)`, in the call's open
+window, where nothing released the reference-counted value the callee turned out to return. Such
+a call now reads the returns bit for any ADT the runtime can copy into an owned value: it takes a
+reference-counted result over and copies an arena one, so it owns the result on both paths
+(`GRC_NO_LOOPSELFADTRESULT`).
+
 A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
 as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry
 adopts it; for a callee it knows to normalize, the caller then gives the reference up. A body
