@@ -18945,13 +18945,23 @@ let recursive definedByRetain (temp: Int) (instructions: List(IrInstruction)) =
 // cell, so it takes nothing from the join's freshness: a join of it and fresh lists is a fresh
 // list its `let` owns, as stage 0's `TrackLetOwnership` owns any reference-counted join that
 // borrows nothing.
+// Whether the branch returns a pattern binding as it is: its retain is an identity marker until
+// the root parameter is placed, so it owns nothing of its own under an arena root.
+let forwardsPatternOwner (body: Expr) (state: CoreLoweringState) =
+    match tailForwardedVariable(body) with
+        | Some(name) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) -> true
+                | None -> false
+        | None -> false
+
 let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrowsParameter: Bool) (retainedParameterPart: Bool) (state: CoreLoweringState) =
     (let emptyListArm = branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state)
     in
         MatchArmResult(
             armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || retainedParameterPart || emptyListArm,
             armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart || emptyListArm,
-            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
+            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && (retainedParameterPart || forwardsPatternOwner(body)(state) == false) || isSelfFunnelArm(body)(state),
             armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
             armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
             armFreshCell = constructsFreshCell(body)(state),
