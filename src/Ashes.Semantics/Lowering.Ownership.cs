@@ -204,23 +204,54 @@ public sealed partial class Lowering
         // root parameter's final placement is runtime-managed; otherwise it remains an identity.
         bool fieldMayBeEmpty = argument is Expr.QualifiedVar && TempMayBeEmptyList(argumentTemp);
         Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, MayBeEmpty: fieldMayBeEmpty));
-        _patternOwnerAggregateDuplicates.Add(duplicatedTemp);
+        PatternOwnerAggregateDuplicates.Add(duplicatedTemp);
         return duplicatedTemp;
     }
 
     // The pattern-owner duplicates taken for an aggregate's elements, and those of them an owning
     // aggregate then normalized: the normalization takes the element's reference itself (a retain of
     // the owner's value, or a copy of an arena one), so the duplicate is released right after it by a
-    // marker promoted together with the duplicate (FinalizePerceusPatternBindingOwners).
-    private readonly HashSet<int> _patternOwnerAggregateDuplicates = [];
+    // marker promoted together with the duplicate (FinalizePerceusPatternBindingOwners). Temps are
+    // numbered per function, so both sets are kept per function: a duplicate an earlier function
+    // released under the same number would otherwise keep a later one's release from being
+    // emitted, and could have a later function's unrelated marker promoted. The function is told by
+    // its temp ownership table, which every function lowering replaces and restores (an
+    // instruction buffer swapped in for a synthesized sequence is not a new function).
+    private readonly Dictionary<object, HashSet<int>> _patternOwnerAggregateDuplicatesByFunction =
+        new(ReferenceEqualityComparer.Instance);
 
-    private readonly HashSet<int> _releasedPatternOwnerDuplicates = [];
+    private readonly Dictionary<object, HashSet<int>> _releasedPatternOwnerDuplicatesByFunction =
+        new(ReferenceEqualityComparer.Instance);
+
+    private readonly HashSet<int> _sharedPatternOwnerAggregateDuplicates = [];
+
+    private readonly HashSet<int> _sharedReleasedPatternOwnerDuplicates = [];
+
+    private static bool PatternOwnerDuplicatesPerFunction
+        => Environment.GetEnvironmentVariable("GRC_NO_FUNCTIONSCOPEDOWNERDUPS") is null;
+
+    private HashSet<int> PatternOwnerAggregateDuplicates
+        => PatternOwnerDuplicatesPerFunction ? PatternOwnerDuplicateSet(_patternOwnerAggregateDuplicatesByFunction) : _sharedPatternOwnerAggregateDuplicates;
+
+    private HashSet<int> ReleasedPatternOwnerDuplicates
+        => PatternOwnerDuplicatesPerFunction ? PatternOwnerDuplicateSet(_releasedPatternOwnerDuplicatesByFunction) : _sharedReleasedPatternOwnerDuplicates;
+
+    private HashSet<int> PatternOwnerDuplicateSet(Dictionary<object, HashSet<int>> byFunction)
+    {
+        if (!byFunction.TryGetValue(_tempOwnershipFacts, out HashSet<int>? temps))
+        {
+            temps = [];
+            byFunction[_tempOwnershipFacts] = temps;
+        }
+
+        return temps;
+    }
 
     private void ReleaseNormalizedPatternOwnerDuplicate(int elementTemp, TypeRef elementType)
     {
         if (Environment.GetEnvironmentVariable("GRC_NO_SUPERSEDEDOWNERDUP") is null
-            && _patternOwnerAggregateDuplicates.Contains(elementTemp)
-            && _releasedPatternOwnerDuplicates.Add(elementTemp))
+            && PatternOwnerAggregateDuplicates.Contains(elementTemp)
+            && ReleasedPatternOwnerDuplicates.Add(elementTemp))
         {
             Emit(new IrInst.RcDrop(elementTemp, GetOwnedTypeName(Prune(elementType)) ?? "PatternBinding"));
         }

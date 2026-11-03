@@ -1613,7 +1613,14 @@ each owner took for it, and the arena cell never releases them. They are release
 unless the callee's result may reach the argument and does not own itself. A duplicate taken
 behind a branch of the argument keeps its reference. The duplicate and its release are markers
 promoted together with the owner (`GRC_NO_ARGUMENTTUPLEOWNERDUP`, stage 0; stage 1's
-`prepareRecursiveGroup([(name, value)])` kept every recursive function's syntax tree).
+`prepareRecursiveGroup([(name, value)])` kept the binder strings).
+The pattern-owner duplicates an aggregate took, and those already released after a
+normalization, are kept per function: temps are numbered per function, and one set shared by
+every function let an earlier function's released duplicate stop a later one's release under the
+same number (stage 1's `lambdaParts` kept every recursive function's syntax tree,
+`GRC_NO_FUNCTIONSCOPEDOWNERDUPS`, stage 0; stage 1 resets its set per lambda body). The generic
+deep-copied list results a lambda lowered inside a function records are kept apart from the
+enclosing function's the same way, rather than clearing them.
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that

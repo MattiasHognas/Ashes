@@ -21775,4 +21775,77 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop head binders in an argument tuple", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildPatternOwnerDuplicateInLaterFunctionProgram(int rounds)
+        => $$"""
+            type Node =
+                | At(Int, Node)
+                | Lam(Str, Node)
+                | Leaf(Int)
+
+            let recursive firstParts node =
+                match node with
+                    | At(_span, inner) -> firstParts(inner)
+                    | Lam(parameter, body) -> Some((parameter, body))
+                    | _ -> None
+
+            let recursive laterParts node =
+                match node with
+                    | At(_span, inner) -> laterParts(inner)
+                    | Lam(parameter, body) -> Some((parameter, body))
+                    | _ -> None
+
+            let recursive depth (node: Node) =
+                match node with
+                    | At(_span, inner) -> depth(inner)
+                    | Lam(_parameter, body) -> 1 + depth(body)
+                    | Leaf(n) -> n
+
+            let measure (node: Node) =
+                match (firstParts(node), laterParts(node)) with
+                    | (Some((a, first)), Some((b, later))) -> Ashes.Text.byteLength(a) + Ashes.Text.byteLength(b) + depth(first) + depth(later)
+                    | _ -> 0
+
+            let recursive build (k: Int) (n: Int) =
+                if k == 0
+                then Leaf(n)
+                else At(k, Lam(Ashes.Text.fromInt(n + k), build(k - 1)(n)))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + measure(build(3)(n % 7)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_pattern_owner_duplicate_in_later_function_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Two functions lowered the same way number their temps the same, and the set of released
+        // pattern-owner duplicates was shared by every function: the second function's tuple kept the
+        // duplicate it took of its body as well as its own reference.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += 6 + (2 * (n % 7));
+            }
+
+            IrProgram ir = LowerProgram(BuildPatternOwnerDuplicateInLaterFunctionProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("pattern-owner duplicate in a later function", samples, maxRssKb: 16_000);
+    }
 }

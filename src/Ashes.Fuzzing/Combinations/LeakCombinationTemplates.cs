@@ -191,6 +191,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new FreshArgumentToClosureOfUnresolvedResultTemplate());
         registry.Register(new SelfCallResultKeptInPlaceTemplate());
         registry.Register(new LoopHeadBindersInArgumentTupleTemplate());
+        registry.Register(new PatternOwnerDuplicateInLaterFunctionTemplate());
     }
 }
 

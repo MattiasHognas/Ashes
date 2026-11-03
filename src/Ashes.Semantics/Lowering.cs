@@ -1363,8 +1363,15 @@ public sealed partial class Lowering
     // The temps holding a generic callee's list result after LowerCallDeepCopyOutListResult copied it
     // into fresh runtime-managed cells (or a placeholder that may yet resolve to that copy): the one
     // class of consumed call argument that was arena-placed and never released before that copy
-    // existed. Per function: temp numbers restart with each LowerLambdaCoreResetFrame.
-    private readonly HashSet<int> _genericDeepCopiedListTemps = [];
+    // existed. Per function: temp numbers restart with each LowerLambdaCoreResetFrame, and a lambda
+    // lowered inside the function keeps its own set rather than clearing the enclosing one.
+    private readonly Dictionary<object, HashSet<int>> _genericDeepCopiedListTempsByFunction =
+        new(ReferenceEqualityComparer.Instance);
+
+    private readonly HashSet<int> _sharedGenericDeepCopiedListTemps = [];
+
+    private HashSet<int> GenericDeepCopiedListTemps
+        => PatternOwnerDuplicatesPerFunction ? PatternOwnerDuplicateSet(_genericDeepCopiedListTempsByFunction) : _sharedGenericDeepCopiedListTemps;
     private int _nextCallResultCopyOutId;
 
     // Set while lowering the tail-call argument of an affine string accumulator (its own param
@@ -8757,7 +8764,7 @@ public sealed partial class Lowering
                         }
                         changed |= aliases.Add(duplicate.Target);
                         break;
-                    case IrInst.RcDrop { RuntimeManaged: false } release when _releasedPatternOwnerDuplicates.Contains(release.SourceTemp) && aliases.Contains(release.SourceTemp):
+                    case IrInst.RcDrop { RuntimeManaged: false } release when ReleasedPatternOwnerDuplicates.Contains(release.SourceTemp) && aliases.Contains(release.SourceTemp):
                         _inst[i] = release with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty, StructuralDropperLabel = structuralDropperLabel };
                         break;
                     case IrInst.RcDrop drop when drop.OwnerSlot == site.LocalSlot:
@@ -9724,7 +9731,7 @@ public sealed partial class Lowering
         _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
-        _genericDeepCopiedListTemps.Clear();
+        GenericDeepCopiedListTemps.Clear();
 
         // Lambda function gets implicit locals for env and arg at slots 0 and 1
         int envSlot = NewLocal(); // 0
@@ -15638,7 +15645,7 @@ public sealed partial class Lowering
         => calleeResultPoisoned
             && !resultNormalized
             && !calleeCompiledResultVerifiedRuntimeManaged
-            && _genericDeepCopiedListTemps.Contains(temp);
+            && GenericDeepCopiedListTemps.Contains(temp);
 
     // A runtime-managed reference the caller hands to a call and settles after it. A plain
     // consumed argument (AdoptionFlagTemp < 0) is a fresh value released once the result is
@@ -16111,7 +16118,7 @@ public sealed partial class Lowering
                 currentTemp,
                 deepCopyResultList.Element,
                 runtimeManagedResultFlagTemp);
-            _genericDeepCopiedListTemps.Add(deepCopiedTemp);
+            GenericDeepCopiedListTemps.Add(deepCopiedTemp);
             return deepCopiedTemp;
         }
 
@@ -16452,7 +16459,7 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         if (calleeResultElementIsGeneric && Prune(callResultType) is TypeRef.TList)
         {
-            _genericDeepCopiedListTemps.Add(resultTemp);
+            GenericDeepCopiedListTemps.Add(resultTemp);
         }
 
         return resultTemp;

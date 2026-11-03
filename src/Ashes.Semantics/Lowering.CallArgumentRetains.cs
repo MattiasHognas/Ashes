@@ -332,7 +332,7 @@ public sealed partial class Lowering
             || IsGeneralRcValueType(pruned);
         foreach ((int temp, TypeRef type, bool resultMayReach) in frame.PatternOwnerDuplicates)
         {
-            if ((!resultMayReach || resultOwnsItself) && _releasedPatternOwnerDuplicates.Add(temp))
+            if ((!resultMayReach || resultOwnsItself) && ReleasedPatternOwnerDuplicates.Add(temp))
             {
                 Emit(new IrInst.RcDrop(temp, GetOwnedTypeName(type) ?? "PatternBinding"));
             }
