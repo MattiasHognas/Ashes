@@ -456,6 +456,20 @@ public sealed partial class Lowering
         }
     }
 
+    // A fresh arena cell a loop body hands to a join whose normalization copies it: the copy takes
+    // its own reference to every reference-counted child, and the arena cell never releases the
+    // retains its construction took of loop-parameter reads, so they are withdrawn like a
+    // borrowed scrutinee's.
+    private void RecordJoinCopiedArenaCell(int cellTemp)
+    {
+        if (_tcoCtx is TcoContext tco
+            && IsArenaCell(cellTemp)
+            && Environment.GetEnvironmentVariable("GRC_NO_JOINCOPYWITHDRAW") is null)
+        {
+            _borrowedScrutinees.Add(new BorrowedScrutinee(tco, cellTemp));
+        }
+    }
+
     private void WithdrawBorrowedScrutineeRetains(TcoContext? tco)
     {
         for (int index = _borrowedScrutinees.Count - 1; index >= 0; index--)

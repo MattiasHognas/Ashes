@@ -22225,4 +22225,66 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("nil beside fresh cell", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildJoinCopiedRecordUpdateProgram(int rounds)
+        => $$"""
+            type FlowCount =
+                | references: Int
+                | calls: Int
+                | flow: List(List(Int))
+
+            let recursive countNodes (self: Int) (nodes: List(Int)) (count: FlowCount) =
+                match nodes with
+                    | [] -> count
+                    | name :: rest ->
+                        countNodes(self)(rest)((if name == self
+                        then count with references = count.references + 1
+                        else count))
+
+            let recursive emptyLists (count: Int) =
+                if count == 0
+                then []
+                else [] :: emptyLists(count - 1)
+
+            let recursive size (lists: List(List(Int))) (acc: Int) =
+                match lists with
+                    | [] -> acc
+                    | _first :: rest -> size(rest)(acc + 1)
+
+            let flowWith (nodes: List(Int)) =
+                match FlowCount(references = 0, calls = 0, flow = emptyLists(3)) |> countNodes(7)(nodes) with
+                    | FlowCount { references = references, calls = _calls, flow = flow } -> size(flow)(references)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + flowWith([7, n]))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_join_copied_record_update_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The loop hands its record on through an if that either updates a scalar field or passes the
+        // record itself. The updated record is an arena cell retaining the list field it reads out of
+        // the parameter, and the join copies the cell, taking a reference of its own, so the cell's
+        // retain was never released. The copy now withdraws it.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildJoinCopiedRecordUpdateProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("join copied record update", samples, maxRssKb: 16_000);
+    }
 }

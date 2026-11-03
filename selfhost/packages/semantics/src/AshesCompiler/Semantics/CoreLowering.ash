@@ -19087,6 +19087,19 @@ let normalizeJoinArmStore (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan
                                 |> statePatternOwnerSites
                                 |> shiftPatternOwnerSites(index)(length(buffered.reversedInstructions) - 1))(spliced)))
 
+// Stage 0's `RecordJoinCopiedArenaCell`: a fresh arena cell a loop body hands to a join whose
+// normalization copies it. The copy takes its own reference to every reference-counted child, and
+// the arena cell never releases the retains its construction took of loop-parameter reads, so they
+// are withdrawn like a borrowed scrutinee's once the loop's placements are final.
+let recordJoinCopiedArenaCell (consedElementPlan: Maybe(ArgumentCopyPlan)) (arm: MatchArmResult) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), arm.armConsesOntoSelfResult, consedElementPlan) with
+        | (None, _, _) -> state
+        | (Some(_frame), true, Some(_elementPlan)) -> state
+        | (Some(_frame), _, _) ->
+            if isArenaCell(arm.armStoreTemp)(state.reversedInstructions)
+            then withStateBorrowedScrutineeCells(arm.armStoreTemp :: stateBorrowedScrutineeCells(state))(state)
+            else state
+
 let recursive normalizeUnownedJoinArms (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan)) (plan: ArgumentCopyPlan) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     match arms with
         | [] -> (state, [])
@@ -19098,6 +19111,7 @@ let recursive normalizeUnownedJoinArms (slot: Int) (consedElementPlan: Maybe(Arg
             else
                 match state
                 |> normalizeJoinArmStore(slot)(consedElementPlan)(plan)(arm)
+                |> recordJoinCopiedArenaCell(consedElementPlan)(arm)
                 |> normalizeUnownedJoinArms(slot)(consedElementPlan)(plan)(rest) with
                     | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = arm.armJoinsSelfConsingArms) :: restArms)
 

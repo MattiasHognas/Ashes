@@ -1751,6 +1751,14 @@ of it. A retain is withdrawn only when the cell holds its sole reference and the
 is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
 child's root there).
 
+The same holds for a join that copies an arm's arena cell. A loop handing its record on through
+`if name == self then count with references = count.references + 1 else count` builds the update
+in the arena, retaining the list field it reads out of the parameter, and the join, owned on the
+parameter's arm, normalizes the update's arm by copying the cell; the copy takes its own reference
+to the list, so the cell's retain is withdrawn once the loop's placements are final, as a borrowed
+scrutinee's is. Left alone, the list stayed one count too high and its cells outlived the loop
+(`GRC_NO_JOINCOPYWITHDRAW`).
+
 A record update written as a child of such a literal (`Step(state = (state with items = n ::
 state.items), error = None)`) is an arena cell like the literal, and the copy of the literal copies
 it too, so the references its construction took are released from the dying cell field by field: a

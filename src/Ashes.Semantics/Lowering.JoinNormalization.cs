@@ -56,6 +56,7 @@ public sealed partial class Lowering
             else if (!IsOwnedJoinArm(arm) && !(consingOnly && arm.Body is { } nil && IsEmptyListLiteral(nil)))
             {
                 NormalizeJoinArmStore(arm.Store!, pruned, Environment.GetEnvironmentVariable("GRC_NO_FRESHARM") is null && arm.Body is { } body && ConstructsFreshCell(body));
+                RecordJoinCopiedArenaCell(arm.Store!.Source);
             }
         }
 
