@@ -21000,21 +21000,21 @@ public sealed class LinuxBackendCoverageTests
     private static string BuildHandlerContextListAccumulatorProgram(int rounds)
         => $$"""
             capability Cap =
-                | get : Unit -> Str
+                | get : Unit -> Int
 
-            let recursive gather (i: Int) (acc: List(Str)) =
+            let recursive gather (i: Int) (acc: List(Int)) =
                 if i == 0
                 then acc
                 else gather(i - 1)(perform Cap.get(Unit) :: acc)
 
-            let recursive count (xs: List(Str)) (n: Int) =
+            let recursive count (xs: List(Int)) (n: Int) =
                 match xs with
                     | [] -> n
                     | _ :: rest -> count(rest)(n + 1)
 
             let probe (n: Int) =
-                count(handle gather(3)([Ashes.Text.fromInt(n)]) with
-                    | Cap.get(u) -> let x = resume("lit") in "s" :: x
+                count(handle gather(3)([n]) with
+                    | Cap.get(u) -> let x = resume(7) in 1 :: x
                     | return(r) -> r)(0)
 
             let recursive loop (n: Int) (acc: Int) =
@@ -21035,7 +21035,9 @@ public sealed class LinuxBackendCoverageTests
 
         // The loop runs inside the handle, so its list accumulator gets no reference-counted
         // placement, and its successor cells stay in the arena with it. A counted successor cell
-        // made the accumulator a counted list that the caller copied and nothing released.
+        // made the accumulator a counted list that the caller copied and nothing released. The
+        // elements are integers: a string head performed into the arena cell is the separate arena-cell
+        // fresh-head class.
         int[] roundCounts = [20000, 80000, 320000];
         List<MemoryExecutionResult> samples = new(roundCounts.Length);
         foreach (int rounds in roundCounts)
