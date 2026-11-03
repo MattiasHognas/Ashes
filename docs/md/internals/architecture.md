@@ -1768,7 +1768,11 @@ withdrawn: for a record update or a `let`-bound record successor, for a loop's r
 normalization helper, and for a record built only to be matched when no arm binds a heap-typed part
 of it. A retain is withdrawn only when the cell holds its sole reference and the parameter it reads
 is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
-child's root there).
+child's root there). That self call clears the root parameter's active flag, but its back edge
+stores the retained child as the next value and sets the flag again, so on the loop's exit the
+parameter is still held to the end: such a clear does not count as an early release
+(`GRC_NO_BACKEDGEFLAGRESET`). `match body with | ExprAt(_, inner) -> walk(inner) | _ -> Some(body)`
+withdraws its option cell's retain of `body` that way.
 
 The same holds for a join that copies an arm's arena cell. A loop handing its record on through
 `if name == self then count with references = count.references + 1 else count` builds the update

@@ -22677,4 +22677,86 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("scalar variant list result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildTransferredRootOptionResultProgram(int rounds)
+        => $$"""
+            type TextSpan =
+                | start: Int
+                | end: Int
+
+            type Expr =
+                | ExprAt(TextSpan, Expr)
+                | ExprVar(Str)
+                | ExprLet(Str, Expr, Expr)
+                | ExprCall(Expr, Expr, Bool, Maybe(Int))
+
+            let recursive chainBodyFirst (body: Expr) (lastOrdinary: Bool) =
+                match body with
+                    | ExprAt(_span, inner) -> chainBodyFirst(inner)(lastOrdinary)
+                    | ExprLet(_name, _value, nested) -> chainBodyFirst(nested)(true)
+                    | _ ->
+                        if lastOrdinary
+                        then Some(body)
+                        else None
+
+            let recursive chainBody (body: Expr) (lastOrdinary: Bool) =
+                match body with
+                    | ExprAt(_span, inner) -> chainBody(inner)(lastOrdinary)
+                    | ExprLet(_name, _value, nested) -> chainBody(nested)(true)
+                    | _ ->
+                        if lastOrdinary
+                        then Some(body)
+                        else None
+
+            let recursive size (expression: Expr) =
+                match expression with
+                    | ExprAt(_span, inner) -> 1 + size(inner)
+                    | ExprLet(_name, value, body) -> size(value) + size(body)
+                    | ExprCall(callee, argument, _sugar, _layout) -> size(callee) + size(argument)
+                    | _ -> 1
+
+            let request (body: Expr) (n: Int) =
+                match chainBody(body)(true) with
+                    | Some(found) -> size(found) + n
+                    | None -> n
+
+            let recursive build (k: Int) (n: Int) =
+                if k == 0
+                then ExprCall(ExprAt(TextSpan(start = 2, end = 3), ExprVar("walk")), ExprVar("rest"), false, Some(n))
+                else ExprAt(TextSpan(start = k, end = n), build(k - 1)(n))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    let tree = ExprLet("next", ExprVar("x"), build(2)(n))
+                    in loop(n - 1)(acc + request(tree)(n))
+            in Ashes.IO.print(Ashes.Text.fromInt(loop({{rounds}})(0)))
+            """;
+
+    [Test]
+    public async Task Linux_backend_transferred_root_option_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The loop hands a pattern-bound child on as its next parameter, which clears the root's
+        // active flag at the self call, and returns `Some(body)` at its exit. The flag counted as a
+        // release ahead of the loop's end, so the arena option cell kept its retain of the parameter
+        // while the result's copy retained it again. The back edge sets the flag again, so the
+        // retain is now withdrawn.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildTransferredRootOptionResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("transferred root option result", samples, maxRssKb: 16_000);
+    }
 }

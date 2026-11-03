@@ -215,19 +215,43 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool SuccessorResetFlagClearEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_BACKEDGEFLAGRESET") is null;
+
+    // The active-flag clears a self call emits for a root it releases while its pattern-bound
+    // successor takes the parameter's place, by function body: the back edge stores the retained
+    // successor and sets the flag again, so the parameter is held to the loop's end all the same.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _successorResetActiveFlagClearsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void NoteSuccessorResetActiveFlagClear(int zeroTemp)
+    {
+        if (!_successorResetActiveFlagClearsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _successorResetActiveFlagClearsByBody[_inst] = temps;
+        }
+
+        temps.Add(zeroTemp);
+    }
+
     /// <summary>
     /// The parameter slots no path releases ahead of the loop's end: a parameter a self call hands
-    /// on as the root of a pattern-bound successor is released there and its active flag cleared.
+    /// on as the root of a pattern-bound successor is released there and its active flag cleared,
+    /// unless the back edge sets it again for the retained successor.
     /// </summary>
     private HashSet<int> ParametersHeldToTheEnd(IReadOnlyCollection<(int Slot, int ActiveSlot)> parameters)
     {
         var zeroTemps = new HashSet<int>();
         var clearedSlots = new HashSet<int>();
+        HashSet<int> transientClears = SuccessorResetFlagClearEnabled
+            ? _successorResetActiveFlagClearsByBody.GetValueOrDefault(_inst) ?? []
+            : [];
         foreach (IrInst instruction in _inst)
         {
             switch (instruction)
             {
-                case IrInst.LoadConstInt { Value: 0 } zero:
+                case IrInst.LoadConstInt { Value: 0 } zero when !transientClears.Contains(zero.Target):
                     zeroTemps.Add(zero.Target);
                     break;
                 case IrInst.StoreLocal store when zeroTemps.Contains(store.Source):

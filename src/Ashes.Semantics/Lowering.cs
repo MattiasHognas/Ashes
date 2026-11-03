@@ -12078,6 +12078,7 @@ public sealed partial class Lowering
                 int inactiveTemp = NewTemp();
                 Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
                 Emit(new IrInst.StoreLocal(activeSlot, inactiveTemp));
+                NoteSuccessorResetActiveFlagClear(inactiveTemp);
             }
         }
     }

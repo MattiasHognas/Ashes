@@ -324,11 +324,14 @@ let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (visited: List
             match withdrawCellRetains(cell)(slots)(visited)(instructions) with
                 | (withdrawn, nextVisited) -> withdrawCells(rest)(slots)(nextVisited)(withdrawn)
 
-let recursive zeroConstantTemps (instructions: List(IrInstruction)) (temps: List(Int)) =
+let recursive zeroConstantTemps (transientClears: List(Int)) (instructions: List(IrInstruction)) (temps: List(Int)) =
     match instructions with
         | [] -> temps
-        | IrInstruction { instruction = LoadConstInt(target, 0) } :: rest -> zeroConstantTemps(rest)(target :: temps)
-        | _instruction :: rest -> zeroConstantTemps(rest)(temps)
+        | IrInstruction { instruction = LoadConstInt(target, 0) } :: rest ->
+            if containsInt(target)(transientClears)
+            then zeroConstantTemps(transientClears)(rest)(temps)
+            else zeroConstantTemps(transientClears)(rest)(target :: temps)
+        | _instruction :: rest -> zeroConstantTemps(transientClears)(rest)(temps)
 
 let recursive clearedSlotsOf (instructions: List(IrInstruction)) (zeroTemps: List(Int)) (slots: List(Int)) =
     match instructions with
@@ -350,9 +353,9 @@ let recursive heldParameterSlots (parameters: List((Int, Int))) (cleared: List(I
 // Stage 0's `ParametersHeldToTheEnd`: the parameter slots no path releases ahead of the loop's end.
 // A parameter a self call hands on as the root of a pattern-bound successor is released there and
 // its active flag cleared.
-let parametersHeldToTheEnd (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
+let parametersHeldToTheEnd (transientClears: List(Int)) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
     []
-    |> zeroConstantTemps(instructions)
+    |> zeroConstantTemps(transientClears)(instructions)
     |> (given (zeroTemps: List(Int)) -> clearedSlotsOf(instructions)(zeroTemps)([]))
     |> heldParameterSlots(parameters)
 
@@ -367,8 +370,8 @@ let recursive parameterSlotsOf (parameters: List((Int, Int))) =
 // before the loop releases its parameters. Each parameter is its slot beside its active flag, or
 // -1; a retain is withdrawn only when the cell holds its sole reference and the parameter it reads
 // is not released ahead of the loop's end.
-let withdrawLoopParameterRetainsOfCopiedCells (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
+let withdrawLoopParameterRetainsOfCopiedCells (transientClears: List(Int)) (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
     match parameters with
         | [] -> instructions
         | _parameters ->
-            withdrawCells(arenaCellsCarrying([valueTemp])([])(parameterSlotsOf(parameters))(instructions)([]))(parametersHeldToTheEnd(parameters)(instructions))([])(instructions)
+            withdrawCells(arenaCellsCarrying([valueTemp])([])(parameterSlotsOf(parameters))(instructions)([]))(parametersHeldToTheEnd(transientClears)(parameters)(instructions))([])(instructions)

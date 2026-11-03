@@ -774,6 +774,11 @@ type CoreTcoState =
     // the retains of loop-parameter reads they were built with are withdrawn once the loop's
     // placements are final (stage 0's `_borrowedScrutinees`).
     | borrowedScrutineeCells: List(Int)
+    // The active-flag clears a tail self-call emits for a root it releases while its pattern-bound
+    // successor takes the parameter's place, with the function they belong to: the back edge sets
+    // the flag again, so the parameter is still held to the loop's end (stage 0's
+    // `_successorResetActiveFlagClearsByBody`).
+    | transientFlagClears: List((Maybe(IrFunctionOrigin), Int))
     // The parameter slot whose tail self-call argument is being lowered, stage 0's
     // `_loweringTcoBackEdgeArgumentSlot`: a read of that parameter inside its own successor is
     // the reference the back edge moves, never retained.
@@ -1981,6 +1986,24 @@ let withStateBorrowedScrutineeCells value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with borrowedScrutineeCells = value))
 
+let recursive transientFlagClearsOf (origin: Maybe(IrFunctionOrigin)) (clears: List((Maybe(IrFunctionOrigin), Int))) =
+    match clears with
+        | [] -> []
+        | (owner, temp) :: rest ->
+            if owner == origin
+            then temp :: transientFlagClearsOf(origin)(rest)
+            else transientFlagClearsOf(origin)(rest)
+
+// The active-flag clears of the function being lowered that its back edges set again.
+let stateTransientFlagClears (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in
+        transientFlagClearsOf(stateActiveFunctionOrigin(state))(group.transientFlagClears))
+
+let noteTransientFlagClear (temp: Int) (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with transientFlagClears = (stateActiveFunctionOrigin(state), temp) :: group.transientFlagClears))
+
 let stateBackEdgeArgumentSlot (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.backEdgeArgumentSlot)
@@ -2626,6 +2649,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             tcoParameterRetainSites = [],
             arenaParameterCopies = [],
             borrowedScrutineeCells = [],
+            transientFlagClears = [],
             backEdgeArgumentSlot = None,
             lateCopiedCellHeads = [],
             arenaSuccessorLetLoop = None,
@@ -8852,7 +8876,8 @@ let backEdgeCopyBorrows (semanticType: SemanticType) (expression: Expr) (state: 
 // was built with for loop-parameter reads are withdrawn.
 let withdrawCopiedLiteralRetains (expression: Expr) (temp: Int) (parameters: List((Int, Int))) (state: CoreLoweringState) =
     match unspanArgument(expression) with
-        | ExprList(_first :: _rest, _isMultiline) -> state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(temp)(parameters)(state.reversedInstructions)
+        | ExprList(_first :: _rest, _isMultiline) ->
+            state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(stateTransientFlagClears(state))(temp)(parameters)(state.reversedInstructions)
         | _ -> state
 
 // Stage 0's `BackEdgeCopyBorrowsSuccessorChildren`: an arena successor of a runtime-managed ADT
@@ -8864,7 +8889,8 @@ let recursive withdrawBorrowedSuccessorRetains (arguments: List(TcoResetArgument
         | [] -> state
         | TcoResetArgument { managedAdt = Some((_activeSlot, semanticType, _typeName)), shape = shape, parameterSlot = slot, argumentTemp = temp, argumentRuntime = false, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
             if shape != TcoPassThroughShape && !passesThrough && backEdgeCopyBorrows(semanticType)(expression)(state)
-            then withdrawBorrowedSuccessorRetains(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(temp)(parameters)(state.reversedInstructions)))
+            then
+                withdrawBorrowedSuccessorRetains(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(stateTransientFlagClears(state))(temp)(parameters)(state.reversedInstructions)))
             else
                 state
                 |> withdrawCopiedLiteralRetains(expression)(temp)(parameters)
@@ -14415,7 +14441,8 @@ let frameLoopParameters (frame: CoreTcoLoopFrame) = loopParametersWithActiveSlot
 
 let withdrawCopiedLoopResultRetains (parameters: List((Int, Int))) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (isGeneralRcValueType(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
-        | (true, Some(_plan)) -> state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(bodyTemp)(parameters)(state.reversedInstructions)
+        | (true, Some(_plan)) ->
+            state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(stateTransientFlagClears(state))(bodyTemp)(parameters)(state.reversedInstructions)
         | _ -> state
 
 // A loop whose result is of the contract's types makes it the function's own before its exit
@@ -14527,7 +14554,8 @@ let retireUnusedListActiveSlots (pairs: List((Int, Int))) (managedLists: List((I
 let recursive withdrawScrutineeCells (cells: List(Int)) (parameters: List((Int, Int))) (state: CoreLoweringState) =
     match cells with
         | [] -> state
-        | cell :: rest -> withdrawScrutineeCells(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(cell)(parameters)(state.reversedInstructions)))
+        | cell :: rest ->
+            withdrawScrutineeCells(rest)(parameters)((state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(stateTransientFlagClears(state))(cell)(parameters)(state.reversedInstructions)))
 
 // Stage 0's `WithdrawBorrowedScrutineeRetains`, run once the retains carry their resolved form.
 let withdrawBorrowedScrutineeRetains (parameters: List((Int, Int))) (state: CoreLoweringState) =
@@ -29482,6 +29510,7 @@ let clearListActiveFlag (rootSlot: Int) (frame: CoreTcoLoopFrame) (state: CoreLo
                     allocated
                     |> emit(LoadConstInt(inactive)(0))
                     |> emit(StoreLocal(activeSlot)(inactive))
+                    |> noteTransientFlagClear(inactive)
 
 // Stage 0's `LowerCallTcoTransferPatternBindings`, second half: a root whose successor took its
 // reference, and which does not itself move to the next iteration, is released unconditionally
