@@ -23442,12 +23442,20 @@ let isCopiedOutFreshHeadType (semanticType: SemanticType) (state: CoreLoweringSt
         | SemNamed(_symbolId, name, _typeArguments) -> !isResourceTypeNameIn(name)(state)
         | _ -> false
 
+// A tail self-call's argument is the next iteration's parameter, which keeps the cell and the head it
+// holds: a copied-out head handed to an owned slot there was released while the successor still read
+// it, so only a head of the contract's own types goes to the slot on a back edge.
+let lowersBackEdgeArgument (state: CoreLoweringState) =
+    match stateBackEdgeArgumentSlot(state) with
+        | Some(_slot) -> true
+        | None -> false
+
 let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headType: SemanticType) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, error = None } ->
             let resolved = resolveType(state)(headType)
             in
-                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state))
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
                 then
                     match freshLocal(state) with
                         | FreshLocal { state = allocated, local = ownedSlot } ->
