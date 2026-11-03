@@ -846,7 +846,17 @@ public sealed partial class Lowering
         => Environment.GetEnvironmentVariable("GRC_NO_RCTUPLE") is null
             && elements.Exists(element =>
                 element.Ownership.Representation == LoweredTempRepresentation.RuntimeRc
-                && !CanArenaReset(Prune(element.Type)));
+                && !CanArenaReset(Prune(element.Type))
+                && !IsFreshNullaryConstructor(element.Temp));
+
+    // A nullary constructor built on the reference-counted heap is an immortal cell: an arena tuple
+    // holding it strands nothing, so it does not make the tuple a reference-counted one. Counted as
+    // one, `(LineLeaf, starts)` in a function whose other arm builds an arena tuple left that arm's
+    // tuple, and the list it copied in, with a caller that releases neither.
+    private bool IsFreshNullaryConstructor(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_NULLARYTUPLEELEMENT") is null
+            && _inst.FindLast(instruction => instruction is IrInst.AllocAdt allocation && allocation.Target == temp)
+                is IrInst.AllocAdt { FieldCount: 0, RuntimeManaged: true };
 
     // A reference-counted tuple owns its children: an element of the contract's types (borrowed, or
     // held by an owned slot the function releases) is retained or copied into it.

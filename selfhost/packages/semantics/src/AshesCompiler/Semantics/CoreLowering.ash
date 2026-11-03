@@ -22645,13 +22645,20 @@ let recursive allRuntimeManageableTupleElements (elements: List(Expr)) (temps: L
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) && allRuntimeManageableTupleElements(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
+// Stage 0's `IsFreshNullaryConstructor`: a tuple element written as a nullary constructor's name.
+let isFreshNullaryConstructor (element: Expr) (state: CoreLoweringState) =
+    match unspanArgument(element) with
+        | ExprVar(name) -> isNullaryConstructorPatternName(name)(state)
+        | _ -> false
+
 // Stage 0's `HoldsReferenceCountedElement`. A tuple's store takes a reference to a
 // reference-counted element, and an arena tuple can release nothing, so that reference would
 // outlive the tuple. On the reference-counted heap the tuple owns the element and whoever matches
-// on it releases both.
+// on it releases both. A nullary constructor is an immortal cell an arena tuple strands nothing
+// of, so it does not count.
 let recursive holdsReferenceCountedElement (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
-        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false || holdsReferenceCountedElement(restElements)(restTemps)(restTypes)(state)
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false && isFreshNullaryConstructor(element)(state) == false || holdsReferenceCountedElement(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
 let recursive withoutTransferRetain (retained: Int) (retains: List((Int, Int, SemanticType))) =

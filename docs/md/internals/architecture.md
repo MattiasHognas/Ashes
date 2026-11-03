@@ -2330,6 +2330,11 @@ reaches the body still being lowered, so like a call through a captured self it 
 returns bit for a list result: a reference-counted result is owned by the caller and released once the
 further call that took it returns. Taken unread, that list stayed with nobody: the export lists
 stage 1's `collectCompatibilityExports` builds for a module interface (`GRC_NO_DIRECTSELFRESULT`, stage 0).
+A nullary constructor built on the reference-counted heap is an immortal cell, so a tuple holding one
+is not made a reference-counted tuple on its account: in stage 1's `buildLineTree` the base arm
+`(LineLeaf, starts)` otherwise went to the heap with a copy of `starts` beside an arm through the
+function's own call that builds an arena pair, and the caller, reading an arena result, released
+neither (`GRC_NO_NULLARYTUPLEELEMENT`, both stages).
 
 ### One-shot resumptive arms: the pre/post split
 

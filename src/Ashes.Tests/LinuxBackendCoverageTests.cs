@@ -21287,6 +21287,66 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("self-call result argument", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildNullaryLeafPairProgram(int rounds)
+        => $$"""
+            type LineTree =
+                | LineLeaf
+                | LineNode(LineTree, Int, Int, LineTree)
+
+            let recursive buildLineTree (starts: List(Int)) (firstLine: Int) (count: Int) =
+                if count <= 0
+                then (LineLeaf, starts)
+                else
+                    let leftCount = count / 2
+                    in
+                        match buildLineTree(starts)(firstLine)(leftCount) with
+                            | (left, start :: afterLeft) ->
+                                match buildLineTree(afterLeft)(firstLine + leftCount + 1)(count - leftCount - 1) with
+                                    | (right, afterRight) -> (LineNode(left)(firstLine + leftCount)(start)(right), afterRight)
+                            | (left, []) -> (left, [])
+
+            let recursive size (tree: LineTree) =
+                match tree with
+                    | LineLeaf -> 0
+                    | LineNode(left, _line, start, right) -> 1 + start + size(left) + size(right)
+
+            let probe (n: Int) =
+                match buildLineTree([1, 5, 9, n, n + 3, n + 7])(2)(6) with
+                    | (tree, _remaining) -> size(tree)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_nullary_leaf_pair_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // buildLineTree's base arm pairs the immortal LineLeaf with its list parameter while the arm
+        // through its own calls builds an arena pair. A nullary constructor does not make the pair a
+        // reference-counted one, so the base arm's pair stays beside its arena sibling; counted as
+        // one, every call left a reference-counted pair and a copy of the list nobody released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildNullaryLeafPairProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(31L * rounds) + (3L * rounds * (rounds + 1) / 2)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nullary leaf pair", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildArenaConstructorFreshListProgram(int rounds)
         => $$"""
             capability Cap =
