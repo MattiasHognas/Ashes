@@ -24097,6 +24097,18 @@ let keepCopiedLiteralHeadOwned (request: ConsumerRequest) (expression: Expr) (he
     then keepCopiedCellFreshHeadOwned(expression)(headTemp)(headType)(state)
     else state
 
+// Stage 0's `KeepArenaListLiteralFreshHeadOwned`: a literal's arena cell holding a value produced right
+// there (a constructor placed on the reference-counted heap because it owns a fresh string) is that
+// value's only holder, and an arena cell releases nothing, so its reference goes to an owned slot.
+let keepArenaListLiteralFreshHeadOwned (cellTemp: Int) (headTemp: Int) (cellHeadTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    if cellHeadTemp == headTemp && !isFreshReferenceCountedCell(cellTemp)(state)
+    then
+        match state
+        |> success(cellTemp)(headType)
+        |> keepEscapingArenaCellFreshHeadOwned(true)(headTemp)(headType) with
+            | LoweredCoreValue { state = kept } -> kept
+    else state
+
 let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) (tailIsFreshCell: Bool) lower state =
     match elements with
         | [] ->
@@ -24135,7 +24147,7 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
                                                             isFreshReferenceCountedCell(cellTemp)(cellState),
                                                             isFreshReferenceCountedCell(cellTemp)(cellState),
                                                             lower,
-                                                            cellState
+                                                            keepArenaListLiteralFreshHeadOwned(cellTemp)(headTemp)(cellHeadTemp)(headType)(cellState)
                                                         )
                                                     | failed -> failed
 
