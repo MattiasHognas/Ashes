@@ -59,6 +59,7 @@ function lambda_1  [ClosureHelper from step]
     LoadLocal             Target=15 Slot=14   (tco_tuple_parameter_rebuild.ash:12:31)
     Borrow                Target=16 SourceTemp=15
     RcDup                 Target=17 SourceTemp=16
+    RcDrop                SourceTemp=4 TypeName=PatternBinding OwnerSlot=14
     LoadLocal             Target=18 Slot=13   (tco_tuple_parameter_rebuild.ash:12:34)
     LoadLocal             Target=19 Slot=2   (tco_tuple_parameter_rebuild.ash:12:38)
     AddInt                Target=20 Left=18 Right=19   (tco_tuple_parameter_rebuild.ash:12:34)

@@ -2269,12 +2269,15 @@ public sealed partial class Lowering
     /// is an arena value that never releases what it holds: the reference taken for that result
     /// goes to an owned slot, released once the function's result or the loop's successors hold
     /// references of their own, as an ordinary call's handed-over argument does.
+    /// A result of unresolved layout (a generic body applying a constrained callee) may hold the
+    /// argument as anything: the slot is released only where the function's own result is out of
+    /// that call's reach.
     /// </summary>
     private void HandOverDictionaryCallArgumentsToOwnedSlots(List<HandedOverDictionaryArgument> handedOver, TypeRef resultType)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_DICTHANDEDSLOT") is not null
-            || ContainsUnresolvedLayoutType(Prune(resultType), []))
+            || (ContainsUnresolvedLayoutType(Prune(resultType), []) && Environment.GetEnvironmentVariable("GRC_NO_DICTUNRESOLVEDSLOT") is not null))
         {
             return;
         }

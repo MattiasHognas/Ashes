@@ -164,6 +164,38 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConsOntoSelfResultTemplate());
         registry.Register(new RecordUpdateInLiteralSuccessorTemplate());
         registry.Register(new ReuseSpecializedResultReadByScalarCallerTemplate());
+        registry.Register(new OneShotPostResultTemplate());
+        registry.Register(new OneShotPostInCallWindowTemplate());
+        registry.Register(new EscapingClosureCaptureTemplate());
+        registry.Register(new OneShotPostOwnedFoldTemplate());
+        registry.Register(new PerformResultElementTemplate());
+        registry.Register(new AccumulatorAppendPerformResultTemplate());
+        registry.Register(new TupleHeadOwnersAtBackEdgeTemplate());
+        registry.Register(new ConsInTupleSuccessorTemplate());
+        registry.Register(new UpdateFieldMatchJoinTemplate());
+        registry.Register(new ConsChainOntoFreshCellTemplate());
+        registry.Register(new NestedCellInArenaSuccessorTemplate());
+        registry.Register(new UnnamedPredecessorInArenaLoopTemplate());
+        registry.Register(new PatternOwnerInCallArgumentCellTemplate());
+        registry.Register(new GenericStringArgumentTemplate());
+        registry.Register(new ClosureInEscapingAggregateTemplate());
+        registry.Register(new DeferredGenericStringAddTemplate());
+        registry.Register(new MutualGroupFreshTupleCellTemplate());
+        registry.Register(new HandlerContextListAccumulatorTemplate());
+        registry.Register(new ArenaConstructorFreshStringTemplate());
+        registry.Register(new ArenaConstructorFreshListTemplate());
+        registry.Register(new EscapingCellRetainedTailTemplate());
+        registry.Register(new MutualGroupFreshOptionCellTemplate());
+        registry.Register(new ArenaTupleFreshElementTemplate());
+        registry.Register(new MutualGroupSiblingResultPipedTemplate());
+        registry.Register(new FreshArgumentToClosureOfUnresolvedResultTemplate());
+        registry.Register(new SelfCallResultKeptInPlaceTemplate());
+        registry.Register(new LoopHeadBindersInArgumentTupleTemplate());
+        registry.Register(new PatternOwnerDuplicateInLaterFunctionTemplate());
+        registry.Register(new ArenaListLiteralFreshHeadTemplate());
+        registry.Register(new ConstrainedCallOfUnresolvedResultTemplate());
+        registry.Register(new DiscardedResultArgumentUnderHandlerTemplate());
+        registry.Register(new ProducerTupleFreshElementTemplate());
     }
 }
 

@@ -204,23 +204,54 @@ public sealed partial class Lowering
         // root parameter's final placement is runtime-managed; otherwise it remains an identity.
         bool fieldMayBeEmpty = argument is Expr.QualifiedVar && TempMayBeEmptyList(argumentTemp);
         Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, MayBeEmpty: fieldMayBeEmpty));
-        _patternOwnerAggregateDuplicates.Add(duplicatedTemp);
+        PatternOwnerAggregateDuplicates.Add(duplicatedTemp);
         return duplicatedTemp;
     }
 
     // The pattern-owner duplicates taken for an aggregate's elements, and those of them an owning
     // aggregate then normalized: the normalization takes the element's reference itself (a retain of
     // the owner's value, or a copy of an arena one), so the duplicate is released right after it by a
-    // marker promoted together with the duplicate (FinalizePerceusPatternBindingOwners).
-    private readonly HashSet<int> _patternOwnerAggregateDuplicates = [];
+    // marker promoted together with the duplicate (FinalizePerceusPatternBindingOwners). Temps are
+    // numbered per function, so both sets are kept per function: a duplicate an earlier function
+    // released under the same number would otherwise keep a later one's release from being
+    // emitted, and could have a later function's unrelated marker promoted. The function is told by
+    // its temp ownership table, which every function lowering replaces and restores (an
+    // instruction buffer swapped in for a synthesized sequence is not a new function).
+    private readonly Dictionary<object, HashSet<int>> _patternOwnerAggregateDuplicatesByFunction =
+        new(ReferenceEqualityComparer.Instance);
 
-    private readonly HashSet<int> _releasedPatternOwnerDuplicates = [];
+    private readonly Dictionary<object, HashSet<int>> _releasedPatternOwnerDuplicatesByFunction =
+        new(ReferenceEqualityComparer.Instance);
+
+    private readonly HashSet<int> _sharedPatternOwnerAggregateDuplicates = [];
+
+    private readonly HashSet<int> _sharedReleasedPatternOwnerDuplicates = [];
+
+    private static bool PatternOwnerDuplicatesPerFunction
+        => Environment.GetEnvironmentVariable("GRC_NO_FUNCTIONSCOPEDOWNERDUPS") is null;
+
+    private HashSet<int> PatternOwnerAggregateDuplicates
+        => PatternOwnerDuplicatesPerFunction ? PatternOwnerDuplicateSet(_patternOwnerAggregateDuplicatesByFunction) : _sharedPatternOwnerAggregateDuplicates;
+
+    private HashSet<int> ReleasedPatternOwnerDuplicates
+        => PatternOwnerDuplicatesPerFunction ? PatternOwnerDuplicateSet(_releasedPatternOwnerDuplicatesByFunction) : _sharedReleasedPatternOwnerDuplicates;
+
+    private HashSet<int> PatternOwnerDuplicateSet(Dictionary<object, HashSet<int>> byFunction)
+    {
+        if (!byFunction.TryGetValue(_tempOwnershipFacts, out HashSet<int>? temps))
+        {
+            temps = [];
+            byFunction[_tempOwnershipFacts] = temps;
+        }
+
+        return temps;
+    }
 
     private void ReleaseNormalizedPatternOwnerDuplicate(int elementTemp, TypeRef elementType)
     {
         if (Environment.GetEnvironmentVariable("GRC_NO_SUPERSEDEDOWNERDUP") is null
-            && _patternOwnerAggregateDuplicates.Contains(elementTemp)
-            && _releasedPatternOwnerDuplicates.Add(elementTemp))
+            && PatternOwnerAggregateDuplicates.Contains(elementTemp)
+            && ReleasedPatternOwnerDuplicates.Add(elementTemp))
         {
             Emit(new IrInst.RcDrop(elementTemp, GetOwnedTypeName(Prune(elementType)) ?? "PatternBinding"));
         }
@@ -2410,6 +2441,7 @@ public sealed partial class Lowering
             else if (hadAliveOwned && resultTemp >= 0
                 && TryEmitScopeCopyOut(resultType, resultTemp, cursorSlot, endSlot, preRestoreEndSlot, out int copiedResultTemp))
             {
+                ReleaseCopiedRetainedPatternOwnerResult(resultTemp, resultType);
                 return copiedResultTemp;
             }
             // else: heap type that cannot be copy-outed, or no owned values to reclaim.
@@ -2418,6 +2450,32 @@ public sealed partial class Lowering
 
         PopTrackedOwnershipScope();
         return resultTemp;
+    }
+
+    // An arm returning a pattern binding retains it for the join, so a scope copy-out that replaces the
+    // value with its copy releases that retain: a reference-counted original would otherwise keep it.
+    // With a capability in the program the copy-out may be skipped while a post is pending, leaving the
+    // original as the result, so the retain is kept there.
+    private void ReleaseCopiedRetainedPatternOwnerResult(int resultTemp, TypeRef resultType)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_COPIEDOWNERRESULT") is not null
+            || CapabilityGlobalCount > 0
+            || !_retainedPatternOwnerArmTempsByBody.TryGetValue(_inst, out HashSet<int>? temps)
+            || !temps.Contains(resultTemp))
+        {
+            return;
+        }
+
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, resultTemp));
+        string skipLabel = NewLabel("rc_copied_owner_result_kept");
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, skipLabel));
+        Emit(new IrInst.RcDrop(
+            resultTemp,
+            TcoRuntimeManagedTypeName(resultType),
+            OwnerSlot: -1,
+            RuntimeManaged: true));
+        Emit(new IrInst.Label(skipLabel));
     }
 
     /// <summary>
@@ -2462,6 +2520,7 @@ public sealed partial class Lowering
         if (normalizeToRuntimeOwnership)
         {
             MarkRuntimeManagedTemp(copyDest);
+            ReleaseCellTailRetainAfterCopy(copyOutKind, resultType, resultTemp);
         }
         Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
         PopTrackedOwnershipScope();
@@ -2485,6 +2544,24 @@ public sealed partial class Lowering
 
         copiedResultTemp = copyDest;
         return true;
+    }
+
+    /// <summary>
+    /// A scope's result built as an arena cons cell whose tail is a pattern owner's duplicate taken
+    /// for the cell (a list matched out of a loop parameter inside the loop's successor): the
+    /// reference-counted copy stops at that tail and takes a reference of its own, and the arena cell
+    /// never releases anything, so the duplicate is released right after the copy by a marker
+    /// promoted together with it.
+    /// </summary>
+    private void ReleaseCellTailRetainAfterCopy(CopyOutKind copyOutKind, TypeRef resultType, int cellTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_SCOPECOPYTAILRELEASE") is null
+            && copyOutKind == CopyOutKind.List
+            && FindLastInstruction(instruction => instruction is IrInst.Alloc allocation && allocation.Target == cellTemp) >= 0
+            && ConstructionWordSource(cellTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)) is int tail)
+        {
+            ReleaseNormalizedPatternOwnerDuplicate(tail, resultType);
+        }
     }
 
     private void EmitScopeCopyOutInstruction(
@@ -2890,6 +2967,7 @@ public sealed partial class Lowering
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression)
             || IsFreshCopyListExpression(expression)
             || expression is Expr.TupleLit tuple && IsFreshGenericTupleExpression(tuple)
+            || ClosureOwnsEscapingCaptures(expression)
             || TryGetEnclosingTcoLoopParameterLocal(expression, out Binding.Local genericListLocal)
                 && Prune(genericListLocal.Type) is TypeRef.TList genericList
                 && CanArenaReset(Prune(genericList.Element));

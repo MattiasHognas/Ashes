@@ -110,13 +110,14 @@ public sealed partial class Lowering
 
         return reloadIndex - 6;
     }
-
     /// <summary>
     /// The retains the arena cells reaching <paramref name="valueTemp"/> still hold once the
     /// loop-parameter reads among them are withdrawn, each with its field's type: a head matched
     /// out of a parameter the loop releases before the back edge (the walked cell of a list), kept
     /// alive by the cell until the copy takes its own reference. Released right after that copy,
-    /// since the arena cell never releases anything.
+    /// since the arena cell never releases anything. A constructor cell nested in such a cell as a
+    /// field (`Node(seen, Item(name))`) is copied by the same normalizer, so its retains are
+    /// collected too.
     /// </summary>
     private List<(int Temp, TypeRef Type)> RetainsHeldPastTheCopy(int valueTemp, TypeRef.TNamedType named, IReadOnlyCollection<(int Slot, int ActiveSlot)> parameters)
     {
@@ -127,28 +128,41 @@ public sealed partial class Lowering
         }
 
         HashSet<int> parameterSlots = [.. parameters.Select(parameter => parameter.Slot)];
+        var visited = new HashSet<int>();
         foreach (int cell in ArenaCellsCarrying(valueTemp, parameterSlots))
         {
-            int allocation = FindLastInstruction(instruction => instruction is IrInst.AllocAdt adt && adt.Target == cell);
-            if (allocation < 0
-                || named.Symbol.Constructors.FirstOrDefault(candidate => GetConstructorTag(candidate) == ((IrInst.AllocAdt)_inst[allocation]).Tag) is not { } constructor)
-            {
-                continue;
-            }
-
-            foreach (IrInst.SetAdtField field in _inst.OfType<IrInst.SetAdtField>().Where(field => field.Ptr == cell))
-            {
-                int retain = FindLastInstruction(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == field.Source);
-                if (retain >= 0
-                    && _inst[retain] is IrInst.RcDup { RuntimeManaged: true }
-                    && TempUseCount(field.Source, retain) == 1)
-                {
-                    retains.Add((field.Source, InstantiateConstructorParameterType(constructor, field.FieldIndex, named)));
-                }
-            }
+            CollectRetainsHeldByCell(cell, named, retains, visited);
         }
 
         return retains;
+    }
+
+    private void CollectRetainsHeldByCell(int cell, TypeRef.TNamedType named, List<(int Temp, TypeRef Type)> retains, HashSet<int> visited)
+    {
+        int allocation = FindLastInstruction(instruction => instruction is IrInst.AllocAdt adt && adt.Target == cell);
+        if (!visited.Add(cell)
+            || allocation < 0
+            || named.Symbol.Constructors.FirstOrDefault(candidate => GetConstructorTag(candidate) == ((IrInst.AllocAdt)_inst[allocation]).Tag) is not { } constructor)
+        {
+            return;
+        }
+
+        bool nestedCells = Environment.GetEnvironmentVariable("GRC_NO_NESTEDHELDRETAINS") is null;
+        foreach (IrInst.SetAdtField field in _inst.OfType<IrInst.SetAdtField>().Where(field => field.Ptr == cell))
+        {
+            TypeRef fieldType = InstantiateConstructorParameterType(constructor, field.FieldIndex, named);
+            int retain = FindLastInstruction(instruction => instruction is IrInst.RcDup duplicate && duplicate.Target == field.Source);
+            if (retain >= 0
+                && _inst[retain] is IrInst.RcDup { RuntimeManaged: true }
+                && TempUseCount(field.Source, retain) == 1)
+            {
+                retains.Add((field.Source, fieldType));
+            }
+            else if (nestedCells && Prune(fieldType) is TypeRef.TNamedType nested && IsArenaCell(field.Source))
+            {
+                CollectRetainsHeldByCell(field.Source, nested, retains, visited);
+            }
+        }
     }
 
     /// <summary>

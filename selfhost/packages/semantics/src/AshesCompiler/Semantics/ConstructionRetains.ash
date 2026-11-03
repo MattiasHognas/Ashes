@@ -12,8 +12,11 @@ import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 export (
     value constructionFieldSource,
     value constructionWordSource,
+    value countTempUses,
+    value isArenaCell,
     value isUnrealizedConstructionRetain,
     value retainsHeldPastTheCopy,
+    value storedValuesOf,
     value withdrawLoopParameterRetainsOfCopiedCells,
 )
 
@@ -259,36 +262,60 @@ let isSoleHeldRetain (storedTemp: Int) (instructions: List(IrInstruction)) =
         | Some(IrInstruction { instruction = RcDup(_target, _source, true, _mayBeEmpty) } :: _rest) -> countTempUses(storedTemp)(instructions)(0) == 1
         | _ -> false
 
-// The field retains of `cellTemp` with the cell's tag and each field's index, in field order.
-let recursive heldFieldRetains (cellTemp: Int) (tag: Int) (all: List(IrInstruction)) (instructions: List(IrInstruction)) (retains: List((Int, Int, Int))) =
-    match instructions with
-        | [] -> retains
-        | IrInstruction { instruction = SetAdtField(pointer, index, source, _tagless) } :: rest ->
-            if pointer == cellTemp && isSoleHeldRetain(source)(all)
-            then heldFieldRetains(cellTemp)(tag)(all)(rest)((source, tag, index) :: retains)
-            else heldFieldRetains(cellTemp)(tag)(all)(rest)(retains)
-        | _instruction :: rest -> heldFieldRetains(cellTemp)(tag)(all)(rest)(retains)
+// The tag of `temp` when it is an arena constructor cell not yet visited.
+let unvisitedArenaCellTag (temp: Int) (visited: List(Int)) (instructions: List(IrInstruction)) =
+    if containsInt(temp)(visited) == false && isArenaCell(temp)(instructions)
+    then arenaCellTag(temp)(instructions)
+    else None
 
-let recursive heldRetainsOfCells (cells: List(Int)) (instructions: List(IrInstruction)) =
-    match cells with
-        | [] -> []
-        | cell :: rest ->
+// The field retains of `cellTemp`, each as its temp beside its field path from the outermost cell
+// (each step a cell's tag and a field's index), in field order, with the cells visited. A
+// constructor cell nested in the cell as a field (`Node(seen, Item(name))`) is copied by the same
+// normalizer, so its retains are collected too.
+let recursive heldFieldRetains (cellTemp: Int) (path: List((Int, Int))) (tag: Int) (all: List(IrInstruction)) (instructions: List(IrInstruction)) (found: (List((Int, List((Int, Int)))), List(Int))) =
+    match (instructions, found) with
+        | ([], _) -> found
+        | (IrInstruction { instruction = SetAdtField(pointer, index, source, _tagless) } :: rest, (retains, visited)) ->
+            if pointer != cellTemp
+            then heldFieldRetains(cellTemp)(path)(tag)(all)(rest)(found)
+            else
+                if isSoleHeldRetain(source)(all)
+                then heldFieldRetains(cellTemp)(path)(tag)(all)(rest)(((source, append(path)([(tag, index)])) :: retains, visited))
+                else
+                    match unvisitedArenaCellTag(source)(visited)(all) with
+                        | Some(nestedTag) ->
+                            (retains, source :: visited)
+                            |> heldFieldRetains(source)(append(path)([(tag, index)]))(nestedTag)(all)(all)
+                            |> heldFieldRetains(cellTemp)(path)(tag)(all)(rest)
+                        | None -> heldFieldRetains(cellTemp)(path)(tag)(all)(rest)(found)
+        | (_instruction :: rest, _) -> heldFieldRetains(cellTemp)(path)(tag)(all)(rest)(found)
+
+let recursive heldRetainsOfCells (cells: List(Int)) (instructions: List(IrInstruction)) (found: (List((Int, List((Int, Int)))), List(Int))) =
+    match (cells, found) with
+        | ([], _) -> found
+        | (cell :: rest, (retains, visited)) ->
             match arenaCellTag(cell)(instructions) with
                 | Some(tag) ->
-                    instructions
-                    |> heldRetainsOfCells(rest)
-                    |> append(heldFieldRetains(cell)(tag)(instructions)(instructions)([]))
-                | None -> heldRetainsOfCells(rest)(instructions)
+                    if containsInt(cell)(visited)
+                    then heldRetainsOfCells(rest)(instructions)(found)
+                    else
+                        ([], cell :: visited)
+                        |> heldFieldRetains(cell)([])(tag)(instructions)(instructions)
+                        |> (given (cellFound: (List((Int, List((Int, Int)))), List(Int))) ->
+                            match cellFound with
+                                | (cellRetains, cellVisited) -> heldRetainsOfCells(rest)(instructions)((append(retains)(cellRetains), cellVisited)))
+                | None -> heldRetainsOfCells(rest)(instructions)(found)
 
 // Stage 0's `RetainsHeldPastTheCopy`: the retains the arena constructor cells reaching `valueTemp`
 // still hold once the loop-parameter reads among them are withdrawn, each as its temp beside its
-// cell's tag and its field's index. A head matched out of a parameter the loop releases before the
-// back edge is kept alive by the cell until the copy takes its own reference, and is released
-// right after that copy, since the arena cell never releases anything.
+// field path. A head matched out of a parameter the loop releases before the back edge is kept
+// alive by the cell until the copy takes its own reference, and is released right after that copy,
+// since the arena cell never releases anything.
 let retainsHeldPastTheCopy (valueTemp: Int) (slots: List(Int)) (instructions: List(IrInstruction)) =
-    instructions |> heldRetainsOfCells([]
+    match heldRetainsOfCells([]
     |> arenaCellsCarrying([valueTemp])([])(slots)(instructions)
-    |> reverse)
+    |> reverse)(instructions)(([], [])) with
+        | (retains, _visited) -> retains
 
 let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
     match cells with

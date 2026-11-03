@@ -206,8 +206,9 @@ let testEscapingListLiteralRetainsOwnedChildren unit =
             |> test.assertEqual(2)))
 
 // An escaping cons onto an owned list is an arena cell that retains its owned head and its
-// owned tail (null-tolerantly), and the list owner's scope exit walks the spine under a
-// uniqueness test.
+// owned tail (null-tolerantly). The list owner's scope exit walks the spine under a uniqueness
+// test, and so does the function's exit for the owned slot holding the cell's tail retain, as in
+// stage 0's `aggregate_children_retain` fixture.
 let testEscapingConsRetainsHeadAndTail unit =
     aggregateSource
     |> loweredLines
@@ -233,11 +234,11 @@ let testEscapingConsRetainsHeadAndTail unit =
         |> (given (_) ->
             lines
             |> countContaining("Target=rcdrop_list_shared_")
-            |> test.assertEqual(1))
+            |> test.assertEqual(2))
         |> (given (_) ->
             lines
             |> countContaining("RcIsUnique")
-            |> test.assertEqual(1)))
+            |> test.assertEqual(2)))
 
 let matchOn (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) = ExprMatch(ExprVar(name))(cases)(None)
 

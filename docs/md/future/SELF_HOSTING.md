@@ -682,6 +682,24 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    cell, and a specialization that hands its result over counted takes the ordinary call path instead
    of leaving its fresh elements in to-space. The census runs 543 cases with none leaking, plain and
    poisoned, and the exit residual is 1,240, 1,269 and 1,307 cells per added function.
+
+   **Round 10, 3 November.** Every leak known at its start, implemented by four parallel workers and
+   checked in one combined pass. The round first fixed a regression it introduced: an escaping
+   closure that takes its captured `let` owner over (a use-after-free fix) doubled the exit residual,
+   because a closure applied where it is made (`make(n)("a")`) was never released; it is now lowered
+   as the `let` it stands for, and an `if` between such closures moves the owner on both branches.
+   Then, by exit class: escaping arena cells hand a fresh head or tail retain to an owned slot, a loop
+   parameter chosen beside a call consuming it is a choice accumulator, a reference-counted cell owns
+   a list tail bound out of a pattern (which also fixed a crash present on `main`), a scope copy-out
+   releases a returned pattern binding's retain, a fresh argument handed to a closure of unresolved
+   result is released, an arena argument tuple's pattern-owner duplicates are released after the
+   call, and the pattern-owner duplicate sets are kept per function: they were keyed by temp numbers
+   that restart in each function, so one function's release silently cancelled another's. Stage 1
+   gained the live-handler placement context and its general-RC gates. The exit residual is 821, 880
+   and 958 cells per added function. Known and carried to round 11: the arena-cell fresh string head
+   rule, withdrawn because it corrupted stage 1's heap; stage-1 counterparts for mutual groups'
+   result normalization, a loop head binder tuple on a back edge, and a loop exit head under a nested
+   pattern.
 F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction

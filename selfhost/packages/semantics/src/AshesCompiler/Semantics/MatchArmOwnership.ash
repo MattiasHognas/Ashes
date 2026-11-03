@@ -45,6 +45,9 @@ type MatchArmResult =
     // Whether the arm conses cells onto the function's own full recursive call, whose owned
     // result only the last cell holds.
     | armConsesOntoSelfResult: Bool
+    // Whether the arm's value is a nested match or `if` one of whose arms conses onto the
+    // function's own full recursive call.
+    | armJoinsSelfConsingArms: Bool
 
 let recursive unspanned (expression: Expr) =
     match expression with

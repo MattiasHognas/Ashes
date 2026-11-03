@@ -49,14 +49,22 @@ public sealed partial class Lowering
         {
             if (!_functionReturnedClosureLabels.TryGetValue(label, out string? nextLabel))
             {
-                return false;
+                return IsUncompiledGroupSibling(label);
             }
 
             label = nextLabel;
         }
 
-        return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal);
+        return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal) || IsUncompiledGroupSibling(label);
     }
+
+    // A sibling of a recursive group whose body is lowered after this call's (`applied` called from
+    // `derive` in `let recursive derive ... and applied ...`) has no compiled placement or curried
+    // stages yet either, so its result is read at run time the same way: taken unread, an owned
+    // reference-counted result piped into the next call was never released.
+    private bool IsUncompiledGroupSibling(string label)
+        => Environment.GetEnvironmentVariable("GRC_NO_UNCOMPILEDSIBLINGRESULT") is null
+            && !_bodyRuntimeManagedByLabel.ContainsKey(label);
 
     private (int Temp, TypeRef Type) LowerConsTailValue(
         Expr.Cons cons,
@@ -88,7 +96,7 @@ public sealed partial class Lowering
             || Environment.GetEnvironmentVariable("GRC_NO_FRESHTAILCELL") is not null
             || !CanTestRepresentation
             || request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
-            || cons.Tail is not Expr.Call
+            || !IsFreshTailExpression(cons.Tail)
             || !IsNewlyProducedRcTemp(tailTemp)
             || IsBackEdgeCopiedCell(cons)
             || ContainsUnresolvedLayoutType(tailType, [])
@@ -107,6 +115,15 @@ public sealed partial class Lowering
 
         return (head, request.AddRuntime(true, LoweredValueRuntimeRepresentation.List));
     }
+
+    /// <summary>
+    /// A tail whose value can be a fresh reference-counted list: a call's owned result, or a cons
+    /// cell that itself took over such a tail (`x :: y :: build(n)`), which the outer cell takes over
+    /// in turn instead of leaving it to an arena cell.
+    /// </summary>
+    private static bool IsFreshTailExpression(Expr tail)
+        => tail is Expr.Call
+            || (tail is Expr.Cons && Environment.GetEnvironmentVariable("GRC_NO_FRESHCONSTAILCELL") is null);
 
     private void LinkLambdaLabel(string label, Expr.Lambda lambda)
     {

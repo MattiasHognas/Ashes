@@ -2962,6 +2962,31 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("worklist back queue grown and emptied", samples, maxRssKb: 16_000);
     }
+    [Test]
+    public async Task Linux_backend_string_passed_to_generic_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop inserts each matched name into a tree through a function generic in its key and
+        // takes the result as its next tree. The key used to be copied into the persistent blob
+        // region at every call, which nothing reclaims; it now goes as a reference-counted
+        // reference the caller releases once the result is copied out.
+        int[] roundCounts = [100_000, 400_000, 1_600_000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildStringPassedToGenericParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("string passed to a generic parameter", samples, maxRssKb: 16_000);
+    }
+
 
     [Test]
     public async Task Linux_backend_pattern_list_passed_to_borrowing_call_memory_should_plateau()
@@ -3248,6 +3273,78 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_tuple_head_owners_at_back_edge_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop binds its tuple parameter with one irrefutable pattern at the loop head and hands
+        // the bindings on in a new tuple from inside an `if`. Each iteration's protective references
+        // of the bindings end at the back edge into the block that binds them again.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildTupleHeadOwnersAtBackEdgeProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 42}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("tuple head owners at back edge", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_cons_in_tuple_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is a tuple literal holding a cons onto a matched list. The cons is an
+        // arena cell that retained its head and tail; the back edge's copy takes references of its
+        // own, so the dying cell's retains are released.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildConsInTupleSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons in tuple successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_record_update_field_match_join_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is a record update whose field is a match consing onto the list it
+        // matches out of the state. The arm's arena cons holds a duplicate of that list and is
+        // copied onto the heap at the arm's scope, so the duplicate is released after the copy.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildRecordUpdateFieldMatchJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 22}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record update field match join", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_record_update_in_literal_successor_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -3294,6 +3391,295 @@ public sealed class LinuxBackendCoverageTests
         }
 
         AssertMemoryPlateaus("reuse specialized result read by scalar caller", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_one_shot_post_under_let_prefix_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A one-shot operation arm under a `let` prefix builds a fresh string from the resumed handle
+        // value. The prefix's arena window keeps the stored post alive until the perform site counts
+        // it, and the fold, starting from an arena value, asks the post for an arena result, so the
+        // post releases the reference-counted string it built.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildOneShotPostResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{OneShotPostResultLength(rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("one-shot post under let prefix", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_one_shot_post_pushed_inside_call_window_survives_the_window()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The perform runs inside the arena window of the call that consumes its result, so its
+        // post cell and closure live in that window. The window's conditional copy-out exit must
+        // not rewind the arena while the post is pending, or the fold reads freed memory.
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            capability Cap =
+                | get : Unit -> Str
+
+            let one (a: Str) = a + "k"
+
+            let probe (n: Int) =
+                handle one(perform Cap.get(Unit)) with
+                    | Cap.get(u) -> let x = resume("lit") in x + "s"
+                    | return(r) -> r + Ashes.Text.fromInt(n)
+
+            let recursive loop (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n) + ",")
+
+            Ashes.IO.print(loop(3)(""))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("litk3s,litk2s,litk1s,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_closure_outliving_its_captured_let_owner_keeps_the_owner()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each closure captures a reference-counted `let` owner and runs after the owner's scope
+        // released it: an operation arm's post under the arm's `let` prefix, and a closure returned
+        // from its function, beside an arena-owned capture. Their environments take the owners over.
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            capability Cap =
+                | get : Unit -> Str
+
+            let tag (n: Int) = Ashes.Text.fromInt(n) + "q"
+
+            let probe (n: Int) =
+                handle perform Cap.get(Unit) with
+                    | Cap.get(u) -> let s = tag(n) in let x = resume("lit") in x + s
+
+            let make (n: Int) = let s = tag(n) in let t = Ashes.Text.fromInt(n) in given (x) -> x + s + t
+
+            let use (n: Int) = let f = make(n) in f("arg")
+
+            let recursive loop (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n) + use(n) + ",")
+
+            Ashes.IO.print(loop(3)(""))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("lit3qarg3q3,lit2qarg2q2,lit1qarg1q1,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_post_owning_its_captured_let_owner_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A post that takes over the arm's reference-counted `let` owner is a reference-counted
+        // closure; the fold releases it, and the owner with it, once the post has run.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                capability Cap =
+                    | get : Unit -> Str
+
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let probe (n: Int) =
+                    handle perform Cap.get(Unit) with
+                        | Cap.get(u) -> let s = tag(n) in let x = resume("lit") in x + s
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("post owning its captured let owner", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_returned_closure_applied_at_once_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `make(n)("a")` applies the reference-counted closure `make` returns where it is made; the
+        // call releases it, and the owner it took over, once its result is settled.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let make (n: Int) = let s = tag(n) in given (x) -> x + s
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(make(n)("a")))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("returned closure applied at once", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_if_between_capturing_closures_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each `if` returns one of two closures: `pick`'s both take its reference-counted `let` owner
+        // over, `only`'s else branch alone does. The branch whose closure does not take the owner
+        // releases it.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let pick (n: Int) = let s = tag(n) in if n % 2 == 0 then (given (x) -> x + s) else (given (x) -> s + x)
+
+                let only (n: Int) = let s = tag(n) in if n % 2 == 0 then (given (x) -> x + "?") else (given (x) -> s + x)
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(pick(n)("a")) + Ashes.Text.byteLength(only(n)("a")))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 11 / 2}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("if between capturing closures", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_closure_in_escaping_aggregate_keeps_its_captured_let_owner()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each closure captures a reference-counted `let` owner and leaves its function inside an
+        // aggregate: a reference-counted tuple takes a reference-counted closure that owns the
+        // owner, an arena Option or list keeps an arena closure holding an arena copy of it, and two
+        // closures sharing one owner each hold a reference.
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let tag (n: Int) = Ashes.Text.fromInt(n) + "q"
+
+            let inTuple (n: Int) = let s = tag(n) in (given (x) -> x + s, n)
+
+            let inOption (n: Int) = let s = tag(n) in Some((given (x) -> x + s, n))
+
+            let inList (n: Int) = let s = tag(n) in [given (x) -> x + s]
+
+            let shared (n: Int) = let s = tag(n) in let t = tag(n + 1) in (given (x) -> x + s, given (y) -> t + y + s)
+
+            let probe (n: Int) =
+                let a = match inTuple(n) with
+                    | (f, m) -> f("lit")
+                in let b = match inOption(n) with
+                    | Some((f, m)) -> f("lit")
+                    | None -> ""
+                in let c = match inList(n) with
+                    | f :: _ -> f("lit")
+                    | [] -> ""
+                in let d = match shared(n) with
+                    | (f, g) -> f("a") + g("b")
+                in a + b + c + d + ","
+
+            let recursive loop (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop(2)(""))
+            """)).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("lit2qlit2qlit2qa2q3qb2q,lit1qlit1qlit1qa1q2qb1q,\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_closure_in_escaping_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A reference-counted tuple owns its closures and they own the captured owner: the caller's
+        // release of the tuple releases all of them.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram($$"""
+                let tag (n: Int) = Ashes.Text.fromInt(n % 10) + "q"
+
+                let shared (n: Int) = let s = tag(n) in let t = tag(n + 1) in (given (x) -> x + s, given (y) -> t + y + s)
+
+                let probe (n: Int) =
+                    match shared(n) with
+                        | (f, g) -> f("a") + g("b")
+
+                let recursive loop (n: Int) (acc: Int) =
+                    if n == 0
+                    then acc
+                    else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+                Ashes.IO.print(loop({{rounds}})(0))
+                """);
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 8}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("closure in escaping tuple", samples, maxRssKb: 16_000);
     }
 
     [Test]
@@ -14476,6 +14862,35 @@ public sealed class LinuxBackendCoverageTests
             |> rounds({{rounds}})
             |> Ashes.IO.print
             """;
+    private static string BuildStringPassedToGenericParameterProgram(int rounds)
+        => $$"""
+            type Tree(K, V) =
+                | Leaf
+                | Node(Tree(K, V), K, V)
+
+            let recursive insert key value tree =
+                match tree with
+                    | Leaf -> Node(Leaf, key, value)
+                    | Node(left, k, v) -> Node(insert(key)(value)(left), k, v)
+
+            let recursive count tree =
+                match tree with
+                    | Leaf -> 0
+                    | Node(left, _, _) -> 1 + count(left)
+
+            let recursive loop (items: List(Str)) seen (n: Int) =
+                match items with
+                    | [] -> n + count(seen)
+                    | name :: rest -> loop(rest)(insert(name)(n)(seen))(n + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + loop(["coal"])(Leaf)(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
 
     private static string BuildWorklistBackGrownAndEmptiedProgram(int rounds)
         => $$"""
@@ -15021,6 +15436,81 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
 
+    private static string BuildTupleHeadOwnersAtBackEdgeProgram(int rounds)
+        => $$"""
+            let recursive size (xs: List(Int)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (n: Int) (pair: (List(Int), List(Str))) =
+                match pair with
+                    | (xs, extra) ->
+                        if n == 0
+                        then size(xs)(0) + 1
+                        else go(n - 1)((xs, extra))
+
+            let run (seed: Int) = go(20)(([seed, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40], ["b", "c"]))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildConsInTupleSuccessorProgram(int rounds)
+        => $$"""
+            let recursive size (xs: List(Str)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (pair: (List(Str), List(Str))) =
+                match pair with
+                    | ([], acc) -> size(acc)(0)
+                    | (h :: t, acc) -> go((t, h :: acc))
+
+            let run (seed: Int) = go((["x", "y", "z"], ["b"]))
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(n))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildRecordUpdateFieldMatchJoinProgram(int rounds)
+        => $$"""
+            type State =
+                | instructions: List(Int)
+                | next: Int
+
+            let recursive size (xs: List(Int)) (acc: Int) =
+                match xs with
+                    | [] -> acc
+                    | _ :: rest -> size(rest)(acc + 1)
+
+            let recursive go (n: Int) (state: State) =
+                if n == 0
+                then state
+                else go(n - 1)(state with instructions = (match state with
+                    | State { instructions = is } -> n :: is))
+
+            let run (seed: Int) =
+                match go(20)(State(instructions = [seed], next = seed)) with
+                    | State { next = next, instructions = instructions } -> next + size(instructions)(0)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1 + n % 1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
     private static string BuildRecordUpdateInLiteralSuccessorProgram(int rounds)
         => $$"""
             type State =
@@ -15054,6 +15544,39 @@ public sealed class LinuxBackendCoverageTests
 
             Ashes.IO.print(rounds({{rounds}})(0))
             """;
+
+    private static string BuildOneShotPostResultProgram(int rounds)
+        => $$"""
+            capability Tick =
+                | get : Unit -> Int
+
+            let probe (n: Int) =
+                handle Ashes.Text.fromInt(perform Tick.get(Unit)) with
+                    | Tick.get(_) ->
+                        let k = n + 1
+                        in
+                            let x = resume(k)
+                            in x + "s"
+                    | return(r) -> r
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    private static long OneShotPostResultLength(int rounds)
+    {
+        long total = 0;
+        for (int n = 1; n <= rounds; n++)
+        {
+            total += (n + 1).ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 1;
+        }
+
+        return total;
+    }
 
     private static string BuildReuseSpecializedResultReadByScalarCallerProgram(int rounds)
         => $$"""
@@ -20104,4 +20627,1465 @@ public sealed class LinuxBackendCoverageTests
         long MaxRssKb,
         double CpuMilliseconds);
     private readonly record struct MemoryExecutionResult(string Stdout, long MaxRssKb);
+
+    private static string BuildPerformResultElementProgram(int rounds)
+        => $$"""
+            capability Fetch =
+                | get : Unit -> List(Str)
+
+            let first (xs: List(Str)) =
+                match xs with
+                    | [] -> ","
+                    | h :: _ -> h
+
+            let probe (n: Int) =
+                handle first(perform Fetch.get(Unit)) with
+                    | Fetch.get(u) -> resume([Ashes.Text.fromInt(n) + "h", "b"])
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + Ashes.Text.byteLength(probe(n)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_perform_result_passed_to_element_returning_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A perform's result list goes straight to a callee that returns its head. The string result
+        // is copied out on the arena branch of the call's ownership flag, sharing nothing with the
+        // list, so the caller releases the list with its heads there and each round's fresh head is
+        // freed.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildPerformResultElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{PerformResultElementLength(rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("perform result passed to element-returning call", samples, maxRssKb: 16_000);
+    }
+
+    private static long PerformResultElementLength(int rounds)
+    {
+        long total = 0;
+        for (int n = 1; n <= rounds; n++)
+        {
+            total += n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 1;
+        }
+
+        return total;
+    }
+
+    private static string BuildConsChainOntoFreshRecursiveCellProgram(int rounds)
+        => $$"""
+            let recursive keepPairs (xs: List(Str)) (seen: List(Str)) =
+                match (xs, seen) with
+                    | (x :: rest, s :: more) ->
+                        if x == s
+                        then keepPairs(rest)(more)
+                        else x :: s :: keepPairs(rest)(more)
+                    | _ -> seen
+
+            let recursive triple (xs: List(Int)) =
+                match xs with
+                    | x :: rest -> x :: x :: x :: triple(rest)
+                    | [] -> []
+
+            let recursive words (n: Int) =
+                if n == 0
+                then []
+                else "w" + Ashes.Text.fromInt(n) :: words(n - 1)
+
+            let recursive numbers (n: Int) =
+                if n == 0
+                then []
+                else n :: numbers(n - 1)
+
+            let recursive count (xs: List(Str)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> Ashes.Text.byteLength(x) + count(rest)
+
+            let recursive total (xs: List(Int)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> x + total(rest)
+
+            let run (seed: Int) =
+                (let a = words(seed % 4 + 3)
+                in
+                    let b =
+                        keepPairs(words(3))(a)
+                    in
+                        count(b) + count(keepPairs(b)(a)) + total(seed % 3 + 1
+                        |> numbers
+                        |> triple))
+
+            let recursive rounds (n: Int) (sum: Int) =
+                if n == 0
+                then sum
+                else rounds(n - 1)(sum + run(n))
+
+            0
+            |> rounds({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    [Test]
+    public async Task Linux_backend_cons_chain_onto_fresh_recursive_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `x :: s :: keep(rest)(more)` is no tail-recursion-modulo-cons loop: the inner cell takes
+        // the fresh recursive result over, and the outer cell takes that fresh cell over in turn, so
+        // no arena cell is left holding a reference the copy-out retains a second time.
+        (int Rounds, long Expected)[] cases = [(3000, 109_500), (12000, 438_000), (48000, 1_752_000)];
+        List<MemoryExecutionResult> samples = new(cases.Length);
+        foreach ((int rounds, long expected) in cases)
+        {
+            IrProgram ir = LowerProgram(BuildConsChainOntoFreshRecursiveCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("cons chain onto fresh recursive cell", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildNestedCellInArenaSuccessorProgram(int rounds)
+        => $$"""
+            type Item =
+                | ItemPlain(Str)
+
+            type Tree =
+                | Leaf
+                | Node(Tree, Item)
+
+            let recursive loop (items: List(Str)) (seen: Tree) (count: Int) =
+                match items with
+                    | [] -> count
+                    | name :: rest -> loop(rest)(Node(seen, ItemPlain(name)))(count + 1)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + loop(["coal", "ash", "dust", "soot"])(Leaf)(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    private static string BuildUnnamedPredecessorInArenaLoopProgram(int rounds)
+        => $$"""
+            type Item =
+                | ItemPlain(Str)
+                | ItemWrapped(Item)
+
+            type Tree(K, V) =
+                | Leaf
+                | Node(Tree(K, V), K, V, Tree(K, V))
+
+            let recursive insert (key: Str) (value: Item) (tree: Tree(Str, Item)) =
+                match tree with
+                    | Leaf -> Node(Leaf, key, value, Leaf)
+                    | Node(left, k, v, right) -> Node(insert(key)(value)(left), k, v, right)
+
+            let recursive loop (items: List(Item)) (seen: Tree(Str, Item)) (count: Int) =
+                match items with
+                    | [] -> count
+                    | ItemWrapped(inner) :: rest -> loop(inner :: rest)(seen)(count)
+                    | ItemPlain(name) :: rest -> loop(rest)(insert(name)(ItemPlain(name))(seen))(count + 1)
+
+            let run (seed: Int) = loop([ItemPlain("ash"), ItemPlain("dust"), ItemPlain("coal"), ItemPlain("soot")])(Leaf)(seed)
+
+            let recursive rounds (n: Int) (total: Int) =
+                if n == 0
+                then total
+                else rounds(n - 1)(total + run(1))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_nested_cell_in_arena_successor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop's successor is an arena node holding the loop's own tree beside a fresh cell over
+        // the matched head. The back edge copies the node with a normalizer, which takes its own
+        // reference to the head through the nested cell, so the nested cell's retain is released.
+        int[] roundCounts = [10000, 40000, 160000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildNestedCellInArenaSuccessorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nested cell in arena successor", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_unnamed_predecessor_in_arena_loop_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop that stays in the arena (one arm conses a wrapped item back onto its list) inserts
+        // into a tree through a call and hands the result on as its tree. The earlier iteration's
+        // tree, never bound to a name, is released at the back edge, since no successor names it.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildUnnamedPredecessorInArenaLoopProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * 5}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("unnamed predecessor in arena loop", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildAccumulatorAppendPerformResultProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            let recursive gather (i: Int) (acc: Str) =
+                if i == 0
+                then acc
+                else gather(i - 1)(acc + perform Cap.get(Unit))
+
+            let probe (n: Int) =
+                Ashes.Text.byteLength(handle gather(3)(Ashes.Text.fromInt(n)) with
+                    | Cap.get(u) -> let x = resume("lit") in x + "s"
+                    | return(r) -> r + "r")
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_accumulator_append_of_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop appends a perform's adopted result string to its accumulator in place. The append
+        // copies the result's bytes, so it releases the result; keeping it leaks one string per
+        // append.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildAccumulatorAppendPerformResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{AccumulatorAppendPerformResultLength(rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("accumulator append of perform result", samples, maxRssKb: 16_000);
+    }
+
+    private static long AccumulatorAppendPerformResultLength(int rounds)
+    {
+        long total = 0;
+        for (int n = 1; n <= rounds; n++)
+        {
+            total += n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + 13;
+        }
+
+        return total;
+    }
+
+    private static string BuildMutualGroupFreshTupleCellProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Pick(Node, List(Str))
+                | Apply(Node, List(Node))
+                | Lam(Str, Node)
+
+            let recursive binders (acc: List(Str)) (xs: List(Str)) =
+                match xs with
+                    | [] -> acc
+                    | x :: rest -> binders(x :: acc)(rest)
+
+            let recursive derive (nodes: List(Node)) (ds: List((Node, List(Str)))) =
+                match nodes with
+                    | [] -> ds
+                    | Pick(value, ns) :: rest -> derive(rest)((value, binders([])(ns)) :: ds)
+                    | Apply(root, arguments) :: rest ->
+                        ds
+                        |> applied(root)(arguments)
+                        |> derive(rest)
+                    | _other :: rest -> derive(rest)(ds)
+            and applied (root: Node) (arguments: List(Node)) (ds: List((Node, List(Str)))) =
+                match (root, arguments) with
+                    | (Lam(parameter, body), argument :: rest) -> applied(body)(rest)((argument, [parameter]) :: ds)
+                    | _ -> ds
+
+            let recursive count (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> count(rest)(k + 1)
+
+            let recursive total (ds: List((Node, List(Str)))) (k: Int) =
+                match ds with
+                    | [] -> k
+                    | (_v, ns) :: rest -> total(rest)(count(ns)(k))
+
+            let probe (n: Int) =
+                total(derive([Pick(Leaf("a"), ["x", Ashes.Text.fromInt(n)]), Apply(Lam("p", Leaf("q")), [Leaf("r")]), Leaf("c"), Pick(Leaf(Ashes.Text.fromInt(n)), ["y"])])([]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_mutual_group_fresh_tuple_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // In a mutually recursive group the self call is a closure call, so the cell consing a fresh
+        // tuple onto the accumulator it passes is an arena cell, which never releases its head. The
+        // tuple now goes to an owned slot, released once the function's result holds its own
+        // references.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMutualGroupFreshTupleCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual group fresh tuple cell", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildHandlerContextListAccumulatorProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Int
+
+            let recursive gather (i: Int) (acc: List(Int)) =
+                if i == 0
+                then acc
+                else gather(i - 1)(perform Cap.get(Unit) :: acc)
+
+            let recursive count (xs: List(Int)) (n: Int) =
+                match xs with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let probe (n: Int) =
+                count(handle gather(3)([n]) with
+                    | Cap.get(u) -> let x = resume(7) in 1 :: x
+                    | return(r) -> r)(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_handler_context_list_accumulator_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The loop runs inside the handle, so its list accumulator gets no reference-counted
+        // placement, and its successor cells stay in the arena with it. A counted successor cell
+        // made the accumulator a counted list that the caller copied and nothing released. The
+        // elements are integers: a string head performed into the arena cell is the separate arena-cell
+        // fresh-head class.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildHandlerContextListAccumulatorProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{7L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handler-context list accumulator", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildArenaConstructorPerformedStringProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            type Item =
+                | Item(Str, Int)
+
+            let make (i: Int) = Item(perform Cap.get(Unit), i)
+
+            let size (it: Item) =
+                match it with
+                    | Item(s, k) -> k
+
+            let probe (n: Int) =
+                size(handle make(1) with
+                    | Cap.get(u) -> resume("lit"))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_constructor_holding_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The function runs inside the handle, so its constructor cell stays in the arena, which
+        // never releases what it holds. The perform's reference-counted string stored into the field
+        // outlived every reader; the cell now stores an arena copy and the original is released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaConstructorPerformedStringProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena constructor holding a perform result", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildLoopChoiceConsumingCallProgram(int rounds)
+        => $$"""
+            let recursive addNew (candidates: List(Str)) (names: List(Str)) =
+                match candidates with
+                    | [] -> names
+                    | candidate :: rest -> addNew(rest)(candidate :: names)
+
+            let recursive derivePass (derivations: List(Str)) (names: List(Str)) =
+                match derivations with
+                    | [] -> names
+                    | value :: rest ->
+                        derivePass(rest)(if value == "a"
+                        then addNew([value])(names)
+                        else names)
+
+            let recursive count (xs: List(Str)) (n: Int) =
+                match xs with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let probe (n: Int) =
+                count(derivePass(["a", "b" + Ashes.Text.fromInt(n), "a"])(["x"]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_choice_between_parameter_and_consuming_call_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A tail self-call argument choosing between the loop parameter itself and a call consuming
+        // it: the parameter is placed on the reference-counted heap as a choice accumulator, and the
+        // arm handing it on takes a reference of its own beside the call's owned result. Retained
+        // without that placement, the back edge never released the predecessor.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopChoiceConsumingCallProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop choice between parameter and consuming call", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildArenaConstructorFreshListProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> List(Str)
+
+            capability Name =
+                | get : Unit -> Str
+
+            type Item =
+                | Item(List(Str), Int)
+
+            let twice (s: Str) = [s + "!", s]
+
+            let make (i: Int) = Item(perform Cap.get(Unit), i)
+
+            let helped (i: Int) = Item(twice(perform Name.get(Unit)), i)
+
+            let recursive count (ws: List(Str)) (n: Int) =
+                match ws with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let size (it: Item) =
+                match it with
+                    | Item(ws, k) -> count(ws)(0)
+
+            let probe (n: Int) =
+                let performed =
+                    size(handle make(n) with
+                        | Cap.get(u) -> resume(["lit", Ashes.Text.fromInt(n)]))
+                in
+                    performed + size(handle helped(n) with
+                        | Name.get(u) -> resume(Ashes.Text.fromInt(n)))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_constructor_holding_fresh_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The functions run inside the handle, so their constructor cells stay in the arena, which
+        // never releases what it holds. The perform's list, and the list a helper builds from a
+        // perform's string, stored into a field outlived every reader; the cell now stores an arena
+        // deep copy and the original is released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaConstructorFreshListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena constructor holding a fresh list", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildEscapingCellRetainedTailProgram(int rounds)
+        => $$"""
+            type Context =
+                | name: Str
+                | count: Int
+
+            let contextOf (n: Int) = Context(name = Ashes.Text.fromInt(n) + "!", count = n)
+
+            let stage (c: Context) (state: List(Str)) = c.name :: state
+
+            let lowerIn (n: Int) (state: List(Str)) =
+                (let c = contextOf(n)
+                in
+                    match stage(c)(state) with
+                        | applied -> Ashes.Text.fromInt(c.count) :: applied)
+
+            let recursive count (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> count(rest)(k + 1)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + count(lowerIn(n)(["s"]))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_escaping_cell_retained_tail_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The function's result is an arena cell consed onto a list a match bound, so the cell
+        // retains the list before the match releases it, and an arena cell releases nothing. The
+        // retain now goes to an owned slot, released once the result is copied out.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildEscapingCellRetainedTailProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("escaping cell retained tail", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildLoopRebuildsListOfListsProgram(int rounds)
+        => $$"""
+            let recursive recordCall (arguments: List(Int)) (flow: List(List(Int))) =
+                match (arguments, flow) with
+                    | (argument :: restArguments, sources :: restFlow) -> (argument :: sources) :: recordCall(restArguments)(restFlow)
+                    | _ -> flow
+
+            let recursive countNodes (nodes: List(Int)) (flow: List(List(Int))) =
+                match nodes with
+                    | [] -> flow
+                    | node :: rest -> countNodes(rest)(recordCall([node, node + 1, node + 2])(flow))
+
+            let recursive cells (lists: List(List(Int))) (acc: Int) =
+                match lists with
+                    | [] -> acc
+                    | first :: rest ->
+                        match first with
+                            | [] -> cells(rest)(acc)
+                            | _ :: inner -> cells(inner :: rest)(acc + 1)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + cells(countNodes([n, n + 1])([[], [], []]))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_rebuilding_list_of_lists_onto_matched_inner_lists_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A tail-modulo-constructor rebuild conses onto an inner list matched out of the loop
+        // parameter. The reference-counted cell takes a reference of its own to that inner list: it
+        // stored the pattern-bound list as it was, and the caller's back edge freed it under the cell.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopRebuildsListOfListsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{6L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop rebuilding list of lists onto matched inner lists", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildMutualGroupFreshOptionCellProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Pick(Node, List(Str))
+                | Apply(Node, List(Node))
+                | Lam(Str, Node)
+
+            let recursive binders (acc: List(Str)) (xs: List(Str)) =
+                match xs with
+                    | [] -> acc
+                    | x :: rest -> binders(x :: acc)(rest)
+
+            let recursive derive (nodes: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match nodes with
+                    | [] -> ds
+                    | Pick(_value, ns) :: rest -> derive(rest)(Some(binders([])(ns)) :: ds)
+                    | Apply(root, arguments) :: rest ->
+                        ds
+                        |> applied(root)(arguments)
+                        |> derive(rest)
+                    | _other :: rest -> derive(rest)(ds)
+            and applied (root: Node) (arguments: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match (root, arguments) with
+                    | (Lam(_parameter, body), _argument :: rest) -> applied(body)(rest)(None :: ds)
+                    | _ -> ds
+
+            let recursive count (xs: List(Str)) (k: Int) =
+                match xs with
+                    | [] -> k
+                    | _ :: rest -> count(rest)(k + 1)
+
+            let recursive total (ds: List(Maybe(List(Str)))) (k: Int) =
+                match ds with
+                    | [] -> k
+                    | Some(ns) :: rest -> total(rest)(count(ns)(k))
+                    | None :: rest -> total(rest)(k)
+
+            let probe (n: Int) = total(derive([Pick(Leaf("a"), ["x", Ashes.Text.fromInt(n)]), Leaf("c"), Pick(Leaf("b"), [Ashes.Text.fromInt(n)])])([]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_mutual_group_fresh_option_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The group's self call conses `Some` of a helper's list into an arena cell, which never
+        // releases its head; the `Some`, a type the result copies out, now goes to an owned slot.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMutualGroupFreshOptionCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual group fresh option cell", samples, maxRssKb: 16_000);
+    }
+
+
+    private static string BuildLoopReturnsMatchedLastElementProgram(int rounds)
+        => $$"""
+            let recursive lastPiece (pieces: List(Str)) =
+                match pieces with
+                    | [] -> ""
+                    | last :: [] -> last
+                    | _ :: rest -> lastPiece(rest)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + Ashes.Text.byteLength(lastPiece(["rc", "drop", Ashes.Text.fromInt(1000000 + n)])))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_returning_element_matched_with_nested_empty_pattern_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An arm returning a pattern binding retains it for the match result, and the arm's nested
+        // `[]` subpattern gives it a scope whose copy-out replaces the value with a copy: the retain of
+        // the original is released after the copy, or every call keeps one string.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildLoopReturnsMatchedLastElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{7L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop returning element matched with nested empty pattern", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildArenaTupleFreshElementProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            let make (i: Int) = (perform Cap.get(Unit), i)
+
+            let size (p: (Str, Int)) =
+                match p with
+                    | (s, a) -> Ashes.Text.byteLength(s) + a
+
+            let probe (n: Int) =
+                size(handle make(1) with
+                    | Cap.get(u) -> resume("lit"))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_handled_tuple_of_perform_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Without general reference counting the tuple was placed on the reference-counted heap to
+        // own the perform's string, and the caller, taking the handle's value as an arena value,
+        // released neither. The string is now copied into the arena, so the tuple stays there too.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaTupleFreshElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handled tuple of a perform result", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildMutualGroupSiblingResultPipedProgram(int rounds)
+        => $$"""
+            type Node =
+                | Leaf(Str)
+                | Pick(Node, List(Str))
+                | Apply(Node, List(Node))
+                | Lam(Str, Node)
+
+            let recursive derive (nodes: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match nodes with
+                    | [] -> ds
+                    | Pick(_value, ns) :: rest -> derive(rest)(Some(ns) :: ds)
+                    | Apply(root, arguments) :: rest ->
+                        ds
+                        |> applied(root)(arguments)
+                        |> derive(rest)
+                    | _other :: rest -> derive(rest)(ds)
+            and applied (root: Node) (arguments: List(Node)) (ds: List(Maybe(List(Str)))) =
+                match (root, arguments) with
+                    | (Lam(_parameter, body), _argument :: rest) -> applied(body)(rest)(None :: ds)
+                    | _ -> ds
+
+            let recursive total (ds: List(Maybe(List(Str)))) (k: Int) =
+                match ds with
+                    | [] -> k
+                    | Some(_ns) :: rest -> total(rest)(k + 1)
+                    | None :: rest -> total(rest)(k + 2)
+
+            let probe (n: Int) = total(derive([Pick(Leaf("a"), ["x", Ashes.Text.fromInt(n)]), Apply(Lam("p", Leaf("q")), [Leaf("r")]), Leaf("c")])([]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_mutual_group_sibling_result_piped_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A group sibling lowered after its caller had no known result placement, so its owned
+        // result, piped straight into the caller's next call, was never released; it is now read at
+        // run time as a captured self's is.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildMutualGroupSiblingResultPipedProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("mutual group sibling result piped", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildFreshArgumentToClosureOfUnresolvedResultProgram(int rounds)
+        => $$"""
+            external absOf(Int) -> Int = "abs@libc.so.6"
+
+            type Box =
+                | Box(Int)
+
+            let positionAt builder block = Box(absOf(builder + block))
+
+            let branch builder target = absOf(builder - target)
+
+            let emitArm builder block continueBlock body =
+                block
+                |> positionAt(builder)
+                |> body
+                |> (given (_) -> branch(builder)(continueBlock))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + emitArm(n)(2)(n)(given (_) -> n + 7))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_fresh_argument_to_closure_of_unresolved_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic body hands a helper's fresh record to a closure parameter whose result has no
+        // layout there and returns something else: the closure does not adopt the record, so the
+        // body releases it once its own result is out of that call's reach.
+        int[] roundCounts = [50000, 200000, 800000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildFreshArgumentToClosureOfUnresolvedResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("fresh argument to a closure of unresolved result", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildSelfCallResultKeptInPlaceProgram(int rounds)
+        => $$"""
+            type Tree =
+                | TAt(Tree)
+                | TLeaf(Str)
+                | TCall(Tree, Tree)
+                | TIf(Tree, Tree, Tree)
+
+            let firstSome (first: Maybe(Int)) (second: Maybe(Int)) =
+                match first with
+                    | Some(_found) -> first
+                    | None -> second
+
+            let recursive unspan (t: Tree) =
+                match t with
+                    | TAt(inner) -> unspan(inner)
+                    | other -> other
+
+            let recursive passing (expression: Tree) (name: Str) =
+                match expression with
+                    | TCall(function, argument) ->
+                        name
+                        |> passing(argument)
+                        |> firstSome(passing(function)(name))
+                        |> firstSome(match unspan(argument) with
+                            | TLeaf(passed) ->
+                                if passed == name
+                                then Some(1)
+                                else None
+                            | _ -> None)
+                    | TIf(c, t, e) ->
+                        name
+                        |> passing(e)
+                        |> firstSome(passing(t)(name))
+                        |> firstSome(passing(c)(name))
+                    | _ -> None
+
+            let check (n: Int) =
+                match passing(TIf(TLeaf("c"), TLeaf("d"), TLeaf(Ashes.Text.fromInt(n))))("y") with
+                    | None -> 1
+                    | Some(found) -> found + 1
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + check(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_self_call_result_kept_in_place_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A recursive function holding an owned call result returns a Maybe(Int) the arena has no
+        // copy for and that cannot hold it: the result stays where it is, since the self-calls,
+        // lowered before the return, never take a reference-counted copy of it as owned.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildSelfCallResultKeptInPlaceProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("self-call result kept in place", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildReadOfFreshValueOrLoopParameterJoinProgram(int rounds)
+        => $$"""
+            let recursive widen (n: Int) (text: Str) =
+                if n == 0
+                then text
+                else widen(n - 1)(text + text)
+
+            let recursive loop (n: Int) (text: Str) (total: Int) =
+                if n == 0
+                then total
+                else
+                    loop(n - 1)(text)(total + Ashes.Text.byteLength(if n % 2 == 0
+                    then widen(6)(Ashes.Text.fromInt(n))
+                    else text))
+
+            let recursive rounds (k: Int) (acc: Int) =
+                if k == 0
+                then acc
+                else rounds(k - 1)(acc + loop(10)("ab" + Ashes.Text.fromInt(k))(0))
+
+            Ashes.IO.print(rounds({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_read_of_join_between_fresh_value_and_loop_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An if join of a fresh string and the loop's own parameter is normalized: the parameter
+        // branch takes a reference of its own. The join is then fresh, as a normalized match join
+        // is, so the read releases it; counted as merely owned, nothing released it.
+        int[] roundCounts = [2000, 8000, 32000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildReadOfFreshValueOrLoopParameterJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("read of join between fresh value and loop parameter", samples, maxRssKb: 16_000);
+    }
+
+
+    private static string BuildLoopHeadBindersInArgumentTupleProgram(int rounds)
+        => $$"""
+            type Item =
+                | ItemLet(Str, Str)
+
+            let recursive measure (bindings: List((Str, Str))) (total: Int) =
+                match bindings with
+                    | [] -> total
+                    | (name, value) :: rest -> measure(rest)(total + Ashes.Text.byteLength(name) + Ashes.Text.byteLength(value))
+
+            let recursive lowerItems (items: List(Item)) (total: Int) =
+                match items with
+                    | [] -> total
+                    | ItemLet(name, value) :: rest -> lowerItems(rest)(measure([(name, value)])(total))
+
+            let recursive itemsOf (k: Int) (n: Int) =
+                if k == 0
+                then []
+                else ItemLet(Ashes.Text.fromInt(n), Ashes.Text.fromInt(n + 1)) :: itemsOf(k - 1)(n)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + lowerItems(itemsOf(2)(n))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_head_binders_in_argument_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The binders of a loop's list head, put in a tuple of a list literal passed to a call, each
+        // took a duplicate the arena tuple never released. The duplicates are now released after the
+        // call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += 2L * (n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length + (n + 1).ToString(System.Globalization.CultureInfo.InvariantCulture).Length);
+            }
+
+            IrProgram ir = LowerProgram(BuildLoopHeadBindersInArgumentTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop head binders in an argument tuple", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildPatternOwnerDuplicateInLaterFunctionProgram(int rounds)
+        => $$"""
+            type Node =
+                | At(Int, Node)
+                | Lam(Str, Node)
+                | Leaf(Int)
+
+            let recursive firstParts node =
+                match node with
+                    | At(_span, inner) -> firstParts(inner)
+                    | Lam(parameter, body) -> Some((parameter, body))
+                    | _ -> None
+
+            let recursive laterParts node =
+                match node with
+                    | At(_span, inner) -> laterParts(inner)
+                    | Lam(parameter, body) -> Some((parameter, body))
+                    | _ -> None
+
+            let recursive depth (node: Node) =
+                match node with
+                    | At(_span, inner) -> depth(inner)
+                    | Lam(_parameter, body) -> 1 + depth(body)
+                    | Leaf(n) -> n
+
+            let measure (node: Node) =
+                match (firstParts(node), laterParts(node)) with
+                    | (Some((a, first)), Some((b, later))) -> Ashes.Text.byteLength(a) + Ashes.Text.byteLength(b) + depth(first) + depth(later)
+                    | _ -> 0
+
+            let recursive build (k: Int) (n: Int) =
+                if k == 0
+                then Leaf(n)
+                else At(k, Lam(Ashes.Text.fromInt(n + k), build(k - 1)(n)))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + measure(build(3)(n % 7)))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_pattern_owner_duplicate_in_later_function_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Two functions lowered the same way number their temps the same, and the set of released
+        // pattern-owner duplicates was shared by every function: the second function's tuple kept the
+        // duplicate it took of its body as well as its own reference.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += 6 + (2 * (n % 7));
+            }
+
+            IrProgram ir = LowerProgram(BuildPatternOwnerDuplicateInLaterFunctionProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("pattern-owner duplicate in a later function", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildArenaListLiteralFreshHeadProgram(int rounds)
+        => $$"""
+            type Inst =
+                | Jump(Str)
+                | Other(Int)
+
+            let label (n: Int) = "flint" + Ashes.Text.fromInt(n)
+
+            let recursive walk (insts: List(Inst)) (count: Int) =
+                match insts with
+                    | [] -> count
+                    | inst :: rest ->
+                        match inst with
+                            | Jump(name) -> walk(rest)(count + Ashes.Text.byteLength(name))
+                            | _ -> walk(rest)(count)
+
+            let run (seed: Int) = walk([Jump(label(seed)), Jump(label(seed + 1))])(seed)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + (if run(n) > 0 then 1 else 0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_list_literal_fresh_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list literal's arena cells hold constructors placed on the reference-counted heap over a
+        // helper's fresh string; the walk copies the list with references of its own, so each cell's
+        // reference goes to an owned slot.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaListLiteralFreshHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena list literal fresh head", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildConstrainedCallOfUnresolvedResultProgram(int rounds)
+        => $$"""
+            type Inst =
+                | Jump(Str)
+                | Other(Int)
+
+            let recursive lookupAssociation key entries =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail ->
+                        if k == key
+                        then Some(v)
+                        else lookupAssociation(key)(tail)
+
+            let recursive countRefs instructions acc =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | Jump(target) ->
+                                let found =
+                                    match lookupAssociation(target)(acc) with
+                                        | Some(c) -> c + 1
+                                        | None -> 1
+                                in
+                                    countRefs(tail)(acc)
+                            | _ -> countRefs(tail)(acc)
+
+            let recursive total entries sum =
+                match entries with
+                    | [] -> sum
+                    | (_k, v) :: rest -> total(rest)(sum + v)
+
+            let label (n: Int) = "rcdrop_list_end_" + Ashes.Text.fromInt(n)
+
+            let check (n: Int) = total(countRefs([Jump(label(n)), Other(1), Jump(label(n + 1))])([("k", 1)]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + check(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_constrained_call_of_unresolved_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic walk passes a string bound out of a list element to a constrained generic lookup
+        // whose result has no layout there: the reference taken for that result goes to an owned
+        // slot, released at the walk's back edge.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildConstrainedCallOfUnresolvedResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("constrained call of unresolved result", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildDiscardedResultArgumentUnderHandlerProgram(int rounds)
+        => $$"""
+            external absOf(Int) -> Int = "abs@libc.so.6"
+
+            capability Probe =
+                | probe
+
+            type Box =
+                | Box(Int)
+
+            let probed =
+                handle Probe.probe(1) with
+                    | Probe.probe(x) -> resume(x)
+                    | return(r) -> r
+
+            let positionAt builder block = Box(absOf(builder + block))
+
+            let branch builder target = absOf(builder - target)
+
+            let emitArm builder block continueBlock body =
+                block
+                |> positionAt(builder)
+                |> body
+                |> (given (_) -> branch(builder)(continueBlock))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + emitArm(n)(probed)(n)(given (_) -> n + 7))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_discarded_result_argument_under_handler_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A handled capability turns the general contract off. A generic body hands a helper's fresh
+        // record to a closure whose result the applied lambda after it discards: the closure does
+        // not adopt the record, so it is released right after the call.
+        int[] roundCounts = [50000, 200000, 800000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildDiscardedResultArgumentUnderHandlerProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("discarded result argument under a handler", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildProducerTupleFreshElementProgram(int rounds)
+        => $$"""
+            capability Tick =
+                | get : Unit -> Int
+
+            type Tree =
+                | Leaf(Int)
+                | Node(Str, Tree)
+
+            let recursive build (depth: Int) (n: Int) =
+                if depth == 0
+                then Leaf(n)
+                else Node(Ashes.Text.fromInt(depth), build(depth - 1)(n))
+
+            let recursive weight (t: Tree) =
+                match t with
+                    | Leaf(n) -> n
+                    | Node(_s, rest) -> 1 + weight(rest)
+
+            let recursive bindingsOf (k: Int) (n: Int) =
+                if k == 0
+                then []
+                else (Ashes.Text.fromInt(n + k), build(2)(n)) :: bindingsOf(k - 1)(n)
+
+            let recursive total (bs: List((Str, Tree))) (acc: Int) =
+                match bs with
+                    | [] -> acc
+                    | (name, t) :: rest -> total(rest)(acc + Ashes.Text.byteLength(name) + weight(t))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + total(bindingsOf(2)(n))(0))
+            in Ashes.IO.print(handle loop({{rounds}})(perform Tick.get(Unit)) with
+                | Tick.get(u) -> resume(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_producer_tuple_fresh_element_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // With a handler in the program general reference counting is off. The producer's cell asked
+        // for a reference-counted tuple, so the name was made reference-counted, but the tuple could
+        // not own the tree and stayed in the arena, which never released the name. The arena tuple now
+        // stores an arena copy of it and releases the original.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildProducerTupleFreshElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("producer tuple fresh element", samples, maxRssKb: 16_000);
+    }
 }

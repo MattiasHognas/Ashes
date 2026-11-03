@@ -7,7 +7,7 @@ function lambda_0  [ClosureHelper]
     Return                Source=0   (handle_match_arm_reset.ash:6:27)
 
 function _start_main  [ProgramEntry]
-  locals=23 temps=69
+  locals=23 temps=82
     SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
     LoadConstInt          Target=0 Value=0   (handle_match_arm_reset.ash:6:27)
     MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (handle_match_arm_reset.ash:6:27)
@@ -69,95 +69,108 @@ function _start_main  [ProgramEntry]
     LoadConstInt          Target=31 Value=1   (handle_match_arm_reset.ash:9:25)
     StoreLocal            Slot=8 Source=31   (handle_match_arm_reset.ash:8:13)
     LoadCapabilityHandler Target=32 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
-    LoadConstInt          Target=33 Value=0   (handle_match_arm_reset.ash:8:13)
-    CmpIntEq              Target=34 Left=32 Right=33   (handle_match_arm_reset.ash:8:13)
-    JumpIfFalse           CondTemp=34 Target=live_posts_skip_3   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=33 CapabilityIndex=1   (handle_match_arm_reset.ash:8:13)
+    OrInt                 Target=34 Left=32 Right=33   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=35 Value=0   (handle_match_arm_reset.ash:8:13)
+    CmpIntEq              Target=36 Left=34 Right=35   (handle_match_arm_reset.ash:8:13)
+    JumpIfFalse           CondTemp=36 Target=live_posts_skip_3   (handle_match_arm_reset.ash:8:13)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
   live_posts_skip_3:
     Jump                  Target=match_end_3   (handle_match_arm_reset.ash:8:13)
   match_arm_cleanup_6:
-    LoadCapabilityHandler Target=35 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
-    LoadConstInt          Target=36 Value=0   (handle_match_arm_reset.ash:8:13)
-    CmpIntEq              Target=37 Left=35 Right=36   (handle_match_arm_reset.ash:8:13)
-    JumpIfFalse           CondTemp=37 Target=live_posts_skip_4   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=37 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=38 CapabilityIndex=1   (handle_match_arm_reset.ash:8:13)
+    OrInt                 Target=39 Left=37 Right=38   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=40 Value=0   (handle_match_arm_reset.ash:8:13)
+    CmpIntEq              Target=41 Left=39 Right=40   (handle_match_arm_reset.ash:8:13)
+    JumpIfFalse           CondTemp=41 Target=live_posts_skip_4   (handle_match_arm_reset.ash:8:13)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12
   live_posts_skip_4:
     Jump                  Target=match_next_5   (handle_match_arm_reset.ash:8:13)
   match_next_5:
     SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
-    LoadConstInt          Target=38 Value=0   (handle_match_arm_reset.ash:10:24)
-    StoreLocal            Slot=8 Source=38   (handle_match_arm_reset.ash:8:13)
-    LoadCapabilityHandler Target=39 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
-    LoadConstInt          Target=40 Value=0   (handle_match_arm_reset.ash:8:13)
-    CmpIntEq              Target=41 Left=39 Right=40   (handle_match_arm_reset.ash:8:13)
-    JumpIfFalse           CondTemp=41 Target=live_posts_skip_5   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=42 Value=0   (handle_match_arm_reset.ash:10:24)
+    StoreLocal            Slot=8 Source=42   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=43 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=44 CapabilityIndex=1   (handle_match_arm_reset.ash:8:13)
+    OrInt                 Target=45 Left=43 Right=44   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=46 Value=0   (handle_match_arm_reset.ash:8:13)
+    CmpIntEq              Target=47 Left=45 Right=46   (handle_match_arm_reset.ash:8:13)
+    JumpIfFalse           CondTemp=47 Target=live_posts_skip_5   (handle_match_arm_reset.ash:8:13)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
   live_posts_skip_5:
     Jump                  Target=match_end_3   (handle_match_arm_reset.ash:8:13)
   match_arm_cleanup_7:
-    LoadCapabilityHandler Target=42 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
-    LoadConstInt          Target=43 Value=0   (handle_match_arm_reset.ash:8:13)
-    CmpIntEq              Target=44 Left=42 Right=43   (handle_match_arm_reset.ash:8:13)
-    JumpIfFalse           CondTemp=44 Target=live_posts_skip_6   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=48 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=49 CapabilityIndex=1   (handle_match_arm_reset.ash:8:13)
+    OrInt                 Target=50 Left=48 Right=49   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=51 Value=0   (handle_match_arm_reset.ash:8:13)
+    CmpIntEq              Target=52 Left=50 Right=51   (handle_match_arm_reset.ash:8:13)
+    JumpIfFalse           CondTemp=52 Target=live_posts_skip_6   (handle_match_arm_reset.ash:8:13)
     RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
   live_posts_skip_6:
     Jump                  Target=match_none_4   (handle_match_arm_reset.ash:8:13)
   match_none_4:
-    LoadConstInt          Target=45 Value=0   (handle_match_arm_reset.ash:8:13)
-    StoreLocal            Slot=8 Source=45   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=53 Value=0   (handle_match_arm_reset.ash:8:13)
+    StoreLocal            Slot=8 Source=53   (handle_match_arm_reset.ash:8:13)
   match_end_3:
-    LoadLocal             Target=46 Slot=8   (handle_match_arm_reset.ash:8:13)
-    StoreLocal            Slot=4 Source=46   (handle_match_arm_reset.ash:8:13)
-    LoadCapabilityHandler Target=47 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
-    LoadConstInt          Target=48 Value=0   (handle_match_arm_reset.ash:8:13)
-    CmpIntEq              Target=49 Left=47 Right=48   (handle_match_arm_reset.ash:8:13)
-    JumpIfFalse           CondTemp=49 Target=live_posts_skip_7   (handle_match_arm_reset.ash:8:13)
+    LoadLocal             Target=54 Slot=8   (handle_match_arm_reset.ash:8:13)
+    StoreLocal            Slot=4 Source=54   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=55 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=56 CapabilityIndex=1   (handle_match_arm_reset.ash:8:13)
+    OrInt                 Target=57 Left=55 Right=56   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=58 Value=0   (handle_match_arm_reset.ash:8:13)
+    CmpIntEq              Target=59 Left=57 Right=58   (handle_match_arm_reset.ash:8:13)
+    JumpIfFalse           CondTemp=59 Target=live_posts_skip_7   (handle_match_arm_reset.ash:8:13)
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=17
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=17
   live_posts_skip_7:
     Jump                  Target=match_end_0   (handle_match_arm_reset.ash:8:13)
   match_arm_cleanup_2:
-    LoadCapabilityHandler Target=50 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
-    LoadConstInt          Target=51 Value=0   (handle_match_arm_reset.ash:8:13)
-    CmpIntEq              Target=52 Left=50 Right=51   (handle_match_arm_reset.ash:8:13)
-    JumpIfFalse           CondTemp=52 Target=live_posts_skip_8   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=60 CapabilityIndex=2   (handle_match_arm_reset.ash:8:13)
+    LoadCapabilityHandler Target=61 CapabilityIndex=1   (handle_match_arm_reset.ash:8:13)
+    OrInt                 Target=62 Left=60 Right=61   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=63 Value=0   (handle_match_arm_reset.ash:8:13)
+    CmpIntEq              Target=64 Left=62 Right=63   (handle_match_arm_reset.ash:8:13)
+    JumpIfFalse           CondTemp=64 Target=live_posts_skip_8   (handle_match_arm_reset.ash:8:13)
     RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=18
     ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=18
   live_posts_skip_8:
     Jump                  Target=match_none_1   (handle_match_arm_reset.ash:8:13)
   match_none_1:
-    LoadConstInt          Target=53 Value=0   (handle_match_arm_reset.ash:8:13)
-    StoreLocal            Slot=4 Source=53   (handle_match_arm_reset.ash:8:13)
+    LoadConstInt          Target=65 Value=0   (handle_match_arm_reset.ash:8:13)
+    StoreLocal            Slot=4 Source=65   (handle_match_arm_reset.ash:8:13)
   match_end_0:
-    LoadLocal             Target=54 Slot=4   (handle_match_arm_reset.ash:8:13)
-    StoreLocal            Slot=19 Source=54   (handle_match_arm_reset.ash:5:5)
-    LoadMemOffset         Target=55 BasePtr=2 OffsetBytes=0   (handle_match_arm_reset.ash:5:5)
-    StoreLocal            Slot=20 Source=55   (handle_match_arm_reset.ash:5:5)
+    LoadLocal             Target=66 Slot=4   (handle_match_arm_reset.ash:8:13)
+    StoreLocal            Slot=19 Source=66   (handle_match_arm_reset.ash:5:5)
+    LoadMemOffset         Target=67 BasePtr=2 OffsetBytes=0   (handle_match_arm_reset.ash:5:5)
+    StoreLocal            Slot=20 Source=67   (handle_match_arm_reset.ash:5:5)
   posts_fold_9:
-    LoadLocal             Target=56 Slot=20   (handle_match_arm_reset.ash:5:5)
-    LoadConstInt          Target=57 Value=0   (handle_match_arm_reset.ash:5:5)
-    CmpIntNe              Target=58 Left=56 Right=57   (handle_match_arm_reset.ash:5:5)
-    JumpIfFalse           CondTemp=58 Target=posts_fold_done_9   (handle_match_arm_reset.ash:5:5)
-    LoadMemOffset         Target=59 BasePtr=56 OffsetBytes=0   (handle_match_arm_reset.ash:5:5)
-    LoadLocal             Target=60 Slot=19   (handle_match_arm_reset.ash:5:5)
-    CallClosure           Target=61 ClosureTemp=59 ArgTemp=60   (handle_match_arm_reset.ash:5:5)
-    StoreLocal            Slot=19 Source=61   (handle_match_arm_reset.ash:5:5)
-    LoadMemOffset         Target=62 BasePtr=56 OffsetBytes=8   (handle_match_arm_reset.ash:5:5)
-    StoreLocal            Slot=20 Source=62   (handle_match_arm_reset.ash:5:5)
-    LoadCapabilityHandler Target=63 CapabilityIndex=2   (handle_match_arm_reset.ash:5:5)
-    LoadConstInt          Target=64 Value=-1   (handle_match_arm_reset.ash:5:5)
-    AddInt                Target=65 Left=63 Right=64   (handle_match_arm_reset.ash:5:5)
-    StoreCapabilityHandlerCapabilityIndex=2 Source=65   (handle_match_arm_reset.ash:5:5)
+    LoadLocal             Target=68 Slot=20   (handle_match_arm_reset.ash:5:5)
+    LoadConstInt          Target=69 Value=0   (handle_match_arm_reset.ash:5:5)
+    CmpIntNe              Target=70 Left=68 Right=69   (handle_match_arm_reset.ash:5:5)
+    JumpIfFalse           CondTemp=70 Target=posts_fold_done_9   (handle_match_arm_reset.ash:5:5)
+    LoadMemOffset         Target=71 BasePtr=68 OffsetBytes=0   (handle_match_arm_reset.ash:5:5)
+    LoadLocal             Target=72 Slot=19   (handle_match_arm_reset.ash:5:5)
+    LoadConstInt          Target=74 Value=2   (handle_match_arm_reset.ash:5:5)
+    CallClosure           Target=73 ClosureTemp=71 ArgTemp=72 RuntimeManagedArgumentFlagTemp=74   (handle_match_arm_reset.ash:5:5)
+    StoreLocal            Slot=19 Source=73   (handle_match_arm_reset.ash:5:5)
+    LoadMemOffset         Target=75 BasePtr=68 OffsetBytes=8   (handle_match_arm_reset.ash:5:5)
+    StoreLocal            Slot=20 Source=75   (handle_match_arm_reset.ash:5:5)
+    LoadCapabilityHandler Target=76 CapabilityIndex=2   (handle_match_arm_reset.ash:5:5)
+    LoadConstInt          Target=77 Value=-1   (handle_match_arm_reset.ash:5:5)
+    AddInt                Target=78 Left=76 Right=77   (handle_match_arm_reset.ash:5:5)
+    StoreCapabilityHandlerCapabilityIndex=2 Source=78   (handle_match_arm_reset.ash:5:5)
     Jump                  Target=posts_fold_9   (handle_match_arm_reset.ash:5:5)
   posts_fold_done_9:
-    LoadLocal             Target=66 Slot=19   (handle_match_arm_reset.ash:5:5)
-    StoreLocal            Slot=21 Source=66   (handle_match_arm_reset.ash:4:1)
-    LoadLocal             Target=67 Slot=21   (handle_match_arm_reset.ash:12:16)
-    PrintInt              Source=67   (handle_match_arm_reset.ash:12:1)
-    AllocAdt              Target=68 Tag=0 FieldCount=0   (handle_match_arm_reset.ash:12:1)
-    Return                Source=68
+    LoadLocal             Target=79 Slot=19   (handle_match_arm_reset.ash:5:5)
+    StoreLocal            Slot=21 Source=79   (handle_match_arm_reset.ash:4:1)
+    LoadLocal             Target=80 Slot=21   (handle_match_arm_reset.ash:12:16)
+    PrintInt              Source=80   (handle_match_arm_reset.ash:12:1)
+    AllocAdt              Target=81 Tag=0 FieldCount=0   (handle_match_arm_reset.ash:12:1)
+    Return                Source=81
 

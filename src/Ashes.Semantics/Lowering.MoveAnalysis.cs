@@ -3031,6 +3031,22 @@ public sealed partial class Lowering
 
     private static bool ResetChoiceAccumulatorsEnabled => Environment.GetEnvironmentVariable("GRC_NO_RESETACCUMULATOR") is null;
 
+    private static bool ConsumingCallAccumulatorsEnabled => Environment.GetEnvironmentVariable("GRC_NO_CONSUMINGCALLACCUMULATOR") is null;
+
+    private static bool IsCallConsumingParameter(Expr.Call call, int ordinal, IReadOnlyDictionary<string, int> parameterScope)
+        => call.Arg is Expr.Var passed
+            && parameterScope.TryGetValue(passed.Name, out int passedOrdinal)
+            && passedOrdinal == ordinal
+            && CallFunctionReadsNoLoopParameter(call.Func, parameterScope);
+
+    private static bool CallFunctionReadsNoLoopParameter(Expr function, IReadOnlyDictionary<string, int> parameterScope)
+        => function switch
+        {
+            Expr.Var callee => !parameterScope.ContainsKey(callee.Name),
+            Expr.Call inner => !ReadsLoopParameter(inner.Arg, parameterScope) && CallFunctionReadsNoLoopParameter(inner.Func, parameterScope),
+            _ => false,
+        };
+
     // A walked-or-refilled list's edge passes the parameter's consumed tail, the parameter itself,
     // a call's result, or an empty list. A list only ever handed on, emptied or refilled holds
     // nothing older than its refills, so a walk among its edges is not required of it. A list walked
@@ -3098,6 +3114,9 @@ public sealed partial class Lowering
             // parameter.
             Expr.ListLit fresh => fresh.Elements.All(element => !ReadsLoopParameter(element, parameterScope)),
             Expr.Cons fresh when ResetChoiceAccumulatorsEnabled => IsFreshResetList(fresh, parameterScope),
+            // A call handed the parameter as its last argument, its other arguments reading no loop
+            // parameter, consumes the parameter and returns the list it is to become.
+            Expr.Call call when ConsumingCallAccumulatorsEnabled => IsCallConsumingParameter(call, ordinal, parameterScope),
             _ => IsBranchingAccumulatorEdge(arm, parameterName, ordinal, parameterScope),
         };
 

@@ -34,12 +34,12 @@ Function: listed
 Function: prefixed
   Operations
     dup:                  2
-    drop:                 4
-    uniqueness checks:    1
+    drop:                 7
+    uniqueness checks:    2
     allocations:          1
     reused allocations:   0
     reuse tokens:         0
-    copies:               0
+    copies:               1
 
 Function: pair
   Operations

@@ -22,7 +22,7 @@ Function: collect
     acc: consumed, move-safe yes
     result fresh: no
   perceus [lambda_9]
-    dup:                  14
+    dup:                  19
     drop:                 6
     uniqueness checks:    4
   perceus [lambda_8]
@@ -36,7 +36,7 @@ Function: collect
   representation [lambda_9]
     conservative unknown: 18
     region:               7
-    runtime rc:           64
+    runtime rc:           78
     copy value:           5
   representation [lambda_8]
     conservative unknown: 2
@@ -66,7 +66,7 @@ Function: joinAll
     result fresh: no
   perceus [lambda_17]
     dup:                  5
-    drop:                 11
+    drop:                 12
     uniqueness checks:    6
   perceus [lambda_16]
     dup:                  0
@@ -74,7 +74,7 @@ Function: joinAll
     uniqueness checks:    0
   perceus [lambda_17__scalarenv0]
     dup:                  5
-    drop:                 11
+    drop:                 12
     uniqueness checks:    6
   representation [lambda_17]
     conservative unknown: 15

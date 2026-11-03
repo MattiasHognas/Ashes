@@ -961,12 +961,17 @@ public sealed class ArenaDeallocationTests
             in pick 3 ("a" + "b")
             """);
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
+        int joinIndex = instructions.FindIndex(instruction => instruction is IrInst.Label label
+            && label.Name.StartsWith("endif_", StringComparison.Ordinal));
+        bool parameterArmOwnsItsReference = joinIndex >= 0
+            && instructions.Skip(joinIndex).TakeWhile(instruction => instruction is not IrInst.Label { Name: var name }
+                || !name.StartsWith("match_end_", StringComparison.Ordinal)).Any(instruction => instruction is IrInst.RcDup);
 
-        instructions.Any(instruction => instruction is IrInst.Label label
-            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal)).ShouldBeTrue(
-                "A loop whose arm returns the parameter itself must hand that reference over at the exit "
-                + "instead of releasing the string it returns, which needs the literal arm beside it "
-                + "normalized so the whole join is runtime-managed.");
+        (parameterArmOwnsItsReference || instructions.Any(instruction => instruction is IrInst.Label label
+            && label.Name.Contains("rc_tco_exit_transfer_not_selected", StringComparison.Ordinal))).ShouldBeTrue(
+                "A loop whose arm returns the parameter itself must not release the string it returns: either the "
+                + "exit hands the parameter's reference over, or the join gives the parameter arm a reference of its "
+                + "own beside the owned literal arm.");
     }
 
     [Test]

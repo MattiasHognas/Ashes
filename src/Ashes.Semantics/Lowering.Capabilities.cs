@@ -409,6 +409,10 @@ public sealed partial class Lowering
     /// </summary>
     private int PostRegisterIndex => CapabilityGlobalCount;
 
+    // Counts the reference-counted posts lowered so far; a handle whose arms lowered one releases
+    // each post its fold has run.
+    private int _referenceCountedPostCount;
+
     /// <summary>
     /// Index of the live-posts counter global: the number of collected post-resume continuations
     /// not yet folded by their handle. While it is non-zero, every arena restore/reclaim is
@@ -429,9 +433,11 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Begins a live-posts guard around an arena restore/copy-out/reclaim block: emits a check
-    /// that jumps past the block when any post-resume continuation is pending. Returns the skip
-    /// label to place after the block, or null (emitting nothing) when the program declares no
-    /// capabilities and the guard is unnecessary.
+    /// that jumps past the block when any post-resume continuation is pending. A post an arm
+    /// has stored in the pending-post register but its perform site has not yet counted is pending
+    /// too: a `let` scoped over the arm's one-shot `resume` closes before the arm returns. Returns
+    /// the skip label to place after the block, or null (emitting nothing) when the program declares
+    /// no capabilities and the guard is unnecessary.
     /// </summary>
     private string? BeginLivePostsGuard()
     {
@@ -442,10 +448,19 @@ public sealed partial class Lowering
 
         int counterTemp = NewTemp();
         Emit(new IrInst.LoadCapabilityHandler(counterTemp, LivePostsIndex));
+        int guardedTemp = counterTemp;
+        if (Environment.GetEnvironmentVariable("GRC_NO_PENDINGPOSTGUARD") is null)
+        {
+            int pendingTemp = NewTemp();
+            Emit(new IrInst.LoadCapabilityHandler(pendingTemp, PostRegisterIndex));
+            guardedTemp = NewTemp();
+            Emit(new IrInst.OrInt(guardedTemp, counterTemp, pendingTemp));
+        }
+
         int zeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         int isZeroTemp = NewTemp();
-        Emit(new IrInst.CmpIntEq(isZeroTemp, counterTemp, zeroTemp));
+        Emit(new IrInst.CmpIntEq(isZeroTemp, guardedTemp, zeroTemp));
         string skipLabel = $"live_posts_skip_{_nextCapabilitySiteId++}";
         Emit(new IrInst.JumpIfFalse(isZeroTemp, skipLabel));
         return skipLabel;
@@ -458,6 +473,27 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(skipLabel));
         }
     }
+
+    // Rewinds a call's arena window unless a one-shot post is pending: a perform inside the window
+    // pushes its post cell and closure into the window's allocations, which must survive until the
+    // handle folds them. The paired reclaim is guarded the same way, and the result normalization
+    // between the two runs either way, since it copies into reference-counted storage.
+    private void EmitPostGuardedArenaRestore(int cursorSlot, int endSlot, int preRestoreEndSlot)
+    {
+        string? skipLabel = CallResultPostGuardEnabled ? BeginLivePostsGuard() : null;
+        Emit(new IrInst.RestoreArenaState(cursorSlot, endSlot, preRestoreEndSlot));
+        EndLivePostsGuard(skipLabel);
+    }
+
+    private void EmitPostGuardedArenaReclaim(int endSlot, int preRestoreEndSlot)
+    {
+        string? skipLabel = CallResultPostGuardEnabled ? BeginLivePostsGuard() : null;
+        Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
+        EndLivePostsGuard(skipLabel);
+    }
+
+    private static bool CallResultPostGuardEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_CALLRESULTPOSTGUARD") is null;
 
     /// <summary>Emits `counter := counter + delta` on the live-posts global.</summary>
     private void EmitLivePostsAdjust(long delta)
@@ -481,7 +517,13 @@ public sealed partial class Lowering
         LoweredValueRequest request)
     {
         var (valueTemp, valueType) = LowerExpr(post.Value, request);
-        var (postTemp, postType) = LowerExpr(post.PostLambda);
+        LoweredValueRequest postRequest = PostLambdaRequest(post.PostLambda);
+        if (postRequest.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure))
+        {
+            _referenceCountedPostCount++;
+        }
+
+        var (postTemp, postType) = LowerExpr(post.PostLambda, postRequest);
 
         // The post runs after its handle exits, transforming the handle's result: R -> R. Its
         // capabilities belong to the enclosing context (the ambient row the arm is lowered under).
@@ -495,6 +537,16 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreCapabilityHandler(PostRegisterIndex, postTemp));
         return (valueTemp, valueType);
     }
+
+    // A post runs at the fold, after the arm's `let` prefix has released its owners, so a post
+    // capturing a reference-counted owner of that prefix is a reference-counted closure whose
+    // environment takes the owner over; the fold releases the post once it has run.
+    private LoweredValueRequest PostLambdaRequest(Expr postLambda)
+        => LoweredValueRequest.None.AddRuntime(
+            AllowsAsyncIndependentRcPlacement
+                && ClosureCapturesRuntimeManagedHeapValue(postLambda)
+                && IsRuntimeRcCopyClosureProducer(postLambda, escapes: true),
+            LoweredValueRuntimeRepresentation.Closure);
 
     /// <summary>The operation's slot index inside a handler frame for its capability (declaration order).</summary>
     private static int OperationDeclIndex(CapabilitySymbol capability, string opName)
@@ -1328,7 +1380,9 @@ public sealed partial class Lowering
 
         // 3. Lower the operation arms to closures (in the enclosing context: an arm belongs
         // lexically outside the handle and its capabilities flow to the enclosing row).
+        int referenceCountedPostsBefore = _referenceCountedPostCount;
         var armClosures = LowerHandleLowerArmClosures(handle, opArms, capabilityInstances, resultType);
+        bool armsMakeReferenceCountedPosts = _referenceCountedPostCount != referenceCountedPostsBefore;
         if (armClosures is null)
         {
             return ReturnNeverWithDummyTemp();
@@ -1349,7 +1403,7 @@ public sealed partial class Lowering
             handle, returnArm, bodyTemp, bodyType, resultType, request);
 
         // 8. Fold the collected one-shot post-resume continuations over the result.
-        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp, resultType);
+        int finalResultTemp = LowerHandleFoldPosts(postsHeadPtrTemp, currentResultTemp, resultType, armsMakeReferenceCountedPosts);
         return (finalResultTemp, resultType);
     }
 
@@ -1602,7 +1656,7 @@ public sealed partial class Lowering
     // handle owns as a reference-counted value is handed to each post under the owned-argument
     // contract, so the fold's slot holds an owned reference-counted value before and after every
     // post and the final value is reference-counted.
-    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp, TypeRef resultType)
+    private int LowerHandleFoldPosts(int postsHeadPtrTemp, int currentResultTemp, TypeRef resultType, bool releasesReferenceCountedPosts)
     {
         int foldId = _nextCapabilitySiteId++;
         string foldLoopLabel = $"posts_fold_{foldId}";
@@ -1636,10 +1690,11 @@ public sealed partial class Lowering
         else
         {
             foldOutTemp = NewTemp();
-            Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp));
+            Emit(new IrInst.CallClosure(foldOutTemp, postClosureTemp, foldInTemp, PostArenaResultRequestWord()));
         }
 
         Emit(new IrInst.StoreLocal(foldResultSlot, foldOutTemp));
+        EmitReleaseReferenceCountedPost(postClosureTemp, foldId, releasesReferenceCountedPosts);
         int nextCellTemp = NewTemp();
         Emit(new IrInst.LoadMemOffset(nextCellTemp, headTemp, 8));
         Emit(new IrInst.StoreLocal(foldHeadSlot, nextCellTemp));
@@ -1655,6 +1710,31 @@ public sealed partial class Lowering
 
         return finalResultTemp;
     }
+
+    // A post that owns a captured reference-counted value (see PostLambdaRequest) is the fold's
+    // only reference, released once the post has run; an arena post is reclaimed with its arena.
+    private void EmitReleaseReferenceCountedPost(int postClosureTemp, int foldId, bool armsMakeReferenceCountedPosts)
+    {
+        if (!armsMakeReferenceCountedPosts || !EscapingClosureOwnsCapturesEnabled)
+        {
+            return;
+        }
+
+        string skipLabel = $"posts_fold_{foldId}_arena_post";
+        int isCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(isCountedTemp, postClosureTemp));
+        Emit(new IrInst.JumpIfFalse(isCountedTemp, skipLabel));
+        Emit(new IrInst.RcDrop(postClosureTemp, "Function", RuntimeManaged: true));
+        Emit(new IrInst.Label(skipLabel));
+    }
+
+    // The ownership word of a post call whose fold slot holds an arena value: bit 1 asks the post
+    // for its result in the arena, so a post that produces a reference-counted value copies it out
+    // and releases the original instead of handing the fold a reference it never releases.
+    private int PostArenaResultRequestWord()
+        => Environment.GetEnvironmentVariable("GRC_NO_POSTARENARESULT") is null
+            ? EmitArenaResultRequestWord(-1)
+            : -1;
 
     // A value the current function owns as a newly produced reference-counted result, as opposed
     // to a borrowed read of a binding whose own owner releases it.

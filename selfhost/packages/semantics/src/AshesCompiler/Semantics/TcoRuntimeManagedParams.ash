@@ -44,6 +44,7 @@ export (
     value tcoSelfCallSpineFlow,
     value shapePatternNames,
     value flowSuccessorsNamingNoPartOf,
+    value flowSuccessorsNamingNoHandedParameter,
     value tcoOwnReferencePositions,
     value flowCallKeyOf,
     value flowNodes,
@@ -510,6 +511,20 @@ let recursive shapeObserveResets (arguments: List(Expr)) (index: Int) (shadowed:
         | (argument :: restArguments, reset :: restResets) -> shapeObserveReset(argument)(index)(shadowed)(tailOwners)(parameters)(reset) :: shapeObserveResets(restArguments)(index + 1)(shadowed)(tailOwners)(parameters)(restResets)
         | _ -> resets
 
+// Stage 0's `IsCallConsumingParameter`: a call handed the parameter as its last argument, its other
+// arguments and its callee reading no loop parameter, consumes the parameter and returns the list
+// it is to become.
+let recursive shapeCallFunctionReadsNoLoopParameter (function: Expr) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(function) with
+        | ExprVar(callee) -> shapeResolveParameter(callee)(shadowed)(parameters) == None
+        | ExprCall(inner, argument, _isSugar, _layout) -> !shapeReadsLoopParameter(argument)(shadowed)(parameters) && shapeCallFunctionReadsNoLoopParameter(inner)(shadowed)(parameters)
+        | _ -> false
+
+let shapeIsCallConsumingParameter (function: Expr) (argument: Expr) (index: Int) (shadowed: List(Str)) (parameters: List(Str)) =
+    match shapeUnspan(argument) with
+        | ExprVar(passed) -> shapeResolveParameter(passed)(shadowed)(parameters) == Some(index) && shapeCallFunctionReadsNoLoopParameter(function)(shadowed)(parameters)
+        | _ -> false
+
 // Stage 0's `IsAccumulatorEdgeArm` and `IsBranchingAccumulatorEdge`: an arm hands the parameter at
 // `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list,
 // a literal or cells consed onto nil, none of whose elements reads one (nil resets the
@@ -524,6 +539,7 @@ let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadow
                 | ExprVar(tailName) -> shapeResolveParameter(tailName)(shadowed)(parameters) == Some(index) && !shapeReadsLoopParameter(head)(shadowed)(parameters)
                 | _ -> shapeIsResetList(arm)(shadowed)(parameters)
         | ExprList(elements, _isMultiline) -> shapeElementsReadNoLoopParameter(elements)(shadowed)(parameters)
+        | ExprCall(function, argument, _isSugar, _layout) -> shapeIsCallConsumingParameter(function)(argument)(index)(shadowed)(parameters)
         | other -> shapeIsChoiceEdge(other)(index)(name)(shadowed)(parameters)
 and shapeIsChoiceEdge (expression: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(expression) with
@@ -1619,6 +1635,19 @@ let flowSuccessorsNamingNoPartOf (self: Str) (parameters: List(Str)) (policy: Li
                     |> flowHolderClosure(sources)(flowCutsWith(ownReferences)(0)(cuts)) with
                         | holders ->
                             flowPositionsReadingNone(arguments)(0)(flowParameterNamesAt(holders)(parameters)(named))(parameters)(policy)
+
+// The binders' counterpart for an earlier iteration's value no name was bound to: the positions
+// whose successor names none of the parameters the value was handed to as a successor
+// (`handedTo`), nor a parameter the body's flow carries one of them into. Nothing is claimed
+// without the body's flow.
+let flowSuccessorsNamingNoHandedParameter (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (flow: Maybe(List(List(Int)))) (handedTo: List(Int)) (ownReferences: List(Int)) (cuts: List(Bool)) (arguments: List(Expr)) =
+    match flow with
+        | None -> []
+        | Some(sources) ->
+            handedTo
+            |> flowHolderClosure(sources)(flowCutsWith(ownReferences)(0)(cuts))
+            |> (given (holders: List(Int)) -> flowParameterNamesAt(holders)(parameters)([]))
+            |> (given (names: List(Str)) -> flowPositionsReadingNone(arguments)(0)(names)(parameters)(policy))
 
 // The source parameters an argument reads, by ordinal, added to the sources a position already has.
 let recursive flowArgumentSources (argument: Expr) (parameters: List(Str)) (policy: List((Str, Int, Str, List(Bool)))) (derived: List(List(Str))) (source: Int) (sources: List(Int)) =

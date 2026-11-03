@@ -30,7 +30,7 @@ public sealed partial class Lowering
         if (!GeneralRcEnabled
             || reaching.Count < 2
             || !reaching.Any(arm => IsReferenceCountedJoinArm(arm) || ConsesOntoOwnedSelfResult(arm, pruned))
-            || reaching.All(IsReferenceCountedJoinArm)
+            || reaching.All(IsReferenceCountedJoinArm) && !OwnedArmBesideBorrowedParameter(reaching)
             || reaching.Any(arm => arm.Store is null)
             || CanArenaReset(pruned)
             || ContainsUnresolvedLayoutType(pruned, [])
@@ -166,6 +166,14 @@ public sealed partial class Lowering
         return reaching.Count > 0
             && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && (IsNewlyProducedRcTemp(store.Source) || IsRetainedPatternOwnerArm(arm)));
     }
+
+    // An owned arm beside one borrowing a loop parameter: the join is reference-counted on every path
+    // but owned on only some, so the borrowing arm takes a reference of its own. A loop parameter the
+    // join hands to the next iteration is released as the predecessor at the back edge.
+    private bool OwnedArmBesideBorrowedParameter(IReadOnlyList<JoinArm> reaching)
+        => Environment.GetEnvironmentVariable("GRC_NO_OWNEDBESIDEBORROWED") is null
+            && reaching.Any(IsOwnedJoinArm)
+            && reaching.Any(BorrowsLoopParameter);
 
     // An arm that hands the join a reference-counted value: one it owns, or one a loop parameter owns.
     private bool IsReferenceCountedJoinArm(JoinArm arm) => IsOwnedValueArm(arm) || BorrowsLoopParameter(arm);
@@ -789,6 +797,10 @@ public sealed partial class Lowering
     private static bool NormalizedElementOwnsItsReference
         => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDELEMENTRETAIN") is null;
 
+    // A normalized if join whose every branch now holds a reference of its own is fresh, as a normalized
+    // match join is, so a reading builtin consuming it releases it.
+    private static bool NormalizedIfJoinFreshEnabled => Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDIFFRESH") is null;
+
     // An if's join: owned when both branches are, or once a mixed pair is normalized.
     private void MarkIfJoinResult(
         int resultTemp,
@@ -812,7 +824,7 @@ public sealed partial class Lowering
         if (NormalizeMixedJoinArms(arms, resultType))
         {
             RecordNormalizedJoinTemp(resultTemp);
-            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: true, allBranchesNewlyProduced: false);
+            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: true, allBranchesNewlyProduced: NormalizedIfJoinFreshEnabled && NormalizedArmsAllOwnTheirReference(arms));
             return;
         }
 

@@ -310,6 +310,10 @@ type ConsumerRequest =
     // loop's list parameter (`first :: separator :: acc`). It reaches the cons itself, through its
     // spans, and nothing else.
     | chainTailCell: Bool
+    // Stage 0's `ConsumerCanOwn` left unset for an ordinary call's argument: the transfer asked of it
+    // comes from the callee's result reaching it, not from a consumer that owns the value, so a
+    // constructor built there borrows a pattern owner's read rather than taking a duplicate of it.
+    | callArgument: Bool
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -338,7 +342,8 @@ let emptyConsumerRequest =
         recordFieldCells = false,
         recordFieldCell = false,
         escapingArgumentCell = false,
-        chainTailCell = false
+        chainTailCell = false,
+        callArgument = false
     )
 
 // The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
@@ -548,6 +553,11 @@ type CoreProgramState =
     | moveFunctionTable: List((Str, List(Str), Expr))
     | moveCallSites: List(MoveCallSite)
     | moveNullaryConstructors: List(Str)
+    // Stage 0's `_maFunctionsMayExecuteUnderLiveHandlerPost`: the top-level functions that may run
+    // while a one-shot handler's post is pending, and whether the entry scope may.
+    | liveHandlerFunctions: MapTree(Str, Bool)
+    | entryRunsUnderLiveHandlerPost: Bool
+    | anyRunsUnderLiveHandlerPost: Bool
     | patternOwnerSites: List(PatternOwnerSite)
     // The binders matched out of a reference-counted tuple scrutinee at a loop parameter's own
     // position, each with that parameter's slot (stage 0's `_tupleBinderParameterSlots`).
@@ -639,6 +649,14 @@ type CoreFunctionState =
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
+    // Stage 0's `OwnershipPlacementContext.MayExecuteUnderLiveHandlerPost` of the function being
+    // lowered: it may run while a one-shot handler's post is pending, so its values stay off the
+    // reference-counted heap. A nested function takes its enclosing function's answer.
+    | underLiveHandlerPost: Bool
+    // Stage 0's `_loweringHandlerArmOwnResult`: an operation arm closure is being lowered, whose own
+    // escaping result may reach the reference-counted heap under a live handler post, since the
+    // perform site always asks for its arena form and releases the original.
+    | handlerArmOwnResult: Bool
     | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
     | resourceStates: List((Int, ResourceReleaseKind))
     | recursiveDeclarationSpan: Maybe(TextSpan)
@@ -672,6 +690,10 @@ type CoreOwnerState =
     // crosses its scope's reset as it is, never copied onto the reference-counted heap.
     | reuseResultTemps: List(Int)
     | patternOwnerCopyTemps: List(Int)
+    // The pattern-owner duplicates an arena cell held and a scope's copy took over, each released
+    // right after the copy by a marker promoted together with the duplicate (stage 0's
+    // `_releasedPatternOwnerDuplicates`).
+    | releasedPatternOwnerDuplicates: List(Int)
     | runtimeOwners: List((Int, Bool))
     // The temps holding a pattern owner's retained reference as a branch result, and the joins
     // every reaching branch stored one into: such a result crosses an arm's reset without a copy.
@@ -1055,6 +1077,27 @@ let withStateMoveCallSites value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with moveCallSites = value))
 
+let withStateLiveHandlerFunctions value (state: CoreLoweringState) =
+    match value with
+        | (functions, entryLive, anyLive) ->
+            let group = state.programState
+            in state with programState = (group with liveHandlerFunctions = functions, entryRunsUnderLiveHandlerPost = entryLive, anyRunsUnderLiveHandlerPost = anyLive)
+
+let stateLiveHandlerFunctions (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.liveHandlerFunctions)
+
+let stateEntryRunsUnderLiveHandlerPost (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.entryRunsUnderLiveHandlerPost)
+
+// Stage 0's `ProgramMayRunUnderLiveHandlerPost`: a capability in the program and some function, or
+// the entry, that may run while a one-shot post is pending. The general reference-counting
+// contract is one calling convention for the whole program, so such a program keeps it off.
+let programMayRunUnderLiveHandlerPost (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.capabilityGlobalCount > 0 && group.anyRunsUnderLiveHandlerPost)
+
 let stateMoveNullaryConstructors (state: CoreLoweringState) =
     (let group = state.programState
     in group.moveNullaryConstructors)
@@ -1360,6 +1403,35 @@ let withStateActiveFunctionOrigin value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with activeFunctionOrigin = value))
 
+let stateUnderLiveHandlerPost (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.underLiveHandlerPost)
+
+let withStateUnderLiveHandlerPost value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with underLiveHandlerPost = value))
+
+let stateHandlerArmOwnResult (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.handlerArmOwnResult)
+
+let withStateHandlerArmOwnResult value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with handlerArmOwnResult = value))
+
+// Stage 0's `AllowsOrdinaryRcPlacement`: the function being lowered cannot run while a one-shot
+// post is pending, so its values may be placed on the reference-counted heap.
+let ordinaryRcPlacementAllowed (state: CoreLoweringState) = stateUnderLiveHandlerPost(state) == false
+
+// Stage 0's `AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult`, the gate of an escaping
+// result's placement.
+let escapingRcPlacementAllowed (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) || stateHandlerArmOwnResult(state)
+
+// Stage 0's `GeneralRcEnabled` as far as the live-handler context decides it: the function may place
+// ordinary values on the reference-counted heap and no function of the program may run while a
+// one-shot post is pending.
+let generalRcEnabled (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && programMayRunUnderLiveHandlerPost(state) == false
+
 let statePendingClosureNormalizers (state: CoreLoweringState) =
     (let group = state.functionState
     in group.pendingClosureNormalizers)
@@ -1486,6 +1558,14 @@ let statePatternOwnerCopyTemps (state: CoreLoweringState) =
 let withStatePatternOwnerCopyTemps value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with patternOwnerCopyTemps = value))
+
+let stateReleasedPatternOwnerDuplicates (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.releasedPatternOwnerDuplicates)
+
+let withStateReleasedPatternOwnerDuplicates value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with releasedPatternOwnerDuplicates = value))
 
 let statePatternOwnerResultTemps (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -2460,6 +2540,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             moveFunctionTable = [],
             moveCallSites = [],
             moveNullaryConstructors = [],
+            liveHandlerFunctions = Ashes.Collection.Map.empty,
+            entryRunsUnderLiveHandlerPost = false,
+            anyRunsUnderLiveHandlerPost = false,
             patternOwnerSites = [],
             tupleBinderParameters = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
@@ -2499,6 +2582,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             sealedOperatorDefaults = [],
             pendingSourceFunction = None,
             activeFunctionOrigin = None,
+            underLiveHandlerPost = false,
+            handlerArmOwnResult = false,
             pendingClosureNormalizers = [],
             resourceStates = [],
             recursiveDeclarationSpan = None,
@@ -2514,6 +2599,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             backEdgeDummyTemps = [],
             reuseResultTemps = [],
             patternOwnerCopyTemps = [],
+            releasedPatternOwnerDuplicates = [],
             runtimeOwners = [],
             borrowedOwners = [],
             pendingBorrowedOwners = [],
@@ -2763,6 +2849,86 @@ let emit kind state =
             let wrapped = tagItemInstruction(kind)(span)(item)(context)
             in state with reversedInstructions = wrapped :: instructions
 
+// The index of the live-posts counter among the capability globals: one past the pending-post
+// register that follows the capability handler slots.
+let livePostsIndex (state: CoreLoweringState) = stateCapabilityGlobalCount(state) + 1
+
+// Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
+// while a one-shot post is pending, since the post's closure still lives in the window. A post
+// an arm has stored in the pending-post register but its perform site has not yet counted is
+// pending too: a `let` scoped over the arm's one-shot `resume` closes before the arm returns. The
+// guard reads the live-posts counter and the pending-post register and jumps past the block when
+// either is not zero; without a capability nothing is emitted and there is no label to close.
+// `place` adds each instruction: `emit` for a block lowered in place, `unlocatedInstruction` for
+// a block spliced in after the body is lowered.
+let beginLivePostsGuardBy place (state: CoreLoweringState) =
+    if stateCapabilityGlobalCount(state) == 0
+    then (state, None)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = counterState, temp = counterTemp } ->
+                match freshTemp(counterState) with
+                    | FreshTemp { state = pendingState, temp = pendingTemp } ->
+                        match freshTemp(pendingState) with
+                            | FreshTemp { state = guardedState, temp = guardedTemp } ->
+                                match freshTemp(guardedState) with
+                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                        match freshTemp(zeroState) with
+                                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
+                                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
+                                                in
+                                                    isZeroState
+                                                    |> place(state
+                                                    |> livePostsIndex
+                                                    |> LoadCapabilityHandler(counterTemp))
+                                                    |> place(state
+                                                    |> stateCapabilityGlobalCount
+                                                    |> LoadCapabilityHandler(pendingTemp))
+                                                    |> place(OrInt(guardedTemp)(counterTemp)(pendingTemp))
+                                                    |> place(LoadConstInt(zeroTemp)(0))
+                                                    |> place(CmpIntEq(isZeroTemp)(guardedTemp)(zeroTemp))
+                                                    |> place(JumpIfFalse(isZeroTemp)(skipLabel))
+                                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
+
+let beginLivePostsGuard (state: CoreLoweringState) = beginLivePostsGuardBy(emit)(state)
+
+let endLivePostsGuardBy place (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
+    match skipLabel with
+        | Some(label) -> place(Label(label))(state)
+        | None -> state
+
+let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) = endLivePostsGuardBy(emit)(skipLabel)(state)
+
+// Stage 0's `EmitLivePostsAdjust`: adds `delta` to the live-posts counter, which a perform site
+// raises when it pushes a one-shot post and the posts fold lowers when it has run one, so every
+// live-posts guard sees the post as pending until its fold.
+let emitLivePostsAdjust (delta: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = counterState, temp = counterTemp } ->
+            match freshTemp(counterState) with
+                | FreshTemp { state = deltaState, temp = deltaTemp } ->
+                    match freshTemp(deltaState) with
+                        | FreshTemp { state = adjustedState, temp = adjustedTemp } ->
+                            adjustedState
+                            |> emit(state
+                            |> livePostsIndex
+                            |> LoadCapabilityHandler(counterTemp))
+                            |> emit(LoadConstInt(deltaTemp)(delta))
+                            |> emit(AddInt(adjustedTemp)(counterTemp)(deltaTemp))
+                            |> emit(StoreCapabilityHandler(livePostsIndex(state))(adjustedTemp))
+
+// An arena restore and its reclaim under the live-posts guard, the shape of every scope, call and
+// back-edge reset stage 0 skips while a one-shot post is pending.
+let emitGuardedRestoreAndReclaimBy place cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuardBy(place)(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> place(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> place(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuardBy(place)(skipLabel)
+
+let emitGuardedRestoreAndReclaim cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) = emitGuardedRestoreAndReclaimBy(emit)(cursorSlot)(endSlot)(preRestoreSlot)(state)
+
 // The innermost enclosing span resolved the way emitted instructions resolve theirs.
 let currentLocation (state: CoreLoweringState) =
     match (state.currentSpan, stateSourceContext(state)) with
@@ -2899,8 +3065,26 @@ let lambdaOriginFor (label: Str) (parameter: Str) (state: CoreLoweringState) =
         | None ->
             closureHelperOrigin(label)(parameter)(stateActiveFunctionOrigin(state))(state)
 
+// A top-level function takes its own live-handler answer; any other function keeps the answer
+// of the function it is lowered inside, stage 0's fallback to the enclosing context.
+let functionUnderLiveHandlerPost (origin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match origin.sourceOrigin with
+        | Some(SourceFunctionOrigin { functionSourceName = name }) ->
+            match state
+            |> stateTopLevelNames
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(_) ->
+                    match state
+                    |> stateLiveHandlerFunctions
+                    |> Ashes.Collection.Map.getStr(name) with
+                        | Some(_) -> true
+                        | None -> false
+                | None -> stateUnderLiveHandlerPost(state)
+        | None -> stateUnderLiveHandlerPost(state)
+
 let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) =
     state
+    |> withStateUnderLiveHandlerPost(functionUnderLiveHandlerPost(origin)(state))
     |> withStatePendingSourceFunction(None)
     |> withStatePendingStackClosure(false)
     |> withStateActiveFunctionOrigin(Some(origin))
@@ -3166,8 +3350,8 @@ let transfersChildrenRequested (state: CoreLoweringState) =
         | ConsumerRequest { transfersRuntimeManagedChildren = requested } -> requested
 
 // A call argument's request: the callee's parameter type, and the transfer when the call is the
-// loop's tail self-call.
-let withArgumentRequest expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, argumentSite = site, transfersRuntimeManagedChildren = transfers))(state)
+// loop's tail self-call; any other call's argument is marked as one.
+let withArgumentRequest expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (callArgument: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, argumentSite = site, transfersRuntimeManagedChildren = transfers, callArgument = callArgument))(state)
 
 // The reference-counted heap temps of the current function.
 let runtimeTempStateOf (temp: Int) (state: CoreLoweringState) = Ashes.Collection.Map.getInt(temp)(state.runtimeTemps)
@@ -3481,7 +3665,8 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         recordFieldCells = recordSuccessorRequestForwards(expression) && request.recordFieldCells,
         recordFieldCell = argumentCellRequestForwards(expression) && request.recordFieldCell,
         escapingArgumentCell = argumentCellRequestForwards(expression) && request.escapingArgumentCell,
-        chainTailCell = argumentCellRequestForwards(expression) && request.chainTailCell
+        chainTailCell = argumentCellRequestForwards(expression) && request.chainTailCell,
+        callArgument = transferRequestForwards(expression) && request.callArgument
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (request: ConsumerRequest) (lowered: LoweredCoreValue) =
@@ -4515,20 +4700,6 @@ let storeLetValue name (tailForwarded: Bool) bodyRequest outerBindings valueTemp
                     |> adoptRuntimeLetValue(valueTemp)(local)(valueType)
                     |> addOwnedBinding(name)(scheme)(CoreLocal(local))
 
-let lowerStoredLet name body requestBody bodyRequest lower outerBindings valueTemp valueType fresh =
-    fresh
-    |> storeLetValue(name)(isTailForwardedBindingResult(requestBody)(name))(bodyRequest)(outerBindings)(valueTemp)(valueType)
-    |> lower(body)
-    |> restoreLoweredBindings(outerBindings)
-
-let finishLetValue name body lower outerBindings lowered =
-    match lowered with
-        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            state
-            |> freshLocal
-            |> lowerStoredLet(name)(body)(body)(consumerRequestOf(state))(lower)(outerBindings)(temp)(semanticType)
-
 let recursive stripExprAt (expr: Expr) =
     match expr with
         | ExprAt(_span, inner) -> stripExprAt(inner)
@@ -4923,7 +5094,7 @@ let closeScopeForResult (resultTemp: Int) (resultType: SemanticType) cursorSlot 
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
             if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(stateBackEdgeDummyTemps(allocated)) || isReuseResultTemp(resultTemp)(allocated)
-            then emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
+            then emitGuardedRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
             else allocated
 
 // What a scope's heap result needs to cross the closing reset, stage 0's `GetCopyOutKind`: a
@@ -4978,23 +5149,128 @@ let scopeCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
                 | _ -> None
         | _ -> None
 
-let scopeCopyOutInstruction copyOut copyTemp resultTemp =
-    match copyOut with
-        | ShallowScopeCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(true)(RcNormalization)(None)
-        | ListScopeCopyOut -> CopyOutList(copyTemp)(resultTemp)(InlineListHead)(true)(RcNormalization)
+// The copy is reference-counted, or an arena copy where the function may run under a live handler
+// post (stage 0's `normalizeToRuntimeOwnership`).
+let scopeCopyOutInstruction copyOut (runtime: Bool) copyTemp resultTemp =
+    (let purpose =
+        if runtime
+        then RcNormalization
+        else ArenaScopeBoundary
+    in
+        match copyOut with
+            | ShallowScopeCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(runtime)(purpose)(None)
+            | ListScopeCopyOut -> CopyOutList(copyTemp)(resultTemp)(InlineListHead)(runtime)(purpose))
+
+let markCopyRuntime (runtime: Bool) (temp: Int) (state: CoreLoweringState) =
+    if runtime
+    then markRuntimeTemp(temp)(RuntimeNewlyProduced)(state)
+    else state
+
+// Whether this function built `cellTemp` as an arena cell (a cons or tuple allocation).
+let recursive allocatesCell (cellTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(target, _sizeBytes, _runtimeManaged) } :: rest -> target == cellTemp || allocatesCell(cellTemp)(rest)
+        | _instruction :: rest -> allocatesCell(cellTemp)(rest)
+
+// Whether `temp` is a duplicate marker not yet made real: the identity a pattern owner's read
+// takes for an aggregate until the loop's finalize pass promotes it.
+let recursive isDuplicateMarker (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged == false
+            else isDuplicateMarker(temp)(rest)
+        | _instruction :: rest -> isDuplicateMarker(temp)(rest)
+
+// Stage 0's `ReleaseCellTailRetainAfterCopy`: a scope's result built as an arena cons cell whose
+// tail is a pattern owner's duplicate taken for the cell (a list matched out of a loop parameter
+// inside the loop's successor). The reference-counted copy stops at that tail and takes a reference
+// of its own, and the arena cell never releases anything, so the duplicate is released right after
+// the copy by a marker promoted together with it.
+let releaseCellTailDuplicateAfterCopy copyOut (resultType: SemanticType) (cellTemp: Int) (state: CoreLoweringState) =
+    match (copyOut, constructionWordSource(cellTemp)(8)(state.reversedInstructions)) with
+        | (ListScopeCopyOut, Some(tail)) ->
+            if allocatesCell(cellTemp)(state.reversedInstructions) && isDuplicateMarker(tail)(state.reversedInstructions) && !containsInt(tail)(stateReleasedPatternOwnerDuplicates(state))
+            then
+                state
+                |> emit(RcDrop(tail)(patternOwnerTypeName(resolveType(state)(resultType))(state))(-1)(false)(false)(None))
+                |> withStateReleasedPatternOwnerDuplicates(tail :: stateReleasedPatternOwnerDuplicates(state))
+            else state
+        | _ -> state
+
+// Whether `temp` is a reference-counted retain already, rather than an identity marker the loop's
+// finalize may still place.
+let recursive retainedAsRuntimeValue (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else retainedAsRuntimeValue(temp)(rest)
+        | _ :: rest -> retainedAsRuntimeValue(temp)(rest)
+
+// Stage 0's `ReleaseCopiedRetainedPatternOwnerResult`: an arm returning a pattern binding retains it
+// for the join, so a scope copy-out that replaces the value with its copy releases that retain when
+// the original is reference-counted. With a capability in the program the copy-out may be skipped
+// while a post is pending, so the retain is kept there.
+let releaseCopiedRetainedPatternOwnerResult (resultType: SemanticType) (resultTemp: Int) (state: CoreLoweringState) =
+    if stateCapabilityGlobalCount(state) == 0 && containsInt(resultTemp)(statePatternOwnerResultTemps(state)) && retainedAsRuntimeValue(resultTemp)(state.reversedInstructions)
+    then
+        match freshTemp(state) with
+            | FreshTemp { state = allocated, temp = referenceCountedTemp } ->
+                match freshLabel("rc_copied_owner_result_kept")(allocated) with
+                    | FreshLabel { state = labelled, label = skipLabel } ->
+                        labelled
+                        |> emit(IsReferenceCounted(referenceCountedTemp)(resultTemp))
+                        |> emit(JumpIfFalse(referenceCountedTemp)(skipLabel))
+                        |> emit(RcDrop(resultTemp)(patternOwnerTypeName(resolveType(labelled)(resultType))(labelled))(-1)(true)(false)(None))
+                        |> emit(Label(skipLabel))
+    else state
 
 // Restores the arena, copies the result past the reset into a fresh runtime-managed temp, and
 // reclaims the chunks, stage 0's `TryEmitScopeCopyOut` with the RC-normalizing copy.
-let emitScopeCopyOut copyOut resultTemp cursorSlot endSlot preRestoreSlot state =
+let emitUnguardedScopeCopyOut copyOut (resultType: SemanticType) resultTemp cursorSlot endSlot preRestoreSlot state =
     match state
     |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
     |> freshTemp with
         | FreshTemp { state = restored, temp = copyTemp } ->
             restored
-            |> emit(scopeCopyOutInstruction(copyOut)(copyTemp)(resultTemp))
-            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+            |> emit(scopeCopyOutInstruction(copyOut)(ordinaryRcPlacementAllowed(restored))(copyTemp)(resultTemp))
+            |> markCopyRuntime(ordinaryRcPlacementAllowed(restored))(copyTemp)
+            |> releaseCellTailDuplicateAfterCopy(copyOut)(resultType)(resultTemp)
             |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-            |> (given (closed) -> (closed, Some(copyTemp)))
+            |> releaseCopiedRetainedPatternOwnerResult(resultType)(resultTemp)
+            |> (given (closed) -> (closed, copyTemp))
+
+// With a capability in the program the copy-out runs only while no one-shot post is pending: the
+// result travels through a slot that the skipped path leaves holding the original pointer. The
+// reloaded temp carries the copy's ownership fact; on the skipped path it reads the arena value,
+// whose release is a no-op against its immortal header.
+let emitScopeCopyOut copyOut (resultType: SemanticType) resultTemp cursorSlot endSlot preRestoreSlot state =
+    if stateCapabilityGlobalCount(state) == 0
+    then
+        match emitUnguardedScopeCopyOut(copyOut)(resultType)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(state) with
+            | (closed, copyTemp) -> (closed, Some(copyTemp))
+    else
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = guardSlot } ->
+                match allocated
+                |> emit(StoreLocal(guardSlot)(resultTemp))
+                |> beginLivePostsGuard with
+                    | (guarded, skipLabel) ->
+                        match emitUnguardedScopeCopyOut(copyOut)(resultType)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(guarded) with
+                            | (copied, copyTemp) ->
+                                match copied
+                                |> emit(StoreLocal(guardSlot)(copyTemp))
+                                |> endLivePostsGuard(skipLabel)
+                                |> freshTemp with
+                                    | FreshTemp { state = joined, temp = reloadTemp } ->
+                                        joined
+                                        |> emit(LoadLocal(reloadTemp)(guardSlot))
+                                        |> markCopyRuntime(ordinaryRcPlacementAllowed(joined))(reloadTemp)
+                                        |> (given (closed) -> (closed, Some(reloadTemp)))
 
 // The closing reset of a scope that owned and released a binding, stage 0's `PopOwnershipScope`:
 // a surviving result resets the arena, a heap result with a copy-out kind is copied past the
@@ -5003,11 +5279,11 @@ let closeOwnedScopeForResult (resultTemp: Int) (resultType: SemanticType) cursor
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
             if resultSurvivesReset(resultType)(allocated) || isRuntimeTemp(resultTemp)(allocated) || containsInt(resultTemp)(stateBackEdgeDummyTemps(allocated)) || isReuseResultTemp(resultTemp)(allocated)
-            then (emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated), None)
+            then (emitGuardedRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated), None)
             else
                 match scopeCopyOutOf(resultType)(allocated) with
                     | None -> (allocated, None)
-                    | Some(copyOut) -> emitScopeCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
+                    | Some(copyOut) -> emitScopeCopyOut(copyOut)(resultType)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
 
 // The reloaded copy of a spilled reference-counted result holds the same reference.
 let inheritRuntimeTemp (sourceTemp: Int) (targetTemp: Int) (state: CoreLoweringState) =
@@ -5073,8 +5349,6 @@ let recordRecursiveProducerSlot expression (fresh: FreshLocal) =
                 in fresh with state = recorded
             else fresh
 
-// `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it,
-// and the body's request decided by the caller from the body the binding scopes over.
 // The stored half of `finishLetValueInSlot`: the binding's slot allocated and its value stored in
 // it, with the body left for the caller to lower over the returned state.
 // The owners a `let` collected from its value ahead of the store, taken back out by name: the
@@ -6206,6 +6480,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateBackEdgeDummyTemps([])
             |> withStateReuseResultTemps([])
             |> withStatePatternOwnerCopyTemps([])
+            |> withStateReleasedPatternOwnerDuplicates([])
             |> withStateRuntimeOwners([])
             |> withStateBorrowedOwners([])
             |> withStatePendingBorrowedOwners([])
@@ -6425,10 +6700,7 @@ let emitPlainTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
             |> emitResolvedOwnedDrops(reset.ownedDrops)
             |> (given (released: CoreLoweringState) ->
                 if argumentsSurviveReset(reset.argumentTypes)(released)
-                then
-                    released
-                    |> unlocatedInstruction(RestoreArenaState(reset.arenaCursorSlot)(reset.arenaEndSlot)(preRestoreSlot)(false))
-                    |> unlocatedInstruction(ReclaimArenaChunks(reset.arenaEndSlot)(preRestoreSlot)(false))
+                then emitGuardedRestoreAndReclaimBy(unlocatedInstruction)(reset.arenaCursorSlot)(reset.arenaEndSlot)(preRestoreSlot)(released)
                 else released)
 
 let recursive unreadLoopSlotType (slot: Int) (unreadSlots: List((Int, SemanticType))) =
@@ -6706,7 +6978,7 @@ let contractRecordAnswer (named: SemanticType) (name: Str) (facts: HeapLayoutFac
 let isGeneralRcNamedType (named: SemanticType) (state: CoreLoweringState) =
     match generalCopyPlanOf(named)(state) with
         | Some(NormalizerArgumentCopy(_type)) ->
-            !canRuntimeManageRecursiveCopyAdt(named)(state) && anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
+            programMayRunUnderLiveHandlerPost(state) == false && !canRuntimeManageRecursiveCopyAdt(named)(state) && anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
         | _ -> false
 
 // Stage 0's `ReachesGeneralRcNamedType`.
@@ -8730,18 +9002,28 @@ let recursive constructorFieldTypeAt (typeName: Str) (arguments: List(SemanticTy
                     | (fields, _resultType) -> typeAtIndex(index)(fields)
             else constructorFieldTypeAt(typeName)(arguments)(tag)(index)(rest)(state)
 
+// The type of the field a path of constructor tags and field indices reaches from `semanticType`.
+let recursive fieldTypeAlong (path: List((Int, Int))) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (path, resolveType(state)(semanticType)) with
+        | ([], _) -> Some(semanticType)
+        | ((tag, index) :: rest, SemNamed(_symbolId, name, arguments)) ->
+            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorLayouts(state))(state) with
+                | Some(fieldType) -> fieldTypeAlong(rest)(fieldType)(state)
+                | None -> None
+        | _ -> None
+
 // Stage 0's release of `RetainsHeldPastTheCopy` after an arena successor's back-edge copy: each
 // field retain the arena cell held for its head, released now that the copy holds its own.
-let recursive emitHeldRetainReleases (retains: List((Int, Int, Int))) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match (retains, resolveType(state)(semanticType)) with
-        | ((temp, tag, index) :: rest, SemNamed(_symbolId, name, arguments)) ->
-            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorLayouts(state))(state) with
+let recursive emitHeldRetainReleases (retains: List((Int, List((Int, Int))))) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match retains with
+        | [] -> state
+        | (temp, path) :: rest ->
+            match fieldTypeAlong(path)(semanticType)(state) with
                 | Some(fieldType) ->
                     state
                     |> emitOwnedValueRelease(unlocatedInstruction)(temp)(fieldType)
                     |> emitHeldRetainReleases(rest)(semanticType)
                 | None -> emitHeldRetainReleases(rest)(semanticType)(state)
-        | _ -> state
 
 let backEdgeHeldRetains (temp: Int) (semanticType: SemanticType) (expression: Expr) (state: CoreLoweringState) =
     match stateTcoLoopFrame(state) with
@@ -9209,6 +9491,23 @@ let emitBackEdgeGeneralRcOwnedSlotDrops (reset: CoreTcoReset) (arguments: List(T
                             |> emitFreshGeneralRcSlots(reset.generalRcSlotFacts)(releasedFact)(reset)(arguments)(tmc)(normalized)
             in released with currentSpan = state.currentSpan)
 
+// The reset and its reclaim, each skipped while a one-shot post is pending; the reference-counted
+// successors' stores between them run either way.
+let emitGuardedRuntimeManagedTcoRestore (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuardBy(unlocatedInstruction)(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> unlocatedInstruction(RestoreArenaState(reset.fixedCursorSlot)(reset.fixedEndSlot)(preRestoreSlot)(false))
+            |> emitReservationZeroing(arguments)
+            |> endLivePostsGuardBy(unlocatedInstruction)(skipLabel)
+
+let emitGuardedRuntimeManagedTcoReclaim (reset: CoreTcoReset) preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuardBy(unlocatedInstruction)(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> unlocatedInstruction(ReclaimArenaChunks(reset.fixedEndSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuardBy(unlocatedInstruction)(skipLabel)
+
 let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = allocated, local = preRestoreSlot } ->
@@ -9222,10 +9521,9 @@ let emitRuntimeManagedTcoReset (reset: CoreTcoReset) (arguments: List(TcoResetAr
                     |> emitLateCopiedCellHeadDrops(reverse(reset.lateCopiedCellHeads))(arguments)
                     |> emitResolvedOwnedDrops(reset.ownedDrops)
                     |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(true)
-                    |> unlocatedInstruction(RestoreArenaState(reset.fixedCursorSlot)(reset.fixedEndSlot)(preRestoreSlot)(false))
-                    |> emitReservationZeroing(arguments)
+                    |> emitGuardedRuntimeManagedTcoRestore(reset)(arguments)(preRestoreSlot)
                     |> emitRuntimeManagedBackEdgeStores(stores)
-                    |> unlocatedInstruction(ReclaimArenaChunks(reset.fixedEndSlot)(preRestoreSlot)(false))
+                    |> emitGuardedRuntimeManagedTcoReclaim(reset)(preRestoreSlot)
 
 // What carries an arena loop parameter's successor across the back edge's reset, stage 0's
 // `GetTcoCopyOutKind`: a string copies by its length, a big integer by its limb count, a
@@ -9581,30 +9879,36 @@ let emitCompactionRecord (frame: CoreTcoLoopFrame) (skipLabel: Str) (state: Core
 // the heap arguments are copied up above the cursor, the arena is reset to the fixed loop-entry
 // watermark (the arena reservations of an arena string successor zeroed), the copies are copied
 // down onto the watermark and stored into their slots, the chunks above are reclaimed, and the
-// live size is recorded.
+// live size is recorded. The whole block is skipped while a one-shot post is pending.
 let emitCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (preRestoreSlot: Int) (state: CoreLoweringState) =
-    match emitCompactionCheck(frame)(arguments)(state) with
-        | (checked, skipLabel) ->
-            match emitCompactionUpCopies(arguments)(checked)([]) with
-                | (copiedUp, copies) ->
-                    copiedUp
-                    |> unlocatedInstruction(RestoreArenaState(frame.fixedCursorSlot)(frame.fixedEndSlot)(preRestoreSlot)(false))
-                    |> emitReservationZeroing(arguments)
-                    |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
-                    |> unlocatedInstruction(ReclaimArenaChunks(frame.fixedEndSlot)(preRestoreSlot)(false))
-                    |> emitCompactionRecord(frame)(skipLabel)
+    match beginLivePostsGuardBy(unlocatedInstruction)(state) with
+        | (guarded, postsSkipLabel) ->
+            match emitCompactionCheck(frame)(arguments)(guarded) with
+                | (checked, skipLabel) ->
+                    match emitCompactionUpCopies(arguments)(checked)([]) with
+                        | (copiedUp, copies) ->
+                            copiedUp
+                            |> unlocatedInstruction(RestoreArenaState(frame.fixedCursorSlot)(frame.fixedEndSlot)(preRestoreSlot)(false))
+                            |> emitReservationZeroing(arguments)
+                            |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
+                            |> unlocatedInstruction(ReclaimArenaChunks(frame.fixedEndSlot)(preRestoreSlot)(false))
+                            |> emitCompactionRecord(frame)(skipLabel)
+                            |> endLivePostsGuardBy(unlocatedInstruction)(postsSkipLabel)
 
 // The same two-pass copy-out against the advancing per-iteration watermark, for a loop whose list
 // argument keeps only its top cell: every back edge copies that cell, so nothing is amortized and
-// no live size is recorded.
+// no live size is recorded. Skipped as a whole while a one-shot post is pending.
 let emitAdvancingCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(TcoResetArgument)) (preRestoreSlot: Int) (state: CoreLoweringState) =
-    match emitCompactionUpCopies(arguments)(state)([]) with
-        | (copiedUp, copies) ->
-            copiedUp
-            |> unlocatedInstruction(RestoreArenaState(frame.arenaCursorSlot)(frame.arenaEndSlot)(preRestoreSlot)(false))
-            |> emitReservationZeroing(arguments)
-            |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
-            |> unlocatedInstruction(ReclaimArenaChunks(frame.arenaEndSlot)(preRestoreSlot)(false))
+    match beginLivePostsGuardBy(unlocatedInstruction)(state) with
+        | (guarded, postsSkipLabel) ->
+            match emitCompactionUpCopies(arguments)(guarded)([]) with
+                | (copiedUp, copies) ->
+                    copiedUp
+                    |> unlocatedInstruction(RestoreArenaState(frame.arenaCursorSlot)(frame.arenaEndSlot)(preRestoreSlot)(false))
+                    |> emitReservationZeroing(arguments)
+                    |> emitCompactionDownCopies(copies)(frame.affineReservationSlots)
+                    |> unlocatedInstruction(ReclaimArenaChunks(frame.arenaEndSlot)(preRestoreSlot)(false))
+                    |> endLivePostsGuardBy(unlocatedInstruction)(postsSkipLabel)
 
 // Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
 // value's layout.
@@ -9723,10 +10027,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
             |> emitBackEdgeGeneralRcOwnedSlotDrops(reset)(arguments)(false)
             |> (given (released: CoreLoweringState) ->
                 if allArgumentsSurvivePlainReset(arguments)(released)
-                then
-                    released
-                    |> unlocatedInstruction(RestoreArenaState(reset.arenaCursorSlot)(reset.arenaEndSlot)(preRestoreSlot)(false))
-                    |> unlocatedInstruction(ReclaimArenaChunks(reset.arenaEndSlot)(preRestoreSlot)(false))
+                then emitGuardedRestoreAndReclaimBy(unlocatedInstruction)(reset.arenaCursorSlot)(reset.arenaEndSlot)(preRestoreSlot)(released)
                 else
                     if allArgumentsCompactable(arguments)(released)
                     then
@@ -9740,7 +10041,7 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
 // it placed on the reference-counted heap. Each successor takes a reference of its own and the
 // predecessor is released, as the reset path does, only without the reset; the iteration's owned
 // drops follow the successors, which may borrow from them.
-let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && (!allArgumentsCompactable(arguments)(state) || compactionCopiesManagedList(arguments)(state))
+let tcoBackEdgeKeepsSuccessorsWithoutReset (arguments: List(TcoResetArgument)) (state: CoreLoweringState) = generalRcEnabled(state) && anyManagedListArgument(arguments) && !allArgumentsSurvivePlainReset(arguments)(state) && (!allArgumentsCompactable(arguments)(state) || compactionCopiesManagedList(arguments)(state))
 
 let emitRuntimeManagedSuccessorsWithoutReset (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
     match freshLocal(state) with
@@ -9828,18 +10129,50 @@ let renameInstructionTemps (renames: List((Int, Int))) (instruction: IrInstructi
         | _ ->
             instruction with instruction = mapInstructionTemps(renamedTemp(renames))(instruction.instruction)
 
+// Stage 0's `LowerCallCopyOutResult` copy: reference-counted, or an arena copy where the function may
+// run under a live handler post.
+let plainCallCopyOutInstruction (copyOut: CallCopyOut) (runtime: Bool) (copyTemp: Int) (resultTemp: Int) =
+    if runtime
+    then callCopyOutInstruction(copyOut)(copyTemp)(resultTemp)
+    else
+        match copyOut with
+            | ShallowCallCopyOut(staticSizeBytes) -> CopyOutArena(copyTemp)(resultTemp)(staticSizeBytes)(false)(ArenaCallBoundary)(None)
+            | ListCallCopyOut(headCopy) -> CopyOutList(copyTemp)(resultTemp)(headCopy)(false)(ArenaCallBoundary)
+
 // Stage 0's `LowerCallCopyOutResult` for a deferred block: the window reset, the copy of the
 // resolved kind, and the reclaim, all unlocated. The conditional variant never reaches here: a
 // result whose type was unresolved at the call read no returns flag.
-let emitPlainCallCopyOut copyOut (resultTemp: Int) cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+let emitUnguardedCallCopyOut copyOut (resultTemp: Int) cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
     match state
     |> unlocatedInstruction(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
     |> freshTemp with
         | FreshTemp { state = restored, temp = copiedTemp } ->
             (restored
-            |> unlocatedInstruction(callCopyOutInstruction(copyOut)(copiedTemp)(resultTemp))
-            |> markRuntimeTemp(copiedTemp)(RuntimeNewlyProduced)
+            |> unlocatedInstruction(plainCallCopyOutInstruction(copyOut)(ordinaryRcPlacementAllowed(restored))(copiedTemp)(resultTemp))
+            |> markCopyRuntime(ordinaryRcPlacementAllowed(restored))(copiedTemp)
             |> unlocatedInstruction(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false)), copiedTemp)
+
+// With a capability in the program the copy-out runs only while no one-shot post is pending: the
+// result travels through a slot that the skipped path leaves holding the original pointer, and the
+// slot's value is reloaded as the call's result.
+let emitPlainCallCopyOut copyOut (resultTemp: Int) cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+    if stateCapabilityGlobalCount(state) == 0
+    then emitUnguardedCallCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(state)
+    else
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = guardSlot } ->
+                match allocated
+                |> unlocatedInstruction(StoreLocal(guardSlot)(resultTemp))
+                |> beginLivePostsGuardBy(unlocatedInstruction) with
+                    | (guarded, skipLabel) ->
+                        match emitUnguardedCallCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(guarded) with
+                            | (copied, copiedTemp) ->
+                                match copied
+                                |> unlocatedInstruction(StoreLocal(guardSlot)(copiedTemp))
+                                |> endLivePostsGuardBy(unlocatedInstruction)(skipLabel)
+                                |> freshTemp with
+                                    | FreshTemp { state = joined, temp = reloadTemp } ->
+                                        (unlocatedInstruction(LoadLocal(reloadTemp)(guardSlot))(joined), reloadTemp)
 
 // Stage 0's `EmitDeferredCallResultCopyOut`: the copy-out block the call would have received had
 // its type been known, storing the copy back into the slot the result travels through; nothing
@@ -9901,8 +10234,7 @@ let resolveDeferredCallCopyOut (pending: CorePendingCallCopyOut) (state: CoreLow
     then
         (state
         |> cancelArenaResultRequest(pending.deferredResultTemp)
-        |> unlocatedInstruction(RestoreArenaState(pending.deferredCursorSlot)(pending.deferredEndSlot)(pending.deferredPreRestoreSlot)(false))
-        |> unlocatedInstruction(ReclaimArenaChunks(pending.deferredEndSlot)(pending.deferredPreRestoreSlot)(false)), true)
+        |> emitGuardedRestoreAndReclaimBy(unlocatedInstruction)(pending.deferredCursorSlot)(pending.deferredEndSlot)(pending.deferredPreRestoreSlot), true)
     else resolveDeferredCallCopyOutByKind(pending)(state)
 
 // The store a deferred result travelled through, the instruction just re-emitted, when its block
@@ -10081,10 +10413,11 @@ let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state:
 // Stage 0's `IsGeneralRcValueType`: a resolved type that reaches a named type only the
 // normalization helper expresses and has no fixed copy-out. A value of it follows the contract:
 // passed borrowed, returned owned. A reuse specialization keeps its values in the persistent
-// region and takes no part in it.
+// region and takes no part in it, nor does a program where a function may run under a
+// live handler post.
 let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState) =
     match (stateSpecializationFreshInputs(state), callCopyOutOf(semanticType)(state)) with
-        | (None, None) -> !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
+        | (None, None) -> programMayRunUnderLiveHandlerPost(state) == false && !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
         | _ -> false
 
 let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
@@ -10361,6 +10694,12 @@ let resultReachesOwnedSlots (resultTemp: Int) (resultType: SemanticType) (state:
             |> ownedSlotsOf(stateActiveFunctionOrigin(state))
         in
             length(outside([])) < length(ownedSlotsOf(stateActiveFunctionOrigin(state))(slots)([])))
+
+// Stage 0's `KeepsUnreachedResultInPlace`: a result the arena has no copy for, that no owned value
+// reaches, stays where it is. Normalized onto the reference-counted heap it would be owned by
+// callers that cannot know it, a self-call lowered before this return among them, and leak there.
+// The owned slots are released behind it all the same, since none of them is in its reach.
+let keepsUnreachedResultInPlace (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) = !isRuntimeTemp(bodyTemp)(state) && !resultReachesOwnedSlots(bodyTemp)(bodyType)(state)
 
 // Stage 0's `MovesOwnedPartsIntoTupleResult`: a tuple result that holds a part of an owned value
 // is placed on the reference-counted heap at the return, each element the owned values hold
@@ -10926,7 +11265,7 @@ let recursive withdrawnAskedFor (callTemp: Int) (requests: List((Int, Int, List(
 // call, beside whatever its word already passes; the mask the callee writes says whether it handed
 // anything over.
 let forwardTupleResultPartsRequestThroughGenericResult (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    if isGenericResultForwardedAsIs(resultType)(state)
+    if generalRcEnabled(state) && isGenericResultForwardedAsIs(resultType)(state)
     then
         let callTemp =
             soleCallSourceThroughLocals(resultTemp)(16)(reverse(state.reversedInstructions))(state)
@@ -11504,6 +11843,7 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
 
 let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
+        | (true, Some(OwnedResultCopy(_plan))) when keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state) -> emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state)
         | (true, Some(copy)) ->
             match emitIndependentResultCopy(copy)(bodyTemp)(state) with
                 | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
@@ -11568,7 +11908,7 @@ let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state
     isRuntimeTemp(bodyTemp)(state) || (match (isGeneralRcValueType(bodyType)(state), generalCopyPlanOf(bodyType)(state)) with
         | (true, Some(_plan)) -> true
         | _ -> false) || !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
-        | Some(OwnedResultCopy(_plan)) -> true
+        | Some(OwnedResultCopy(_plan)) -> !keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state)
         | Some(ArenaResultCopy(_copyOut)) -> false
         | None ->
             match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
@@ -11828,7 +12168,7 @@ let isPlainFunctionBody (state: CoreLoweringState) =
 // Stage 0's `ResolvePassthroughParameter`: the parameter of a plain function whose body returns
 // it on some arms and a fresh value on the others; the direct argument lives in local slot 1.
 let withPassthroughParameter (parameter: Str) (body: Expr) (parameterType: SemanticType) (state: CoreLoweringState) =
-    if isPlainFunctionBody(state) && returnsParameterOrFreshValue(given (arm: Expr) -> producesFreshValue(arm)(state))(parameter)(body)
+    if ordinaryRcPlacementAllowed(state) && isPlainFunctionBody(state) && returnsParameterOrFreshValue(given (arm: Expr) -> producesFreshValue(arm)(state))(parameter)(body)
     then withStatePassthroughParameter(Some((parameter, 1, parameterType)))(state)
     else withStatePassthroughParameter(None)(state)
 
@@ -11908,6 +12248,19 @@ let isConsChainOntoSelfCall (branch: Expr) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
+// Whether a branch ends in a nested match or `if` one of whose arms, at any depth, conses onto the
+// function's own full recursive call.
+let recursive nestedJoinConsesOntoSelfResult (branch: Expr) (state: CoreLoweringState) =
+    match letChainBody(branch) with
+        | ExprMatch(_scrutinee, cases, _id) -> anyCaseConsesOntoSelfResult(cases)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) -> branchConsesOntoSelfResult(thenBranch)(state) || branchConsesOntoSelfResult(elseBranch)(state)
+        | _ -> false
+and anyCaseConsesOntoSelfResult (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match cases with
+        | [] -> false
+        | (_pattern, body, _guard) :: rest -> branchConsesOntoSelfResult(body)(state) || anyCaseConsesOntoSelfResult(rest)(state)
+and branchConsesOntoSelfResult (branch: Expr) (state: CoreLoweringState) = isConsChainOntoSelfCall(branch)(state) || nestedJoinConsesOntoSelfResult(branch)(state)
+
 // The temp the most recent store wrote into a cons cell's tail, or -1.
 let recursive consCellTailTemp (cellTemp: Int) (instructions: List(IrInstruction)) =
     match instructions with
@@ -11943,6 +12296,20 @@ let recursive loadedSlotOf (temp: Int) (instructions: List(IrInstruction)) =
             then slot
             else loadedSlotOf(temp)(rest)
         | _ :: rest -> loadedSlotOf(temp)(rest)
+
+// The slot `temp` was loaded from, through the borrows taken of the load.
+let recursive loadedSlotThroughBorrows (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then slot
+            else loadedSlotThroughBorrows(temp)(rest)
+        | IrInstruction { instruction = Borrow(target, source) } :: rest ->
+            if target == temp
+            then loadedSlotThroughBorrows(source)(rest)
+            else loadedSlotThroughBorrows(temp)(rest)
+        | _ :: rest -> loadedSlotThroughBorrows(temp)(rest)
 
 // The sources of every store into a local slot.
 let recursive slotStoreSources (slot: Int) (instructions: List(IrInstruction)) (sources: List(Int)) =
@@ -12766,8 +13133,12 @@ let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
             |> Ashes.Collection.Map.setStr(name)(label))(state)
         | None -> state
 
-// Stage 0's `LowerEscapingResult` at a function body, from an empty request.
-let functionBodyRequest (body: Expr) (state: CoreLoweringState) = escapingResultRequest(body)(emptyConsumerRequest)(state)
+// Stage 0's `LowerEscapingResult` at a function body, from an empty request; a function that may
+// run under a live handler post lowers its body plainly, as stage 0 does.
+let functionBodyRequest (body: Expr) (state: CoreLoweringState) =
+    if escapingRcPlacementAllowed(state)
+    then escapingResultRequest(body)(emptyConsumerRequest)(state)
+    else emptyConsumerRequest
 
 // Stage 0's `EmitRuntimeManagedTcoArgumentNormalization`: bit 0 of the hidden ownership word says
 // whether the caller handed over a retained reference; a borrowed argument is copied into an
@@ -13254,6 +13625,8 @@ let recursive parameterOrdinalOf (name: Str) (names: List(Str)) (ordinal: Int) =
 // Stage 0's `TcoPlacementReason.ReuseAccumulator`: a linear reuse root keeps the arena, its
 // matched cells being rebuilt in place, so the resolved back edge never places it on the
 // reference-counted heap.
+// Stage 0's `TcoPlacementReason.DynamicCapabilityBoundary` keeps every parameter of a loop that
+// may run under a live handler post in the arena the same way.
 let loopParameterIsLinearReuseRoot (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopParameterNameAt(ordinal)(loop.parameterNames) with
         | Some(name) ->
@@ -13265,7 +13638,7 @@ let loopParameterIsLinearReuseRoot (ordinal: Int) (loop: CoreTcoLoop) (state: Co
 let recursive tcoManagedCandidates (ordinal: Int) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (slots, shapes) with
         | (slot :: restSlots, shape :: restShapes) ->
-            (let linearReuse = loopParameterIsLinearReuseRoot(ordinal)(loop)(state)
+            (let linearReuse = ordinaryRcPlacementAllowed(state) == false || loopParameterIsLinearReuseRoot(ordinal)(loop)(state)
             in
                 let strManaged = !linearReuse && containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
                 in
@@ -13770,19 +14143,23 @@ let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLo
 // Stage 0's `PromotePatternBindingOwnerMarkers`: every identity duplicate of an alias becomes a
 // real retain, and the owner's release marker a real runtime-managed release under the resolved
 // type name, naming the structural dropper of a value whose release reaches past its own cell
-// (the marker is one instruction, so an aggregate owner's walk lives behind that label).
-let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
+// (the marker is one instruction, so an aggregate owner's walk lives behind that label). A release
+// marker of a duplicate a scope's copy took over (`released`) is promoted with that duplicate.
+let recursive promotePatternOwnerInstructions (instructions: List(IrInstruction)) (slot: Int) (aliases: List(Int)) (released: List(Int)) (typeName: Str) (mayBeEmpty: Bool) (dropper: Maybe(Str)) =
     match instructions with
         | [] -> []
         | (IrInstruction { instruction = RcDup(target, source, runtimeManaged, _mayBeEmpty) } as instruction) :: rest ->
             (if containsInt(source)(aliases) && !runtimeManaged
             then instruction with instruction = RcDup(target)(source)(true)(mayBeEmpty)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
-        | (IrInstruction { instruction = RcDrop(source, _typeName, ownerSlot, _runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
+            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+        | (IrInstruction { instruction = RcDrop(source, markerTypeName, ownerSlot, runtimeManaged, _mayBeEmpty, _dropper) } as instruction) :: rest ->
             (if ownerSlot == slot
             then instruction with instruction = RcDrop(source)(typeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
-            else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
-        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(typeName)(mayBeEmpty)(dropper)
+            else
+                if !runtimeManaged && containsInt(source)(released) && containsInt(source)(aliases)
+                then instruction with instruction = RcDrop(source)(markerTypeName)(ownerSlot)(true)(mayBeEmpty)(dropper)
+                else instruction) :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
+        | instruction :: rest -> instruction :: promotePatternOwnerInstructions(rest)(slot)(aliases)(released)(typeName)(mayBeEmpty)(dropper)
 
 let recursive markRuntimeTemps (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
@@ -13805,7 +14182,7 @@ let promotePatternOwnerMarkers (site: PatternOwnerSite) (state: CoreLoweringStat
                         synthesized
                         |> markRuntimeTemps(aliases)
                         |> (given (marked: CoreLoweringState) ->
-                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
+                            marked with reversedInstructions = reverse(promotePatternOwnerInstructions(instructions)(site.siteSlot)(aliases)(stateReleasedPatternOwnerDuplicates(marked))(patternOwnerTypeName(resolved)(marked))(mayBeEmptyList(resolved))(dropper))))
 
 let recursive promotePatternOwnerSites (sites: List(PatternOwnerSite)) (state: CoreLoweringState) =
     match sites with
@@ -14070,7 +14447,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
 // (`EvaluateTcoListRcEligibility`, `facts.FreshRebuiltList`), so such a parameter gets its active
 // flag at the loop entry like a grown or consumed one, and its placement follows from its type
 // rather than waiting for the body.
-let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+let listActiveSlotCandidate (ordinal: Int) (loop: CoreTcoLoop) (shape: TcoArgumentShape) (slot: Int) (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && (isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals))
 
 // Stage 0 places a loop parameter on the reference-counted heap only once its type has a
 // resolved layout (`ResolvedLayoutEligible`), so a parameter whose type is still a variable at
@@ -14585,7 +14962,7 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
 let provisionallyRuntimeManagedLoopSlot (ordinal: Int) (slot: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match loopShapeAtOrdinal(ordinal)(loop.argumentShapes) with
-        | Some(shape) -> isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals)
+        | Some(shape) -> ordinaryRcPlacementAllowed(state) && (isTcoListShape(shape) || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || shape == TcoFreshListShape && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals))
         | None -> false
 
 // A non-resource ADT whose whole cell has no shallow copy and that the contract does not govern:
@@ -15752,7 +16129,7 @@ let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTc
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
             let shape = shapeAtOrdinal(ordinal)(loop.argumentShapes)
-            in tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state)
+            in ordinaryRcPlacementAllowed(state) && (tcoAdtSlotAdmitted(ordinal)(slot)(shape)(loop)(state) && !adtSlotBlockedBySibling(slot)(frame)(loop)(state) || isTcoListShape(shape) && tcoListSlotElement(slot)(shape)(ordinal)(loop)(state) != None || isAccumulatorRebuildListSlot(ordinal)(slot)(loop)(state) || containsInt(ordinal)(loop.runtimeManagedOrdinals) && isTcoRuntimeManagedStrSlot(slot)(state))
         | None -> false
 
 // The loop parameter an aggregate child reads: the parameter itself, or a record field read out
@@ -16220,8 +16597,9 @@ let calleeCompiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: C
 
 // Stage 0's `TryResolveKnownFunctionResultOwnership`: a saturated call to a callee whose result
 // the provenance classification proved RC-eligible, of a type runtime RC holds, whose lowered
-// body produced a reference-counted result.
-let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeSaturatedAndEligible(facts) && isRuntimeManageableResultType(resultType)(state) && calleeCompiledResultRuntimeManaged(facts)(state)
+// body produced a reference-counted result, read only where this function may place ordinary values on
+// the reference-counted heap.
+let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = ordinaryRcPlacementAllowed(state) && calleeSaturatedAndEligible(facts) && isRuntimeManageableResultType(resultType)(state) && calleeCompiledResultRuntimeManaged(facts)(state)
 
 // Stage 0's `IsDirectRuntimeManagedFunctionCall` with `ResolveUncopyableResultRuntimeManaged`:
 // the known result ownership, or a lowered body's reference-counted result of a type runtime RC
@@ -16235,7 +16613,7 @@ let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: Semant
 let appliedLambdaResultRuntimeManaged (context: CoreCallContext) (resultType: SemanticType) (state: CoreLoweringState) =
     match context.appliedLambdaLabel with
         | Some(label) ->
-            resultSurvivesReset(resultType)(state) == false && isRuntimeManageableResultType(resultType)(state) && (match state
+            ordinaryRcPlacementAllowed(state) && resultSurvivesReset(resultType)(state) == false && isRuntimeManageableResultType(resultType)(state) && (match state
             |> stateFunctionReturnedClosureLabels
             |> innermostStageLabel(context.argumentCount - 1)(label) with
                 | Some(stage) ->
@@ -16348,7 +16726,7 @@ let resultOwnershipReadAtRunTime (context: CoreCallContext) (resultType: Semanti
     if hasCallCopyOut(resultType)(state)
     then (state, true, false)
     else
-        if capturedSelfListResultOwnedAtRunTime(context)(resultType)(state)
+        if generalRcEnabled(state) && capturedSelfListResultOwnedAtRunTime(context)(resultType)(state)
         then (state, true, false)
         else
             if context.selfCallee && insideTcoLoop(state) || calleeCompiledResultRuntimeManaged(context.facts)(state) || calleeReturnsGeneralRcOwned(context)(state) == false
@@ -16604,6 +16982,58 @@ let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argument
             else (state, argumentTemp)
         | None -> (state, argumentTemp)
 
+// The result of the last application of a curried call, `remaining` applications after this one;
+// None when the type runs out of arrows first.
+let recursive finalApplicationResult (resultType: SemanticType) (remaining: Int) (state: CoreLoweringState) =
+    if remaining == 0
+    then
+        resultType
+        |> resolveType(state)
+        |> Some
+    else
+        match resolveType(state)(resultType) with
+            | SemFunction(_argument, result, _row) -> finalApplicationResult(result)(remaining - 1)(state)
+            | _ -> None
+
+// Stage 0's `OwnsGenericStringArgument`: a string passed to a generic parameter of a call whose
+// final result holds no closure goes as an owned reference-counted reference instead of a copy in
+// the persistent blob region, which nothing reclaims. Only the final result can keep it: no curry
+// stage's closure escapes the call, and the final result is a value the caller settles the
+// reference against.
+let ownsGenericStringArgument (argumentType: SemanticType) (resultType: SemanticType) (arity: Int) (state: CoreLoweringState) =
+    match resolveType(state)(argumentType) with
+        | SemString ->
+            match finalApplicationResult(resultType)(arity - 1)(state) with
+                | Some(SemFunction(_argument, _result, _row)) -> false
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | None -> false
+        | _ -> false
+
+let rcStringCopyOut (sourceTemp: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = copyTemp } -> (rcNormalizationCopyOut(copyTemp)(sourceTemp)(-1)(allocated), copyTemp)
+
+// Stage 0's `EmitHandedOverGenericStringArgument`: the reference is handed over and never adopted,
+// so the caller releases it once the result was copied out, and parks it in an owned slot while
+// an arena result may still hold it.
+let handOverGenericStringArgument (context: CoreCallContext) (arity: Int) (argumentType: SemanticType) (resultType: SemanticType) (argumentTemp: Int) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+    match context.calleeScheme with
+        | Some(TypeScheme { quantified = quantified, body = body }) ->
+            if parameterQuantifiedAt(quantified)(context.argumentCount - arity)(body) && ownsGenericStringArgument(argumentType)(resultType)(arity)(state)
+            then
+                match emitReferenceOrCopy(argumentTemp)(rcStringCopyOut(argumentTemp))(state) with
+                    | (owned, ownedTemp) ->
+                        match freshTemp(owned) with
+                            | FreshTemp { state = flagged, temp = notAdoptedTemp } ->
+                                Some((flagged |> emit(LoadConstInt(notAdoptedTemp)(0)), ownedTemp, append(consumed)([CoreConsumedArgument(
+                                    temp = ownedTemp,
+                                    semanticType = argumentType,
+                                    preserveEscapedChildren = true,
+                                    adoptionFlagTemp = notAdoptedTemp
+                                )])))
+            else None
+        | None -> None
+
 // Stage 0's `ApplyReuseSpecializationClosure`: a call routed to a reuse specialization (its callee
 // bound to the specialization's closure while the call is lowered) passes every argument but the
 // accumulator borrowed, since the specialization copies them into the persistent region rather
@@ -16619,6 +17049,16 @@ let borrowedByReuseSpecialization (context: CoreCallContext) (arity: Int) (state
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
 // follows.
+let applyCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
+    match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
+        | (decidedState, readsResult, resultNormalizedOwned) ->
+            decidedState
+            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
+            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
+            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
+
+// The argument reaches the application as the value itself, a handed-over reference for a generic
+// string parameter, or a to-space copy for any other generic parameter.
 let finishCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp argumentTemp resultType binding =
     match binding with
         | (unifiedState, Some(error)) ->
@@ -16626,14 +17066,11 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> failure(unifiedState)
             |> callStageOf
         | (unifiedState, None) ->
-            match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
-                | (copiedState, passedTemp) ->
-                    match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
-                        | (decidedState, readsResult, resultNormalizedOwned) ->
-                            decidedState
-                            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
-                            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
-                            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
+            match handOverGenericStringArgument(context)(arity)(argumentType)(resultType)(argumentTemp)(consumed)(unifiedState) with
+                | Some((ownedState, ownedTemp, handedConsumed)) -> applyCoreCall(context)(arity)(argument)(argumentType)(handedConsumed)(functionTemp)(resultType)(ownedTemp)(ownedState)
+                | None ->
+                    match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
+                        | (copiedState, passedTemp) -> applyCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(resultType)(passedTemp)(copiedState)
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
 // state's span is back to once the argument is lowered.
@@ -16749,7 +17186,7 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     deferredState
                     |> withArgumentRequest(Some(expectedType))(deferredState
                     |> argumentSite(context.calleeName)(context.argumentCount - arity + 1)
-                    |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
+                    |> Some)(transfers || calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))(transfers == false)
                     |> collectCallArgumentRetains(arity
                     |> argumentIndexOf(context.facts)
                     |> calleeResultReachesArgument(context.facts))
@@ -17218,12 +17655,14 @@ let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (
 // callee's result to keep, where the result is an arena value that may hold the argument and that
 // the caller does not copy at the call, goes to an owned slot the function releases once its
 // result or the loop's successors hold references of their own; a callee that adopted the
-// reference consumed it, so the slot is left empty.
+// reference consumed it, so the slot is left empty. A result of unresolved layout (a closure
+// parameter applied in a generic body) may hold the argument as anything, so the slot is released
+// only where the function's own result is out of that call's reach.
 let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
     match valueType with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            if policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
+            if generalRcEnabled(state) == false || policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
             then state
             else
                 match freshLocal(state) with
@@ -17381,20 +17820,41 @@ let releaseCallSpineArguments (context: CoreCallContext) (elementCopyingFlagTemp
         | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } as closed } -> closed
         | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as closed } -> closed with state = releaseConsumedArguments(context)(semanticType)(elementCopyingFlagTemp)(stage)(state)
 
-// Stage 0's `arenaBranchCopiesElements`: the call's result-ownership flag when its result takes
-// the conditional list copy-out and that copy-out copies the heads on its arena branch, so the
-// consumed arguments' release can follow the same branch; -1 otherwise.
-let elementCopyingFlagOf (stage: CoreCallStage) =
+// Stage 0's `ResultCopyBranchFlagTemp`: the call's result-ownership flag when its result takes
+// a conditional copy-out that copies the whole result on its arena branch, a list copy-out that
+// copies the heads or a shallow copy (a string, or a cell of scalar fields), so the consumed
+// arguments' release can follow the same branch; -1 otherwise.
+let elementCopyingFlagOf (context: CoreCallContext) (stage: CoreCallStage) =
     match stage with
         | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp } ->
-            if flagTemp >= 0 && isRuntimeTemp(temp)(state) == false && resultSurvivesReset(semanticType)(state) == false
+            if flagTemp >= 0 && isRuntimeTemp(temp)(state) == false && resultSurvivesReset(semanticType)(state) == false && specializationSelfReuseCall(context)(state) == false
             then
                 match callCopyOutOf(semanticType)(state) with
                     | Some(ListCallCopyOut(InlineListHead)) -> -1
                     | Some(ListCallCopyOut(_headCopy)) -> flagTemp
+                    | Some(ShallowCallCopyOut(_sizeBytes)) -> flagTemp
                     | _ -> -1
             else -1
         | _ -> -1
+
+// Stage 0's `EmitPostGuardedArenaRestore`: a call window's rewind is skipped while a one-shot post
+// is pending, since a perform inside the window pushed its post cell and closure into the window's
+// allocations, which must survive until the handle folds them. The paired reclaim is guarded the
+// same way; the result normalization between the two runs either way, since it copies into
+// reference-counted storage.
+let emitPostGuardedArenaRestore cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuard(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuard(skipLabel)
+
+let emitPostGuardedArenaReclaim endSlot preRestoreSlot (state: CoreLoweringState) =
+    match beginLivePostsGuard(state) with
+        | (guarded, skipLabel) ->
+            guarded
+            |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+            |> endLivePostsGuard(skipLabel)
 
 // Stage 0's `LowerCallConditionalCopyOutResult`: the result is spilled to a slot, the arena is
 // restored, and the callee's returns bit selects between reclaiming the window as is (the
@@ -17405,7 +17865,7 @@ let emitConditionalCallCopyOut copyOut resultTemp flagTemp cursorSlot endSlot pr
         | FreshLocal { state = allocated, local = resultSlot } ->
             match allocated
             |> emit(StoreLocal(resultSlot)(resultTemp))
-            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
             |> freshLabel("call_copy_arena_result") with
                 | FreshLabel { state = copyLabelled, label = copyLabel } ->
                     match freshLabel("call_reclaim_owned_result")(copyLabelled) with
@@ -17420,7 +17880,7 @@ let emitConditionalCallCopyOut copyOut resultTemp flagTemp cursorSlot endSlot pr
                                     |> emit(callCopyOutInstruction(copyOut)(copiedTemp)(resultTemp))
                                     |> emit(StoreLocal(resultSlot)(copiedTemp))
                                     |> emit(Label(reclaimLabel))
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> reloadRuntimeSlot(resultSlot)
 
 // Stage 0's `LowerCallConditionalNormalizeResult`: a record result with no fixed copy-out from a
@@ -17433,7 +17893,7 @@ let emitConditionalNormalizeResult (plan: ArgumentCopyPlan) (resultTemp: Int) (f
         | FreshLocal { state = allocated, local = resultSlot } ->
             match allocated
             |> emit(StoreLocal(resultSlot)(resultTemp))
-            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
             |> freshLabel("call_normalize_arena_result") with
                 | FreshLabel { state = copyLabelled, label = copyLabel } ->
                     match freshLabel("call_owned_result")(copyLabelled) with
@@ -17447,7 +17907,7 @@ let emitConditionalNormalizeResult (plan: ArgumentCopyPlan) (resultTemp: Int) (f
                                     copied
                                     |> emit(StoreLocal(resultSlot)(copiedTemp))
                                     |> emit(Label(ownedLabel))
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> reloadRuntimeSlot(resultSlot)
 
 // Stage 0's `LowerCallDeepCopyOutListResult`: the generic list result is walked out of the call
@@ -17458,16 +17918,15 @@ let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagT
     if flagTemp < 0
     then
         match state
-        |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+        |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
         |> emitListDeepCopy(resultTemp)(elementPlan) with
-            | (copied, copiedTemp) ->
-                (emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))(copied), copiedTemp)
+            | (copied, copiedTemp) -> (emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)(copied), copiedTemp)
     else
         match freshLocal(state) with
             | FreshLocal { state = allocated, local = resultSlot } ->
                 match allocated
                 |> emit(StoreLocal(resultSlot)(resultTemp))
-                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
                 |> freshLabel("call_deep_copy_arena_result") with
                     | FreshLabel { state = copyLabelled, label = copyLabel } ->
                         match freshLabel("call_reclaim_owned_result")(copyLabelled) with
@@ -17481,7 +17940,7 @@ let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagT
                                         match copied
                                         |> emit(StoreLocal(resultSlot)(copiedTemp))
                                         |> emit(Label(reclaimLabel))
-                                        |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                        |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                         |> freshTemp with
                                             | FreshTemp { state = reloadState, temp = reloadTemp } ->
                                                 (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
@@ -17827,7 +18286,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                             let restored =
                                 slotted
                                 |> emit(StoreLocal(ownedSlot)(temp))
-                                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                                |> emitPostGuardedArenaRestore(cursorSlot)(endSlot)(preRestoreSlot)
                             in
                                 let owned =
                                     match (returnsOwned, generalCopyPlanOf(semanticType)(restored)) with
@@ -17841,7 +18300,7 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                                         | _ -> restored
                                 in
                                     match owned
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
                                     |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
                                     |> freshTemp with
@@ -17878,7 +18337,7 @@ let closeCallWindow (context: CoreCallContext) cursorSlot endSlot (stage: CoreCa
                         (if specializationSelfReuseCall(context)(allocated)
                         then markReuseResultTemp(temp)(allocated)
                         else allocated)
-                        |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
+                        |> emitGuardedRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
                         |> success(temp)(semanticType)
                         |> closedCallStage(stage)(false)(false)
                     else
@@ -18125,6 +18584,34 @@ let recursive emitCallArgumentRetainReleases (retains: List((Int, Int, SemanticT
 
 let callResultOwnsItself (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(semanticType)(state) || isRuntimeTemp(temp)(state) || isGeneralRcValueType(semanticType)(state)
 
+// The frame's entries for the pattern-owner duplicates an arena tuple of an argument stored: slot
+// -2 when the callee's result may reach the argument, -3 when it may not.
+let isTupleOwnerDuplicateEntry (slot: Int) = slot == -2 || slot == -3
+
+let recursive callArgumentRecordRetainsOnly (retains: List((Int, Int, SemanticType))) =
+    match retains with
+        | [] -> []
+        | (temp, slot, semanticType) :: rest ->
+            if isTupleOwnerDuplicateEntry(slot)
+            then callArgumentRecordRetainsOnly(rest)
+            else (temp, slot, semanticType) :: callArgumentRecordRetainsOnly(rest)
+
+// Stage 0's `LeaveCallArgumentRetainFrame` for the duplicates of `RecordCallArgumentTupleOwnerDuplicates`:
+// each is released after the call unless the callee's result may reach the argument and does not
+// own itself. The release is a marker promoted together with the duplicate, so a root that stays
+// in the arena keeps neither.
+let recursive emitCallArgumentTupleOwnerDuplicateReleases (retains: List((Int, Int, SemanticType))) (resultOwnsItself: Bool) (state: CoreLoweringState) =
+    match retains with
+        | [] -> state
+        | (temp, slot, semanticType) :: rest ->
+            if (slot == -3 || slot == -2 && resultOwnsItself) && !containsInt(temp)(stateReleasedPatternOwnerDuplicates(state))
+            then
+                state
+                |> emit(RcDrop(temp)(patternOwnerTypeName(resolveType(state)(semanticType))(state))(-1)(false)(false)(None))
+                |> withStateReleasedPatternOwnerDuplicates(temp :: stateReleasedPatternOwnerDuplicates(state))
+                |> emitCallArgumentTupleOwnerDuplicateReleases(rest)(resultOwnsItself)
+            else emitCallArgumentTupleOwnerDuplicateReleases(rest)(resultOwnsItself)(state)
+
 let leaveCallArgumentRetainFrame (outerRetains: List((Int, Int, SemanticType))) (outerCollecting: Bool) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
@@ -18132,10 +18619,18 @@ let leaveCallArgumentRetainFrame (outerRetains: List((Int, Int, SemanticType))) 
                 match stateCallArgumentRecordRetains(state) with
                     | [] -> state
                     | retains ->
-                        if callResultOwnsItself(temp)(semanticType)(state)
-                        then
-                            emitCallArgumentRetainReleases(reverse(retains))(state)
-                        else state
+                        let resultOwnsItself = callResultOwnsItself(temp)(semanticType)(state)
+                        in
+                            state
+                            |> emitCallArgumentTupleOwnerDuplicateReleases(reverse(retains))(resultOwnsItself)
+                            |> (given (duplicatesReleased: CoreLoweringState) ->
+                                match callArgumentRecordRetainsOnly(retains) with
+                                    | [] -> duplicatesReleased
+                                    | recordRetains ->
+                                        if resultOwnsItself
+                                        then
+                                            emitCallArgumentRetainReleases(reverse(recordRetains))(duplicatesReleased)
+                                        else duplicatesReleased)
             in lowered with state = withCallArgumentRetainFrame(outerRetains)(outerCollecting)(released)
         | LoweredCoreValue { state = state } -> lowered with state = withCallArgumentRetainFrame(outerRetains)(outerCollecting)(state)
 
@@ -18313,7 +18808,7 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 stage
                                 |> closeCallWindow(context)(cursorSlot)(endSlot)
                                 |> ownResultBeforeArgumentRelease(context)
-                                |> releaseCallSpineArguments(context)(elementCopyingFlagOf(stage))
+                                |> releaseCallSpineArguments(context)(elementCopyingFlagOf(context)(stage))
                                 |> withCallResultType(applied))
 
 let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
@@ -18450,17 +18945,28 @@ let recursive definedByRetain (temp: Int) (instructions: List(IrInstruction)) =
 // cell, so it takes nothing from the join's freshness: a join of it and fresh lists is a fresh
 // list its `let` owns, as stage 0's `TrackLetOwnership` owns any reference-counted join that
 // borrows nothing.
+// Whether the branch returns a pattern binding as it is: its retain is an identity marker until
+// the root parameter is placed, so it owns nothing of its own under an arena root.
+let forwardsPatternOwner (body: Expr) (state: CoreLoweringState) =
+    match tailForwardedVariable(body) with
+        | Some(name) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) -> true
+                | None -> false
+        | None -> false
+
 let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrowsParameter: Bool) (retainedParameterPart: Bool) (state: CoreLoweringState) =
     (let emptyListArm = branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state)
     in
         MatchArmResult(
             armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || retainedParameterPart || emptyListArm,
             armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart || emptyListArm,
-            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) || isSelfFunnelArm(body)(state),
+            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && (retainedParameterPart || forwardsPatternOwner(body)(state) == false) || isSelfFunnelArm(body)(state),
             armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
             armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
             armFreshCell = constructsFreshCell(body)(state),
             armConsesOntoSelfResult = isConsChainOntoSelfCall(body)(state),
+            armJoinsSelfConsingArms = nestedJoinConsesOntoSelfResult(body)(state),
             armStoreTemp = if armNeverReachesJoin(body)(state)
             then -1
             else finalTemp
@@ -18482,7 +18988,7 @@ let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: Co
     in
         matchArmResultWith(body)(finalTemp)(resultType)(borrowsParameter)((borrowsParameter || armPatternRootIsPlaced(body)(state)) && containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && definedByRetain(finalTemp)(state.reversedInstructions))(state))
 
-let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false)
+let unknownArmResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = false)
 
 // Stage 0's `TransferDirectRuntimeManagedBranchResult`: an `if` branch that returns a pattern
 // owner takes a duplicate of its read, an identity marker until the loop's finalize places the
@@ -18593,7 +19099,23 @@ let recursive normalizeUnownedJoinArms (slot: Int) (consedElementPlan: Maybe(Arg
                 match state
                 |> normalizeJoinArmStore(slot)(consedElementPlan)(plan)(arm)
                 |> normalizeUnownedJoinArms(slot)(consedElementPlan)(plan)(rest) with
-                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false) :: restArms)
+                    | (normalized, restArms) -> (normalized, MatchArmResult(armRuntimeManaged = true, armNewlyProduced = true, armRetainedOwner = arm.armRetainedOwner, armOwned = true, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = arm.armJoinsSelfConsingArms) :: restArms)
+
+// Stage 0's `OwnedArmBesideBorrowedParameter`: an owned arm beside one borrowing a loop parameter. The
+// join is reference-counted on every path but owned on only some, so the borrowing arm takes a
+// reference of its own; a loop parameter the join hands to the next iteration is released as the
+// predecessor at the back edge.
+let recursive anyOwnedJoinArm (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && (arm.armOwned || arm.armRetainedOwner) && !arm.armBorrowsLoopParameter || anyOwnedJoinArm(rest)
+
+let recursive anyParameterBorrowingJoinArm (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && arm.armBorrowsLoopParameter || anyParameterBorrowingJoinArm(rest)
+
+let ownedArmBesideBorrowedParameter (arms: List(MatchArmResult)) = anyOwnedJoinArm(arms) && anyParameterBorrowingJoinArm(arms)
 
 // The arms that reach the join, and how many of them hand it a reference-counted value: one of
 // their own, or a reference a pattern owner retained (stage 0's `IsReferenceCountedJoinArm`).
@@ -18659,13 +19181,21 @@ let recursive anyArmConsesOntoSelfResult (arms: List(MatchArmResult)) =
         | [] -> false
         | arm :: rest -> arm.armStoreTemp >= 0 && arm.armConsesOntoSelfResult && !arm.armOwned && !arm.armRetainedOwner && !arm.armBorrowsLoopParameter || anyArmConsesOntoSelfResult(rest)
 
+// Whether an arm reaching the join is a nested join that took part in the arm normalization
+// because one of its own arms conses onto the function's own recursive result.
+let recursive anyArmJoinsSelfConsingArms (arms: List(MatchArmResult)) =
+    match arms with
+        | [] -> false
+        | arm :: rest -> arm.armStoreTemp >= 0 && arm.armJoinsSelfConsingArms || anyArmJoinsSelfConsingArms(rest)
+
 // Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
 // one it does not own is not owned as a whole, so the owned arm's reference is never released: the
 // consumer retains or copies the join's value again. Such arms are normalized in place instead,
 // right before their store, so every arm hands the join a reference of its own. A reuse
 // specialization keeps its values in the persistent region and takes no part in this, except for
 // an arm consing onto the specialization's own recursive result: that result is reference-counted,
-// and the arm takes it over as stage 0's passthrough branch does.
+// and the arm takes it over as stage 0's passthrough branch does. A join enclosing such an arm's
+// join takes part too, as stage 0's passthrough branch copies the parameter its other arms return.
 let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     (let consedElementPlan = consedJoinElementPlan(resultType)(state)
     in
@@ -18677,11 +19207,11 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
             let outsideSpecialization =
                 match stateSpecializationFreshInputs(state) with
                     | None -> true
-                    | Some(_inputs) -> consing
+                    | Some(_inputs) -> consing || anyArmJoinsSelfConsingArms(arms)
             in
                 match joinArmTally(arms)(0)(0) with
                     | (reaching, owned) ->
-                        if !outsideSpecialization || joinIsRuntimeManaged(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
+                        if !outsideSpecialization || joinIsRuntimeManaged(arms) && !ownedArmBesideBorrowedParameter(arms) || reaching < 2 || owned == 0 && !consing || owned == reaching && !ownedArmBesideBorrowedParameter(arms) || resultSurvivesReset(resultType)(state) || containsUnresolvedLayout(resultType)(state)
                         then (state, arms)
                         else
                             match joinNormalizationPlanOf(resultType)(state) with
@@ -18825,7 +19355,7 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStr
 // value on the reference-counted heap and the literal branches copy theirs, and the join is
 // uniformly runtime-managed wherever it flows.
 let withReconcilableFreshStringJoinRequest (join: Expr) (request: ConsumerRequest) (state: CoreLoweringState) =
-    if request.runtimeString == false && isReconcilableFreshStringJoin(join)(state)
+    if ordinaryRcPlacementAllowed(state) && request.runtimeString == false && isReconcilableFreshStringJoin(join)(state)
     then request with runtimeString = true
     else request
 
@@ -18892,11 +19422,12 @@ let isNullaryConstructorPatternName (name: Str) state =
 
 // The pattern owner fact a binder under the span key `key` carries inside the active loop body:
 // the loop function's classified fact for that binder, when it needs a protective reference. A
-// binder the syntax tree carries no span for (key -1) matches no fact.
+// binder the syntax tree carries no span for (key -1) matches no fact, nor does any binder of a
+// function that may run under a live handler post (stage 0 tracks no pattern owner there).
 let patternOwnerFactFor (key: Int) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
         | (Some(_frame), Some(loop)) ->
-            if key < 0
+            if key < 0 || ordinaryRcPlacementAllowed(state) == false
             then None
             else
                 match lookupPatternBindingFact(key)(loop.patternFacts) with
@@ -19416,40 +19947,6 @@ let recursive armBindings (count: Int) (bindings: List(CoreBinding)) =
             then []
             else binding :: armBindings(count - 1)(rest)
 
-// The index of the live-posts counter among the capability globals: one past the pending-post
-// register that follows the capability handler slots.
-let livePostsIndex (state: CoreLoweringState) = stateCapabilityGlobalCount(state) + 1
-
-// Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
-// while a one-shot post is pending, since the post's closure still lives in the window. The
-// guard reads the live-posts counter and jumps past the block when it is not zero; without a
-// capability nothing is emitted and there is no label to close.
-let beginLivePostsGuard (state: CoreLoweringState) =
-    if stateCapabilityGlobalCount(state) == 0
-    then (state, None)
-    else
-        match freshTemp(state) with
-            | FreshTemp { state = counterState, temp = counterTemp } ->
-                match freshTemp(counterState) with
-                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
-                        match freshTemp(zeroState) with
-                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
-                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
-                                in
-                                    isZeroState
-                                    |> emit(state
-                                    |> livePostsIndex
-                                    |> LoadCapabilityHandler(counterTemp))
-                                    |> emit(LoadConstInt(zeroTemp)(0))
-                                    |> emit(CmpIntEq(isZeroTemp)(counterTemp)(zeroTemp))
-                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
-                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
-
-let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
-    match skipLabel with
-        | Some(label) -> emit(Label(label))(state)
-        | None -> state
-
 // A match arm's closing reset under the live-posts guard: the pre-restore slot is allocated
 // first, as stage 0 does, then the guarded restore and reclaim.
 let closeGuardedArmBracket cursorSlot endSlot (state: CoreLoweringState) =
@@ -19495,7 +19992,7 @@ let emitScrutineeListRelease (ownerSlot: Int) (state: CoreLoweringState) =
 // walk, and a tuple, a named type, or a list over heap elements through the inline structural
 // walk of its release plan.
 let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
-    if scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
+    if ordinaryRcPlacementAllowed(state) && scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
     then
         match resolveType(state)(valueType) with
             | SemString -> Some(MatchScrutineeOwner(scrutineeTypeName = "String", scrutineeIsList = false, scrutineeType = valueType))
@@ -19645,7 +20142,7 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
 // runtime-managed value: the reset runs, and nothing is copied.
 let closeRetainedResultBracket cursorSlot endSlot (state: CoreLoweringState) =
     match freshLocal(state) with
-        | FreshLocal { state = allocated, local = preRestoreSlot } -> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
+        | FreshLocal { state = allocated, local = preRestoreSlot } -> emitGuardedRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
 
 // An arm result that is the direct read of a loop parameter the frame places on the
 // reference-counted heap by now: stage 0 tracks such a parameter as a runtime-managed owner, so
@@ -19670,7 +20167,7 @@ let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot res
             if armResultReadsRuntimeManagedSlot(resultTemp)(state)
             then
                 match freshLocal(state) with
-                    | FreshLocal { state = allocated, local = preRestoreSlot } -> (emitRestoreAndReclaim(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(preRestoreSlot)(allocated), resultTemp)
+                    | FreshLocal { state = allocated, local = preRestoreSlot } -> (emitGuardedRestoreAndReclaim(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(preRestoreSlot)(allocated), resultTemp)
             else (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
 
 // Closes an arm's scope and returns the closed state with the temp the match slot finally holds:
@@ -19684,7 +20181,7 @@ let closeArmScope body owners bracket resultSlot resultTemp resultType (state: C
 let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
     LoweredMatchArm(
         lowered = failure(failedState)(error),
-        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false)
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = -1, armBorrowsLoopParameter = false, armFreshCell = false, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = false)
     )
 
 // A constructor application whose every argument is a literal or another such application, with
@@ -19831,6 +20328,19 @@ let transferScrutineeChildResult (body: Expr) (temp: Int) (bodyType: SemanticTyp
                 | None -> (state, temp)
         | _ -> (state, temp)
 
+// Stage 0's `TransferDirectRuntimeManagedBranchResult` for a match arm: an arm returning a pattern
+// owner of a loop parameter takes a duplicate of its read, as an `if` branch does, since the
+// loop's exit releases the parameter that owns it (`| ([], acc) -> acc` over a tuple parameter);
+// any other arm result transfers a scrutinee child or the arm's own binding.
+let transferArmResult (body: Expr) (temp: Int) (bodyType: SemanticType) (outerBindings: List(CoreBinding)) (owners: List(ArmOwner)) (state: CoreLoweringState) =
+    match transferBranchOwnerResult(body)(temp)(state) with
+        | (duplicated, duplicate) ->
+            if duplicate != temp
+            then (duplicated, duplicate)
+            else
+                match transferScrutineeChildResult(body)(temp)(bodyType)(outerBindings)(owners)(state) with
+                    | (transferred, resultTemp) -> (transferArmBindingResult(body)(resultTemp)(outerBindings)(transferred), resultTemp)
+
 let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armLabel: Str) resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
@@ -19845,10 +20355,9 @@ let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel (armL
                         | (typedState, None) ->
                             match normalizeParameterPassthroughBranch(body)(temp)(typedState) with
                                 | (normalizedState, normalizedTemp) ->
-                                    match transferScrutineeChildResult(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
+                                    match transferArmResult(body)(normalizedTemp)(bodyType)(outerBindings)(owners)(normalizedState) with
                                         | (transferredState, resultTemp) ->
                                             match transferredState
-                                            |> transferArmBindingResult(body)(resultTemp)(outerBindings)
                                             |> emit(StoreLocal(resultSlot)(resultTemp))
                                             |> closeArmScope(body)(owners)(bracket)(resultSlot)(resultTemp)(bodyType) with
                                                 | (closed, finalTemp) ->
@@ -20175,7 +20684,9 @@ let letOwnedTypeName (value: Expr) (loweredValue: LoweredCoreValue) (state: Core
     then None
     else loweredValueOwnedTypeName(loweredValue)
 
-let lowerArenaBracketedNestedLet name value body lower outerBindings state =
+// The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
+// every analysis of the body still reads `body`.
+let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindings state =
     match freshLocal(state) with
         | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
             match freshLocal(cursorAllocated) with
@@ -20192,11 +20703,13 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(state))
                             |> armOwnerReleasePlan(value)
-                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lower)(outerBindings) with
+                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBody)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+
+let lowerArenaBracketedNestedLet name value body lower outerBindings state = lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lower)(outerBindings)(state)
 
 let recursive constructorSpineRoot (expression: Expr) (argumentCount: Int) =
     match expression with
@@ -21277,11 +21790,13 @@ let withScrutineeOwner (scrutinee: Expr) (plan: CoreMatchPlan) =
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType } -> plan with scrutineeOwner = scrutineeOwnerOf(scrutinee)(valueTemp)(valueType)(state), scrutineeParameterSlots = scrutineeParameterSlotsOf(scrutinee)(state)
 
+// Stage 0's `ShouldNormalizeStaticStringMatchJoin`: a function that may run under a live handler
+// post normalizes its literal arms only for a consumer that asked for a reference-counted string.
 let withStaticStringNormalization cases (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
-        | CoreMatchPlan { state = state } ->
-            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
+        | CoreMatchPlan { state = state, armRequest = ConsumerRequest { runtimeString = requested } } ->
+            plan with normalizeStaticStrings = (ordinaryRcPlacementAllowed(state) || requested) && shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
 
 // Stage 0's `PatternBindsHeapValue`: whether `pattern`, matched against a value of
 // `semanticType`, may bind a value that is not a copy type; any shape it cannot see through counts
@@ -21473,6 +21988,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateBackEdgeDummyTemps([])
             |> withStateReuseResultTemps([])
             |> withStatePatternOwnerCopyTemps([])
+            |> withStateReleasedPatternOwnerDuplicates([])
             |> withStateRuntimeOwners([])
             |> withStateBorrowedOwners([])
             |> withStatePendingBorrowedOwners([])
@@ -22032,9 +22548,41 @@ let recordCallArgumentTransferRetain (original: Int) (retained: Int) (semanticTy
     then withCallArgumentRetainFrame((retained, -1, semanticType) :: stateCallArgumentRecordRetains(state))(true)(state)
     else state
 
+let newestIsRuntimeRetain (retained: Int) (state: CoreLoweringState) =
+    match state.reversedInstructions with
+        | IrInstruction { instruction = RcDup(target, _source, true, _mayBeEmpty) } :: _rest -> target == retained
+        | _ -> false
+
+// Stage 0's `KeepEscapingArenaCellTailRetainOwned`: the retain an escaping arena cell took of its
+// tail, when no call argument frame collects it (the cell is a function's result), goes to an owned
+// slot, released once the function's result holds references of its own; the arena cell never
+// releases it.
+let keepArenaCellTailRetainOwned (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(element) ->
+            if retained != original && newestIsRuntimeRetain(retained)(state) && !containsUnresolvedLayout(SemList(element))(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownedSlot } ->
+                        allocated
+                        |> emit(StoreLocal(ownedSlot)(retained))
+                        |> registerGeneralRcOwnedSlot(ownedSlot)(SemList(element))
+            else state
+        | _ -> state
+
 let recordArenaCellTransferRetain (arenaCell: Bool) (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     if arenaCell
     then recordCallArgumentTransferRetain(original)(retained)(semanticType)(state)
+    else state
+
+// An escaping arena cell's tail retain: collected for the call the cell is an argument of, or else
+// kept in an owned slot.
+let recordArenaCellTailRetain (arenaCell: Bool) (original: Int) (retained: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if arenaCell
+    then
+        if retained != original && stateCollectingCallArgumentRetains(state) && state.nextLabelId == stateCallArgumentLabelStart(state)
+        then recordCallArgumentTransferRetain(original)(retained)(semanticType)(state)
+        else keepArenaCellTailRetainOwned(original)(retained)(semanticType)(state)
     else state
 
 // Whether the newest instruction is the loop-parameter retain marker `retainLoopParameterChild` just
@@ -22075,7 +22623,7 @@ let recordArenaParameterCopy (arenaCell: Bool) (element: Expr) (source: Int) (lo
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match (unspanArgument(element), loopParameterReadSlot(element)(state)) with
                 | (ExprVar(_name), Some(slot)) ->
-                    if arenaCell && temp != source && newestIsParameterRetainMarker(temp)(source)(state) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state))
+                    if arenaCell && generalRcEnabled(state) && temp != source && newestIsParameterRetainMarker(temp)(source)(state) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state))
                     then lowered with state = withStateArenaParameterCopies((temp, source, slot, semanticType) :: stateArenaParameterCopies(state))(state)
                     else lowered
                 | _ -> lowered
@@ -22243,26 +22791,6 @@ let normalizesTupleElement (copiesSiblings: Bool) (semanticType: SemanticType) (
         | Some(_plan) -> true
         | None -> false)
 
-// Stage 0's `NormalizeGeneralRcTupleElements`: each element of the contract's types, and each arena
-// sibling of a reference-counted element, is retained or copied into an owned value, and the tuple
-// stores that. The flags mark the elements normalized: each already holds the reference the
-// tuple stores, so none is retained again for the cell.
-let recursive normalizeTupleSiblings (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
-    match (elements, temps, semanticTypes) with
-        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
-            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || !normalizesTupleElement(copiesSiblings)(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
-                | (false, Some(plan)) ->
-                    match emitGuardedDeepCopy(temp)(plan)(state) with
-                        | (copied, copyTemp) ->
-                            match copied
-                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
-                            |> normalizeTupleSiblings(copiesSiblings)(restElements)(restTemps)(restTypes) with
-                                | (normalized, rest, restFlags) -> (normalized, copyTemp :: rest, true :: restFlags)
-                | _ ->
-                    match normalizeTupleSiblings(copiesSiblings)(restElements)(restTemps)(restTypes)(state) with
-                        | (normalized, rest, restFlags) -> (normalized, temp :: rest, false :: restFlags)
-        | _ -> (state, [], [])
-
 // The most recent identity duplicate a pattern-owner read took of a tuple element, made a plain
 // borrow: the cell holds a copy instead, and a marker left behind could still be promoted to a
 // retain nothing releases. Yields the value the element was read as, or none when no marker made it.
@@ -22290,6 +22818,83 @@ let neutralizeElementDuplicate (temp: Int) (state: CoreLoweringState) =
         | Some(source) -> ((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)), source)
         | None -> (state, temp)
 
+let recursive isPatternOwnerSiteSlot (slot: Int) (sites: List(PatternOwnerSite)) =
+    match sites with
+        | [] -> false
+        | site :: rest -> site.siteSlot == slot || isPatternOwnerSiteSlot(slot)(rest)
+
+let recursive isTcoParameterRetainSite (temp: Int) (sites: List((Int, Int, SemanticType))) =
+    match sites with
+        | [] -> false
+        | (duplicate, _slot, _semanticType) :: rest -> duplicate == temp || isTcoParameterRetainSite(temp)(rest)
+
+let recursive isArenaParameterCopy (temp: Int) (copies: List((Int, Int, Int, SemanticType))) =
+    match copies with
+        | [] -> false
+        | (duplicate, _source, _slot, _semanticType) :: rest -> duplicate == temp || isArenaParameterCopy(temp)(rest)
+
+// Whether the identity duplicate `temp` is one finalization promotes to a real retain: a read of a
+// pattern owner bound out of a loop parameter, or a loop parameter's retain marker, that no release
+// after a call or arena copy was recorded for.
+let isPromotableCellMarker (temp: Int) (state: CoreLoweringState) =
+    match findElementDuplicate(temp)(state.reversedInstructions) with
+        | None -> false
+        | Some(source) ->
+            (isPatternOwnerSiteSlot(loadedSlotThroughBorrows(source)(state.reversedInstructions))(statePatternOwnerSites(state)) || isTcoParameterRetainSite(temp)(stateTcoParameterRetainSites(state))) && !collectsCallArgumentRetain(temp)(stateCallArgumentRecordRetains(state)) && !isArenaParameterCopy(temp)(stateArenaParameterCopies(state))
+
+// Stage 0's `EmitRuntimeManagedTcoTupleSuccessorCopy`: a literal nested in a tuple successor (a
+// cons, a record, a record update) that stays in the arena is copied into the tuple with
+// references of its own, before the back edge releases the old parameters, and the arena never
+// releases what the cell held. The duplicates its construction took of pattern owners and loop
+// parameters, and those of the literals nested in it, become borrows; a duplicate with another
+// reader is left alone.
+let recursive withdrawCopiedCellMarkers (pending: List(Int)) (visited: List(Int)) (state: CoreLoweringState) =
+    match pending with
+        | [] -> state
+        | temp :: rest ->
+            if containsInt(temp)(visited)
+            then withdrawCopiedCellMarkers(rest)(visited)(state)
+            else
+                if isArenaCell(temp)(state.reversedInstructions)
+                then
+                    withdrawCopiedCellMarkers(append(storedValuesOf(temp)(state.reversedInstructions)([]))(rest))(temp :: visited)(state)
+                else
+                    if isPromotableCellMarker(temp)(state) && countTempUses(temp)(state.reversedInstructions)(0) == 1
+                    then withdrawCopiedCellMarkers(rest)(temp :: visited)((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)))
+                    else withdrawCopiedCellMarkers(rest)(temp :: visited)(state)
+
+let isRecordUpdateExpression (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprRecordUpdate(_target, _fields) -> true
+        | _ -> false
+
+let withdrawSuccessorLiteralMarkers (successor: Bool) (element: Expr) (temp: Int) (state: CoreLoweringState) =
+    if successor && (isFreshAggregateLiteral(element)(state) || isRecordUpdateExpression(element)) && isArenaCell(temp)(state.reversedInstructions)
+    then withdrawCopiedCellMarkers([temp])([])(state)
+    else state
+
+// Stage 0's `NormalizeGeneralRcTupleElements`: each element of the contract's types, and each arena
+// sibling of a reference-counted element, is retained or copied into an owned value, and the tuple
+// stores that. The flags mark the elements normalized: each already holds the reference the
+// tuple stores, so none is retained again for the cell. `successor` marks a loop's tuple successor.
+let recursive normalizeTupleSiblings (successor: Bool) (copiesSiblings: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (elements, temps, semanticTypes) with
+        | (element :: restElements, temp :: restTemps, semanticType :: restTypes) ->
+            match (isRuntimeManageableTupleElement(element)(temp)(semanticType)(state) || !normalizesTupleElement(copiesSiblings)(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
+                | (false, Some(plan)) ->
+                    match state
+                    |> withdrawSuccessorLiteralMarkers(successor)(element)(temp)
+                    |> emitGuardedDeepCopy(temp)(plan) with
+                        | (copied, copyTemp) ->
+                            match copied
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> normalizeTupleSiblings(successor)(copiesSiblings)(restElements)(restTemps)(restTypes) with
+                                | (normalized, rest, restFlags) -> (normalized, copyTemp :: rest, true :: restFlags)
+                | _ ->
+                    match normalizeTupleSiblings(successor)(copiesSiblings)(restElements)(restTemps)(restTypes)(state) with
+                        | (normalized, rest, restFlags) -> (normalized, temp :: rest, false :: restFlags)
+        | _ -> (state, [], [])
+
 // `runtimeOnly` limits the copies to the elements held as reference-counted values.
 let recursive demoteTupleElements (runtimeOnly: Bool) (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (elements, temps, semanticTypes) with
@@ -22316,10 +22921,10 @@ let recursive demoteTupleElements (runtimeOnly: Bool) (elements: List(Expr)) (te
 let demoteArenaTupleElements (elements: List(Expr)) (holdsReferenceCounted: Bool) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match stateSpecializationFreshInputs(state) with
         | None ->
-            if anyUnresolvedLayout(semanticTypes)(state)
+            if generalRcEnabled(state) && anyUnresolvedLayout(semanticTypes)(state)
             then demoteTupleElements(false)(elements)(temps)(semanticTypes)(state)
             else
-                if holdsReferenceCounted
+                if holdsReferenceCounted && generalRcEnabled(state)
                 then demoteTupleElements(true)(elements)(temps)(semanticTypes)(state)
                 else (state, temps, [])
         | Some(_inputs) -> (state, temps, [])
@@ -22354,21 +22959,119 @@ let recursive cloneNormalizedStringParameterElements (runtimeTuple: Bool) (eleme
                     | (cloned, rest) -> (cloned, temp :: rest)
         | _ -> (state, temps)
 
-let finishTupleLowering elements (runtimeTuple: Bool) (transfers: Bool) lowered =
+// Whether the back edge copies the tuple successor being lowered: its loop parameter is on the
+// reference-counted heap, so the arena tuple is copied with references of its own.
+let backEdgeCopiesTupleSuccessor (successor: Bool) (state: CoreLoweringState) =
+    match (successor, stateBackEdgeArgumentSlot(state), stateTcoLoop(state), stateTcoLoopFrame(state)) with
+        | (true, Some(slot), Some(loop), Some(frame)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state)
+        | _ -> false
+
+// An arena tuple successor the back edge copies: the literals nested in it borrow what they
+// store, as they do in a reference-counted tuple successor that copies them while it is built.
+let recursive withdrawCopiedTupleLiterals (elements: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (elements, temps) with
+        | (element :: restElements, temp :: restTemps) ->
+            state
+            |> withdrawSuccessorLiteralMarkers(true)(element)(temp)
+            |> withdrawCopiedTupleLiterals(restElements)(restTemps)
+        | _ -> state
+
+// Stage 0's `CopyFreshFieldsIntoArenaCell`: without general reference counting (code that may run
+// while a handler's one-shot post is pending) an arena constructor cell releases nothing it holds,
+// so a newly produced reference-counted string field, or a list field over heads the list copy-out
+// reproduces, is stored as an arena copy and the original is released right away, as an arena cons
+// cell does with such a head.
+let recursive arenaCellFieldTemps (types: List(SemanticType)) (temps: List(Int)) (copied: List(Int)) (state: CoreLoweringState) =
+    match (types, temps) with
+        | (fieldType :: restTypes, temp :: restTemps) ->
+            match (resolveType(state)(fieldType), runtimeTempStateOf(temp)(state)) with
+                | (SemString, Some(RuntimeNewlyProduced)) ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = copyTemp } ->
+                            allocated
+                            |> emit(CopyOutArena(copyTemp)(temp)(-1)(false)(IndependentClone)(None))
+                            |> releaseConsumedOperand(temp)
+                            |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
+                | (SemList(element), Some(RuntimeNewlyProduced)) ->
+                    match listHeadCopyKindOf(element)(state) with
+                        | Some(headCopy) ->
+                            match freshTemp(state) with
+                                | FreshTemp { state = allocated, temp = copyTemp } ->
+                                    allocated
+                                    |> emit(CopyOutList(copyTemp)(temp)(headCopy)(false)(IndependentClone))
+                                    |> emitOwnedValueRelease(emit)(temp)(SemList(element))
+                                    |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
+                        | None -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
+                | _ -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
+        | _ ->
+            (state, append(reverse(copied))(temps))
+
+let arenaCellFields (types: List(SemanticType)) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+    if runtimeManaged || generalRcEnabled(state)
+    then (state, temps)
+    else arenaCellFieldTemps(types)(temps)([])(state)
+
+// Stage 0's `RecordCallArgumentTupleOwnerDuplicates`: an arena tuple built inside a call's argument
+// holds the duplicates its pattern owners took, and the arena cell never releases them, so the
+// call's frame releases each after the call. Only on the argument's straight-line path, outside a
+// loop's successor.
+let recursive tupleOwnerDuplicateEntries (temps: List(Int)) (semanticTypes: List(SemanticType)) (slot: Int) (state: CoreLoweringState) (entries: List((Int, Int, SemanticType))) =
+    match (temps, semanticTypes) with
+        | (temp :: restTemps, semanticType :: restTypes) ->
+            if isDuplicateMarker(temp)(state.reversedInstructions)
+            then tupleOwnerDuplicateEntries(restTemps)(restTypes)(slot)(state)((temp, slot, semanticType) :: entries)
+            else tupleOwnerDuplicateEntries(restTemps)(restTypes)(slot)(state)(entries)
+        | _ -> entries
+
+let recordCallArgumentTupleOwnerDuplicates (successor: Bool) (temps: List(Int)) (semanticTypes: List(SemanticType)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = None } ->
+            match stateBackEdgeArgumentSlot(state) with
+                | Some(_slot) -> lowered
+                | None ->
+                    if backEdgeCopiesTupleSuccessor(successor)(state) || state.nextLabelId != stateCallArgumentLabelStart(state)
+                    then lowered
+                    else
+                        let slot =
+                            if stateCollectingCallArgumentRetains(state)
+                            then -2
+                            else -3
+                        in
+                            lowered with state = withCallArgumentRetainFrame(state
+                            |> stateCallArgumentRecordRetains
+                            |> tupleOwnerDuplicateEntries(temps)(semanticTypes)(slot)(state))(stateCollectingCallArgumentRetains(state))(state)
+        | _ -> lowered
+
+let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfers: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValues { state = state, temps = loweredTemps, semanticTypes = semanticTypes, error = None } ->
-            match (freshTemp(state), holdsReferenceCountedElement(elements)(loweredTemps)(semanticTypes)(state)) with
-                | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
-                    if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
-                    then
-                        match normalizeTupleSiblings(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
-                            | (normalizedState, temps, normalized) -> finishPlacedTuple(elements)(temps)(semanticTypes)(normalized)(tupleTemp)(true)(transfers)(normalizedState)
-                    else
-                        match demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes)(reservedState) with
-                            | (demotedState, temps, demoted) ->
-                                match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
-                                    | (clonedState, clonedTemps) -> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)(clonedState)
+        | LoweredCoreValues { state = loweredState, temps = freshTemps, semanticTypes = semanticTypes, error = None } ->
+            // Stage 0's `CopyFreshElementsIntoArenaTuple`: without general reference counting a fresh
+            // reference-counted string element is replaced by an arena copy first, so the tuple stays
+            // in the arena its caller takes it as.
+            match arenaCellFields(semanticTypes)(runtimeTuple)(freshTemps)(loweredState) with
+                | (state, loweredTemps) ->
+                    match (freshTemp(state), holdsReferenceCountedElement(elements)(loweredTemps)(semanticTypes)(state)) with
+                        | (FreshTemp { state = reservedState, temp = tupleTemp }, holdsReferenceCounted) ->
+                            if (runtimeTuple || holdsReferenceCounted) && allTupleElementsPlaceable(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(state)
+                            then
+                                match normalizeTupleSiblings(successor)(holdsReferenceCounted)(elements)(loweredTemps)(semanticTypes)(reservedState) with
+                                    | (normalizedState, temps, normalized) -> finishPlacedTuple(elements)(temps)(semanticTypes)(normalized)(tupleTemp)(true)(transfers)(normalizedState)
+                            else
+                                match reservedState
+                                |> (given (arenaState) ->
+                                    if backEdgeCopiesTupleSuccessor(successor)(arenaState)
+                                    then withdrawCopiedTupleLiterals(elements)(loweredTemps)(arenaState)
+                                    else arenaState)
+                                |> demoteArenaTupleElements(elements)(holdsReferenceCounted)(loweredTemps)(semanticTypes) with
+                                    | (demotedState, temps, demoted) ->
+                                        match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
+                                            | (clonedState, clonedTemps) ->
+                                                match arenaCellFields(semanticTypes)(false)(clonedTemps)(clonedState) with
+                                                    | (copiedState, copiedTemps) ->
+                                                        copiedState
+                                                        |> finishPlacedTuple(elements)(copiedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)
+                                                        |> recordCallArgumentTupleOwnerDuplicates(successor)(clonedTemps)(semanticTypes)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with
@@ -22378,6 +23081,12 @@ let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
 let tupleTransfers (request: ConsumerRequest) (state: CoreLoweringState) =
     match request with
         | ConsumerRequest { runtimeTuple = runtimeTuple, transfersRuntimeManagedChildren = transfersRequested } -> transfersRequested || inLoopTailPosition(request)(state) || runtimeTuple
+
+// A tuple a loop's tail self call passes as its successor.
+let isTupleSuccessorRequest (request: ConsumerRequest) (state: CoreLoweringState) =
+    match (request.argumentSite, stateTcoLoop(state)) with
+        | (Some(_site), Some(_loop)) -> true
+        | _ -> false
 
 // A resource stored into a tuple, list, cons cell, or constructor moves into it. The tuple
 // carries its children out of the scopes that own them when it is a function result (the
@@ -22390,7 +23099,7 @@ let lowerTuple elements lower state =
             state
             |> markResourceArgumentsMoved(elements)
             |> lowerTupleElementsInto(request)(runtimeTuple)(tupleTransfers(request)(state))(expectedTupleElements(request)(coreListLength(elements))(state))(elements)(lower)([])([])
-            |> finishTupleLowering(elements)(runtimeTuple)(tupleTransfers(request)(state))
+            |> finishTupleLowering(isTupleSuccessorRequest(request)(state))(elements)(runtimeTuple)(tupleTransfers(request)(state))
             |> unifyTupleWithExpected(request)
 
 // The live arena list-cell token, if one was published by a cons arm of the match this cell is
@@ -22699,10 +23408,64 @@ let referenceOrCopyUnplacedLetTail (applies: Bool) (tailExpression: Expr) (tailT
             |> emitArgumentCopyByCopy(tailTemp))(state)
         | _ -> (state, tailTemp)
 
+// A list bound out of a pattern is whatever the matched value's lists are, and the matched value may
+// be released before the cell (a loop's predecessor at its back edge): the cell takes a reference
+// of its own when the list is reference-counted and a copy when it is not (stage 0's
+// `PatternBoundTailsOwnedEnabled` branch of `PrepareRuntimeRcConsTail`).
+let isPatternBoundTail (tailExpression: Expr) (state: CoreLoweringState) =
+    match unspanArgument(tailExpression) with
+        | ExprVar(name) ->
+            match patternOwnerBinding(name)(state) with
+                | Some(_fact) -> true
+                | None -> false
+        | _ -> false
+
 let prepareRuntimeRcConsTail (request: ConsumerRequest) (tailExpression: Expr) (tailTemp: Int) (tailType: SemanticType) (state: CoreLoweringState) =
     match loopExitCellSlot(request)(tailExpression)(state) with
         | Some(_slot) -> referenceOrCopyLoopExitTail(tailTemp)(tailType)(state)
-        | None -> prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(state)
+        | None ->
+            if isPatternBoundTail(tailExpression)(state)
+            then referenceOrCopyUnplacedLetTail(true)(tailExpression)(tailTemp)(tailType)(state)
+            else prepareRuntimeRcListTail(request)(tailExpression)(tailTemp)(tailType)(state)
+
+// Stage 0's `KeepEscapingArenaCellFreshHeadOwned`: an escaping arena cell (a call's argument the
+// callee's result may reach) is the only holder of a value produced right there, a fresh tuple
+// consed onto an accumulator passed to a recursive call, and an arena cell releases nothing. The
+// value goes to an owned slot, released once the function's result holds references of its own.
+// Stage 0's `IsCopiedOutFreshHeadType`: a list, tuple or data type the function's result copies out
+// rather than owns is copied before the owned slots are released, so such a head is kept the same
+// way.
+let isCopiedOutFreshHeadType (semanticType: SemanticType) (state: CoreLoweringState) =
+    match semanticType with
+        | SemList(_element) -> true
+        | SemTuple(_elements) -> true
+        | SemNamed(_symbolId, name, _typeArguments) -> !isResourceTypeNameIn(name)(state)
+        | _ -> false
+
+// A tail self-call's argument is the next iteration's parameter, which keeps the cell and the head it
+// holds: a copied-out head handed to an owned slot there was released while the successor still read
+// it, so only a head of the contract's own types goes to the slot on a back edge.
+let lowersBackEdgeArgument (state: CoreLoweringState) =
+    match stateBackEdgeArgumentSlot(state) with
+        | Some(_slot) -> true
+        | None -> false
+
+let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headType: SemanticType) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = None } ->
+            let resolved = resolveType(state)(headType)
+            in
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
+                then
+                    match freshLocal(state) with
+                        | FreshLocal { state = allocated, local = ownedSlot } ->
+                            let kept =
+                                allocated
+                                |> emit(StoreLocal(ownedSlot)(headTemp))
+                                |> registerGeneralRcOwnedSlot(ownedSlot)(resolved)
+                            in lowered with state = kept
+                else lowered
+        | _ -> lowered
 
 // The tail of an escaping arena cell carries a runtime-managed owner out of the scope that owns
 // it exactly like an escaping tuple element, and is retained. A recursive producer result stored
@@ -22721,13 +23484,14 @@ let retainConsTail (request: ConsumerRequest) (transfers: Bool) (headExpression:
                             match retainAggregateChildTemp(tailExpression)(preparedTemp)(tailType)(preparedState) with
                                 | (retained, retainedTemp) ->
                                     retained
-                                    |> recordArenaCellTransferRetain(!managed)(preparedTemp)(retainedTemp)(tailType)
+                                    |> recordArenaCellTailRetain(!managed)(preparedTemp)(retainedTemp)(tailType)
                                     |> referenceOrCopyUnplacedLetTail(managed && retainedTemp == preparedTemp)(tailExpression)(retainedTemp)(tailType)
                                     |> (given (owned: (CoreLoweringState, Int)) ->
                                         match owned with
                                             | (ownedState, ownedTemp) -> success(ownedTemp)(tailType)(ownedState))
                                     |> retainLoopParameterChild(tailExpression)(preparedTemp)
                                     |> recordArenaCellParameterRetain(!managed)(tailExpression)(preparedTemp)
+                                    |> keepEscapingArenaCellFreshHeadOwned(transfers && !managed)(headTemp)(headType)
                         else tail with state = preparedState, temp = preparedTemp
         | _ -> tail
 
@@ -22747,7 +23511,9 @@ let duplicatePatternOwnerConsParts (headExpression: Expr) (tailExpression: Expr)
 // an owner of its own, released once the successor holds its references, as a `let` binding of it
 // would be. The cell only borrows it and the copy takes a reference of its own.
 let keepCopiedCellFreshHeadOwned (headExpression: Expr) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
-    match (unspanArgument(headExpression), runtimeTempStateOf(headTemp)(state)) with
+    match (unspanArgument(headExpression), if generalRcEnabled(state)
+    then runtimeTempStateOf(headTemp)(state)
+    else None) with
         | (ExprVar(_name), _) -> state
         | (ExprQualifiedVar(_owner, _field), _) -> state
         | (_, Some(RuntimeNewlyProduced)) ->
@@ -22825,7 +23591,8 @@ let consTailRequest (request: ConsumerRequest) (tailExpression: Expr) (headType:
         | _ -> withOnlyExpectedType(Some(SemList(headType)))(state)
 
 // Stage 0's `OwnHeadOfCellOverFreshTail`: a cons onto a fresh reference-counted tail (a call's owned
-// result, `entry :: build(n)`) builds a reference-counted cell, the list counterpart of a
+// result, `entry :: build(n)`, or a cons cell that took such a tail over, `x :: y :: build(n)`)
+// builds a reference-counted cell, the list counterpart of a
 // constructor owning a fresh child. The cell takes the tail over, and the head takes a reference
 // of its own when it is reference-counted or a copy when it lies in the arena. A live arena
 // list-cell reuse token beats it, as it beats the recursive producer's request: a reuse
@@ -22836,9 +23603,10 @@ let noListCellReuseToken (tokens: List(CoreReuseToken)) =
         | Some(_found) -> false
         | None -> true
 
-let freshCallTail (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
+let freshProducedTail (tailExpression: Expr) (tailTemp: Int) (state: CoreLoweringState) =
     (match unspanArgument(tailExpression) with
         | ExprCall(_function, _argument, _isSugar, _layout) -> true
+        | ExprCons(_head, _tail) -> true
         | _ -> false) && (match runtimeTempStateOf(tailTemp)(state) with
         | Some(RuntimeNewlyProduced) -> true
         | _ -> false)
@@ -22848,7 +23616,7 @@ let cellRequestOf (request: ConsumerRequest) = request with runtimeList = true
 let ownHeadOfCellOverFreshTail (request: ConsumerRequest) (tailExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType, error = None }) ->
-            if canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshCallTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
+            if generalRcEnabled(tailState) && canTestRepresentation && requestsRuntimeList(request) == false && request.borrowsCellParts == false && noListCellReuseToken(tailState.reuseTokens) && freshProducedTail(tailExpression)(tailTemp)(tailState) && containsUnresolvedLayout(tailType)(tailState) == false && containsUnresolvedLayout(headType)(tailState) == false
             then
                 if headType
                 |> resolveType(tailState)
@@ -22923,7 +23691,7 @@ let noteListHeadCell (tailExpression: Expr) (head: LoweredCoreValue) (tail: Lowe
                         in
                             match (definitionOfTemp(cellTemp)(state.reversedInstructions), closureOfCallResult(headCall)(1000000)(state.reversedInstructions)) with
                                 | (Some(Alloc(_target, _size, false)), Some(closureTemp)) ->
-                                    if generic && headCall >= 0 && tailCall != -2
+                                    if generalRcEnabled(state) && generic && headCall >= 0 && tailCall != -2
                                     then cell with state = withStateListHeadCells((cellTemp, headTemp, closureTemp, tailCall) :: stateListHeadCells(state))(state)
                                     else cell
                                 | _ -> cell
@@ -23228,7 +23996,7 @@ let ownBorrowedHeadForProducerCell (producerCell: Bool) (request: ConsumerReques
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match resolveType(state)(semanticType) with
                 | SemTuple(_elements) as tuple ->
-                    if producerCell && requestsRuntimeList(request) && !isRuntimeManageableListElement(headExpression)(temp)(tuple)(state)
+                    if producerCell && generalRcEnabled(state) && requestsRuntimeList(request) && !isRuntimeManageableListElement(headExpression)(temp)(tuple)(state)
                     then
                         match generalCopyPlanOf(tuple)(state) with
                             | Some(plan) ->
@@ -23350,6 +24118,18 @@ let keepCopiedLiteralHeadOwned (request: ConsumerRequest) (expression: Expr) (he
     then keepCopiedCellFreshHeadOwned(expression)(headTemp)(headType)(state)
     else state
 
+// Stage 0's `KeepArenaListLiteralFreshHeadOwned`: a literal's arena cell holding a value produced right
+// there (a constructor placed on the reference-counted heap because it owns a fresh string) is that
+// value's only holder, and an arena cell releases nothing, so its reference goes to an owned slot.
+let keepArenaListLiteralFreshHeadOwned (cellTemp: Int) (headTemp: Int) (cellHeadTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    if cellHeadTemp == headTemp && !isFreshReferenceCountedCell(cellTemp)(state)
+    then
+        match state
+        |> success(cellTemp)(headType)
+        |> keepEscapingArenaCellFreshHeadOwned(true)(headTemp)(headType) with
+            | LoweredCoreValue { state = kept } -> kept
+    else state
+
 let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) elements elementType tailTemp (tailIsReferenceCounted: Bool) (tailIsFreshCell: Bool) lower state =
     match elements with
         | [] ->
@@ -23388,7 +24168,7 @@ let recursive lowerListElements (request: ConsumerRequest) (transfers: Bool) ele
                                                             isFreshReferenceCountedCell(cellTemp)(cellState),
                                                             isFreshReferenceCountedCell(cellTemp)(cellState),
                                                             lower,
-                                                            cellState
+                                                            keepArenaListLiteralFreshHeadOwned(cellTemp)(headTemp)(cellHeadTemp)(headType)(cellState)
                                                         )
                                                     | failed -> failed
 
@@ -23694,25 +24474,27 @@ let allocateReusedConstructorCell (arguments: List(Expr)) (argumentTypes: List(S
 let allocateOrReuseConstructorCell (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (stackAllocate: Bool) (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
     (let fieldCount = coreListLength(temps)
     in
-        match if stackAllocate
-        then None
-        else reuseConsumeToken(ctorName)(fieldCount)(tagless)(state) with
-            | Some((token, consumedState)) -> allocateReusedConstructorCell(arguments)(argumentTypes)(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
-            | None ->
-                match freshTemp(state) with
-                    | FreshTemp { state = allocatedState, temp = resultTemp } ->
-                        // `runtimeManaged` is the consumer's placement request: the dead top-level
-                        // `let` path's flag carried by the constructor shape, or a request the
-                        // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
-                        // without one the cell is arena-placed.
-                        match allocatedState
-                        |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(stackAllocate)(runtimeManaged)(tagless)
-                        |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(temps) with
-                            | (materializedState, materializedTemps) ->
-                                materializedState
-                                |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
-                                |> markAggregateRuntimeManaged(resultTemp)(stackAllocate == false && specializationCellsArePersistent(state) == false && runtimeManaged)
-                                |> success(resultTemp)(resolveType(materializedState)(resultType)))
+        match arenaCellFields(argumentTypes)(runtimeManaged)(temps)(state) with
+            | (fieldState, fieldTemps) ->
+                match if stackAllocate
+                then None
+                else reuseConsumeToken(ctorName)(fieldCount)(tagless)(fieldState) with
+                    | Some((token, consumedState)) -> allocateReusedConstructorCell(arguments)(argumentTypes)(token)(tag)(fieldCount)(tagless)(layout)(resultType)(fieldTemps)(consumedState)
+                    | None ->
+                        match freshTemp(fieldState) with
+                            | FreshTemp { state = allocatedState, temp = resultTemp } ->
+                                // `runtimeManaged` is the consumer's placement request: the dead top-level
+                                // `let` path's flag carried by the constructor shape, or a request the
+                                // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
+                                // without one the cell is arena-placed.
+                                match allocatedState
+                                |> emitFreshConstructorCell(resultTemp)(tag)(fieldCount)(stackAllocate)(runtimeManaged)(tagless)
+                                |> materializeConstructorFields(arguments)(argumentTypes)(resultType)(None)(resultTemp)(tagless)(fieldTemps) with
+                                    | (materializedState, materializedTemps) ->
+                                        materializedState
+                                        |> emitAdtFields(resultTemp)(0)(tagless)(materializedTemps)
+                                        |> markAggregateRuntimeManaged(resultTemp)(stackAllocate == false && specializationCellsArePersistent(state) == false && runtimeManaged)
+                                        |> success(resultTemp)(resolveType(materializedState)(resultType)))
 
 let finishConstructorAllocation arguments (stackAllocate: Bool) layout resultType runtimeManaged lowered =
     match (layout, lowered) with
@@ -23790,7 +24572,7 @@ let isTupleType (semanticType: SemanticType) =
 // tuple for a tuple literal in a tuple or type-parameter field; the transfer is forwarded.
 let constructorArgumentRequest (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match request with
-        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers, recordFieldCells = fieldCells } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, transfersRuntimeManagedChildren = transfers, recordFieldCell = fieldCells && isConsValue(argument)
+        | ConsumerRequest { runtimeString = parentString, runtimeList = parentList, runtimeTuple = parentTuple, runtimeAdt = parentAdt, transfersRuntimeManagedChildren = transfers, recordFieldCells = fieldCells, callArgument = callArgument } -> emptyConsumerRequest with runtimeString = parentString || runtimeManaged && fieldTypeIs(fieldType)(state)(isStringType) && isFreshStringChild(argument)(state), runtimeList = parentList || runtimeManaged && fieldTypeIs(fieldType)(state)(isListType) && isFreshListConstruction(argument), runtimeTuple = parentTuple || runtimeManaged && fieldTypeIs(fieldType)(state)(isTupleType) && isTupleLiteral(argument), runtimeAdt = runtimeManaged && parentAdt, runtimeRecord = runtimeManaged, transfersRuntimeManagedChildren = transfers, recordFieldCell = fieldCells && isConsValue(argument), callArgument = callArgument && !runtimeManaged
 
 let emitListNormalizingCopy (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match freshTemp(state) with
@@ -23888,13 +24670,14 @@ let transferSlotRequested (transferSlot: Maybe(Int)) =
 // Stage 0's `RetainEscapingConstructorArgument`: a constructor whose consumer owns the value (a
 // runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
 // pattern-owner duplicate of an argument that reads one, before the transfer retain; an
-// argument neither retained reads takes the loop-parameter marker.
+// argument neither retained reads takes the loop-parameter marker. An ordinary call's argument
+// borrows the read whatever transfer the callee's result asks of it.
 let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
     match request with
-        | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition } ->
+        | ConsumerRequest { transfersRuntimeManagedChildren = transfers, transferSlot = transferSlot, tailPosition = tailPosition, callArgument = callArgument } ->
             lowered
             |> (given (value: LoweredCoreValue) ->
-                if runtimeManaged || tailPosition || transferSlotRequested(transferSlot) || transfers
+                if runtimeManaged || tailPosition || transferSlotRequested(transferSlot) || transfers && !callArgument
                 then duplicatePatternOwnerChild(argument)(value)
                 else value)
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
@@ -24171,7 +24954,7 @@ let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resu
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> lowered
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
+            if generalRcEnabled(state) == false || runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
             then lowered
             else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
         | _ -> lowered
@@ -24226,12 +25009,13 @@ let recursive normalizePlacedConstructorFields (request: ConsumerRequest) (argum
 // Stage 0's `PlaceConstructorOwningFreshChild`: an arena cell never releases what it holds, so a
 // constructor storing a fresh reference-counted value, or a reference taken for the cell, is built
 // on the reference-counted heap instead, owning that value outright and a reference of its own to
-// every other heap field. Answers the arguments and whether the cell is placed there.
+// every other heap field. Answers the arguments and whether the cell is placed there. Without general
+// reference counting the cell stays in the arena.
 let placeConstructorOwningFreshChild (layout: CoreConstructorLayout) arguments (request: ConsumerRequest) (resultType: SemanticType) (runtimeManaged: Bool) (stackAllocate: Bool) lowered =
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> (lowered, runtimeManaged)
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyCellOwnedArgument(request)(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
+            if generalRcEnabled(state) == false || runtimeManaged || stackAllocate || containsUnresolvedLayout(resultType)(state) || handsFreshChildrenToOwnedSlots(resultType)(state) || anyCellOwnedArgument(request)(arguments)(temps)(state) == false || placesConstructorFields(arguments)(temps)(semanticTypes)(state) == false
             then (lowered, runtimeManaged)
             else
                 match normalizePlacedConstructorFields(request)(arguments)(temps)(semanticTypes)(state)([]) with
@@ -25055,7 +25839,7 @@ let loadUnchangedRecordField targetTemp targetSlot index tagless fieldType state
 let handUpdatedFieldToOwnedSlot (expression: Expr) (fieldType: SemanticType) (handsOver: Bool) lowered =
     match lowered with
         | LoweredCoreValues { state = state, temps = temp :: _rest, error = None } ->
-            if handsOver
+            if handsOver && generalRcEnabled(state)
             then
                 lowered with state = handFreshChildToOwnedSlot(expression)(temp)(resolveType(state)(fieldType))(state)
             else lowered
@@ -25369,11 +26153,11 @@ let markConcatResult (target: Int) (runtimeManaged: Bool) (state: CoreLoweringSt
 
 // Stage 0's `LowerStringAdd`: an armed affine accumulator append grows the accumulator's
 // reservation in place (`ConcatStrTip`; the extend and fallback paths live in the backend, and
-// the fallback releases the reference it replaces, so no operand is released here; the
-// runtime-managed flag is decided with the parameter's placement once the body is lowered); any
-// other concatenation is placed on the reference-counted heap when its consumer asked for a
-// runtime string, its result then newly produced, and a newly produced operand is released
-// right after the use.
+// the fallback releases the reference it replaces, so only a newly produced right operand is
+// released here, its bytes copied on both paths; the runtime-managed flag is decided with the
+// parameter's placement once the body is lowered); any other concatenation is placed on the
+// reference-counted heap when its consumer asked for a runtime string, its result then newly
+// produced, and a newly produced operand is released right after the use.
 let emitCoreConcat binary =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
@@ -25383,6 +26167,7 @@ let emitCoreConcat binary =
                         | Some((reservationStart, reservationEnd)) ->
                             targetState
                             |> emit(ConcatStrTip(target)(left)(right)(reservationStart)(reservationEnd)(false))
+                            |> releaseConcatRightOperand(left)(right)
                             |> success(target)(SemString)
                         | None ->
                             targetState
@@ -26303,8 +27088,11 @@ let recursive isCoreZeroExpression expression =
 // not be defaulted eagerly: the operands are unified with each other, an `AddInt` is emitted
 // speculatively and recorded under its target temp (temps survive `pruneDeadCaptures`, positions
 // do not), the shared variable flows on as the result type, and `buildProgram` swaps the
-// instruction for the resolved type's real form once the substitution is final. Every other
-// operand shape still resolves immediately through `resolvedCoreBinary`.
+// instruction for the resolved type's real form once the substitution is final. The variable also
+// joins the body's unresolved call results, as the deferred `==` does, so a body that resolves it
+// is lowered again against the resolved type: a string `+` lowered against the open types is an
+// arena concatenation that does not release the counted copy of an operand read from a call result.
+// Every other operand shape still resolves immediately through `resolvedCoreBinary`.
 let emitDeferredCoreAdd binary =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = left, leftType = leftType, rightTemp = right, rightType = rightType, error = None } ->
@@ -26314,8 +27102,11 @@ let emitDeferredCoreAdd binary =
                     match freshTemp(typedState) with
                         | FreshTemp { state = targetState, temp = target } ->
                             match targetState with
-                                | CoreLoweringState { functionState = CoreFunctionState { pendingOperatorDefaults = pending } } ->
-                                    let recorded = withStatePendingOperatorDefaults((target, Ashes.Internal.deepCopy(leftType)) :: pending)(targetState)
+                                | CoreLoweringState { functionState = CoreFunctionState { pendingOperatorDefaults = pending }, ownerState = CoreOwnerState { unresolvedCallResults = unresolved } } ->
+                                    let recorded =
+                                        targetState
+                                        |> withStatePendingOperatorDefaults((target, Ashes.Internal.deepCopy(leftType)) :: pending)
+                                        |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(leftType) :: unresolved)
                                     in
                                         recorded
                                         |> emit(AddInt(target)(left)(right))
@@ -26757,8 +27548,8 @@ let recursive emitSnapshotGlobals currentK globalCount frameTemp state =
 // already manage) a one-shot-resume arm stores its post continuation into
 // (buildOperationArmClosure's one-shot-let path). When non-zero, conses it onto the handler
 // frame's posts list (the same 16-byte head/tail cell shape allocateListCell already builds for
-// ordinary list cons) and resets the register to zero so a later, unrelated perform site never
-// mistakes a stale value for its own post.
+// ordinary list cons), counts it live, and resets the register to zero so a later, unrelated
+// perform site never mistakes a stale value for its own post.
 let collectCapabilityPost globalCount capabilityIndex state =
     match freshTemp(state) with
         | FreshTemp { state = regState, temp = postRegTemp } ->
@@ -26798,6 +27589,7 @@ let collectCapabilityPost globalCount capabilityIndex state =
                                                                                     cellState
                                                                                     |> emit(StoreMemOffset(postsHeadAddrTemp)(0)(cellTemp))
                                                                                     |> emit(StoreCapabilityHandler(globalCount)(zeroTemp))
+                                                                                    |> emitLivePostsAdjust(1)
                                                                                     |> emit(Label(skipLabel))
                                                                                     |> success(-1)(SemNever)
 
@@ -26963,7 +27755,7 @@ let tailResumeArgument body =
                 | _ -> None
         | _ -> None
 
-// Handed to finishLetValue/lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
+// Handed to lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
 // a continuation lower instead of a literal expression (the rest of a top-level program's items in
 // lowerCoreProgramItems, or the rest of an operation arm's body in resolveOperationArmBody below)
 // — the continuation lower ignores it. A bare int literal needs no environment/binding resolution,
@@ -27068,7 +27860,7 @@ let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex st
 // interleaves shape recognition with real lowering rather than rewriting the Expr tree first and
 // lowering the rewrite once: selfhost's Expr type is a closed ADT with no synthetic "post" node to
 // rewrite into, so each non-resuming prefix's own value is lowered here, in place, through the
-// ordinary let/let-recursive/if/match lowering path (finishLetValue /
+// ordinary let/let-recursive/if/match lowering path (lowerArenaBracketedNestedLetWith /
 // lowerPreparedRecursiveGroupWith / lowerIfThenBranch+finishIfElseBranch / a
 // resolveOperationArmMatchArm(s) mirror of lowerMatchArm(s)), with the recursive call into the
 // rest of the arm body supplied as the continuation — the same sentinel-placeholder-plus-custom-
@@ -27099,13 +27891,14 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                         match state with
                             | CoreLoweringState { bindings = outerBindings } ->
                                 state
-                                |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(letBody))
-                                |> lower(value)
-                                |> finishLetValue(
+                                |> collectPendingBorrowedOwners(name)(value)
+                                |> lowerArenaBracketedNestedLetWith(
                                     name,
-                                    topLevelContinuationBody,
+                                    value,
+                                    letBody,
                                     given (_ignoredBody) ->
                                         given (s) -> resolveOperationArmBody(letBody)(lower)(postRegisterIndex)(capName)(opName)(s),
+                                    lower,
                                     outerBindings
                                 )
         | ExprLetRecursive(name, value, letBody, _parameters, _annotation, _requirements) ->
@@ -27267,9 +28060,12 @@ let recursive buildArmParameterExpr index patterns body =
 // prefixes before reaching a resume shape), reaches the same place. Every layer is handed the same
 // placeholderBody purely so lowerLambda's own free-variable/capture analysis (`collectFree`) sees
 // the closure's true free variables; the placeholder itself is never lowered.
+// A span-wrapped parameter is looked through, and a wildcard binds a name no source can read.
 let recursive lowerOperationArmParameters patterns armBody placeholderBody lower postRegisterIndex capName opName state =
     match patterns with
         | [] -> resolveOperationArmBody(armBody)(lower)(postRegisterIndex)(capName)(opName)(state)
+        | PatternAt(_span, inner) :: rest -> lowerOperationArmParameters(inner :: rest)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
+        | PatternWildcard :: rest -> lowerOperationArmParameters(PatternVar("__arm_wildcard") :: rest)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
         | PatternVar(name) :: rest ->
             lowerLambda(
                 name,
@@ -27285,13 +28081,22 @@ let recursive lowerOperationArmParameters patterns armBody placeholderBody lower
             |> UnsupportedOperationArmResume(capName)
             |> failure(state)
 
+// Lowers an operation arm closure with its own escaping result admitted to the reference-counted
+// heap, restoring the enclosing answer after it.
+let withArmOwnResult build (state: CoreLoweringState) =
+    match state
+    |> withStateHandlerArmOwnResult(true)
+    |> build with
+        | LoweredCoreValue { state = built } as lowered ->
+            lowered with state = withStateHandlerArmOwnResult(stateHandlerArmOwnResult(state))(built)
+
 // A bare tail `resume(e)` (the arm's whole unwrapped body, no let/letrec prefix) reuses the plain
 // closure/match lowering machinery via buildArmParameterExpr, which — unlike
 // lowerOperationArmParameters — also supports non-variable operation parameters (synthetic name +
 // match), since `e` needs no lowering-time hook of its own. Everything else (a one-shot
 // `let x = resume(v) in body`, or any non-resuming let/letrec prefix before either shape) goes
-// through the general resolveOperationArmBody recursion, which only supports variable operation
-// parameters.
+// through the general resolveOperationArmBody recursion, which supports variable and wildcard
+// operation parameters.
 let buildOperationArmClosure capName opName patterns armBody lower postRegisterIndex state =
     match tailResumeArgument(armBody) with
         | Some(resumedValue) ->
@@ -27314,12 +28119,67 @@ let recursive installOperationArmClosures capName ops opArms frameTemp globalCou
                 match findCapabilityOperationIndex(opName)(ops) with
                     | None -> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
                     | Some(opIndex) ->
-                        match buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount)(state) with
+                        match withArmOwnResult(buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount))(state) with
                             | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                             | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } ->
                                 closureState
                                 |> emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))
                                 |> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)
+
+// The posts fold hands the handle's value to each post under the owned-argument contract when the
+// value it starts from is reference-counted and its type has a complete copy-out (stage 0's
+// `ownedResult` in `LowerHandleFoldPosts`); the copy-out is what an arena post result is
+// normalized with.
+let ownedPostsFoldCopyOut (initialResultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if isRuntimeTemp(initialResultTemp)(state)
+    then callCopyOutOf(resultType)(state)
+    else None
+
+// A post call whose fold slot holds an arena value: bit 1 of the ownership word asks the post for
+// its result in the arena, so a post that produces a reference-counted value copies it out and
+// releases the original.
+let emitArenaPostCall postClosureTemp currentResultTemp resultLocal state =
+    match emitRequestWord(-1)(state) with
+        | (wordState, wordTemp) ->
+            match freshTemp(wordState) with
+                | FreshTemp { state = callState, temp = nextResultTemp } ->
+                    callState
+                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(wordTemp))
+                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
+
+// Stage 0's `EmitOwnedContinuationCall` for a post: the fold's value is retained when the post's
+// entry adopts reference-counted arguments and handed over under that flag; a reference-counted
+// result is adopted and an arena one normalized into a reference-counted copy, after which the
+// value the post was given is released, so the fold's slot holds one owned reference-counted
+// value before and after every post.
+let emitOwnedPostCall (copyOut: CallCopyOut) postClosureTemp currentResultTemp resultLocal resultType state =
+    match emitAcceptsRuntimeManagedFlag(postClosureTemp)(state) with
+        | (flagged, acceptsFlagTemp) ->
+            match emitConditionalArgumentRetain(currentResultTemp)(resultType)(acceptsFlagTemp)(flagged) with
+                | (retained, passedTemp) ->
+                    match emitReturnsRuntimeManagedFlag(postClosureTemp)(retained) with
+                        | (returnsFlagged, returnsFlagTemp) ->
+                            match freshLabel("posts_fold_copy_arena_result")(returnsFlagged) with
+                                | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                                    match freshLabel("posts_fold_owned_result")(copyLabelled) with
+                                        | FreshLabel { state = ownedLabelled, label = ownedLabel } ->
+                                            match freshTempRun(2)(ownedLabelled) with
+                                                | FreshTemp { state = callState, temp = nextResultTemp } ->
+                                                    callState
+                                                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(passedTemp)(acceptsFlagTemp))
+                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
+                                                    |> emit(JumpIfFalse(returnsFlagTemp)(copyLabel))
+                                                    |> emit(Jump(ownedLabel))
+                                                    |> emit(Label(copyLabel))
+                                                    |> emit(callCopyOutInstruction(copyOut)(nextResultTemp + 1)(nextResultTemp))
+                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp + 1))
+                                                    |> emit(Label(ownedLabel))
+                                                    |> emitArenaResultRelease(currentResultTemp)(resultType)
+
+let emitCapabilityPostCall postClosureTemp currentResultTemp resultLocal initialResultTemp resultType state =
+    match ownedPostsFoldCopyOut(initialResultTemp)(resultType)(state) with
+        | Some(copyOut) -> emitOwnedPostCall(copyOut)(postClosureTemp)(currentResultTemp)(resultLocal)(resultType)(state)
+        | None -> emitArenaPostCall(postClosureTemp)(currentResultTemp)(resultLocal)(state)
 
 // Folds every collected one-shot post continuation over the handle's current result, in
 // most-recently-collected-first order (the posts list is a stack, newest at the head — matching
@@ -27374,31 +28234,31 @@ and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal initialRes
                                                     let loadedResultState =
                                                         emit(LoadLocal(currentResultTemp)(resultLocal))(currentResultState)
                                                     in
-                                                        match freshTemp(loadedResultState) with
-                                                            | FreshTemp { state = callState, temp = nextResultTemp } ->
-                                                                let calledState =
-                                                                    callState
-                                                                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(-1))
-                                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
-                                                                in
-                                                                    match freshTemp(calledState) with
-                                                                        | FreshTemp { state = nextCellState, temp = nextCellTemp } ->
-                                                                            nextCellState
-                                                                            |> emit(LoadMemOffset(nextCellTemp)(cellTemp)(8))
-                                                                            |> emit(StoreLocal(cellLocal)(nextCellTemp))
-                                                                            |> emit(Jump(loopLabel))
-                                                                            |> emit(Label(doneLabel))
-                                                                            |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
-// The handle's value read back after the fold keeps the reference-counted fact of the value the
-// fold started from: only a non-tail `resume` collects a post, and this lowering rejects one, so
-// the value read back is the handled body's (or `return` arm's) own, owned exactly as it was.
+                                                        match loadedResultState
+                                                        |> emitCapabilityPostCall(postClosureTemp)(currentResultTemp)(resultLocal)(initialResultTemp)(resultType)
+                                                        |> freshTemp with
+                                                            | FreshTemp { state = nextCellState, temp = nextCellTemp } ->
+                                                                nextCellState
+                                                                |> emit(LoadMemOffset(nextCellTemp)(cellTemp)(8))
+                                                                |> emit(StoreLocal(cellLocal)(nextCellTemp))
+                                                                |> emitLivePostsAdjust(-1)
+                                                                |> emit(Jump(loopLabel))
+                                                                |> emit(Label(doneLabel))
+                                                                |> finishCapabilityPostsFold(resultLocal)(initialResultTemp)(resultType)
+// The handle's value read back after the fold is reference-counted exactly when the fold handed
+// it to the posts owned; a fold from any other value asks every post for an arena result.
 and finishCapabilityPostsFold resultLocal initialResultTemp resultType state =
     match freshTemp(state) with
         | FreshTemp { state = readState, temp = finalResultTemp } ->
-            readState
-            |> emit(LoadLocal(finalResultTemp)(resultLocal))
-            |> joinedCopyFact(initialResultTemp)(finalResultTemp)
-            |> success(finalResultTemp)(resultType)
+            let read =
+                emit(LoadLocal(finalResultTemp)(resultLocal))(readState)
+            in
+                match ownedPostsFoldCopyOut(initialResultTemp)(resultType)(read) with
+                    | Some(_copyOut) ->
+                        read
+                        |> markRuntimeTemp(finalResultTemp)(RuntimeNewlyProduced)
+                        |> success(finalResultTemp)(resultType)
+                    | None -> success(finalResultTemp)(resultType)(read)
 
 // The return arm binds the handled body's value as a `let` binding scoped over the arm, bracketed
 // and closed as a nested `let` is: a value the binding adopted as its owner is released when the
@@ -27594,7 +28454,9 @@ let loweredTailSelfCallArguments (state: CoreLoweringState) (reversedTemps: List
 // The request a tail self-call argument is lowered under: the loop function's parameter type,
 // the children transfer, and — for a parameter every self-call grows by one cons cell (stage 0's
 // `AffineConsList` request, `OwnedRuntime(List)`) — a runtime list, so the cell is allocated on
-// the reference-counted heap owning its head when the head is runtime-manageable.
+// the reference-counted heap owning its head when the head is runtime-manageable. A loop that may
+// run while a handler's one-shot post is pending keeps those cells in the arena with its parameter
+// (stage 0's `BuildsRuntimeCellsOutsideHandlerContext`).
 // A `Str` parameter placed by type takes a reference-counted successor only when the successor's
 // concatenation reads the parameter itself (`text + suffix`): stage 0 promotes a concatenation
 // its runtime-managed parameter reaches, so the back edge stores it as the parameter's own value;
@@ -27631,7 +28493,7 @@ let isReleasableAffineConsElement (parameterType: SemanticType) (state: CoreLowe
         | _ -> true
 
 let tailSelfCallArgumentRequest (parameterType: SemanticType) (site: CoreMismatchSite) (shape: TcoArgumentShape) (runtimeString: Bool) (tailSlot: Maybe(Int)) (copiesSuccessor: Bool) (argument: Expr) (state: CoreLoweringState) =
-    (let grownCons = shape == TcoGrownConsShape && isReleasableAffineConsElement(parameterType)(state)
+    (let grownCons = shape == TcoGrownConsShape && isReleasableAffineConsElement(parameterType)(state) && ordinaryRcPlacementAllowed(state)
     in
         withConsumerRequest((emptyConsumerRequest with expectedType = Some(parameterType), argumentSite = Some(site), transfersRuntimeManagedChildren = !copiesSuccessor, runtimeList = grownCons, runtimeString = runtimeString, runtimeTcoListTailSlot = (if grownCons
         then tailSlot
@@ -27940,7 +28802,16 @@ let flowOmittingInlineHeads (loop: CoreTcoLoop) (frame: CoreTcoLoopFrame) (state
             |> Some
         | (flow, _spine) -> flow
 
-let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+// The successors naming nothing that can hold a part of the predecessor's value on both paths,
+// given the frame's own-reference positions and its per-parameter cuts: through the names bound
+// from the value, or, for a value no name was bound to, through the parameters it was handed to as
+// a successor (`handedTo`).
+let unnamedSuccessorsWith (loop: CoreTcoLoop) (binders: List(Str)) (handedTo: Maybe(List(Int))) (flow: Maybe(List(List(Int)))) (ownReferences: List(Int)) (cuts: List(Bool)) (arguments: List(Expr)) =
+    match (binders, handedTo) with
+        | ([], Some(positions)) -> flowSuccessorsNamingNoHandedParameter(loop.parameterNames)(loop.callFlow)(flow)(positions)(ownReferences)(cuts)(arguments)
+        | _ -> flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(flow)(binders)(ownReferences)(cuts)(arguments)
+
+let predecessorUnnamedSuccessors (predecessorSlot: Int) (handedTo: Maybe(List(Int))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match stateTcoLoop(state) with
         | None -> ([], [])
         | Some(loop) ->
@@ -27953,9 +28824,11 @@ let predecessorUnnamedSuccessors (predecessorSlot: Int) (arguments: List(Expr)) 
                     |> stateConstructorLayouts
                     |> constructorNamesOf)(loop.body)
                 in
-                    (flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(flowOmittingInlineHeads(loop)(frame)(state))(binders)(ownReferences)(frame.parameterSlots
-                    |> length
-                    |> unmanagedFlags)(arguments), flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(flowOmittingInlineHeads(loop)(frame)(state))(binders)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+                    let flow = flowOmittingInlineHeads(loop)(frame)(state)
+                    in
+                        (unnamedSuccessorsWith(loop)(binders)(handedTo)(flow)(ownReferences)(frame.parameterSlots
+                        |> length
+                        |> unmanagedFlags)(arguments), unnamedSuccessorsWith(loop)(binders)(handedTo)(flow)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
 
 let recursive withoutStringParts (parts: List(SemanticType)) =
     match parts with
@@ -28082,11 +28955,71 @@ let predecessorOnlyHandedOn (predecessorSlot: Int) (predecessors: List((Int, Sem
                             |> slotsOtherThan(ownedSlots))(instructions)
             | _ -> false)
 
+let recursive slotOrdinal (slot: Int) (slots: List(Int)) (position: Int) =
+    match slots with
+        | [] -> -1
+        | candidate :: rest ->
+            if candidate == slot
+            then position
+            else slotOrdinal(slot)(rest)(position + 1)
+
+// The parameter positions a store hands one of the reads to as a successor.
+let recursive successorPositionsReading (reads: List(Int)) (parameterSlots: List(Int)) (instructions: List(IrInstruction)) (positions: List(Int)) =
+    match instructions with
+        | [] -> positions
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest ->
+            let position = slotOrdinal(slot)(parameterSlots)(0)
+            in
+                if position >= 0 && containsInt(source)(reads) && !containsInt(position)(positions)
+                then successorPositionsReading(reads)(parameterSlots)(rest)(position :: positions)
+                else successorPositionsReading(reads)(parameterSlots)(rest)(positions)
+        | _ :: rest -> successorPositionsReading(reads)(parameterSlots)(rest)(positions)
+
+// The positions of the back edge being lowered whose successor is one of the reads.
+let recursive temporaryPositionsReading (reads: List(Int)) (temps: List(Int)) (position: Int) (positions: List(Int)) =
+    match temps with
+        | [] -> positions
+        | temp :: rest ->
+            if containsInt(temp)(reads) && !containsInt(position)(positions)
+            then temporaryPositionsReading(reads)(rest)(position + 1)(position :: positions)
+            else temporaryPositionsReading(reads)(rest)(position + 1)(positions)
+
+// Stage 0's `UnnamedPredecessorParameterPositions`: the loop parameter positions the value an
+// earlier iteration left in a predecessor's slot, never bound to a name, was handed to as a
+// successor, when every other read of it is the argument of a call whose result is kept in an owned
+// slot. Those parameters are the only names that can hold it, or a part of it, without a reference
+// of their own.
+let unnamedPredecessorParameterPositions (predecessorSlot: Int) (predecessors: List((Int, SemanticType))) (ownedSlots: List((Int, SemanticType))) (temps: List(Int)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    (let owner =
+        state
+        |> stateGeneralRcPredecessorOwners
+        |> predecessorOwnerOf(stateActiveFunctionOrigin(state))(predecessorSlot)
+    in
+        match (owner < 0, predecessorBindersOf(predecessorSlot)(state)) with
+            | (false, []) ->
+                let instructions = state.reversedInstructions
+                in
+                    let reads = slotReadTemps(owner)(instructions)
+                    in
+                        match handedOnCallTargets(reads)(append(predecessorsOfOwner(owner)(predecessors)(state))(frame.parameterSlots))(instructions)([]) with
+                            | None -> None
+                            | Some(targets) ->
+                                if allStoredIntoOwnedSlots(targets)(predecessors
+                                |> slotNumbersOf
+                                |> slotsOtherThan(ownedSlots))(instructions)
+                                then
+                                    []
+                                    |> successorPositionsReading(reads)(frame.parameterSlots)(instructions)
+                                    |> temporaryPositionsReading(reads)(temps)(0)
+                                    |> Some
+                                else None
+            | _ -> None)
+
 let recursive predecessorDropsWith (all: List((Int, SemanticType))) (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match predecessors with
         | [] -> []
         | (slot, semanticType) :: rest ->
-            match predecessorUnnamedSuccessors(slot)(arguments)(frame)(state) with
+            match predecessorUnnamedSuccessors(slot)(unnamedPredecessorParameterPositions(slot)(all)(ownedSlots)(temps)(frame)(state))(arguments)(frame)(state) with
                 | (unnamedPlain, unnamedNormalized) ->
                     (slot, semanticType, if predecessorOnlyHandedOn(slot)(all)(ownedSlots)(state)
                     then []
@@ -31381,6 +32314,266 @@ let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState
     |> withStateReachByIdentity(reachSummariesByIdentity(summaries)(Ashes.Collection.Map.empty))
     |> withStateReachByName(reachSummariesByName(summaries)(Ashes.Collection.Map.empty))
 
+// Stage 0's live-handler effects (`ComputeLiveHandlerEffects`): what one function's body tells the
+// analysis. The functions it calls by name, the functions it names as values (which may escape
+// and be called anywhere), whether it installs a handler, and whether it calls a local value,
+// a callee the analysis cannot name.
+type HandlerEffectScan =
+    | callees: List(Str)
+    | references: List(Str)
+    | containsHandle: Bool
+    | dynamicCall: Bool
+
+let emptyHandlerEffectScan = HandlerEffectScan(callees = [], references = [], containsHandle = false, dynamicCall = false)
+
+let isLambdaValue (value: Expr) =
+    match unspanArgument(value) with
+        | ExprLambda(_, _, _) -> true
+        | _ -> false
+
+let bindsLetValue (parameters: List(Str)) (value: Expr) =
+    match parameters with
+        | [] -> isLambdaValue(value) == false
+        | _ -> false
+
+let isProgramFunction (functions: MapTree(Str, Bool)) (name: Str) =
+    match Ashes.Collection.Map.getStr(name)(functions) with
+        | Some(_) -> true
+        | None -> false
+
+let recursive scanHandlerEffects (functions: MapTree(Str, Bool)) (locals: List(Str)) (expression: Expr) (scan: HandlerEffectScan) =
+    match expression with
+        | ExprAt(_span, inner) -> scanHandlerEffects(functions)(locals)(inner)(scan)
+        | ExprVar(name) ->
+            if isProgramFunction(functions)(name)
+            then scan with references = name :: scan.references
+            else scan
+        | ExprCall(function, argument, _isSugar, _layout) ->
+            scan
+            |> scanHandlerEffectCallee(functions)(locals)(function)
+            |> scanHandlerEffects(functions)(locals)(argument)
+        | ExprLambda(parameter, body, _annotation) -> scanHandlerEffects(functions)(parameter :: locals)(body)(scan)
+        | ExprLet(name, value, body, parameters, _annotation, _traits) ->
+            scanHandlerEffectLet(functions)(locals)(name)(value)(body)(bindsLetValue(parameters)(value))(scan)
+        | ExprLetRecursive(name, value, body, parameters, _annotation, _traits) ->
+            scanHandlerEffectLet(functions)(locals)(name)(value)(body)(bindsLetValue(parameters)(value))(scan)
+        | ExprLetResult(name, value, body) -> scanHandlerEffectLet(functions)(locals)(name)(value)(body)(true)(scan)
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(condition)
+            |> scanHandlerEffects(functions)(locals)(thenBranch)
+            |> scanHandlerEffects(functions)(locals)(elseBranch)
+        | ExprMatch(scrutinee, arms, _defaultArm) ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(scrutinee)
+            |> scanHandlerEffectArms(functions)(locals)(arms)
+        | ExprHandle(body, arms) ->
+            (scan with containsHandle = true)
+            |> scanHandlerEffects(functions)(locals)(body)
+            |> scanHandlerEffectOperationArms(functions)(locals)(arms)
+        | ExprTuple(elements) -> scanHandlerEffectList(functions)(locals)(elements)(scan)
+        | ExprList(elements, _isMultiline) -> scanHandlerEffectList(functions)(locals)(elements)(scan)
+        | ExprCons(head, tail) -> scanHandlerEffectList(functions)(locals)([head, tail])(scan)
+        | ExprRecord(_constructor, fields, _isMultiline) -> scanHandlerEffectFields(functions)(locals)(fields)(scan)
+        | ExprRecordUpdate(record, fields) ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(record)
+            |> scanHandlerEffectFields(functions)(locals)(fields)
+        | ExprAdd(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprSubtract(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprMultiply(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprDivide(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprModulo(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseAnd(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseOr(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseXor(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprShiftLeft(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprShiftRight(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLogicalAnd(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLogicalOr(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprGreaterThan(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLessThan(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprGreaterOrEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprLessOrEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprNotEqual(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprResultPipe(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprResultMapErrorPipe(left, right) -> scanHandlerEffectList(functions)(locals)([left, right])(scan)
+        | ExprBitwiseNot(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | ExprLogicalNot(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | ExprAwait(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | ExprPerform(operand) -> scanHandlerEffects(functions)(locals)(operand)(scan)
+        | _ -> scan
+// The callee position of a call spine: a program function named there is a call, not an escape,
+// and a local value named there is a call the analysis cannot follow.
+and scanHandlerEffectCallee (functions: MapTree(Str, Bool)) (locals: List(Str)) (callee: Expr) (scan: HandlerEffectScan) =
+    match unspanArgument(callee) with
+        | ExprCall(function, argument, _isSugar, _layout) ->
+            scan
+            |> scanHandlerEffectCallee(functions)(locals)(function)
+            |> scanHandlerEffects(functions)(locals)(argument)
+        | ExprVar(name) ->
+            if containsName(name)(locals)
+            then scan with dynamicCall = true
+            else
+                if isProgramFunction(functions)(name)
+                then scan with callees = name :: scan.callees
+                else scan
+        | other -> scanHandlerEffects(functions)(locals)(other)(scan)
+and scanHandlerEffectLet (functions: MapTree(Str, Bool)) (locals: List(Str)) (name: Str) (value: Expr) (body: Expr) (bindsValue: Bool) (scan: HandlerEffectScan) =
+    (let bodyLocals =
+        if bindsValue
+        then name :: locals
+        else locals
+    in
+        scan
+        |> scanHandlerEffects(functions)(locals)(value)
+        |> scanHandlerEffects(functions)(bodyLocals)(body))
+and scanHandlerEffectList (functions: MapTree(Str, Bool)) (locals: List(Str)) (expressions: List(Expr)) (scan: HandlerEffectScan) =
+    match expressions with
+        | [] -> scan
+        | expression :: rest ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(expression)
+            |> scanHandlerEffectList(functions)(locals)(rest)
+and scanHandlerEffectFields (functions: MapTree(Str, Bool)) (locals: List(Str)) (fields: List((Str, Expr))) (scan: HandlerEffectScan) =
+    match fields with
+        | [] -> scan
+        | (_field, value) :: rest ->
+            scan
+            |> scanHandlerEffects(functions)(locals)(value)
+            |> scanHandlerEffectFields(functions)(locals)(rest)
+and scanHandlerEffectArms (functions: MapTree(Str, Bool)) (locals: List(Str)) (arms: List((Pattern, Expr, Maybe(Expr)))) (scan: HandlerEffectScan) =
+    match arms with
+        | [] -> scan
+        | (pattern, body, guard) :: rest ->
+            let armLocals = patternBoundNames(pattern)(locals)
+            in
+                let guarded =
+                    match guard with
+                        | Some(condition) -> scanHandlerEffects(functions)(armLocals)(condition)(scan)
+                        | None -> scan
+                in
+                    guarded
+                    |> scanHandlerEffects(functions)(armLocals)(body)
+                    |> scanHandlerEffectArms(functions)(locals)(rest)
+and scanHandlerEffectOperationArms (functions: MapTree(Str, Bool)) (locals: List(Str)) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (scan: HandlerEffectScan) =
+    match arms with
+        | [] -> scan
+        | (_capability, _operation, patterns, body) :: rest ->
+            scan
+            |> scanHandlerEffects(functions)(patternsBoundNames(patterns)(locals))(body)
+            |> scanHandlerEffectOperationArms(functions)(locals)(rest)
+
+let recursive programFunctionSet (table: List((Str, List(Str), Expr))) (functions: MapTree(Str, Bool)) =
+    match table with
+        | [] -> functions
+        | (_name, [], _body) :: rest -> programFunctionSet(rest)(functions)
+        | (name, _parameters, _body) :: rest ->
+            functions
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> programFunctionSet(rest)
+
+// Each function's scan, and the entry scope's: the trailing expression and every parameterless
+// top-level binding's right-hand side, which stage 0 counts as one scope.
+let recursive scanProgramHandlerEffects (functions: MapTree(Str, Bool)) (table: List((Str, List(Str), Expr))) (entry: HandlerEffectScan) (scans: List((Str, HandlerEffectScan))) =
+    match table with
+        | [] -> (entry, scans)
+        | (_name, [], body) :: rest ->
+            scanProgramHandlerEffects(functions)(rest)(scanHandlerEffects(functions)([])(body)(entry))(scans)
+        | (name, parameters, body) :: rest -> scanProgramHandlerEffects(functions)(rest)(entry)((name, scanHandlerEffects(functions)(parameters)(body)(emptyHandlerEffectScan)) :: scans)
+
+let recursive addLiveFunctions (names: List(Str)) (live: MapTree(Str, Bool)) (changed: Bool) =
+    match names with
+        | [] -> (live, changed)
+        | name :: rest ->
+            if isProgramFunction(live)(name)
+            then addLiveFunctions(rest)(live)(changed)
+            else
+                addLiveFunctions(rest)(Ashes.Collection.Map.setStr(name)(true)(live))(true)
+
+let recursive seedLiveFunctions (scans: List((Str, HandlerEffectScan))) (live: MapTree(Str, Bool)) =
+    match scans with
+        | [] -> live
+        | (name, scan) :: rest ->
+            if scan.containsHandle
+            then
+                live
+                |> Ashes.Collection.Map.setStr(name)(true)
+                |> seedLiveFunctions(rest)
+            else seedLiveFunctions(rest)(live)
+
+let recursive anyInstallsHandler (scans: List((Str, HandlerEffectScan))) =
+    match scans with
+        | [] -> false
+        | (_name, scan) :: rest -> scan.containsHandle || anyInstallsHandler(rest)
+
+let recursive escapedFunctions (scans: List((Str, HandlerEffectScan))) (escaped: List(Str)) =
+    match scans with
+        | [] -> escaped
+        | (_name, scan) :: rest ->
+            escaped
+            |> append(scan.references)
+            |> escapedFunctions(rest)
+
+// One pass of `PropagateLiveHandlerEffects`: every live function's callees, and every escaped
+// function when it calls a value the analysis cannot name.
+let recursive propagateLiveFunctions (scans: List((Str, HandlerEffectScan))) (escaped: List(Str)) (live: MapTree(Str, Bool)) (changed: Bool) =
+    match scans with
+        | [] -> (live, changed)
+        | (name, scan) :: rest ->
+            if isProgramFunction(live)(name)
+            then
+                match addLiveFunctions(scan.callees)(live)(changed) with
+                    | (withCallees, calleesChanged) ->
+                        if scan.dynamicCall
+                        then
+                            match addLiveFunctions(escaped)(withCallees)(calleesChanged) with
+                                | (withEscaped, escapedChanged) -> propagateLiveFunctions(rest)(escaped)(withEscaped)(escapedChanged)
+                        else propagateLiveFunctions(rest)(escaped)(withCallees)(calleesChanged)
+            else propagateLiveFunctions(rest)(escaped)(live)(changed)
+
+let recursive liveFunctionsFixpoint (scans: List((Str, HandlerEffectScan))) (escaped: List(Str)) (live: MapTree(Str, Bool)) =
+    match propagateLiveFunctions(scans)(escaped)(live)(false) with
+        | (next, true) -> liveFunctionsFixpoint(scans)(escaped)(next)
+        | (next, false) -> next
+
+let entryHandlerEffectScan (functions: MapTree(Str, Bool)) (body: Maybe(Expr)) =
+    match body with
+        | Some(expression) -> scanHandlerEffects(functions)([])(expression)(emptyHandlerEffectScan)
+        | None -> emptyHandlerEffectScan
+
+// The functions the entry scope makes live when it installs a handler itself: its callees, and
+// every escaped function when it calls a value the analysis cannot name.
+let entryLiveFunctions (entry: HandlerEffectScan) (escaped: List(Str)) (live: MapTree(Str, Bool)) =
+    if entry.containsHandle
+    then
+        match addLiveFunctions(entry.callees)(live)(false) with
+            | (withCallees, _changed) ->
+                if entry.dynamicCall
+                then
+                    match addLiveFunctions(escaped)(withCallees)(false) with
+                        | (withEscaped, _escapedChanged) -> withEscaped
+                else withCallees
+    else live
+
+// Stage 0's `ComputeLiveHandlerEffects`: the top-level functions that may run while a one-shot
+// handler's post is pending, the least fixpoint from every function installing a handler through
+// its callees, and whether the entry scope installs one. A function nested in a top-level one is
+// counted as part of it.
+let programLiveHandlerFunctions (table: List((Str, List(Str), Expr))) (body: Maybe(Expr)) =
+    (let functions = programFunctionSet(table)(Ashes.Collection.Map.empty)
+    in
+        match scanProgramHandlerEffects(functions)(table)(entryHandlerEffectScan(functions)(body))([]) with
+            | (entry, scans) ->
+                let escaped = escapedFunctions(scans)(entry.references)
+                in
+                    Ashes.Collection.Map.empty
+                    |> seedLiveFunctions(scans)
+                    |> entryLiveFunctions(entry)(escaped)
+                    |> liveFunctionsFixpoint(scans)(escaped)
+                    |> (given (live) -> (live, entry.containsHandle, entry.containsHandle || anyInstallsHandler(scans))))
+
 let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
     (let functionTable = topLevelFunctions(program)
     in
@@ -31388,6 +32581,9 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> withStateProgramParameterOwnership(inferProgramParameterOwnership(functionTable))
         |> withStateMoveFunctionTable(functionTable)
         |> withStateMoveCallSites(collectAllCallSites(functionTable)(program.body))
+        |> withStateLiveHandlerFunctions(programLiveHandlerFunctions(functionTable)(program.body))
+        |> (given (seeded: CoreLoweringState) ->
+            withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))
         |> withReachSummaries(programReachSummaries(program)))
 

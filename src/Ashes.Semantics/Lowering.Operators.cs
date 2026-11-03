@@ -269,6 +269,14 @@ public sealed partial class Lowering
             {
                 MarkRuntimeManagedTemp(target);
             }
+
+            // Both paths copy the appended bytes, so a newly produced right operand (a perform's
+            // result normalized onto the heap) is dead once the append completes.
+            if (rightTemp != leftTemp && Environment.GetEnvironmentVariable("GRC_NO_TIPRIGHTRELEASE") is null)
+            {
+                ReleaseConsumedOwnedOperand(rightTemp);
+            }
+
             return (target, new TypeRef.TStr());
         }
 
@@ -303,8 +311,9 @@ public sealed partial class Lowering
     ///
     /// The operand's fact becomes <see cref="LoweredTempOwnershipKind.Transferred"/> so a later
     /// consumer of the same temp cannot release it a second time. The affine
-    /// <see cref="IrInst.ConcatStrTip"/> path above needs none of this: it extends its accumulator in
-    /// place and its own fallback already releases the reference it replaces.
+    /// <see cref="IrInst.ConcatStrTip"/> path above releases only its right operand this way: it
+    /// extends its accumulator in place and its own fallback already releases the reference it
+    /// replaces.
     /// </remarks>
     private void ReleaseConsumedOwnedOperand(int operandTemp, string typeName = "String")
     {

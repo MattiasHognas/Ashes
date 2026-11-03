@@ -1363,8 +1363,15 @@ public sealed partial class Lowering
     // The temps holding a generic callee's list result after LowerCallDeepCopyOutListResult copied it
     // into fresh runtime-managed cells (or a placeholder that may yet resolve to that copy): the one
     // class of consumed call argument that was arena-placed and never released before that copy
-    // existed. Per function: temp numbers restart with each LowerLambdaCoreResetFrame.
-    private readonly HashSet<int> _genericDeepCopiedListTemps = [];
+    // existed. Per function: temp numbers restart with each LowerLambdaCoreResetFrame, and a lambda
+    // lowered inside the function keeps its own set rather than clearing the enclosing one.
+    private readonly Dictionary<object, HashSet<int>> _genericDeepCopiedListTempsByFunction =
+        new(ReferenceEqualityComparer.Instance);
+
+    private readonly HashSet<int> _sharedGenericDeepCopiedListTemps = [];
+
+    private HashSet<int> GenericDeepCopiedListTemps
+        => PatternOwnerDuplicatesPerFunction ? PatternOwnerDuplicateSet(_genericDeepCopiedListTempsByFunction) : _sharedGenericDeepCopiedListTemps;
     private int _nextCallResultCopyOutId;
 
     // Set while lowering the tail-call argument of an affine string accumulator (its own param
@@ -1519,11 +1526,16 @@ public sealed partial class Lowering
 
         int resetCursorSlot = info.FixedCursorSlot >= 0 ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = info.FixedEndSlot >= 0 ? info.FixedEndSlot : info.ArenaEndSlot;
+
+        // The reset and its reclaim are skipped while a one-shot post is pending; the successors
+        // are reference-counted, so their stores in between run either way.
+        string? resetSkipLabel = RuntimeManagedTcoResetPostGuardEnabled ? BeginLivePostsGuard() : null;
         TcoBackEdgeEmitResetAndZeroReservations(
             info,
             resetCursorSlot,
             resetEndSlot,
             tcoPreRestoreEndSlot);
+        EndLivePostsGuard(resetSkipLabel);
         for (int i = 0; i < normalizedTemps.Length; i++)
         {
             if (normalizedTemps[i] >= 0)
@@ -1543,9 +1555,15 @@ public sealed partial class Lowering
                 }
             }
         }
+
+        string? reclaimSkipLabel = RuntimeManagedTcoResetPostGuardEnabled ? BeginLivePostsGuard() : null;
         Emit(new IrInst.ReclaimArenaChunks(resetEndSlot, tcoPreRestoreEndSlot));
+        EndLivePostsGuard(reclaimSkipLabel);
         return true;
     }
+
+    private static bool RuntimeManagedTcoResetPostGuardEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_RCTCORESETGUARD") is null;
 
     private int[] TcoBackEdgeNormalizeAndReleaseRuntimeManagedArgs(PendingTcoReset info)
     {
@@ -2026,7 +2044,9 @@ public sealed partial class Lowering
         else if (argType is TypeRef.TTuple tuple
             && !tuple.Elements.All(element => CanArenaReset(Prune(element))))
         {
-            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
+            return ArenaTupleLiteralSuccessor(sourceTemp, tuple, sourceExpression) is { } literal
+                ? EmitRuntimeManagedTcoTupleSuccessorCopy(sourceTemp, tuple, literal)
+                : EmitRuntimeManagedTcoDeepCopy(sourceTemp, tuple);
         }
         else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
         {
@@ -2044,6 +2064,79 @@ public sealed partial class Lowering
 
         MarkRuntimeManagedTemp(normalizedTemp);
         return normalizedTemp;
+    }
+
+    /// <summary>
+    /// Copies a tuple literal successor built in the arena, then releases the references its
+    /// nested arena literals were built with. The tuple's own elements are only borrowed by a
+    /// copied successor, but a literal stored in it (a cons, a record, a record update) retained
+    /// what it stored, and the arena reclaims that cell right after the copy took references of
+    /// its own. An element that is not an arena literal of this function is left alone.
+    /// </summary>
+    private int EmitRuntimeManagedTcoTupleSuccessorCopy(int sourceTemp, TypeRef.TTuple tuple, Expr.TupleLit literal)
+    {
+        int copiedTemp = EmitRuntimeManagedTcoDeepCopyByCopy(sourceTemp, tuple, releaseAdtSourceChildren: false, sourceExpression: null);
+        bool saved = _sourceChildReleaseNeedsRetain;
+        _sourceChildReleaseNeedsRetain = true;
+        for (int index = 0; index < tuple.Elements.Count; index++)
+        {
+            Expr element = literal.Elements[index];
+            if (CanArenaReset(Prune(tuple.Elements[index]))
+                || !(IsFreshAggregateLiteral(element) || element is Expr.RecordUpdate)
+                || ConstructionWordSource(sourceTemp, index * 8) is not int stored
+                || !IsArenaCellConstruction(stored))
+            {
+                continue;
+            }
+
+            int elementTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(elementTemp, sourceTemp, index * 8));
+            EmitRuntimeManagedTcoSourceChildRelease(elementTemp, tuple.Elements[index], element, stored);
+        }
+
+        _sourceChildReleaseNeedsRetain = saved;
+        return copiedTemp;
+    }
+
+    // The tuple literal a successor is written as, when this function built it in the arena.
+    private Expr.TupleLit? ArenaTupleLiteralSuccessor(int sourceTemp, TypeRef.TTuple tuple, Expr? sourceExpression)
+        => sourceExpression is Expr.TupleLit literal
+            && literal.Elements.Count == tuple.Elements.Count
+            && Environment.GetEnvironmentVariable("GRC_NO_TUPLESUCCESSORLITERALS") is null
+            && IsArenaCellConstruction(sourceTemp)
+                ? literal
+                : null;
+
+    // Set while a tuple successor's nested literals are released: a child is released only where
+    // the construction made a real retain of it, since a pattern owner stored in a literal of a
+    // copied successor is only borrowed by the cell.
+    private bool _sourceChildReleaseNeedsRetain;
+
+    // True when temp is a runtime retain the construction made.
+    private bool IsDefinedByRealizedRetain(int temp)
+    {
+        int index = FindLastInstruction(instruction => instruction switch
+        {
+            IrInst.RcDup duplicate => duplicate.Target == temp,
+            IrInst.Borrow borrow => borrow.Target == temp,
+            IrInst.LoadLocal load => load.Target == temp,
+            IrInst.GetAdtField field => field.Target == temp,
+            IrInst.LoadMemOffset load => load.Target == temp,
+            _ => false,
+        });
+        return index >= 0 && _inst[index] is IrInst.RcDup { RuntimeManaged: true };
+    }
+
+    // True when temp is a cell this function allocated in the arena.
+    private bool IsArenaCellConstruction(int temp)
+    {
+        int index = FindLastInstruction(instruction => instruction switch
+        {
+            IrInst.Alloc allocation => allocation.Target == temp,
+            IrInst.AllocAdt allocation => allocation.Target == temp,
+            _ => false,
+        });
+        return index >= 0 && _inst[index] is IrInst.Alloc { RuntimeManaged: false } or IrInst.AllocAdt { RuntimeManaged: false };
     }
 
     private int TcoBackEdgeRetainRuntimeManagedArg(
@@ -2636,6 +2729,11 @@ public sealed partial class Lowering
 
         if (sourceExpression is Expr.RecordUpdate update
             && TryEmitRuntimeManagedTcoRecordUpdateChildrenRelease(childTemp, childType, update, storedTemp))
+        {
+            return;
+        }
+
+        if (_sourceChildReleaseNeedsRetain && !(storedTemp is int retained && IsDefinedByRealizedRetain(retained)))
         {
             return;
         }
@@ -4083,7 +4181,7 @@ public sealed partial class Lowering
         bool runtimeManagedBigInt = placementAllowsRuntimeRc && IsRuntimeRcBigIntProducer(body);
         bool runtimeManagedTuple = placementAllowsRuntimeRc && ProducesFreshTuple(body);
         bool runtimeManagedRecord = placementAllowsRuntimeRc && ProducesFreshRuntimeManageableRecord(body);
-        bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body);
+        bool runtimeManagedClosure = placementAllowsRuntimeRc && IsRuntimeRcCopyClosureProducer(body, escapes: true);
         runtimeManagedClosure &= _lambdaDepth == 0 || ClosureCapturesRuntimeManagedHeapValue(body);
         if (!runtimeManagedString && !runtimeManagedAdt && !runtimeManagedList
             && !runtimeManagedBytes && !runtimeManagedBigInt
@@ -4922,7 +5020,7 @@ public sealed partial class Lowering
         if (_collectInferredTraitElaboration
             || !AllowsAsyncIndependentRcPlacement
             || !AllowsOrdinaryRcPlacement
-            || !IsRuntimeRcCopyClosureProducer(let.Value))
+            || !IsRuntimeRcCopyClosureProducer(let.Value, escapes: IsDirectBindingResult(let.Body, let.Name)))
         {
             lowered = default;
             return false;
@@ -4946,13 +5044,13 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool IsRuntimeRcCopyClosureProducer(Expr expression)
+    private bool IsRuntimeRcCopyClosureProducer(Expr expression, bool escapes = false)
     {
         return expression switch
         {
-            Expr.Lambda lambda => LambdaCapturesOnlyBorrowSafeValues(lambda),
-            Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then)
-                && IsRuntimeRcCopyClosureProducer(conditional.Else),
+            Expr.Lambda lambda => LambdaCapturesOnlyBorrowSafeValues(lambda, escapes),
+            Expr.If conditional => IsRuntimeRcCopyClosureProducer(conditional.Then, escapes)
+                && IsRuntimeRcCopyClosureProducer(conditional.Else, escapes),
             _ => false,
         };
     }
@@ -4963,6 +5061,11 @@ public sealed partial class Lowering
     // the closure's last reference goes; the aggregate storing the closure releases it as a child.
     private bool IsRuntimeRcOwningClosureExpression(Expr expression)
     {
+        if (ClosureOwnsEscapingCaptures(expression))
+        {
+            return true;
+        }
+
         if (expression is Expr.If conditional)
         {
             return IsRuntimeRcOwningClosureExpression(conditional.Then)
@@ -4994,6 +5097,14 @@ public sealed partial class Lowering
 
         return ownsNormalizedParameter;
     }
+
+    // A closure stored into a reference-counted aggregate that captures reference-counted `let` owners:
+    // the aggregate outlives the owners' scope, so the closure is reference-counted and its
+    // environment takes the owners over, as a closure escaping on its own does.
+    private bool ClosureOwnsEscapingCaptures(Expr expression)
+        => EscapingClosureOwnsCapturesEnabled
+            && ClosureCapturesRuntimeManagedHeapValue(expression)
+            && IsRuntimeRcCopyClosureProducer(expression, escapes: true);
 
     private bool ClosureCapturesRuntimeManagedHeapValue(Expr expression)
     {
@@ -5058,11 +5169,16 @@ public sealed partial class Lowering
         return true;
     }
 
-    private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda)
+    // A closure that escapes the scope of a reference-counted owner it captures (the result of its
+    // function or let chain, or a post an operation arm stores) is made reference-counted so its
+    // environment takes the owner over, whatever its body returns: an arena closure would keep a
+    // borrow the owner's release frees before the closure runs.
+    private bool LambdaCapturesOnlyBorrowSafeValues(Expr.Lambda lambda, bool escapes = false)
     {
         HashSet<string> bound = new(StringComparer.Ordinal) { lambda.ParamName };
         HashSet<string> free = FreeVars(lambda.Body, bound);
         bool capturesOwnedValue = false;
+        bool capturesOnlyRuntimeManagedOwners = true;
         foreach (string name in free)
         {
             OwnershipInfo? owned = LookupOwnedValue(name);
@@ -5088,9 +5204,133 @@ public sealed partial class Lowering
                 return false;
             }
             capturesOwnedValue = true;
+            capturesOnlyRuntimeManagedOwners &= owned.RuntimeManaged
+                || owned.Type is { } ownedType && CanRuntimeNormalizeClosureCapture(ownedType);
         }
 
-        return !capturesOwnedValue || IsKnownCopyClosureResult(lambda.Body);
+        return !capturesOwnedValue
+            || IsKnownCopyClosureResult(lambda.Body)
+            || escapes && capturesOnlyRuntimeManagedOwners && EscapingClosureOwnsCapturesEnabled;
+    }
+
+    private static bool EscapingClosureOwnsCapturesEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCLOSUREOWNS") is null;
+
+    // An arena-owned capture of a reference-counted closure: the arena it lives in is reclaimed
+    // before the closure runs, so the environment holds a reference-counted copy its dropper
+    // releases. Null for a capture the closure borrows or takes over as it is.
+    private int NormalizeArenaCapture(Expr.Lambda lambda, string capture, int captureTemp, LoweredValueRequest request)
+    {
+        if (TakesOverMovedCapture(capture, request) && LookupOwnedValue(capture) is { } movedOwner)
+        {
+            // The owner stays live while this closure's body lowers, so the body borrows it as
+            // the first closure's did; the capture classification moves it again afterwards.
+            movedOwner.ReleaseKind = ResourceReleaseKind.None;
+            int retainedTemp = NewTemp();
+            Emit(new IrInst.RcDup(retainedTemp, captureTemp, RuntimeManaged: true));
+            return retainedTemp;
+        }
+
+        if (NormalizedArenaCaptureType(capture, request) is { } arenaCaptureType)
+        {
+            return EmitRuntimeManagedTcoDeepCopy(captureTemp, arenaCaptureType);
+        }
+
+        return _arenaElementClosures.Contains(lambda)
+            && !request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            && LookupOwnedValue(capture) is { RuntimeManaged: true, Type: { } ownedType }
+                ? EmitDeepCopy(captureTemp, Prune(ownedType))
+                : captureTemp;
+    }
+
+    // An owner an earlier reference-counted closure already took over: this closure's dropper
+    // releases its capture too, so its environment holds a reference of its own.
+    private bool TakesOverMovedCapture(string capture, LoweredValueRequest request)
+        => EscapingClosureOwnsCapturesEnabled
+            && request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            && LookupOwnedValue(capture) is { RuntimeManaged: true, CapturedByClosure: true, ReleaseKind: ResourceReleaseKind.Moved, IsResource: false, IsResourceBearing: false };
+
+    // Closures stored into an arena aggregate that escapes the scope of a reference-counted `let`
+    // owner they capture. The arena aggregate cannot release a reference-counted closure, so each
+    // such closure stays in the arena and its environment holds an arena copy of the owner, which
+    // lives as long as the aggregate does.
+    private readonly HashSet<Expr.Lambda> _arenaElementClosures = new(ReferenceEqualityComparer.Instance);
+
+    private LoweredValue LowerArenaAggregateElement(Expr element, LoweredValueRequest request, bool escapingArenaParent)
+    {
+        List<Expr.Lambda> closures = [];
+        if (escapingArenaParent)
+        {
+            CollectArenaElementClosures(element, closures);
+        }
+
+        // A tuple holding such a closure stays in the arena with its parent: a reference-counted
+        // tuple there would be released by nothing.
+        if (closures.Count > 0 && element is Expr.TupleLit)
+        {
+            request = request with
+            {
+                RuntimeRepresentation = request.RuntimeRepresentation & ~LoweredValueRuntimeRepresentation.Tuple,
+            };
+        }
+
+        foreach (Expr.Lambda closure in closures)
+        {
+            _arenaElementClosures.Add(closure);
+        }
+
+        try
+        {
+            return LowerExpr(element, request);
+        }
+        finally
+        {
+            foreach (Expr.Lambda closure in closures)
+            {
+                _arenaElementClosures.Remove(closure);
+            }
+        }
+    }
+
+    private void CollectArenaElementClosures(Expr element, List<Expr.Lambda> closures)
+    {
+        if (element is Expr.TupleLit tuple)
+        {
+            foreach (Expr child in tuple.Elements)
+            {
+                CollectArenaElementClosures(child, closures);
+            }
+        }
+        else if (ClosureOwnsEscapingCaptures(element))
+        {
+            CollectTerminalLambdas(element, closures);
+        }
+    }
+
+    private static void CollectTerminalLambdas(Expr expression, List<Expr.Lambda> lambdas)
+    {
+        if (expression is Expr.If conditional)
+        {
+            CollectTerminalLambdas(conditional.Then, lambdas);
+            CollectTerminalLambdas(conditional.Else, lambdas);
+        }
+        else if (expression is Expr.Lambda lambda)
+        {
+            lambdas.Add(lambda);
+        }
+    }
+
+    private TypeRef? NormalizedArenaCaptureType(string capture, LoweredValueRequest request)
+    {
+        if (!EscapingClosureOwnsCapturesEnabled
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            || LookupOwnedValue(capture) is not { RuntimeManaged: false, IsResource: false, IsResourceBearing: false, Type: { } type })
+        {
+            return null;
+        }
+
+        TypeRef captureType = Prune(type);
+        return !CanArenaReset(captureType) && CanRuntimeNormalizeClosureCapture(captureType) ? captureType : null;
     }
 
     private bool IsKnownCopyClosureResult(Expr expression)
@@ -7018,6 +7258,7 @@ public sealed partial class Lowering
         request = WithReconcilableFreshStringJoinRequest(iff, request);
         bool normalizeStaticStringBranches = ShouldNormalizeStaticStringIfBranches(iff, request);
 
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>? releaseKindsAtIf = SnapshotForClosureBranches(request);
         int slot = NewLocal();
         EnterGeneralRcBranch(endLabel, 0);
         var (tTemp, thenType) = LowerIfBranchIntoSlot(iff.Then, iff.Else, request, null, normalizeStaticStringBranches, slot, out IrInst.StoreLocal thenStore);
@@ -7028,11 +7269,13 @@ public sealed partial class Lowering
 
         _reuseTokens.Clear();
         _reuseTokens.AddRange(reuseTokensAtIf);
+        ClosureBranchMoves? closureMoves = UndoClosureMovesForElse(releaseKindsAtIf, _inst.Count - 2);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         EnterGeneralRcBranch(endLabel, 1);
         var (eTemp, elseType) = LowerIfBranchIntoSlot(iff.Else, iff.Then, request, thenType, normalizeStaticStringBranches, slot, out IrInst.StoreLocal elseStore);
         LeaveGeneralRcBranch();
+        SettleClosureBranchMoves(closureMoves, endLabel);
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();
@@ -8521,7 +8764,7 @@ public sealed partial class Lowering
                         }
                         changed |= aliases.Add(duplicate.Target);
                         break;
-                    case IrInst.RcDrop { RuntimeManaged: false } release when _releasedPatternOwnerDuplicates.Contains(release.SourceTemp) && aliases.Contains(release.SourceTemp):
+                    case IrInst.RcDrop { RuntimeManaged: false } release when ReleasedPatternOwnerDuplicates.Contains(release.SourceTemp) && aliases.Contains(release.SourceTemp):
                         _inst[i] = release with { RuntimeManaged = true, MayBeEmpty = mayBeEmpty, StructuralDropperLabel = structuralDropperLabel };
                         break;
                     case IrInst.RcDrop drop when drop.OwnerSlot == site.LocalSlot:
@@ -9196,6 +9439,7 @@ public sealed partial class Lowering
         }
 
         var (envPtrTemp, captureAllocIndex, captureFillRanges) = LowerLambdaCoreBuildEnvAllocation(
+            lam,
             captures,
             recursiveGroup,
             stackAllocateClosure,
@@ -9247,6 +9491,7 @@ public sealed partial class Lowering
     }
 
     private (int EnvPtrTemp, int CaptureAllocIndex, List<CaptureFillRange>? CaptureFillRanges) LowerLambdaCoreBuildEnvAllocation(
+        Expr.Lambda lam,
         IReadOnlyList<string> captures,
         RecursiveGroupContext? recursiveGroup,
         bool stackAllocateClosure,
@@ -9303,7 +9548,7 @@ public sealed partial class Lowering
                     _suppressTraitConstraintCollection = wasSuppressingTraitConstraints;
                 }
                 // store capTemp into [envPtr + i*8]
-                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capture.capTemp));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, NormalizeArenaCapture(lam, captures[i], capture.capTemp, request)));
                 // Constrain types: the captured binding type should match capTy; already does.
                 fillRanges.Add(new CaptureFillRange(rangeStart, _inst.Count));
             }
@@ -9486,7 +9731,7 @@ public sealed partial class Lowering
         _nextLocalSlot = 0;
         _localNames.Clear();
         _localTypes.Clear();
-        _genericDeepCopiedListTemps.Clear();
+        GenericDeepCopiedListTemps.Clear();
 
         // Lambda function gets implicit locals for env and arg at slots 0 and 1
         int envSlot = NewLocal(); // 0
@@ -10958,6 +11203,10 @@ public sealed partial class Lowering
                 owned.ReleaseKind = ResourceReleaseKind.Moved;
                 runtimeManagedCaptures.Add((ci * 8, owned.Type));
             }
+            else if (NormalizedArenaCaptureType(captures[ci], request) is { } arenaCaptureType)
+            {
+                runtimeManagedCaptures.Add((ci * 8, arenaCaptureType));
+            }
             else if (runtimeManagedClosure
                 && owned is null
                 && IsNormalizedAlwaysReturnedStringParameterRead(new Expr.Var(captures[ci])))
@@ -11162,7 +11411,88 @@ public sealed partial class Lowering
             return builtinResult;
         }
 
-        return LowerCallGeneral(call, rootExpr, collectedArgs, request);
+        return TryLowerAppliedClosureAsLet(call, rootExpr, collectedArgs, request) ?? LowerCallGeneral(call, rootExpr, collectedArgs, request);
+    }
+
+    // A known function's reference-counted closure result applied where it is made (`make(n)("a")`)
+    // is lowered as the `let` it stands for (`let f = make(n) in f("a")`): the binding owns the
+    // closure and releases it once its use is settled, whatever the use returns. Only a call
+    // whose result is a value the closure hands over qualifies: a task or a closure it returns can
+    // still read the environment the release frees.
+    private (int, TypeRef)? TryLowerAppliedClosureAsLet(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
+    {
+        if (!EscapingClosureOwnsCapturesEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_APPLIEDCLOSURELET") is not null
+            || rootExpr is not Expr.Var)
+        {
+            return null;
+        }
+
+        for (int applied = 1; applied < collectedArgs.Count; applied++)
+        {
+            if (AppliedClosureResultIsSettled(rootExpr, collectedArgs.Count)
+                && ResolveUncopyableResultRuntimeManaged(
+                    rootExpr, applied, new TypeRef.TFun(NewTypeVar(), NewTypeVar()), CopyOutKind.None, runtimeManagedResult: false))
+            {
+                return LowerExpr(AppliedClosureLet(call, rootExpr, collectedArgs, applied), request).AsPair();
+            }
+        }
+
+        return null;
+    }
+
+    private bool AppliedClosureResultIsSettled(Expr rootExpr, int argumentCount)
+    {
+        if (rootExpr is not Expr.Var variable || Lookup(variable.Name) is not { } binding)
+        {
+            return false;
+        }
+
+        TypeRef type = Prune(binding.Type);
+        for (int i = 0; i < argumentCount; i++)
+        {
+            if (type is not TypeRef.TFun function)
+            {
+                return false;
+            }
+
+            type = Prune(function.Ret);
+        }
+
+        return type switch
+        {
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool or TypeRef.TStr or TypeRef.TList or TypeRef.TTuple => true,
+            TypeRef.TNamedType named => !string.Equals(named.Symbol.Name, "Task", StringComparison.Ordinal),
+            _ => false,
+        };
+    }
+
+    private static Expr.Let AppliedClosureLet(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs, int applied)
+    {
+        TextSpan span = GetSpan(call);
+        string name = $"__applied_closure_{span.Start}_{applied}";
+        Expr closure = rootExpr;
+        for (int i = 0; i < applied; i++)
+        {
+            closure = new Expr.Call(closure, collectedArgs[i]);
+            AstSpans.Set(closure, span);
+        }
+
+        Expr body = new Expr.Var(name);
+        AstSpans.Set(body, span);
+        for (int i = applied; i < collectedArgs.Count; i++)
+        {
+            body = new Expr.Call(body, collectedArgs[i]);
+            AstSpans.Set(body, span);
+        }
+
+        Expr.Let let = new(name, closure, body);
+        AstSpans.Set(let, span);
+        return let;
     }
 
     private (int, TypeRef)? LowerCallDirectNamedBinding(
@@ -11916,6 +12246,120 @@ public sealed partial class Lowering
         }
     }
 
+    // An `if` asked for a reference-counted closure chooses between closures that may each take the
+    // same owner over (`if c then (given (x) -> x + s) else (given (x) -> s + x)`). Only one branch
+    // runs, so the else branch takes the owner over as the then branch did, instead of retaining a
+    // reference the owner's moved release never balances.
+    private List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>? SnapshotForClosureBranches(LoweredValueRequest request)
+        => request.EmitsRuntime(LoweredValueRuntimeRepresentation.Closure)
+            && EscapingClosureOwnsCapturesEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_IFBRANCHCLOSUREMOVE") is null
+                ? SnapshotOwnershipReleaseKinds()
+                : null;
+
+    // The owners the then branch's closure took over, their release kinds undone so the else branch
+    // can take them over too; the snapshot the else branch's own moves are found against; and the
+    // index of the then branch's jump to the join.
+    private sealed record ClosureBranchMoves(
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)> Snapshot,
+        List<OwnershipInfo> MovedByThen,
+        int ThenJumpIndex);
+
+    private static ClosureBranchMoves? UndoClosureMovesForElse(
+        List<(OwnershipInfo Info, ResourceReleaseKind ReleaseKind)>? snapshot,
+        int thenJumpIndex)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        List<OwnershipInfo> moved = [];
+        foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in snapshot)
+        {
+            if (releaseKind != ResourceReleaseKind.Moved
+                && info.ReleaseKind == ResourceReleaseKind.Moved
+                && info.CapturedByClosure
+                && info.RuntimeManaged)
+            {
+                info.ReleaseKind = releaseKind;
+                moved.Add(info);
+            }
+        }
+
+        return new ClosureBranchMoves(snapshot, moved, thenJumpIndex);
+    }
+
+    // An owner one branch's closure took over is released on the other branch, so it stays moved
+    // after the join on both: the else branch releases what only the then branch's closure took over
+    // at its end, and the then branch's jump to the join goes through a block releasing what only the
+    // else branch's closure took over.
+    private void SettleClosureBranchMoves(ClosureBranchMoves? moves, string endLabel)
+    {
+        if (moves is null)
+        {
+            return;
+        }
+
+        List<OwnershipInfo> movedByElseOnly = [];
+        foreach ((OwnershipInfo info, ResourceReleaseKind releaseKind) in moves.Snapshot)
+        {
+            if (releaseKind != ResourceReleaseKind.Moved
+                && info.ReleaseKind == ResourceReleaseKind.Moved
+                && info.CapturedByClosure
+                && info.RuntimeManaged
+                && !moves.MovedByThen.Contains(info))
+            {
+                movedByElseOnly.Add(info);
+            }
+        }
+
+        foreach (OwnershipInfo info in moves.MovedByThen)
+        {
+            if (info.ReleaseKind != ResourceReleaseKind.Moved)
+            {
+                EmitBranchOwnerRelease(info);
+                info.ReleaseKind = ResourceReleaseKind.Moved;
+            }
+        }
+
+        if (movedByElseOnly.Count == 0 || _inst[moves.ThenJumpIndex] is not IrInst.Jump thenJump)
+        {
+            return;
+        }
+
+        string releaseLabel = NewLabel("if_then_closure_move_release");
+        _inst[moves.ThenJumpIndex] = thenJump with { Target = releaseLabel };
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(releaseLabel));
+        movedByElseOnly.ForEach(EmitBranchOwnerRelease);
+        Emit(new IrInst.Jump(endLabel));
+    }
+
+    // Releases an owner on the one branch that did not move it, at a place precise placement keeps.
+    private void EmitBranchOwnerRelease(OwnershipInfo info)
+    {
+        int sourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(sourceTemp, info.Slot));
+        TypeRef type = info.Type is null ? new TypeRef.TStr() : Prune(info.Type);
+        if (type is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(sourceTemp, list.Element);
+        }
+        else if (type is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(sourceTemp, tuple);
+        }
+        else if (type is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(sourceTemp, named);
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(sourceTemp, TcoRuntimeManagedTypeName(type), OwnerSlot: -1, RuntimeManaged: true));
+        }
+    }
+
     // An owned value passed by name as a self-call argument moves to the next iteration —
     // it must not be dropped at this back-edge (a resource would be closed, a closure with a
     // dropper would close its captured resource). Mark it consumed so
@@ -12011,6 +12455,14 @@ public sealed partial class Lowering
         return (newArgTemps, newArgTypes);
     }
 
+    // A loop that may run while a handler's one-shot post is pending gets no reference-counted
+    // placement for its list parameter, so its successor cells stay in the arena too: a counted cell
+    // consed onto that parameter would make the parameter a counted list nothing releases, returned
+    // under an arena result and copied by the caller.
+    private bool BuildsRuntimeCellsOutsideHandlerContext
+        => AllowsOrdinaryRcPlacement
+            || Environment.GetEnvironmentVariable("GRC_NO_HANDLERCONTEXTARENACELL") is not null;
+
     private (int Temp, TypeRef Type) LowerCallTcoEvalArg(
         TcoContext tco,
         Expr argument,
@@ -12022,7 +12474,8 @@ public sealed partial class Lowering
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].AffineConsList
             && (IsConsChainOverParameter(tco, argument, index) || IsFreshListConstructionExpressionCore(argument))
-            && IsReleasableAffineConsElement(tco, index);
+            && IsReleasableAffineConsElement(tco, index)
+            && BuildsRuntimeCellsOutsideHandlerContext;
         bool freshClosure = index < tco.ParamNames.Count
             && index < tco.ParamSlots.Count
             && tco.ParamFacts[tco.ParamSlots[index]].FreshClosureRebuild
@@ -13328,6 +13781,7 @@ public sealed partial class Lowering
         List<Expr> collectedArgs,
         LoweredValueRequest request)
     {
+        NoteDiscardedResultArgument(rootExpr, collectedArgs);
         // Keep call-chain intermediates in an independent reclaimable arena window.
         int callWmCursorSlot = NewLocal();
         int callWmEndSlot = NewLocal();
@@ -13375,7 +13829,8 @@ public sealed partial class Lowering
                 currentTemp,
                 currentType,
                 consumedRuntimeArguments,
-                runtimeManagedResultFlagTemp);
+                runtimeManagedResultFlagTemp,
+                _discardedResultCalls.Contains(call));
             return result.Value;
         }
         finally
@@ -13397,7 +13852,8 @@ public sealed partial class Lowering
         int currentTemp,
         TypeRef currentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments,
-        int runtimeManagedResultFlagTemp)
+        int runtimeManagedResultFlagTemp,
+        bool resultDiscarded = false)
     {
         UnifyExpectedType(currentType, request);
         RecordOrPinCallResultType(rootExpr, collectedArgs.Count, currentType);
@@ -13446,11 +13902,12 @@ public sealed partial class Lowering
             resultNormalized,
             resultDeepCopied,
             GetOwnershipSummaryForCallRoot(rootExpr) is not { ResultPoisoned: false },
-            resultCopyCopiesElements ? runtimeManagedResultFlagTemp : -1,
+            ResultCopyBranchFlagTemp(resultCopyCopiesElements, callResultType, callResultCopyKind, runtimeManagedResult || stableReuseResult, runtimeManagedResultFlagTemp),
             resultCopyCopiesElements && runtimeManagedResultFlagTemp < 0,
             resultCopySeversArgumentReferences,
             resultCopyFlagTemp,
-            normalizedOwnedResultTemp);
+            normalizedOwnedResultTemp,
+            resultDiscarded);
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
@@ -13582,6 +14039,32 @@ public sealed partial class Lowering
             && !CanArenaReset(callResultType)
             && callResultCopyKind == CopyOutKind.List
             && callResultHeadCopy != IrInst.ListHeadCopyKind.Inline;
+
+    // The result-ownership flag whose arena branch copies the whole result, so a consumed
+    // argument's parts are released with it there (-1 when there is no such branch). A list copy
+    // that copies its heads is one; a shallow copy behind the flag (a string, or a cell of scalar
+    // fields) is another, sharing nothing with any argument once copied. The flag's copy runs even
+    // while a one-shot post is pending, unlike the unconditional copy-out, so a shallow result
+    // without a flag keeps the child-preserving release.
+    private int ResultCopyBranchFlagTemp(
+        bool resultCopyCopiesElements,
+        TypeRef callResultType,
+        CopyOutKind callResultCopyKind,
+        bool resultSkipsCopy,
+        int runtimeManagedResultFlagTemp)
+    {
+        if (resultCopyCopiesElements)
+        {
+            return runtimeManagedResultFlagTemp;
+        }
+
+        bool shallowCopySevers = Environment.GetEnvironmentVariable("GRC_NO_SHALLOWCOPYPARTS") is null
+            && !resultSkipsCopy
+            && runtimeManagedResultFlagTemp >= 0
+            && callResultCopyKind == CopyOutKind.Shallow
+            && !CanArenaReset(callResultType);
+        return shallowCopySevers ? runtimeManagedResultFlagTemp : -1;
+    }
 
     // A result normalized into an owned value on both of its branches holds a handed-over argument
     // only as itself, so it severs every other reference, and the release is guarded by the result.
@@ -14132,7 +14615,9 @@ public sealed partial class Lowering
             TypeRef prunedArgType = Prune(argType);
             if (IsToSpaceCopySafeType(prunedArgType))
             {
-                argTemp = EmitDeepCopyToSpace(argTemp, prunedArgType);
+                argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
+                    ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
+                    : EmitDeepCopyToSpace(argTemp, prunedArgType);
             }
         }
 
@@ -14163,6 +14648,65 @@ public sealed partial class Lowering
             i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
+    }
+
+    // A string passed to a generic parameter of a call whose final result holds no closure goes as
+    // an owned reference-counted reference instead of a copy in the persistent blob region, which
+    // nothing reclaims. Only the final result can keep it: no curry stage's closure escapes the
+    // call, and the final result is a value the caller settles the reference against.
+    private bool OwnsGenericStringArgument(TypeRef argumentType, TypeRef.TFun funType, int remainingArguments)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_GENERICSTRARG") is not null
+            || !GeneralRcEnabled
+            || !CanTestRepresentation
+            || argumentType is not TypeRef.TStr)
+        {
+            return false;
+        }
+
+        TypeRef resultType = Prune(funType.Ret);
+        for (int remaining = remainingArguments; remaining > 0; remaining--)
+        {
+            if (resultType is not TypeRef.TFun stage)
+            {
+                return false;
+            }
+
+            resultType = Prune(stage.Ret);
+        }
+
+        return resultType is not TypeRef.TFun
+            && !ContainsUnresolvedLayoutType(resultType, [])
+            && IsToSpaceCopySafeType(resultType);
+    }
+
+    // The reference is handed over and never adopted: the caller releases it once the result was
+    // copied out, and parks it in an owned slot while an arena result may still hold it.
+    private int EmitHandedOverGenericStringArgument(
+        int argumentTemp,
+        TypeRef argumentType,
+        List<ConsumedRuntimeArgument> consumedRuntimeArguments)
+    {
+        int ownedTemp = EmitReferenceOrCopy(argumentTemp, () =>
+        {
+            int copiedTemp = NewTemp();
+            Emit(new IrInst.CopyOutArena(
+                copiedTemp,
+                argumentTemp,
+                TcoRuntimeManagedCopySize(argumentType),
+                RuntimeManaged: true,
+                IrInst.CopyOutPurpose.RcNormalization));
+            return copiedTemp;
+        });
+        int notAdoptedTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(notAdoptedTemp, 0));
+        consumedRuntimeArguments.Add(
+            new ConsumedRuntimeArgument(
+                ownedTemp,
+                argumentType,
+                PreserveEscapedChildren: true,
+                AdoptionFlagTemp: notAdoptedTemp));
+        return ownedTemp;
     }
 
     // The result types whose ownership a call reads from the callee's returns bit when the callee
@@ -15105,7 +15649,7 @@ public sealed partial class Lowering
         => calleeResultPoisoned
             && !resultNormalized
             && !calleeCompiledResultVerifiedRuntimeManaged
-            && _genericDeepCopiedListTemps.Contains(temp);
+            && GenericDeepCopiedListTemps.Contains(temp);
 
     // A runtime-managed reference the caller hands to a call and settles after it. A plain
     // consumed argument (AdoptionFlagTemp < 0) is a fresh value released once the result is
@@ -15139,7 +15683,8 @@ public sealed partial class Lowering
         bool resultCopiedWithElements = false,
         bool resultCopySeversArgumentReferences = false,
         int resultCopyFlagTemp = -1,
-        int normalizedOwnedResultTemp = -1)
+        int normalizedOwnedResultTemp = -1,
+        bool resultDiscarded = false)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -15158,6 +15703,12 @@ public sealed partial class Lowering
 
             if (argument.AdoptionFlagTemp >= 0)
             {
+                if (resultDiscarded && DiscardedResultReleaseRuleEnabled && ContainsUnresolvedLayoutType(Prune(resultType), []) && valueType is not TypeRef.TFun)
+                {
+                    EmitHandedOverArgumentRelease(temp, valueType, argument.AdoptionFlagTemp, -1);
+                    continue;
+                }
+
                 if (resultCopySeversArgumentReferences)
                 {
                     EmitHandedOverArgumentRelease(
@@ -15200,7 +15751,10 @@ public sealed partial class Lowering
     // never releases what it holds, so the reference goes to an owned slot instead, released once
     // the function's result or the loop's successors hold references of their own (a successor
     // copied at the back edge, a result normalized at the return). A callee that adopted the
-    // reference consumed it, so the slot is left empty.
+    // reference consumed it, so the slot is left empty. A result of unresolved layout (a closure
+    // parameter applied in a generic body) may hold the argument as anything, so the slot is
+    // released only where the function's own result is out of that call's reach: a body that
+    // forwards the call's result keeps the reference to the end.
     private void HandOverArgumentKeptByArenaResultToOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp, TypeRef resultType, bool resultVerifiedRuntimeManaged)
     {
         if (!GeneralRcEnabled
@@ -15208,7 +15762,7 @@ public sealed partial class Lowering
             || resultVerifiedRuntimeManaged
             || valueType is TypeRef.TFun
             || ContainsUnresolvedLayoutType(valueType, [])
-            || ContainsUnresolvedLayoutType(Prune(resultType), [])
+            || (ContainsUnresolvedLayoutType(Prune(resultType), []) && !UnresolvedResultHandedSlotRuleEnabled)
             || !CallResultMayContainArgumentType(resultType, valueType, new HashSet<string>(StringComparer.Ordinal)))
         {
             return;
@@ -15224,6 +15778,29 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(keptLabel));
         RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
     }
+
+    // A call whose result an applied lambda discards (`body(x) |> (given (_) -> ...)`): nothing reads
+    // the result, so a reference handed over for it to keep is released right after the call when
+    // the callee did not adopt it, whatever the result's layout. Owned slots, which wait for the
+    // function's result, exist only under the general contract; this release holds without it.
+    private readonly HashSet<Expr> _discardedResultCalls = new(ReferenceEqualityComparer.Instance);
+
+    private void NoteDiscardedResultArgument(Expr rootExpr, List<Expr> collectedArgs)
+    {
+        if (DiscardedResultReleaseRuleEnabled
+            && collectedArgs.Count == 1
+            && rootExpr is Expr.Lambda { ParamName: "_" }
+            && StripOrSelf(collectedArgs[0]) is Expr.Call discarded)
+        {
+            _discardedResultCalls.Add(discarded);
+        }
+    }
+
+    private static bool DiscardedResultReleaseRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_DISCARDEDRESULTRELEASE") is null;
+
+    private static bool UnresolvedResultHandedSlotRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_UNRESOLVEDHANDEDSLOT") is null;
 
     // A reference handed over for the callee's result to keep is not in a result whose type has no
     // place for a value of the argument's type: a callee that did not adopt it left it with the
@@ -15572,7 +16149,7 @@ public sealed partial class Lowering
                 currentTemp,
                 deepCopyResultList.Element,
                 runtimeManagedResultFlagTemp);
-            _genericDeepCopiedListTemps.Add(deepCopiedTemp);
+            GenericDeepCopiedListTemps.Add(deepCopiedTemp);
             return deepCopiedTemp;
         }
 
@@ -15674,7 +16251,7 @@ public sealed partial class Lowering
     {
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
 
         string copyLabel = NewLabel("call_copy_arena_result");
         string reclaimLabel = NewLabel("call_reclaim_owned_result");
@@ -15684,7 +16261,7 @@ public sealed partial class Lowering
         int copiedTemp = EmitRuntimeManagedResultCopyOut(currentTemp, callCopyOutKind, listHeadCopy, callCopySize);
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
@@ -15718,8 +16295,8 @@ public sealed partial class Lowering
         // The copy walks the result's children, and a child's own normalization allocates: the arena
         // is rewound only once every path is past that, or the rewound cursor would hand the copy
         // the bytes it is still reading from.
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
 
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
@@ -15783,15 +16360,15 @@ public sealed partial class Lowering
     {
         if (runtimeManagedResultFlagTemp < 0)
         {
-            Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+            EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
             int unconditionallyCopiedTemp = EmitRuntimeManagedCallResultListDeepCopy(currentTemp, elementType);
-            Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+            EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
             return unconditionallyCopiedTemp;
         }
 
         int resultSlot = NewLocal();
         Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
-        Emit(new IrInst.RestoreArenaState(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaRestore(callWmCursorSlot, callWmEndSlot, callPreRestoreEndSlot);
 
         string copyLabel = NewLabel("call_deep_copy_arena_result");
         string reclaimLabel = NewLabel("call_reclaim_owned_result");
@@ -15801,7 +16378,7 @@ public sealed partial class Lowering
         int copiedTemp = EmitRuntimeManagedTcoListDeepCopy(currentTemp, elementType);
         Emit(new IrInst.StoreLocal(resultSlot, copiedTemp));
         Emit(new IrInst.Label(reclaimLabel));
-        Emit(new IrInst.ReclaimArenaChunks(callWmEndSlot, callPreRestoreEndSlot));
+        EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
 
         // Owned on both paths: the reference-counted result taken over as it is, the arena one
         // rebuilt with references of its own.
@@ -15913,7 +16490,7 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         if (calleeResultElementIsGeneric && Prune(callResultType) is TypeRef.TList)
         {
-            _genericDeepCopiedListTemps.Add(resultTemp);
+            GenericDeepCopiedListTemps.Add(resultTemp);
         }
 
         return resultTemp;
@@ -16608,11 +17185,37 @@ public sealed partial class Lowering
                 ownTail: !tailIsReferenceCounted);
             tailIsReferenceCounted = IsFreshReferenceCountedCell(tailTemp);
             tailIsFreshCell = tailIsReferenceCounted;
+            if (!tailIsReferenceCounted && headTemp == head.Temp && _tcoArgumentDestination is null)
+            {
+                KeepArenaListLiteralFreshHeadOwned(head);
+            }
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return (tailTemp, Prune(tailType));
+    }
+
+    // A literal's arena cell holding a value produced right there (a constructor placed on the
+    // reference-counted heap because it owns a fresh string) is that value's only holder, and an
+    // arena cell releases nothing: a callee that walks the list copies it with references of its
+    // own, so the cell's reference goes to an owned slot, released once the function's result holds
+    // references of its own. A literal that escapes (a call's argument the callee's result may reach)
+    // keeps it the same way, as an escaping arena cons cell does.
+    private void KeepArenaListLiteralFreshHeadOwned(LoweredValue head)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENALISTFRESHHEAD") is not null
+            || !IsNewlyProducedRcTemp(head.Temp)
+            || ContainsUnresolvedLayoutType(Prune(head.Type), [])
+            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
 
     // A literal's cell over a reference-counted cell is reference-counted too. An arena cell would
@@ -16689,7 +17292,10 @@ public sealed partial class Lowering
         {
             elementRequest = elementRequest.WithCallerReportedExpectedType(expectedElementType);
         }
-        LoweredValue lowered = LowerExpr(element, elementRequest);
+        LoweredValue lowered = LowerArenaAggregateElement(
+            element,
+            elementRequest,
+            runtimeManagedList || listRequest.TransfersRuntimeManagedChildren);
         if (runtimeManagedList)
         {
             lowered = NormalizeRuntimeManagedBytesValue(lowered);
@@ -16871,8 +17477,10 @@ public sealed partial class Lowering
         List<LoweredValue> elements = LowerTupleLitElementValues(tuple, request, elementRequest, expectedRequest, copiedSuccessor, duplicates);
 
         int tupleTemp = NewTemp();
+        CopyFreshElementsIntoArenaTuple(elements, request);
         bool runtimeManaged = PlaceRuntimeManagedTuple(elements, request, out bool[] normalized);
         RecordLateCopiedHeadTupleDuplicates(tuple, duplicates, runtimeManaged);
+        RecordCallArgumentTupleOwnerDuplicates(tuple, duplicates, runtimeManaged, copiedSuccessor);
         if (copiedSuccessor && runtimeManaged)
         {
             DuplicatePatternOwnerElements(tuple, elements);
@@ -16883,6 +17491,11 @@ public sealed partial class Lowering
             elements,
             request,
             runtimeManaged);
+        if (!runtimeManaged)
+        {
+            CopyFreshElementsIntoArenaTuple(elements, LoweredValueRequest.None);
+        }
+
         RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted, normalized);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)
@@ -17121,8 +17734,14 @@ public sealed partial class Lowering
                 LoweredValueRuntimeRepresentation.Adt)
             .AddRuntime(
                 runtimeManagedTuple && element is Expr.RecordLit,
-                LoweredValueRuntimeRepresentation.Record);
-        LoweredValue lowered = LowerExpr(element, elementRequest);
+                LoweredValueRuntimeRepresentation.Record)
+            .AddRuntime(
+                runtimeManagedTuple && ClosureOwnsEscapingCaptures(element),
+                LoweredValueRuntimeRepresentation.Closure);
+        LoweredValue lowered = LowerArenaAggregateElement(
+            element,
+            elementRequest,
+            !runtimeManagedTuple && tupleRequest.TransfersRuntimeManagedChildren);
         if (OwnsKeptPiece(2) && IsNormalizedAlwaysReturnedParameterRead(element))
         {
             MarkRuntimeManagedTemp(lowered.Temp, type: lowered.Type);
@@ -17155,7 +17774,8 @@ public sealed partial class Lowering
                 == LoweredTempRepresentation.RuntimeRc
                 && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
                     || pruned is TypeRef.TList
-                    || pruned is TypeRef.TNamedType);
+                    || pruned is TypeRef.TNamedType
+                    || pruned is TypeRef.TFun && EscapingClosureOwnsCapturesEnabled);
     }
 
     private bool EscapingTupleElementNeedsOwnedCopy(
@@ -17423,9 +18043,8 @@ public sealed partial class Lowering
         {
             // An arena cell that escapes carries a runtime-managed tail (an owned binding or a loop
             // parameter) out of the scope that owns it, exactly like an escaping arena tuple element.
-            int ownTailTemp = tailTemp;
-            tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
-            _ = RecordCallArgumentArenaRetain(ownTailTemp, tailTemp, tailType);
+            tailTemp = RetainEscapingArenaCellTail(cons.Tail, tailTemp, tailType);
+            KeepEscapingArenaCellFreshHeadOwned(head);
         }
         MarkResourceArgMoved(cons.Head);
         MarkResourceArgMoved(cons.Tail);
@@ -17492,12 +18111,78 @@ public sealed partial class Lowering
         return CreateLoweredValue(ownedTemp, head.Type);
     }
 
+    // The retain an escaping arena cell takes of its tail is recorded for the call it is an argument
+    // of; any other one (the cell is a function's result) goes to an owned slot, as an escaping arena
+    // tuple's retained child does, since the arena cell never releases it.
+    private int RetainEscapingArenaCellTail(Expr tail, int tailTemp, TypeRef tailType)
+    {
+        int retainedTemp = RetainRuntimeManagedAggregateChild(tail, tailTemp, tailType);
+        if (!RecordCallArgumentArenaRetain(tailTemp, retainedTemp, tailType)
+            && Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLTAILSLOT") is null)
+        {
+            KeepEscapingArenaCellTailRetainOwned(tailTemp, retainedTemp, tailType);
+        }
+
+        return retainedTemp;
+    }
+
+    // Any list type qualifies, not only the contract's: a list the function's result copies out (a
+    // `List(Str)`) is copied before the owned slots are released, so the copy holds its own cells.
+    private void KeepEscapingArenaCellTailRetainOwned(int tailTemp, int retainedTemp, TypeRef tailType)
+    {
+        if (retainedTemp == tailTemp
+            || !GeneralRcEnabled
+            || _inst.Count == 0
+            || _inst[^1] is not IrInst.RcDup { RuntimeManaged: true } retain
+            || retain.Target != retainedTemp
+            || Prune(tailType) is not TypeRef.TList
+            || ContainsUnresolvedLayoutType(Prune(tailType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(tailType));
+    }
+
+    // An arena cell that escapes (a call's argument the callee's result may reach) holding a value
+    // produced right there (a fresh reference-counted tuple consed onto an accumulator passed to a
+    // recursive call) is that value's only holder, and an arena cell releases nothing. The value
+    // goes to an owned slot instead, released once the function's result holds references of its
+    // own, as a retained child of an escaping arena tuple does.
+    // A list, tuple or data type the function's result copies out rather than owns (`List(Str)`, a
+    // `Some` over one) is copied before the owned slots are released, so such a head is kept the same
+    // way.
+    private static bool IsCopiedOutFreshHeadType(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLCOPYHEAD") is null
+            && (type is TypeRef.TList or TypeRef.TTuple
+                || (type is TypeRef.TNamedType named && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)));
+
+    private void KeepEscapingArenaCellFreshHeadOwned(LoweredValue head)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
+            || !IsNewlyProducedRcTemp(head.Temp)
+            || ContainsUnresolvedLayoutType(Prune(head.Type), [])
+            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
+    }
+
     private bool IsInnermostLoopChainCell(Expr.Cons cons)
         => _loopChainTailCells.Contains(cons)
             && Environment.GetEnvironmentVariable("GRC_NO_CHAININNERHEAD") is null;
 
     // The tail of a reference-counted cell: a recursive producer's result is retained, and an
     // unplaced let-bound one takes a reference when it is reference-counted or a copy when it is not.
+    private static bool PatternBoundTailsOwnedEnabled => Environment.GetEnvironmentVariable("GRC_NO_PATTERNTAILOWNED") is null;
+
     private int PrepareRuntimeRcConsTail(Expr tail, int tailTemp, TypeRef tailType, LoweredValueRequest request)
     {
         // A back edge's cell takes the accumulator over from the iteration it replaces. The cell the
@@ -17508,6 +18193,20 @@ public sealed partial class Lowering
         {
             int parameterTemp = tailTemp;
             return EmitReferenceOrCopy(parameterTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(parameterTemp, exitList));
+        }
+
+        // A list bound out of a pattern is whatever the matched value's lists are, and the matched value
+        // may be released before the cell (a loop's predecessor at its back edge): the cell takes a
+        // reference of its own when the list is reference-counted and a copy when it is not.
+        if (PatternBoundTailsOwnedEnabled
+            && request.RuntimeListTailBinding is null
+            && CanTestRepresentation
+            && IsPerceusPatternOwnerRead(tail)
+            && !IsRuntimeManagedResultTemp(tailTemp)
+            && Prune(tailType) is TypeRef.TList patternList)
+        {
+            int patternTemp = tailTemp;
+            return EmitReferenceOrCopy(patternTemp, () => EmitRuntimeManagedTcoParamCopyByCopy(patternTemp, patternList));
         }
 
         tailTemp = PrepareRuntimeRcListTail(tail, tailTemp, request);

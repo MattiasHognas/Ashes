@@ -224,17 +224,18 @@ let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n 
 // loop's own exit, skipped exactly when the returned value is that same still-live reference (the
 // `n == 0` arm, which returns `r` unchanged). Two releases from the loop itself, and no
 // duplicate — `r`'s own reads never add one; the third is the arena-result boundary's release
-// of the returned string, taken only when a caller asks for an arena result; the fourth is
-// `r`'s own scope-exit anchor (`OwnerSlot`), never promoted to a runtime-managed release
-// since the let holds the parameter's borrowed reference, which stage 0 emits too once the
-// body's `+` has it lowered against its closed type.
+// of the returned string, taken only when a caller asks for an arena result; the other two are
+// `r`'s own anchors (`OwnerSlot`), never promoted to a runtime-managed release since the let
+// holds the parameter's borrowed reference: one at the scope exit, and one on the back edge,
+// which redefines `r` in the loop's first block. Stage 0 emits both once the body's `+` has it
+// lowered against its closed type, and only the first with GRC_NO_REDEFINEDOWNERBACKEDGE set.
 let expectLetAliasOfParameterIsNotAnOwner unit =
     letAliasOfParameterSource
     |> loopLines("[ClosureHelper from loop]")
     |> withoutGuards
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("the back-edge predecessor release, the exit-guarded release, the arena-result boundary's release, and the alias's own unpromoted anchor, no more")(countContaining("RcDrop")(lines) == 4 && countContaining("OwnerSlot")(lines) == 1 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
+        |> (given (_) -> check("the back-edge predecessor release, the exit-guarded release, the arena-result boundary's release, and the alias's two unpromoted anchors, no more")(countContaining("RcDrop")(lines) == 5 && countContaining("OwnerSlot")(lines) == 2 && countContainingBoth("CopyOutArena")("ArenaResultBoundary")(lines) == 1))
         |> (given (_) -> check("no retain of the alias or the parameter")(countContaining("RcDup")(lines) == 0)))
 
 // The `acc` of `count` grows by one cons cell at every tail self-call, and the head it stores
@@ -625,15 +626,12 @@ let expectReadBuiltinReleasesFreshCallResult unit =
     |> (given (_) -> expectReadReleasesConsumedFreshResult("direct")(readBuiltinDirectSource))
     |> (given (_) -> expectReadReleasesConsumedFreshResult("join")(readBuiltinJoinSource))
 
-// A join with one borrowed branch (the loop's own parameter) is a transferred value the read
-// must not release, and a let-bound result is owned by its scope, whose exit release covers it.
+// A join with one borrowed branch (the loop's own parameter) beside a fresh one takes a reference of
+// its own in the borrowed branch, so the read releases the join like a fresh result; a let-bound
+// result is owned by its scope, whose exit release covers it.
 let expectReadBuiltinKeepsOwnedResults unit =
     Unit
-    |> (given (_) ->
-        readBuiltinBorrowedJoinSource
-        |> loopLines("[ClosureHelper from loop]")
-        |> lineAfter("TextByteLength")
-        |> (given (line) -> check("a borrowed branch keeps the join unreleased")(Ashes.Text.contains(line)("RcDrop") == false)))
+    |> (given (_) -> expectReadReleasesConsumedFreshResult("borrowed join")(readBuiltinBorrowedJoinSource))
     |> (given (_) ->
         readBuiltinLetScopeSource
         |> loopLines("[ClosureHelper from loop]")

@@ -1485,6 +1485,87 @@ public sealed partial class Lowering
         return (ptrTemp, resultType);
     }
 
+    // Without general reference counting (code that may run while a handler's one-shot post is
+    // pending) an arena constructor cell releases nothing it holds, so a newly produced
+    // reference-counted value stored into a field (a perform's adopted result, or a call's owned
+    // result) would outlive every reader. The cell stores an arena copy, and the original is
+    // released right away, as an arena cons cell does with such a head. A string is copied flat; a
+    // list, tuple, record or variant is copied deep when every value it reaches can be, and is left
+    // in place otherwise.
+    // A tuple built without general reference counting would be placed on the reference-counted heap
+    // to own a newly produced reference-counted element (a perform's adopted result in
+    // `(perform Cap.get(Unit), i)`), but its caller, without the contract, takes the result as an
+    // arena value and releases nothing: the tuple and the element leaked. The element is replaced by
+    // an arena copy first, as an arena constructor cell's field is, so the tuple stays in the arena.
+    // A tuple requested on the reference-counted heap that still ends up in the arena (an element it
+    // could not own) gets the same copy of the fresh elements it was given for it.
+    private void CopyFreshElementsIntoArenaTuple(List<LoweredValue> elements, LoweredValueRequest request)
+    {
+        if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENATUPLEFRESHELEMENT") is not null)
+        {
+            return;
+        }
+
+        List<int> temps = elements.ConvertAll(element => element.Temp);
+        List<TypeRef> types = elements.ConvertAll(element => element.Type);
+        CopyFreshFieldsIntoArenaCell(temps, types);
+        for (int i = 0; i < elements.Count; i++)
+        {
+            if (temps[i] != elements[i].Temp)
+            {
+                elements[i] = CreateLoweredValue(temps[i], elements[i].Type);
+            }
+        }
+    }
+
+    private void CopyFreshFieldsIntoArenaCell(List<int> argumentTemps, IReadOnlyList<TypeRef> argumentTypes)
+    {
+        if (GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENACTORFRESHFIELD") is not null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < argumentTemps.Count; i++)
+        {
+            if (!IsNewlyProducedRcTemp(argumentTemps[i]))
+            {
+                continue;
+            }
+
+            TypeRef fieldType = Prune(argumentTypes[i]);
+            if (fieldType is TypeRef.TStr)
+            {
+                int copiedTemp = NewTemp();
+                Emit(new IrInst.CopyOutArena(copiedTemp, argumentTemps[i], -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+                ReleaseConsumedOwnedOperand(argumentTemps[i]);
+                argumentTemps[i] = copiedTemp;
+            }
+            else if (IsArenaCopiedFreshAggregateField(fieldType))
+            {
+                argumentTemps[i] = EmitArenaCopyOfFreshAggregate(argumentTemps[i], fieldType);
+            }
+        }
+    }
+
+    private bool IsArenaCopiedFreshAggregateField(TypeRef fieldType)
+        => Environment.GetEnvironmentVariable("GRC_NO_ARENACTORFRESHAGGREGATE") is null
+            && fieldType is TypeRef.TList or TypeRef.TTuple or TypeRef.TNamedType
+            && !(fieldType is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name))
+            && IsDeepCopyOutSafeType(fieldType);
+
+    private int EmitArenaCopyOfFreshAggregate(int sourceTemp, TypeRef type)
+    {
+        int copiedTemp = EmitDeepCopy(sourceTemp, type);
+        EmitRuntimeManagedChildDrop(sourceTemp, type);
+        _tempOwnershipFacts[sourceTemp] = _tempOwnershipFacts[sourceTemp] with
+        {
+            Ownership = LoweredTempOwnershipKind.Transferred,
+        };
+        return copiedTemp;
+    }
+
     private void PrepareConstructorArgumentOwnership(
         IReadOnlyList<Expr> arguments,
         IReadOnlyList<TypeRef> argumentTypes,
@@ -1495,6 +1576,7 @@ public sealed partial class Lowering
         RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps, runtimeManagedCandidate);
         if (!runtimeManagedCandidate)
         {
+            CopyFreshFieldsIntoArenaCell(argumentTemps, argumentTypes);
             return;
         }
 
@@ -1886,7 +1968,10 @@ public sealed partial class Lowering
             fieldType,
             runtimeManagedParent,
             parentRequest);
-        LoweredValue loweredValue = LowerExpr(argument, request);
+        LoweredValue loweredValue = LowerArenaAggregateElement(
+            argument,
+            request,
+            !runtimeManagedParent && EscapesArenaParent(parentRequest));
         if (runtimeManagedParent && fieldType is TypeRef.TBytes)
         {
             loweredValue = NormalizeRuntimeManagedBytesValue(loweredValue);
@@ -1959,6 +2044,12 @@ public sealed partial class Lowering
         };
     }
 
+    // An arena parent built for an escaping position: a function result, or a value whose
+    // reference-counted representation was asked for and its layout refused.
+    private static bool EscapesArenaParent(LoweredValueRequest parentRequest)
+        => parentRequest.TransfersRuntimeManagedChildren
+            || parentRequest.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple);
+
     // The representation a constructor field's producer may emit: a fresh producer of the field's
     // type stores an owned value straight into a runtime-managed parent.
     private LoweredValueRequest BuildRuntimeManagedConstructorArgumentRequest(
@@ -2003,8 +2094,8 @@ public sealed partial class Lowering
                 LoweredValueRuntimeRepresentation.Tuple)
             .AddRuntime(
                 runtimeManagedParent
-                    && fieldType is TypeRef.TFun
-                    && IsRuntimeRcOwningClosureExpression(argument),
+                    && (fieldType is TypeRef.TFun && IsRuntimeRcOwningClosureExpression(argument)
+                        || fieldType is TypeRef.TVar or TypeRef.TTypeParam && ClosureOwnsEscapingCaptures(argument)),
                 LoweredValueRuntimeRepresentation.Closure)
             .WithRuntimeAdtContext(parentRequest.RuntimeAdtChildBindings);
     }

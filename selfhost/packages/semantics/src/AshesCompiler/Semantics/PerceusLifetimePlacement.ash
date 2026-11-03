@@ -425,33 +425,36 @@ let livenessOutOf (blockIndex: Int) (liveness: List(BlockLiveness)) =
     match livenessOf(blockIndex)(liveness) with
         | BlockLiveness { livenessOut = liveOut } -> liveOut
 
-let recursive anyLiveSuccessor (successors: List(Int)) (region: List(Int)) (liveness: List(BlockLiveness)) =
+// A back edge into the block that defines the owner (a loop whose body binds it before any branch,
+// an irrefutable tuple pattern at the loop head) re-runs the definition, which binds the next
+// iteration's own reference: the owner reaching that edge is dead there, not live around the loop.
+let recursive anyLiveSuccessor (definitionBlock: Int) (successors: List(Int)) (region: List(Int)) (liveness: List(BlockLiveness)) =
     match successors with
         | [] -> false
         | successor :: rest ->
-            if sortedSetContains(successor)(region) && livenessInOf(successor)(liveness)
+            if successor != definitionBlock && sortedSetContains(successor)(region) && livenessInOf(successor)(liveness)
             then true
-            else anyLiveSuccessor(rest)(region)(liveness)
+            else anyLiveSuccessor(definitionBlock)(rest)(region)(liveness)
 
-let recursive stepLiveness (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (remaining: List(Int)) =
+let recursive stepLiveness (definitionBlock: Int) (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) (remaining: List(Int)) =
     match remaining with
         | [] -> []
         | blockIndex :: rest ->
             match listAt(blocks)(blockIndex) with
                 | Some(IrCfgBlock { blockSuccessors = successors }) ->
                     liveness
-                    |> anyLiveSuccessor(successors)(region)
+                    |> anyLiveSuccessor(definitionBlock)(successors)(region)
                     |> (given (liveOut) -> BlockLiveness(livenessBlock = blockIndex, livenessIn = hasUse(blockIndex)(facts) || liveOut, livenessOut = liveOut))
-                    |> (given (entry) -> entry :: stepLiveness(blocks)(region)(facts)(liveness)(rest))
-                | None -> stepLiveness(blocks)(region)(facts)(liveness)(rest)
+                    |> (given (entry) -> entry :: stepLiveness(definitionBlock)(blocks)(region)(facts)(liveness)(rest))
+                | None -> stepLiveness(definitionBlock)(blocks)(region)(facts)(liveness)(rest)
 
-let recursive fixLiveness (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) =
+let recursive fixLiveness (definitionBlock: Int) (blocks: List(IrCfgBlock)) (region: List(Int)) (facts: List(BlockFacts)) (liveness: List(BlockLiveness)) =
     region
-    |> stepLiveness(blocks)(region)(facts)(liveness)
+    |> stepLiveness(definitionBlock)(blocks)(region)(facts)(liveness)
     |> (given (next) ->
         if next == liveness
         then next
-        else fixLiveness(blocks)(region)(facts)(next))
+        else fixLiveness(definitionBlock)(blocks)(region)(facts)(next))
 
 let recursive initialLiveness (region: List(Int)) =
     match region with
@@ -728,7 +731,7 @@ let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: O
         |> (given (facts) ->
             match region
             |> initialLiveness
-            |> fixLiveness(blocks)(region)(facts)
+            |> fixLiveness(definitionBlock)(blocks)(region)(facts)
             |> (given (liveness) ->
                 arenaAdtCells
                 |> borrowingArenaCells(instructions)(ownerAliases)
