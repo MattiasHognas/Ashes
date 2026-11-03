@@ -17154,11 +17154,37 @@ public sealed partial class Lowering
                 ownTail: !tailIsReferenceCounted);
             tailIsReferenceCounted = IsFreshReferenceCountedCell(tailTemp);
             tailIsFreshCell = tailIsReferenceCounted;
+            if (!tailIsReferenceCounted && headTemp == head.Temp)
+            {
+                KeepArenaListLiteralFreshHeadOwned(head);
+            }
         }
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
         return (tailTemp, Prune(tailType));
+    }
+
+    // A literal's arena cell holding a value produced right there (a constructor placed on the
+    // reference-counted heap because it owns a fresh string) is that value's only holder, and an
+    // arena cell releases nothing: a callee that walks the list copies it with references of its
+    // own, so the cell's reference goes to an owned slot, released once the function's result holds
+    // references of its own. A literal that escapes (a call's argument the callee's result may reach)
+    // keeps it the same way, as an escaping arena cons cell does.
+    private void KeepArenaListLiteralFreshHeadOwned(LoweredValue head)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ARENALISTFRESHHEAD") is not null
+            || !IsNewlyProducedRcTemp(head.Temp)
+            || ContainsUnresolvedLayoutType(Prune(head.Type), [])
+            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
 
     // A literal's cell over a reference-counted cell is reference-counted too. An arena cell would
