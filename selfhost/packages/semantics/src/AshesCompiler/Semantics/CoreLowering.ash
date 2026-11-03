@@ -22782,9 +22782,10 @@ let recordArenaParameterCopy (arenaCell: Bool) (element: Expr) (source: Int) (lo
         | _ -> lowered
 
 // Stage 0's `RetainRuntimeManagedAggregateChild` on an already lowered child: the read of a
-// binding that still owns its reference is retained, any other child is stored as lowered. A
-// pattern owner is not (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` skips it): its
-// identity marker, promoted once its root parameter is placed, is its retain. The owner is read
+// binding that still owns its reference is retained, the read of an arena binding that borrows
+// owners retains those owners, and any other child is stored as lowered. A pattern owner is not
+// (stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer` skips it): its identity marker,
+// promoted once its root parameter is placed, is its retain. The owner is read
 // whole or a heap-typed field is taken out of it, and both retain alike: the field is a borrow of
 // a child the owner releases with itself, so a cell storing it needs a reference of its own.
 let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
@@ -22794,7 +22795,7 @@ let retainAggregateChildTemp (child: Expr) (temp: Int) (semanticType: SemanticTy
                 | (Some(_slot), None) ->
                     match emitTransferRetain(temp)(semanticType)(state) with
                         | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
-                | _ -> (state, temp)
+                | _ -> (retainAliasBorrowedOwners(name)(state), temp)
         | ExprQualifiedVar(owner, _field) ->
             if resultSurvivesReset(semanticType)(state)
             then (state, temp)
