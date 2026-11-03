@@ -22976,10 +22976,11 @@ let recursive withdrawCopiedTupleLiterals (elements: List(Expr)) (temps: List(In
             |> withdrawCopiedTupleLiterals(restElements)(restTemps)
         | _ -> state
 
-// Stage 0's `CopyFreshStringFieldsIntoArenaCell`: without general reference counting (a program where
-// a function may run while a handler's one-shot post is pending) an arena constructor cell releases
-// nothing it holds, so a newly produced reference-counted string field is stored as an arena copy
-// and the original is released right away, as an arena cons cell does with such a head.
+// Stage 0's `CopyFreshFieldsIntoArenaCell`: without general reference counting (code that may run
+// while a handler's one-shot post is pending) an arena constructor cell releases nothing it holds,
+// so a newly produced reference-counted string field, or a list field over heads the list copy-out
+// reproduces, is stored as an arena copy and the original is released right away, as an arena cons
+// cell does with such a head.
 let recursive arenaCellFieldTemps (types: List(SemanticType)) (temps: List(Int)) (copied: List(Int)) (state: CoreLoweringState) =
     match (types, temps) with
         | (fieldType :: restTypes, temp :: restTemps) ->
@@ -22991,12 +22992,22 @@ let recursive arenaCellFieldTemps (types: List(SemanticType)) (temps: List(Int))
                             |> emit(CopyOutArena(copyTemp)(temp)(-1)(false)(IndependentClone)(None))
                             |> releaseConsumedOperand(temp)
                             |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
+                | (SemList(element), Some(RuntimeNewlyProduced)) ->
+                    match listHeadCopyKindOf(element)(state) with
+                        | Some(headCopy) ->
+                            match freshTemp(state) with
+                                | FreshTemp { state = allocated, temp = copyTemp } ->
+                                    allocated
+                                    |> emit(CopyOutList(copyTemp)(temp)(headCopy)(false)(IndependentClone))
+                                    |> emitOwnedValueRelease(emit)(temp)(SemList(element))
+                                    |> arenaCellFieldTemps(restTypes)(restTemps)(copyTemp :: copied)
+                        | None -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
                 | _ -> arenaCellFieldTemps(restTypes)(restTemps)(temp :: copied)(state)
         | _ ->
             (state, append(reverse(copied))(temps))
 
 let arenaCellFields (types: List(SemanticType)) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
-    if runtimeManaged || programMayRunUnderLiveHandlerPost(state) == false
+    if runtimeManaged || generalRcEnabled(state)
     then (state, temps)
     else arenaCellFieldTemps(types)(temps)([])(state)
 
