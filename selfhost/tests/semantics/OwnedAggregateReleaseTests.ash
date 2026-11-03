@@ -205,10 +205,11 @@ let testEscapingListLiteralRetainsOwnedChildren unit =
             |> countContaining("SizeBytes=16 RuntimeManaged=true")
             |> test.assertEqual(2)))
 
-// An escaping cons onto an owned list is an arena cell that retains its owned head and its
-// owned tail (null-tolerantly). The list owner's scope exit walks the spine under a uniqueness
-// test, and so does the function's exit for the owned slot holding the cell's tail retain, as in
-// stage 0's `aggregate_children_retain` fixture.
+// An escaping cons onto an owned list is an arena cell that stores an arena copy of its owned
+// head, releasing the head's retain at once, and retains its owned tail (null-tolerantly). The
+// list owner's scope exit walks the spine under a uniqueness test, and so does the function's
+// exit for the owned slot holding the cell's tail retain, as in stage 0's
+// `aggregate_children_retain` fixture.
 let testEscapingConsRetainsHeadAndTail unit =
     aggregateSource
     |> loweredLines
@@ -225,11 +226,15 @@ let testEscapingConsRetainsHeadAndTail unit =
             |> test.assertEqual(1))
         |> (given (_) ->
             lines
-            |> countContaining("Alloc                 Target=14 SizeBytes=16")
+            |> countContaining("Alloc                 Target=15 SizeBytes=16")
             |> test.assertEqual(1))
         |> (given (_) ->
             lines
-            |> countContainingBoth("Alloc                 Target=14")("RuntimeManaged")
+            |> countContaining("CopyOutArena          DestTemp=14 SrcTemp=10 Purpose=IndependentClone")
+            |> test.assertEqual(1))
+        |> (given (_) ->
+            lines
+            |> countContainingBoth("Alloc                 Target=15")("RuntimeManaged")
             |> test.assertEqual(0))
         |> (given (_) ->
             lines
