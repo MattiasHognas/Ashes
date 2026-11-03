@@ -1722,6 +1722,12 @@ over whole, bit 62, says as much). Once the call returns, the forwarding functio
 on either bit, releases the owned values its result reached only through the call. A function that
 was not asked keeps them, as before.
 
+A match whose every arm that reaches the join is the empty list or one reference-counted cell consed
+onto the function's own recursive call (`[] -> []`, `x :: rest -> x :: walk(rest)`) joins a fresh
+list: the cell is the join's own, so the function's result does not retain it again. The recursive
+result the cell links to as its tail is owned once, by the cell: the arm clears the owned slot that
+kept the call's result right after its store, so the slot releases nothing at the return.
+
 The caller that asked reads bit 61 too. A forwarding function asks its own callee for an arena
 result, and a function whose record result cannot be copied into the arena (one holding a recursive
 variant, say) keeps its reference-counted result and writes only bit 61. The value that reaches the

@@ -167,6 +167,86 @@ public sealed partial class Lowering
             && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && (IsNewlyProducedRcTemp(store.Source) || IsRetainedPatternOwnerArm(arm)));
     }
 
+    private static bool NilBesideFreshJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_NILBESIDEFRESHJOIN") is null;
+
+    // A reference-counted join whose every reaching arm is nil or a cell the arm just built on the
+    // reference-counted heap onto the function's own recursive result is fresh: the cell is the
+    // join's own, so the function's result takes it over instead of retaining it again. The result
+    // the cell links to is then owned once, by the cell, which takes it over from the owned slot
+    // keeping it instead of the slot releasing it at the return.
+    private bool TryTakeOverNilBesideFreshCells(IReadOnlyList<JoinArm> arms)
+    {
+        if (!NilBesideFreshJoinRuleEnabled || !GeneralRcEnabled)
+        {
+            return false;
+        }
+
+        List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
+        List<(IrInst.StoreLocal Store, int OwnedSlot)> takeOvers = [];
+        foreach (JoinArm arm in reaching)
+        {
+            if (arm.Body is { } nil && IsEmptyListLiteral(nil))
+            {
+                continue;
+            }
+
+            if (!arm.Owned
+                || BorrowsLoopParameter(arm)
+                || arm.Store is not { } store
+                || !IsNewlyProducedRcTemp(store.Source)
+                || FreshCellRecursiveTailOwnedSlot(arm.Body, store) is not int ownedSlot)
+            {
+                return false;
+            }
+
+            takeOvers.Add((store, ownedSlot));
+        }
+
+        if (takeOvers.Count == 0)
+        {
+            return false;
+        }
+
+        foreach ((IrInst.StoreLocal store, int ownedSlot) in takeOvers)
+        {
+            int index = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, store));
+            int zeroTemp = NewTemp();
+            _inst.InsertRange(index + 1, [new IrInst.LoadConstInt(zeroTemp, 0), new IrInst.StoreLocal(ownedSlot, zeroTemp)]);
+            ShiftRecordedInstructionIndices(index, 2);
+        }
+
+        return true;
+    }
+
+    // The owned slot holding the recursive call result an arm's cell links to as its tail: the arm is
+    // a cons onto the function's own recursive call, and the cell stores the slot's value as it is.
+    private int? FreshCellRecursiveTailOwnedSlot(Ashes.Frontend.Expr? body, IrInst.StoreLocal store)
+    {
+        while (body is Ashes.Frontend.Expr.Let let)
+        {
+            body = let.Body;
+        }
+
+        if (body is not Ashes.Frontend.Expr.Cons cons || !IsRecursiveProducerTail(cons.Tail))
+        {
+            return null;
+        }
+
+        int index = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, store));
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (_inst[i] is IrInst.StoreMemOffset { OffsetBytes: 8 } tail && tail.BasePtr == store.Source)
+            {
+                return DefinitionOf(tail.Source) is IrInst.LoadLocal load && _generalRcOwnedSlots.Any(owned => owned.Slot == load.Slot)
+                    ? load.Slot
+                    : null;
+            }
+        }
+
+        return null;
+    }
+
     // An owned arm beside one borrowing a loop parameter: the join is reference-counted on every path
     // but owned on only some, so the borrowing arm takes a reference of its own. A loop parameter the
     // join hands to the next iteration is released as the predecessor at the back edge.

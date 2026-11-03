@@ -21270,6 +21270,90 @@ let prepareMatchPlan loweredValue =
             |> freshType
             |> prepareMatchResultType(valueTemp)(valueType)
 
+// Whether `temp` is a cell built here on the reference-counted heap.
+let recursive definedByRcAlloc (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(target, _size, runtimeManaged) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else definedByRcAlloc(temp)(rest)
+        | _ :: rest -> definedByRcAlloc(temp)(rest)
+
+// Stage 0's `FreshCellRecursiveTailOwnedSlot`: the owned slot an arm's reference-counted cell
+// takes its tail from as it is, when the arm conses that one cell onto the function's own
+// recursive result; -1 otherwise.
+let freshCellRecursiveTailOwnedSlot (arm: MatchArmResult) (state: CoreLoweringState) =
+    if arm.armOwned && arm.armNewlyProduced && !arm.armBorrowsLoopParameter && arm.armConsesOntoSelfResult && definedByRcAlloc(arm.armStoreTemp)(state.reversedInstructions)
+    then
+        let slot =
+            loadedSlotOf(consCellTailTemp(arm.armStoreTemp)(state.reversedInstructions))(state.reversedInstructions)
+        in
+            if slot >= 0 && isOwnedSlotIn(slot)(ownedSlotsOfActiveFunction(state))
+            then slot
+            else -1
+    else -1
+
+// The cells of a join whose every reaching arm is the empty list or one reference-counted cell
+// onto the function's own recursive result, each with the owned slot it takes its tail from;
+// `None` when some arm is neither.
+let recursive nilBesideFreshCells (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> Some([])
+        | arm :: rest ->
+            match nilBesideFreshCells(rest)(state) with
+                | None -> None
+                | Some(cells) ->
+                    if arm.armStoreTemp < 0 || isZeroConstantTemp(arm.armStoreTemp)(state.reversedInstructions)
+                    then Some(cells)
+                    else
+                        let slot = freshCellRecursiveTailOwnedSlot(arm)(state)
+                        in
+                            if slot < 0
+                            then None
+                            else Some((arm.armStoreTemp, slot) :: cells)
+
+// The arm's store of `source` into the join slot followed by `after`, both most recent first.
+let recursive insertAfterJoinArmStore (slot: Int) (source: Int) (after: List(IrInstruction)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } as instruction) :: rest ->
+            if storeSlot == slot && storeSource == source
+            then append(after)(instruction :: rest)
+            else instruction :: insertAfterJoinArmStore(slot)(source)(after)(rest)
+        | instruction :: rest -> instruction :: insertAfterJoinArmStore(slot)(source)(after)(rest)
+
+let recursive clearTakenOverTailSlots (resultSlot: Int) (cells: List((Int, Int))) (state: CoreLoweringState) =
+    match cells with
+        | [] -> state
+        | (storeTemp, ownedSlot) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                    let index = joinArmStoreIndex(resultSlot)(storeTemp)(zeroState.reversedInstructions)
+                    in
+                        let cleared =
+                            (zeroState with reversedInstructions = [])
+                            |> emit(LoadConstInt(zeroTemp)(0))
+                            |> emit(StoreLocal(ownedSlot)(zeroTemp))
+                            |> (given (buffered: CoreLoweringState) -> buffered.reversedInstructions)
+                        in
+                            (zeroState with reversedInstructions = insertAfterJoinArmStore(resultSlot)(storeTemp)(cleared)(zeroState.reversedInstructions))
+                            |> withStatePatternOwnerSites(zeroState
+                            |> statePatternOwnerSites
+                            |> shiftPatternOwnerSites(index)(2))
+                            |> clearTakenOverTailSlots(resultSlot)(rest)
+
+// Stage 0's `TryTakeOverNilBesideFreshCells`: in a fresh join of the empty list beside cells built
+// on the reference-counted heap onto the function's own recursive result, each cell takes that
+// result over from the owned slot keeping it, which then releases nothing at the return.
+let takeOverNilBesideFreshCells (resultSlot: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    if generalRcEnabled(state) && (joinIsNewlyProduced(arms) || reachingArmsAllNewlyProduced(arms))
+    then
+        match nilBesideFreshCells(arms)(state) with
+            | Some(cells) -> clearTakenOverTailSlots(resultSlot)(cells)(state)
+            | None -> state
+    else state
+
 let finishMatchPlan plan =
     match plan with
         | CoreMatchPlan { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -21287,6 +21371,7 @@ let finishMatchPlan plan =
                             |> normalizeMixedJoinArms(resultSlot)(resultType)(reverse(armResults)) with
                                 | (normalized, joinedArms) ->
                                     normalized
+                                    |> takeOverNilBesideFreshCells(resultSlot)(joinedArms)
                                     |> markControlFlowJoin(resultTemp)(joinedArms)
                                     |> success(resultTemp)(resolveType(resultState)(resultType))
 

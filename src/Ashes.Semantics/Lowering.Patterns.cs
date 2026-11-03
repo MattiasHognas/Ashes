@@ -144,7 +144,8 @@ public sealed partial class Lowering
             && runtimeManagedResultArms.Count == cases.Count
             && runtimeManagedResultArms.All(arm => arm.NewlyProduced))
             || (joinArms is not null && ReachingArmsAllNewlyProduced(joinArms))
-            || (normalized && NormalizedArmsAllOwnTheirReference(joinArms!));
+            || (normalized && NormalizedArmsAllOwnTheirReference(joinArms!))
+            || (uniform && joinArms is not null && TryTakeOverNilBesideFreshCells(joinArms));
         RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged, allNewlyProduced);
     }
 

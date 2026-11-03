@@ -22158,4 +22158,71 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("producer tuple fresh element", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildNilBesideFreshCellProgram(int rounds)
+        => $$"""
+            type Pattern =
+                | PatternVar(Str)
+                | PatternWildcard
+                | PatternAt(Int, Pattern)
+
+            type Expr =
+                | ExprAt(Int, Expr)
+                | ExprInt(Int)
+                | ExprVar(Str)
+                | ExprMatch(Expr, List((Pattern, Expr, Maybe(Expr))), Maybe(Int))
+
+            let recursive rewrite (expression: Expr) =
+                match expression with
+                    | ExprAt(span, inner) -> ExprAt(span)(rewrite(inner))
+                    | ExprMatch(scrutinee, cases, position) -> ExprMatch(scrutinee)(rewriteCases(cases))(position)
+                    | other -> other
+            and rewriteCases (cases: List((Pattern, Expr, Maybe(Expr)))) =
+                match cases with
+                    | [] -> []
+                    | (pattern, body, guard) :: rest -> (pattern, body, guard) :: rewriteCases(rest)
+
+            let recursive exprSize (expression: Expr) =
+                match expression with
+                    | ExprAt(_span, inner) -> 1 + exprSize(inner)
+                    | ExprMatch(scrutinee, cases, _position) -> exprSize(scrutinee) + casesSize(cases)
+                    | _ -> 1
+            and casesSize (cases: List((Pattern, Expr, Maybe(Expr)))) =
+                match cases with
+                    | [] -> 0
+                    | (_pattern, body, _guard) :: rest -> exprSize(body) + casesSize(rest)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    let body = ExprAt(n, ExprMatch(ExprAt(1, ExprVar("v")), [(PatternVar("a"), ExprAt(2, ExprInt(n)), None), (PatternWildcard, ExprInt(4), Some(ExprInt(3)))], None))
+                    in loop(n - 1)(acc + exprSize(rewrite(body)))
+            in Ashes.IO.print(Ashes.Text.fromInt(loop({{rounds}})(0)))
+            """;
+
+    [Test]
+    public async Task Linux_backend_nil_beside_fresh_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The match joins the empty list with a reference-counted cell consed onto the function's own
+        // recursive result. The join was not counted fresh, so the function's result retained its head
+        // again and every rebuilt list leaked. The join is now fresh and the cell takes the recursive
+        // result over from the owned slot that kept it.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildNilBesideFreshCellProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("nil beside fresh cell", samples, maxRssKb: 16_000);
+    }
 }
