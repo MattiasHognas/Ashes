@@ -24943,8 +24943,23 @@ let recursive producesOwnValue (argument: Expr) =
         | ExprQualifiedVar(_owner, _member) -> false
         | _ -> true
 
+// Whether `temp` reloads a call result whose deferred copy-out has a kind once its type is known
+// here: the block resolved after the body copies the result onto the reference-counted heap
+// before that reload, so the reload is a fresh value of its own, as stage 0's copy-out pinned at
+// the call is.
+let recursive reloadsResolvedCallCopyOut (temp: Int) (copyOuts: List(CorePendingCallCopyOut)) (state: CoreLoweringState) =
+    match copyOuts with
+        | [] -> false
+        | copyOut :: rest ->
+            if copyOut.deferredReloadTemp == temp && copyOut.deferredOwned == false && containsUnresolvedLayout(copyOut.deferredType)(state) == false
+            then
+                match callCopyOutOf(copyOut.deferredType)(state) with
+                    | Some(_copyOut) -> ordinaryRcPlacementAllowed(state)
+                    | None -> false
+            else reloadsResolvedCallCopyOut(temp)(rest)(state)
+
 let isFreshOwnedConstructorArgument (argument: Expr) (temp: Int) (state: CoreLoweringState) =
-    producesOwnValue(argument) && isRuntimeTemp(temp)(state) && containsInt(temp)(stateBackEdgeDummyTemps(state)) == false
+    producesOwnValue(argument) && (isRuntimeTemp(temp)(state) || reloadsResolvedCallCopyOut(temp)(statePendingCallCopyOuts(state))(state)) && containsInt(temp)(stateBackEdgeDummyTemps(state)) == false
 
 // Stage 0's `IsRetainedTailPatternOwner`: a loop's result built in tail position around a binding
 // matched out of a reference-counted loop parameter takes a duplicate of the binding (the loop
