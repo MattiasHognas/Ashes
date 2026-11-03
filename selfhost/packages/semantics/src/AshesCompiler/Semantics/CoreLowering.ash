@@ -10440,12 +10440,20 @@ let isScalarFieldVariant (semanticType: SemanticType) (state: CoreLoweringState)
             isGeneralRcAdmissible(named)([])(state) && !anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
         | _ -> false
 
+// Stage 0's `IsScalarFieldVariantList`: a list of such variants (optional integers), copied cell by
+// cell with each element, holds nothing of a value it may have been read out of.
+let isScalarFieldVariantList (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(element) -> isScalarFieldVariant(element)(state)
+        | _ -> false
+
 // How a result outside the contract's types is detached from the values its function owns: by
-// its fixed copy-out in the arena, where the caller takes it like any fresh result, or by a
-// normalization into an owned reference-counted value.
+// its fixed copy-out in the arena, where the caller takes it like any fresh result, by an arena
+// deep copy, or by a normalization into an owned reference-counted value.
 type IndependentResultCopy =
     | ArenaResultCopy(CallCopyOut)
     | OwnedResultCopy(ArgumentCopyPlan)
+    | ArenaDeepResultCopy(SemanticType)
 
 // Stage 0's `HasFixedArenaCopyOut` and `CanNormalizeIntoOwnedRuntimeValue` behind
 // `normalizesOwnedResult`, the fixed copy-out first.
@@ -10453,22 +10461,26 @@ let independentResultCopyOf (bodyType: SemanticType) (state: CoreLoweringState) 
     match callCopyOutOf(bodyType)(state) with
         | Some(copyOut) -> Some(ArenaResultCopy(copyOut))
         | None ->
-            match ownedResultPlanOf(bodyType)(state) with
-                | Some(ScalarArgumentCopy) -> None
-                | Some(plan) -> Some(OwnedResultCopy(plan))
-                | None ->
-                    if isScalarFieldVariant(bodyType)(state)
-                    then
-                        match generalCopyPlanOf(bodyType)(state) with
-                            | Some(plan) -> Some(OwnedResultCopy(plan))
-                            | None -> None
-                    else None
+            if isScalarFieldVariantList(bodyType)(state)
+            then Some(ArenaDeepResultCopy(bodyType))
+            else
+                match ownedResultPlanOf(bodyType)(state) with
+                    | Some(ScalarArgumentCopy) -> None
+                    | Some(plan) -> Some(OwnedResultCopy(plan))
+                    | None ->
+                        if isScalarFieldVariant(bodyType)(state)
+                        then
+                            match generalCopyPlanOf(bodyType)(state) with
+                                | Some(plan) -> Some(OwnedResultCopy(plan))
+                                | None -> None
+                        else None
 
 let emitIndependentResultCopy (copy: IndependentResultCopy) (sourceTemp: Int) (state: CoreLoweringState) =
     match copy with
         | OwnedResultCopy(plan) ->
             match emitGuardedDeepCopy(sourceTemp)(plan)(state) with
                 | (copied, resultTemp) -> (markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(copied), resultTemp)
+        | ArenaDeepResultCopy(semanticType) -> emitLocatedDeepCopy(sourceTemp)(semanticType)(state)
         | ArenaResultCopy(copyOut) ->
             match freshTemp(state) with
                 | FreshTemp { state = allocated, temp = copyTemp } ->
@@ -11844,6 +11856,7 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
 let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match (functionOwnsGeneralRcSlots(state), independentResultCopyOf(bodyType)(state)) with
         | (true, Some(OwnedResultCopy(_plan))) when keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state) -> emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state)
+        | (true, Some(ArenaDeepResultCopy(_type))) when keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state) -> emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state)
         | (true, Some(copy)) ->
             match emitIndependentResultCopy(copy)(bodyTemp)(state) with
                 | (copied, resultTemp) -> (emitGeneralRcOwnedSlotDrops(copied), resultTemp)
@@ -11910,6 +11923,7 @@ let finishedResultRuntimeManaged (bodyTemp: Int) (bodyType: SemanticType) (state
         | _ -> false) || !resultSurvivesReset(bodyType)(state) && functionOwnsGeneralRcSlots(state) && (match independentResultCopyOf(bodyType)(state) with
         | Some(OwnedResultCopy(_plan)) -> !keepsUnreachedResultInPlace(bodyTemp)(bodyType)(state)
         | Some(ArenaResultCopy(_copyOut)) -> false
+        | Some(ArenaDeepResultCopy(_type)) -> false
         | None ->
             match ownedTupleResultPlan(bodyTemp)(bodyType)(state) with
                 | Some(_plan) -> true

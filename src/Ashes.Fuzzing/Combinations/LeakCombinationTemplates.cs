@@ -205,6 +205,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new NullaryTupleElementTemplate());
         registry.Register(new LoopSelfCallAdtResultTemplate());
         registry.Register(new DictionaryKeyInLoopTemplate());
+        registry.Register(new ScalarVariantListResultTemplate());
     }
 }
 

@@ -1570,7 +1570,18 @@ public sealed partial class Lowering
     private bool HasFixedArenaCopyOut(TypeRef type)
         => Environment.GetEnvironmentVariable("GRC_NO_FIXEDCOPYRESULT") is null
             && (GetCallCopyOutKind(type, out _, out _) is CopyOutKind.DeepAdt or CopyOutKind.Shallow or CopyOutKind.List
-                || IsScalarFieldVariant(type));
+                || IsScalarFieldVariant(type)
+                || IsScalarFieldVariantList(type));
+
+    private static bool ScalarFieldVariantListResultEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_SCALARVARIANTLISTRESULT") is null;
+
+    // A list of such variants (optional integers): copied cell by cell with each element, it holds
+    // nothing of a value it may have been read out of.
+    private bool IsScalarFieldVariantList(TypeRef type)
+        => ScalarFieldVariantListResultEnabled
+            && Prune(type) is TypeRef.TList list
+            && IsScalarFieldVariant(list.Element);
 
     // A variant every field of which is inline (an optional integer): the contract does not govern
     // it, since it owns no heap child, and a generic one has no fixed copy-out either, so the
@@ -1585,7 +1596,7 @@ public sealed partial class Lowering
     private int EmitGeneralRcArenaResultCopy(int sourceTemp, TypeRef type)
     {
         CopyOutKind kind = GetCallCopyOutKind(type, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy);
-        if (kind == CopyOutKind.DeepAdt)
+        if (kind == CopyOutKind.DeepAdt || (kind is not (CopyOutKind.Shallow or CopyOutKind.List) && IsScalarFieldVariantList(type)))
         {
             return EmitDeepCopy(sourceTemp, type);
         }

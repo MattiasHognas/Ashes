@@ -1722,6 +1722,12 @@ any other head is retained), and writes bit 60 into the mask; the caller copies 
 releases the reference each arena cell's reference-counted head holds, up to the first
 reference-counted cell. A builder with any other cell in its result hands nothing over.
 
+A result that is a list of variants with only inline fields (`List(Maybe(Int))`) has no fixed
+copy-out and is not one of the contract's types, yet it can point into an owned value that holds
+such a variant (a syntax tree with an optional offset). When an owned value is in its reach, the
+list is deep-copied in the arena, element by element, and the owned values are released behind
+the copy (`GRC_NO_SCALARVARIANTLISTRESULT` switches this off).
+
 Which owned values a result can point into is found by following its value back through the
 instructions that built it. A call result of the contract's types kept in an owned slot holds
 references of its own, so the walk ends at that slot: the owned values the call only borrowed as
