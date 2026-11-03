@@ -21848,4 +21848,123 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("pattern-owner duplicate in a later function", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildArenaListLiteralFreshHeadProgram(int rounds)
+        => $$"""
+            type Inst =
+                | Jump(Str)
+                | Other(Int)
+
+            let label (n: Int) = "flint" + Ashes.Text.fromInt(n)
+
+            let recursive walk (insts: List(Inst)) (count: Int) =
+                match insts with
+                    | [] -> count
+                    | inst :: rest ->
+                        match inst with
+                            | Jump(name) -> walk(rest)(count + Ashes.Text.byteLength(name))
+                            | _ -> walk(rest)(count)
+
+            let run (seed: Int) = walk([Jump(label(seed)), Jump(label(seed + 1))])(seed)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + (if run(n) > 0 then 1 else 0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_list_literal_fresh_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list literal's arena cells hold constructors placed on the reference-counted heap over a
+        // helper's fresh string; the walk copies the list with references of its own, so each cell's
+        // reference goes to an owned slot.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaListLiteralFreshHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena list literal fresh head", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildConstrainedCallOfUnresolvedResultProgram(int rounds)
+        => $$"""
+            type Inst =
+                | Jump(Str)
+                | Other(Int)
+
+            let recursive lookupAssociation key entries =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail ->
+                        if k == key
+                        then Some(v)
+                        else lookupAssociation(key)(tail)
+
+            let recursive countRefs instructions acc =
+                match instructions with
+                    | [] -> acc
+                    | inst :: tail ->
+                        match inst with
+                            | Jump(target) ->
+                                let found =
+                                    match lookupAssociation(target)(acc) with
+                                        | Some(c) -> c + 1
+                                        | None -> 1
+                                in
+                                    countRefs(tail)(acc)
+                            | _ -> countRefs(tail)(acc)
+
+            let recursive total entries sum =
+                match entries with
+                    | [] -> sum
+                    | (_k, v) :: rest -> total(rest)(sum + v)
+
+            let label (n: Int) = "rcdrop_list_end_" + Ashes.Text.fromInt(n)
+
+            let check (n: Int) = total(countRefs([Jump(label(n)), Other(1), Jump(label(n + 1))])([("k", 1)]))(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + check(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_constrained_call_of_unresolved_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic walk passes a string bound out of a list element to a constrained generic lookup
+        // whose result has no layout there: the reference taken for that result goes to an owned
+        // slot, released at the walk's back edge.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildConstrainedCallOfUnresolvedResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("constrained call of unresolved result", samples, maxRssKb: 16_000);
+    }
 }
