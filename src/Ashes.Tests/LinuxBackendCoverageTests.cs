@@ -21227,6 +21227,66 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("qualified callee fresh list argument", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildSelfCallResultArgumentProgram(int rounds)
+        => $$"""
+            type Export =
+                | ValueExport(Str)
+                | TypeExport(Str)
+
+            let exportsFor (item: Int) =
+                if item > 2
+                then [ValueExport("v" + Ashes.Text.fromInt(item))]
+                else [TypeExport("t" + Ashes.Text.fromInt(item)), ValueExport("c")]
+
+            let recursive appendExports left right =
+                match left with
+                    | [] -> right
+                    | head :: rest -> head :: appendExports(rest)(right)
+
+            let recursive collectExports (items: List(Int)) =
+                match items with
+                    | [] -> []
+                    | item :: rest -> appendExports(exportsFor(item))(collectExports(rest))
+
+            let recursive count (xs: List(Export)) =
+                match xs with
+                    | [] -> 0
+                    | ValueExport(_) :: rest -> 1 + count(rest)
+                    | TypeExport(_) :: rest -> 2 + count(rest)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + count(collectExports([1, 2, 3, n])))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_self_call_result_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function's non-tail call to itself, `collectExports(rest)`, handed to a further call
+        // whose result keeps that list as its tail. The self-call reads the callee's returns bit, so
+        // a reference-counted result is owned by the caller and released after the call; taken
+        // unread, every round's export list stayed with nobody.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildSelfCallResultArgumentProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(8L * rounds) + 4}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("self-call result argument", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildArenaConstructorFreshListProgram(int rounds)
         => $$"""
             capability Cap =

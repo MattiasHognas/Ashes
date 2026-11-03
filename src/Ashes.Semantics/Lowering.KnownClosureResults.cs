@@ -35,7 +35,8 @@ public sealed partial class Lowering
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_CAPTUREDSELFRESULT") is not null
             || rootExpr is not Expr.Var callee
-            || Lookup(callee.Name) is not (Binding.Env or Binding.EnvScheme)
+            || Lookup(callee.Name) is not (Binding.Env or Binding.EnvScheme or Binding.Self)
+            || Lookup(callee.Name) is Binding.Self && !DirectSelfListResultOwnedAtRunTime(rootExpr)
             || Prune(resultType) is not TypeRef.TList list
             || CanArenaReset(Prune(list.Element))
             || ContainsUnresolvedLayoutType(resultType, [])
@@ -57,6 +58,14 @@ public sealed partial class Lowering
 
         return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal) || IsUncompiledGroupSibling(label);
     }
+
+    // A function's non-tail call to itself by its own name (`append(fresh)(collect(rest))`) reaches
+    // the same body still being lowered, so it reads the returns bit like a call through a captured
+    // self. Taken unread, a reference-counted result handed to a further call was never released.
+    // A loop's tail self-call keeps the loop's own protocol.
+    private bool DirectSelfListResultOwnedAtRunTime(Expr rootExpr)
+        => Environment.GetEnvironmentVariable("GRC_NO_DIRECTSELFRESULT") is null
+            && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco));
 
     // A sibling of a recursive group whose body is lowered after this call's (`applied` called from
     // `derive` in `let recursive derive ... and applied ...`) has no compiled placement or curried

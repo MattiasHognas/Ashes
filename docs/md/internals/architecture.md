@@ -2316,6 +2316,11 @@ result is reference-counted, so a fresh list it returned and the caller handed t
 (`pick(flag)(Names.collect(items)([]))`, whose result is the list or a new one over its elements)
 was released by nobody: stage 1's `classifyParameterOwnership` list behind every callee's facts
 (`GRC_NO_QUALIFIEDCALLEELABEL`, stage 0).
+A function's non-tail call to itself by its own name (`appendExports(exportsFor(item))(collectExports(rest))`)
+reaches the body still being lowered, so like a call through a captured self it reads the callee's
+returns bit for a list result: a reference-counted result is owned by the caller and released once the
+further call that took it returns. Taken unread, that list stayed with nobody: the export lists
+stage 1's `collectCompatibilityExports` builds for a module interface (`GRC_NO_DIRECTSELFRESULT`, stage 0).
 
 ### One-shot resumptive arms: the pre/post split
 
