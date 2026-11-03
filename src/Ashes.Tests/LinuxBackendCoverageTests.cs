@@ -21967,4 +21967,61 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("constrained call of unresolved result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildDiscardedResultArgumentUnderHandlerProgram(int rounds)
+        => $$"""
+            external absOf(Int) -> Int = "abs@libc.so.6"
+
+            capability Probe =
+                | probe
+
+            type Box =
+                | Box(Int)
+
+            let probed =
+                handle Probe.probe(1) with
+                    | Probe.probe(x) -> resume(x)
+                    | return(r) -> r
+
+            let positionAt builder block = Box(absOf(builder + block))
+
+            let branch builder target = absOf(builder - target)
+
+            let emitArm builder block continueBlock body =
+                block
+                |> positionAt(builder)
+                |> body
+                |> (given (_) -> branch(builder)(continueBlock))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + emitArm(n)(probed)(n)(given (_) -> n + 7))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_discarded_result_argument_under_handler_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A handled capability turns the general contract off. A generic body hands a helper's fresh
+        // record to a closure whose result the applied lambda after it discards: the closure does
+        // not adopt the record, so it is released right after the call.
+        int[] roundCounts = [50000, 200000, 800000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildDiscardedResultArgumentUnderHandlerProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe("0\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("discarded result argument under a handler", samples, maxRssKb: 16_000);
+    }
 }
