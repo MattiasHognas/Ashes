@@ -1641,7 +1641,11 @@ walks the list copies it with references of its own, so the cell's reference goe
 (`GRC_NO_ARENALISTFRESHHEAD`, both stages). A constrained call of unresolved result (a generic
 lookup applied in a generic loop) hands the reference it took for that result to an owned slot
 too, released where the function's own result is out of the call's reach
-(`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0).
+(`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0). Inside a loop, such a slot first moves what an earlier
+iteration left in it to a predecessor slot of its own, released at the next back edge once no
+successor can name it, as a call result's owned slot does; otherwise each iteration's store
+overwrote the last one's reference (`GRC_NO_DICTSLOTPREDECESSOR`, stage 0; stage 1 hands no
+dictionary call argument to an owned slot).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that

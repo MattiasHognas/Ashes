@@ -2293,6 +2293,9 @@ public sealed partial class Lowering
             }
 
             int ownedSlot = NewLocal();
+            int predecessorSlot = Environment.GetEnvironmentVariable("GRC_NO_DICTSLOTPREDECESSOR") is null
+                ? SaveGeneralRcOwnedPredecessor(ownedSlot)
+                : -1;
             int storedTemp = argument.Temp;
             if (argument.Marker)
             {
@@ -2306,7 +2309,8 @@ public sealed partial class Lowering
                 _handedOverMarkerSlots.Add(new HandedOverMarkerSlot(_inst, argument.Temp, ownedSlot, storedTemp));
             }
 
-            RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+            GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+            RegisterGeneralRcOwnedPredecessor(predecessorSlot, valueType, owned.Binders, ownedSlot);
         }
     }
 

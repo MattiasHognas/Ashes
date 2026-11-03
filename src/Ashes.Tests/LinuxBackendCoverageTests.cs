@@ -22516,4 +22516,83 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop self call maybe result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildDictionaryKeyInLocalLoopProgram(int rounds)
+        => $$"""
+            type Op =
+                | Jump(Str)
+                | Label(Str)
+                | Other(Int)
+
+            type Inst =
+                | instruction: Op
+                | location: Int
+
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let reduce (weight: Int) (instructions: List(Inst)) =
+                (let recursive go insts saved n =
+                    match insts with
+                        | [] -> n
+                        | Inst { instruction = op } :: tail ->
+                            match op with
+                                | Jump(target) ->
+                                    go(tail)(setAssociation(target)([weight])(saved))(n)
+                                | Label(_name) -> go(tail)(saved)(n + 1)
+                                | _ -> go(tail)(saved)(n)
+                in go(instructions)([])(0))
+
+            let label (n: Int) = "end_" + Ashes.Text.fromInt(n)
+
+            let recursive jumps (n: Int) (k: Int) (acc: List(Inst)) =
+                if k == 0
+                then
+                    Inst(instruction = n
+                    |> label
+                    |> Label, location = 0) :: acc
+                else
+                    jumps(n)(k - 1)(Inst(instruction = n + k % 2
+                    |> label
+                    |> Jump, location = k) :: acc)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    loop(n - 1)(acc + reduce(n)(jumps(n)(4)([])))
+
+            0
+            |> loop({{rounds}})
+            |> Ashes.IO.print
+            """;
+
+    [Test]
+    public async Task Linux_backend_dictionary_call_key_in_local_loop_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A local loop hands each jump's label to an Eq-constrained association update, whose
+        // argument reference goes to an owned slot. Without a predecessor slot the next iteration
+        // overwrote it and every label but the last leaked.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildDictionaryKeyInLocalLoopProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("dictionary call key in local loop", samples, maxRssKb: 16_000);
+    }
 }
