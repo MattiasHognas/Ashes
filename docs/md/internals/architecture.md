@@ -1606,6 +1606,10 @@ The retain such a cell takes of its tail goes to an owned slot too when no call 
 function returning `label :: applied` over a list a match bound from a call keeps that list in the
 arena cell after the match releases it, and the slot is released once the result is copied out
 (`GRC_NO_ESCAPINGCELLTAILSLOT`, both stages).
+An arena aggregate stored in another (a record literal holding a `let`-bound list, returned inside a
+tuple) retains the owners it borrows, since the `let`'s release would otherwise free them under it;
+that retain goes to the call's collected retains or to an owned slot released once the function's
+result is normalized, which retains the owners' values again (`GRC_NO_ALIASOWNERSLOT`, both stages).
 A fresh argument handed to a closure parameter whose result has no layout in a generic body
 (`block |> positionBuilderAtEnd(builder) |> body |> ...`, a foreign call's Unit or a helper's record
 passed to `body`) goes to an owned slot when the closure does not adopt it: the slot is released at

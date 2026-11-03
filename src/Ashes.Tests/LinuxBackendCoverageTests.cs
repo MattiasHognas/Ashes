@@ -22759,4 +22759,88 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("transferred root option result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildRecordBorrowingLetListProgram(int rounds)
+        => $$"""
+            type Op =
+                | Label(Str)
+                | Other(Int)
+
+            type Context =
+                | width: Int
+                | labelBlocks: List((Str, Int))
+                | isEntry: Bool
+
+            let recursive collectLabelNames instructions =
+                match instructions with
+                    | [] -> []
+                    | instruction :: rest ->
+                        match instruction with
+                            | Label(name) -> name :: collectLabelNames(rest)
+                            | _ -> collectLabelNames(rest)
+
+            let recursive createLabelBlocks base names =
+                match names with
+                    | [] -> []
+                    | name :: rest -> (name, base) :: createLabelBlocks(base + 1)(rest)
+
+            let buildContext width isEntry instructions =
+                (let labelBlocks =
+                    instructions
+                    |> collectLabelNames
+                    |> createLabelBlocks(width)
+                in
+                    let cx = Context(width = width, labelBlocks = labelBlocks, isEntry = isEntry)
+                    in (cx, instructions))
+
+            let recursive sizeOf (blocks: List((Str, Int))) (n: Int) =
+                match blocks with
+                    | [] -> n
+                    | (_name, b) :: rest -> sizeOf(rest)(n + b)
+
+            let label (n: Int) = "end_" + Ashes.Text.fromInt(n)
+
+            let recursive ops (n: Int) (k: Int) (acc: List(Op)) =
+                if k == 0
+                then acc
+                else
+                    ops(n)(k - 1)(Label(label(n + k)) :: Other(k) :: acc)
+
+            let emitFunction (n: Int) =
+                match []
+                |> ops(n)(3)
+                |> buildContext(n)(n > 3) with
+                    | (cx, instructions) -> sizeOf(cx.labelBlocks)(0) + Ashes.Collection.List.length(instructions)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + emitFunction(3))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_record_borrowing_let_list_in_result_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A record literal holding a let-bound list is returned inside a tuple by a generic builder.
+        // The escaping record retains the list it borrows and the result's normalization retains it
+        // again; the first retain goes to an owned slot released after that normalization.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildRecordBorrowingLetListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{18L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("record borrowing let list in result tuple", samples, maxRssKb: 16_000);
+    }
 }

@@ -297,7 +297,7 @@ public sealed partial class Lowering
             || LookupOwnedValue(ownerName) is not
             { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
         {
-            RetainBorrowedRuntimeOwnersOfAlias(argument, argumentTemp);
+            RetainBorrowedRuntimeOwnersOfAlias(argument, argumentTemp, keepOwned: true);
             return argumentTemp;
         }
 
@@ -406,7 +406,7 @@ public sealed partial class Lowering
     // nothing is retained for it: an owner reference taken there has no release anywhere. The
     // owner's graph is shared with the copy either way, so its release no longer assumes it
     // is unique.
-    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument, int storedTemp)
+    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument, int storedTemp, bool keepOwned = false)
     {
         if (argument is not Expr.Var variable
             || LookupOwnedValue(variable.Name) is not
@@ -431,17 +431,47 @@ public sealed partial class Lowering
 
             int ownerTemp = NewTemp();
             Emit(new IrInst.LoadLocal(ownerTemp, owner.Slot));
+            int duplicatedTemp;
             if (owner.Type is not null && MayUseEmptyListRepresentation(Prune(owner.Type)))
             {
-                EmitRuntimeManagedNullableDup(ownerTemp);
+                duplicatedTemp = EmitRuntimeManagedNullableDup(ownerTemp);
             }
             else
             {
-                int duplicatedTemp = NewTemp();
+                duplicatedTemp = NewTemp();
                 Emit(new IrInst.RcDup(duplicatedTemp, ownerTemp, RuntimeManaged: true));
                 MarkRuntimeManagedTemp(duplicatedTemp);
             }
+
+            if (keepOwned)
+            {
+                KeepAliasOwnerRetainOwned(ownerTemp, duplicatedTemp, owner.Type);
+            }
         }
+    }
+
+    // The reference an escaping arena alias took of an owner it borrows: the arena aggregate never
+    // releases it, and a result normalized onto the reference-counted heap retains the owner's value
+    // again. It is recorded for the call it is an argument of, or goes to an owned slot released
+    // once the function's result holds references of its own.
+    private void KeepAliasOwnerRetainOwned(int ownerTemp, int retainedTemp, TypeRef? ownerType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERSLOT") is not null
+            || ownerType is null
+            || CanArenaReset(Prune(ownerType))
+            || ContainsUnresolvedLayoutType(Prune(ownerType), [])
+            || _inst.Count == 0
+            || _inst[^1] is not IrInst.RcDup { RuntimeManaged: true } retain
+            || retain.Target != retainedTemp
+            || RecordCallArgumentArenaRetain(ownerTemp, retainedTemp, ownerType))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
     }
 
     // A reference-counted value the lowering produced or took a reference to, rather than a
