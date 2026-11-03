@@ -23056,9 +23056,11 @@ let finishTupleLowering (successor: Bool) elements (runtimeTuple: Bool) (transfe
                                     | (demotedState, temps, demoted) ->
                                         match cloneNormalizedStringParameterElements(runtimeTuple)(elements)(temps)(demotedState) with
                                             | (clonedState, clonedTemps) ->
-                                                clonedState
-                                                |> finishPlacedTuple(elements)(clonedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)
-                                                |> recordCallArgumentTupleOwnerDuplicates(successor)(clonedTemps)(semanticTypes)
+                                                match arenaCellFields(semanticTypes)(false)(clonedTemps)(clonedState) with
+                                                    | (copiedState, copiedTemps) ->
+                                                        copiedState
+                                                        |> finishPlacedTuple(elements)(copiedTemps)(semanticTypes)(demoted)(tupleTemp)(false)(transfers)
+                                                        |> recordCallArgumentTupleOwnerDuplicates(successor)(clonedTemps)(semanticTypes)
 
 let inLoopTailPosition (request: ConsumerRequest) (state: CoreLoweringState) =
     match (request, stateTcoLoop(state)) with

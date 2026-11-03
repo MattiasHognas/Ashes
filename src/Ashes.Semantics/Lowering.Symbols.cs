@@ -1497,6 +1497,8 @@ public sealed partial class Lowering
     // `(perform Cap.get(Unit), i)`), but its caller, without the contract, takes the result as an
     // arena value and releases nothing: the tuple and the element leaked. The element is replaced by
     // an arena copy first, as an arena constructor cell's field is, so the tuple stays in the arena.
+    // A tuple requested on the reference-counted heap that still ends up in the arena (an element it
+    // could not own) gets the same copy of the fresh elements it was given for it.
     private void CopyFreshElementsIntoArenaTuple(List<LoweredValue> elements, LoweredValueRequest request)
     {
         if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple)

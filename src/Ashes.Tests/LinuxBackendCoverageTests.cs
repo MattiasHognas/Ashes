@@ -22024,4 +22024,66 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("discarded result argument under a handler", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildProducerTupleFreshElementProgram(int rounds)
+        => $$"""
+            capability Tick =
+                | get : Unit -> Int
+
+            type Tree =
+                | Leaf(Int)
+                | Node(Str, Tree)
+
+            let recursive build (depth: Int) (n: Int) =
+                if depth == 0
+                then Leaf(n)
+                else Node(Ashes.Text.fromInt(depth), build(depth - 1)(n))
+
+            let recursive weight (t: Tree) =
+                match t with
+                    | Leaf(n) -> n
+                    | Node(_s, rest) -> 1 + weight(rest)
+
+            let recursive bindingsOf (k: Int) (n: Int) =
+                if k == 0
+                then []
+                else (Ashes.Text.fromInt(n + k), build(2)(n)) :: bindingsOf(k - 1)(n)
+
+            let recursive total (bs: List((Str, Tree))) (acc: Int) =
+                match bs with
+                    | [] -> acc
+                    | (name, t) :: rest -> total(rest)(acc + Ashes.Text.byteLength(name) + weight(t))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + total(bindingsOf(2)(n))(0))
+            in Ashes.IO.print(handle loop({{rounds}})(perform Tick.get(Unit)) with
+                | Tick.get(u) -> resume(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_producer_tuple_fresh_element_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // With a handler in the program general reference counting is off. The producer's cell asked
+        // for a reference-counted tuple, so the name was made reference-counted, but the tuple could
+        // not own the tree and stayed in the arena, which never released the name. The arena tuple now
+        // stores an arena copy of it and releases the original.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildProducerTupleFreshElementProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("producer tuple fresh element", samples, maxRssKb: 16_000);
+    }
 }

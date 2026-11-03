@@ -17491,6 +17491,11 @@ public sealed partial class Lowering
             elements,
             request,
             runtimeManaged);
+        if (!runtimeManaged)
+        {
+            CopyFreshElementsIntoArenaTuple(elements, LoweredValueRequest.None);
+        }
+
         RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged, demoted, normalized);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)

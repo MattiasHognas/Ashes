@@ -2285,6 +2285,9 @@ An arena tuple literal does the same with its elements before it is placed: with
 fresh reference-counted string element (`(perform Cap.get(Unit), i)`) put the tuple on the
 reference-counted heap to own it, and a caller without the contract took the handle's value as an
 arena value and released neither (`GRC_NO_ARENATUPLEFRESHELEMENT`, both stages).
+A tuple the cell asked for on the reference-counted heap that still ends up in the arena, because it
+cannot own one of its elements, copies its fresh elements the same way: a recursive producer's
+`(Ashes.Text.fromInt(n + k), build(3)(n)) :: rest` asks for a reference-counted name and keeps it.
 
 ### One-shot resumptive arms: the pre/post split
 
