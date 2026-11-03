@@ -191,6 +191,9 @@ see says why.
 | bf215f6e A back-edge helper is spliced only when every helper it calls is spliced too | none | A false ASH014, not a leak: a template with the shape would report `SKIP compile exit 1`; `tests/back_edge_helper_calling_unreachable_helper_is_called.ash` pins it |
 | A fresh argument handed to a closure of unresolved result goes to an owned slot released behind an unreached result | `leak.fresh-argument-to-closure-of-unresolved-result` | `GRC_NO_UNRESOLVEDHANDEDSLOT`: 1, 1 and 1 cells per round |
 | A result the arena has no copy for and no owned value reaches stays in place | `leak.self-call-result-kept-in-place` | `GRC_NO_UNREACHEDRESULTINPLACE`: 2, 3 and 3 cells per round |
+| A list literal's arena cell hands a fresh reference-counted head to an owned slot | `leak.arena-list-literal-fresh-head` | `GRC_NO_ARENALISTFRESHHEAD`: 6, 4 and 6 cells per round |
+| A constrained call of unresolved result hands its retained argument to an owned slot | `leak.constrained-call-of-unresolved-result` | `GRC_NO_DICTUNRESOLVEDSLOT`: 2, 2 and 2 cells per round |
+| A call whose result an applied lambda discards releases a handed-over argument the callee did not adopt | `leak.discarded-result-argument-under-handler` | `GRC_NO_DISCARDEDRESULTRELEASE`: 1, 1 and 1 cells per round |
 
 A leak template's program needs types and top-level functions that an expression cannot declare,
 so it is an `IDeclaringCombinationTemplate`: a case that forces it adds its declarations, which end

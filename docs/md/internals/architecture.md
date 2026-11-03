@@ -1621,6 +1621,18 @@ same number (stage 1's `lambdaParts` kept every recursive function's syntax tree
 `GRC_NO_FUNCTIONSCOPEDOWNERDUPS`, stage 0; stage 1 resets its set per lambda body). The generic
 deep-copied list results a lambda lowered inside a function records are kept apart from the
 enclosing function's the same way, rather than clearing them.
+A program that handles a capability is lowered without the general contract, so there are no owned
+slots to wait for the function's result: when an applied lambda discards a call's result
+(`body(x) |> (given (_) -> ...)`), a reference handed over for that result to keep is released right
+after the call unless the callee adopted it, whatever the result's layout
+(`GRC_NO_DISCARDEDRESULTRELEASE`, stage 0 only so far).
+A list literal's arena cell holding a value produced right there (a constructor placed on the
+reference-counted heap because it owns a fresh string) is that value's only holder: a callee that
+walks the list copies it with references of its own, so the cell's reference goes to an owned slot
+(`GRC_NO_ARENALISTFRESHHEAD`, both stages). A constrained call of unresolved result (a generic
+lookup applied in a generic loop) hands the reference it took for that result to an owned slot
+too, released where the function's own result is out of the call's reach
+(`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that
