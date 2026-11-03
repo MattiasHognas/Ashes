@@ -118,3 +118,49 @@ internal sealed class SelfCallResultKeptInPlaceTemplate() : LeakCombinationTempl
             """;
     }
 }
+
+/// <summary>
+/// The fresh argument of <see cref="FreshArgumentToClosureOfUnresolvedResultTemplate"/> in a
+/// program that handles a capability, which turns the general contract off: the closure's result
+/// is discarded by the applied lambda after it, so the argument is released right after the call.
+/// </summary>
+internal sealed class DiscardedResultArgumentUnderHandlerTemplate() : LeakCombinationTemplate(
+    "leak.discarded-result-argument-under-handler", "discardedResultArgument", GeneratedFeature.Lambda)
+{
+    protected override string Declarations(LeakNames names)
+    {
+        string box = names.Of("LeakBox");
+        string absOf = names.Of("absOf");
+        string probe = names.Of("LeakProbe");
+        string probed = names.Of("probed");
+        string position = names.Of("positionAt");
+        string branch = names.Of("branch");
+        string arm = names.Of("emitArm");
+        return $$"""
+            external {{absOf}}(Int) -> Int = "abs@libc.so.6"
+
+            capability {{probe}} =
+                | probe
+
+            type {{box}} =
+                | {{box}}(Int)
+
+            let {{probed}} =
+                handle {{probe}}.probe(1) with
+                    | {{probe}}.probe(x) -> resume(x)
+                    | return(r) -> r
+
+            let {{position}} builder block = {{box}}({{absOf}}(builder + block))
+
+            let {{branch}} builder target = {{absOf}}(builder - target)
+
+            let {{arm}} builder block continueBlock body =
+                block
+                |> {{position}}(builder)
+                |> body
+                |> (given (_) -> {{branch}}(builder)(continueBlock))
+
+            let {{names.Entry}} (seed: Int) = {{arm}}(seed)({{names.Between(1, 4)}})({{probed}})(given (_) -> seed + 7)
+            """;
+    }
+}
