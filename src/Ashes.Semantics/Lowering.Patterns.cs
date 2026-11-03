@@ -2115,7 +2115,7 @@ public sealed partial class Lowering
         }
 
         int nodeTemp = NewTemp();
-        bool reusedCell = EmitListCellAllocation(nodeTemp, runtimeManaged, location);
+        bool reusedCell = EmitListCellAllocation(nodeTemp, runtimeManaged, location, HeadIsFreshArenaAggregate(headTemp, headType));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), headTemp));
         Emit(new IrInst.StoreMemOffset(nodeTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), tailTemp));
         if (!reusedCell && runtimeManaged && request.RuntimeTcoListTailSlot is not null)
@@ -2128,26 +2128,20 @@ public sealed partial class Lowering
     private bool EmitListCellAllocation(
         int nodeTemp,
         bool runtimeManaged,
-        SourceLocation? location)
+        SourceLocation? location,
+        bool freshArenaHead)
     {
-        // Reconciled reuse-token rule: a list
-        // cons cell satisfied by ANY reuse token — arena or (hypothetically) runtime-managed — is
-        // ALWAYS an in-place arena reuse. There is no list-specific runtime-managed reuse cleanup (see
-        // the assert below), so `runtimeManaged` only ever governs the FRESH-allocation branch; it must
-        // never also drive the post-emission bookkeeping when the reuse branch actually ran. Before this
-        // fix, the bookkeeping below keyed only off `runtimeManaged` (and the ambient TCO-tail slot),
-        // independent of which branch emitted the cell — so a reuse-token hit could mark a cell that was
-        // just given a plain arena AllocReusing (RuntimeManaged: false, no RC header) as runtime-managed
-        // anyway, which would make a later RcDup/RcDrop read/write a bogus header at that address. Track
-        // which branch ran and gate the bookkeeping on that fact directly, instead of re-deriving it from
-        // `runtimeManaged` a second time after the emission decision has already been made.
-        ReuseTokenMatch tokenMatch = TryConsumeReuseToken(
-            2,
-            runtimeManaged,
-            listCell: true,
-            tagless: false,
-            targetConstructor: "::",
-            location);
+        // A list cell satisfied by any reuse token is an in-place arena reuse: `runtimeManaged` governs
+        // only the fresh allocation, and the bookkeeping keys off which branch ran.
+        ReuseTokenMatch tokenMatch = freshArenaHead
+            ? new ReuseTokenMatch(null, CandidateCompared: false)
+            : TryConsumeReuseToken(
+                2,
+                runtimeManaged,
+                listCell: true,
+                tagless: false,
+                targetConstructor: "::",
+                location);
         if (tokenMatch.Token is { } reuseToken)
         {
             Debug.Assert(
@@ -2190,6 +2184,14 @@ public sealed partial class Lowering
         }
         return false;
     }
+
+    // A head this frame just built in the arena (a tuple or record literal) lives in the frame's
+    // window, which the arm's reset reclaims; a reused cell lives where its token's cell lived,
+    // outside that window, and the window's copy-out never sees it. Such a cell takes no token.
+    private bool HeadIsFreshArenaAggregate(int headTemp, TypeRef headType)
+        => Environment.GetEnvironmentVariable("GRC_NO_FRESHHEADREUSE") is null
+            && !CanArenaReset(Prune(headType))
+            && IsArenaCellConstruction(headTemp);
 
     private bool IsRuntimeManageableListElement(TypeRef type, int temp)
     {
