@@ -17185,7 +17185,7 @@ public sealed partial class Lowering
                 ownTail: !tailIsReferenceCounted);
             tailIsReferenceCounted = IsFreshReferenceCountedCell(tailTemp);
             tailIsFreshCell = tailIsReferenceCounted;
-            if (!tailIsReferenceCounted && headTemp == head.Temp)
+            if (!tailIsReferenceCounted && headTemp == head.Temp && _tcoArgumentDestination is null)
             {
                 KeepArenaListLiteralFreshHeadOwned(head);
             }
