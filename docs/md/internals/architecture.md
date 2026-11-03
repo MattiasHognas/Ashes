@@ -2277,7 +2277,14 @@ parts as views copied out of their scopes (`GRC_NO_PERFORMSCRUTINEE`).
 
 An adopted perform result appended to a loop's string accumulator in place (`ConcatStrTip`) is
 released once its bytes are copied, as a plain concatenation releases its operands
-(`GRC_NO_TIPRIGHTRELEASE`, both compilers).
+(`GRC_NO_TIPRIGHTRELEASE`, both compilers). One stored as the head of an arena cons cell is copied
+into the arena and released at the cons, since an arena cell never releases its head and a
+caller's copy-out copies the heads without dropping them; a cell's retain of a `let` binding's
+string is replaced the same way, except where the back edge copies the cell or a late release
+still names the duplicate (`GRC_NO_ARENACELLFRESHHEAD`, both compilers). When the cell is part of a
+call's argument, its retain was also collected for release after the call; the cell's immediate
+release takes it out of that collection, so the call does not release it a second time
+(`GRC_NO_FORGETARGRET`, both compilers).
 
 A tail-recursive loop that may run while a handler's one-shot post is pending gets no
 reference-counted placement for its list accumulator, so the successor cells it conses onto that

@@ -415,7 +415,7 @@ let aggregateChildrenRetainPairReprLine (line: Str) =
 let aggregateChildrenRetainPrefixedReprLine (line: Str) =
     match line with
         | "    conservative unknown: 2" -> ["    conservative unknown: 6"]
-        | "    region:               4" -> ["    region:               1"]
+        | "    region:               5" -> ["    region:               1"]
         | "    runtime rc:           8" -> ["    runtime rc:           2"]
         | _ -> [line]
 

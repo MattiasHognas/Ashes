@@ -22638,6 +22638,22 @@ let recursive holdsReferenceCountedElement (elements: List(Expr)) (temps: List(I
         | (element :: restElements, temp :: restTemps, semanticType :: restTypes) -> childIsRuntimeManaged(element)(temp)(state) && resultSurvivesReset(semanticType)(state) == false || holdsReferenceCountedElement(restElements)(restTemps)(restTypes)(state)
         | _ -> false
 
+let recursive withoutTransferRetain (retained: Int) (retains: List((Int, Int, SemanticType))) =
+    match retains with
+        | [] -> []
+        | (temp, slot, semanticType) :: rest ->
+            if temp == retained && slot == -1
+            then withoutTransferRetain(retained)(rest)
+            else (temp, slot, semanticType) :: withoutTransferRetain(retained)(rest)
+
+// Stage 0's `ForgetCallArgumentArenaRetain`: a collected retain released where it was taken (an
+// arena cell that stores a copy of its head instead) leaves the frame, so the call does not release
+// it a second time.
+let forgetCallArgumentTransferRetain (retained: Int) (state: CoreLoweringState) =
+    withCallArgumentRetainFrame(state
+    |> stateCallArgumentRecordRetains
+    |> withoutTransferRetain(retained))(stateCollectingCallArgumentRetains(state))(state)
+
 // Stage 0's `RecordCallArgumentArenaRetain` for the transfer retain an arena aggregate took of a
 // live owner's read: collected while an argument the callee's result may reach is lowered, and
 // only when no label was allocated since the argument began, so the release after the call never
@@ -23375,6 +23391,33 @@ let chainTailKeepsCellInArena (request: ConsumerRequest) (tailExpression: Expr) 
         | (ExprCons(_head, _tail), Some(_slot)) -> !isRuntimeTemp(tailTemp)(state)
         | _ -> false
 
+// Stage 0's `CopyFreshStringHeadIntoArenaCell`: an arena cell never releases its head, so a newly
+// produced reference-counted string, or a reference the cell took on a binding's string, is stored
+// as an arena copy and released right away. A cell whose parts the back edge copies, or whose
+// duplicate a late release still names, keeps its head as it is.
+let arenaCellHeadOf (request: ConsumerRequest) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    (let retained =
+        match definitionOfTemp(headTemp)(state.reversedInstructions) with
+            | Some(RcDup(_target, _source, true, _mayBeEmpty)) -> true
+            | _ -> false
+    in
+        let fresh = isFreshRuntimeTemp(headTemp)(state)
+        in
+            if resolveType(state)(headType) != SemString || request.borrowsCellParts || request.lateCopiedCellParts || request.recordFieldCell || !(fresh || retained)
+            then (state, headTemp)
+            else
+                match freshTemp(state) with
+                    | FreshTemp { state = allocated, temp = copyTemp } ->
+                        let copied =
+                            emit(CopyOutArena(copyTemp)(headTemp)(-1)(false)(IndependentClone)(None))(allocated)
+                        in
+                            if fresh
+                            then (releaseConsumedOperand(headTemp)(copied), copyTemp)
+                            else
+                                (copied
+                                |> emit(RcDrop(headTemp)("String")(-1)(true)(false)(None))
+                                |> forgetCallArgumentTransferRetain(headTemp), copyTemp))
+
 let finishCons (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) head tail =
     match (head, tail) with
         | (LoweredCoreValue { state = failedState, error = Some(error) }, _tail) -> failure(failedState)(error)
@@ -23382,7 +23425,12 @@ let finishCons (request: ConsumerRequest) (headExpression: Expr) (tailExpression
         | (LoweredCoreValue { temp = headTemp, semanticType = headType }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType }) ->
             match bindType(SemList(headType))(tailType)(tailState) with
                 | (failedState, Some(error)) -> failure(failedState)(error)
-                | (typedState, None) -> allocateListCell(headTemp)(tailTemp)(headType)(cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState) && !chainTailKeepsCellInArena(request)(tailExpression)(tailTemp)(typedState))(typedState)
+                | (typedState, None) ->
+                    if cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState) && !chainTailKeepsCellInArena(request)(tailExpression)(tailTemp)(typedState)
+                    then allocateListCell(headTemp)(tailTemp)(headType)(true)(typedState)
+                    else
+                        match arenaCellHeadOf(request)(headTemp)(headType)(typedState) with
+                            | (headedState, cellHeadTemp) -> allocateListCell(cellHeadTemp)(tailTemp)(headType)(false)(headedState)
 
 // Stage 0's `EmitReferenceCountedListTail`: the tail a reference-counted cell takes over from the
 // accumulator parameter it extends. The parameter's first value is whatever the caller passed, so

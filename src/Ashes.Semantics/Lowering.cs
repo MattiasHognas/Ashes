@@ -18069,6 +18069,7 @@ public sealed partial class Lowering
             };
         }
 
+        head = CopyFreshStringHeadIntoArenaCell(cons, head, request, lateHeadDuplicate >= 0);
         (int cellTemp, TypeRef cellType) = LowerConsCell(
             head.Temp,
             tailTemp,
@@ -18179,6 +18180,40 @@ public sealed partial class Lowering
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
+    }
+
+    // An arena cell never releases its head, so a newly produced reference-counted string (a
+    // perform's adopted result) stored there would outlive every reader: the caller's copy-out copies
+    // the heads and nothing drops the original. The same holds for a reference the cell took on a
+    // binding's string (a `let` owner read in head position). The cell stores an arena copy, and the
+    // original or the reference is released right away. A duplicate kept for a late release stays.
+    private LoweredValue CopyFreshStringHeadIntoArenaCell(Expr.Cons cons, LoweredValue head, LoweredValueRequest request, bool lateDuplicate)
+    {
+        bool retained = DefinitionOf(head.Temp) is IrInst.RcDup { RuntimeManaged: true };
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARENACELLFRESHHEAD") is not null
+            || Prune(head.Type) is not TypeRef.TStr
+            || lateDuplicate
+            || !(IsNewlyProducedRcTemp(head.Temp) || retained)
+            || IsBackEdgeCopiedCell(cons)
+            || (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+                && IsRuntimeManageableListElement(head.Type, head.Temp)))
+        {
+            return head;
+        }
+
+        int copiedTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(copiedTemp, head.Temp, -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+        if (IsNewlyProducedRcTemp(head.Temp))
+        {
+            ReleaseConsumedOwnedOperand(head.Temp);
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(head.Temp, "String", RuntimeManaged: true));
+            ForgetCallArgumentArenaRetain(head.Temp);
+        }
+
+        return CreateLoweredValue(copiedTemp, head.Type);
     }
 
     private bool IsInnermostLoopChainCell(Expr.Cons cons)

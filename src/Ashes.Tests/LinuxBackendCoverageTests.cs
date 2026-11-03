@@ -22287,4 +22287,53 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("join copied record update", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildArenaCellFreshHeadProgram(int rounds)
+        => $$"""
+            capability Cap =
+                | get : Unit -> Str
+
+            let gather (acc: List(Str)) = perform Cap.get(Unit) :: acc
+
+            let recursive count (xs: List(Str)) (n: Int) =
+                match xs with
+                    | [] -> n
+                    | _ :: rest -> count(rest)(n + 1)
+
+            let probe (n: Int) =
+                count(handle gather([Ashes.Text.fromInt(n)]) with
+                    | Cap.get(u) -> let x = resume("lit") in "s" :: x
+                    | return(r) -> r)(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_perform_result_consed_into_arena_cell_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A perform's adopted result string is the head of an arena cons cell. The cell stores an
+        // arena copy and the adopted string is released at the cons; stored as it is, nothing would
+        // release it, since the caller's copy-out copies the heads without dropping them.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaCellFreshHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("perform result consed into arena cell", samples, maxRssKb: 16_000);
+    }
 }

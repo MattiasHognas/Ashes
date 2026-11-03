@@ -93,6 +93,19 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// A collected retain released where it was taken (an arena cell that stores a copy of its head
+    /// instead) leaves the frame, so the call does not release it a second time.
+    /// </summary>
+    private void ForgetCallArgumentArenaRetain(int retainedTemp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_FORGETARGRET") is null
+            && _callArgumentRetainFrame is { } frame)
+        {
+            _ = frame.Retains.RemoveAll(retain => retain.Temp == retainedTemp && retain.PendingSlot < 0);
+        }
+    }
+
+    /// <summary>
     /// An arena tuple built inside a call's argument holds the duplicates its pattern owners took
     /// (DuplicatePerceusPatternOwnerForAggregate), and the arena cell never releases them. Each is
     /// released after the call: the duplicate and its release are markers promoted together with the
