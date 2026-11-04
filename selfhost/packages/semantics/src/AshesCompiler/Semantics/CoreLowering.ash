@@ -23035,6 +23035,25 @@ let remainingExpectedElements (expectedElements: List(SemanticType)) =
         | _first :: rest -> rest
         | [] -> []
 
+// Stage 0's `MaterializeEscapingStringTupleElement`: inside a loop, a bare string variable placed
+// into a reference-counted tuple is copied into an owned string the tuple stores, unless it reads a
+// binding that owns a runtime-managed reference itself; a match-bound string of the loop's
+// parameter would otherwise be retained into an arena tuple that the cell then copies again.
+let materializeEscapingStringTupleElement (runtimeTuple: Bool) (element: Expr) (lowered: LoweredCoreValue) =
+    match (lowered, unspanArgument(element)) with
+        | (LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, ExprVar(name)) ->
+            match (runtimeTuple, stateTcoLoop(state), resolveType(state)(semanticType), liveRuntimeOwnerSlot(name)(state), patternOwnerBinding(name)(state)) with
+                | (true, Some(_loop), SemString, Some(_slot), None) -> lowered
+                | (true, Some(_loop), SemString, _ownerSlot, _patternOwner) ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = allocated, temp = copyTemp } ->
+                            allocated
+                            |> emit(CopyOutArena(copyTemp)(temp)(-1)(true)(RcNormalization)(None))
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> success(copyTemp)(semanticType)
+                | _ -> lowered
+        | _ -> lowered
+
 let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: Bool) (transfers: Bool) (expectedElements: List(SemanticType)) elements lower reversedTemps reversedTypes state =
     match elements with
         | [] -> finishCoreValues(state)(reversedTemps)(reversedTypes)
@@ -23042,6 +23061,7 @@ let recursive lowerTupleElementsInto (request: ConsumerRequest) (runtimeTuple: B
             match state
             |> withConsumerRequest(tupleElementRequest(request)(runtimeTuple)(transfers)(element)(state))
             |> lower(element)
+            |> materializeEscapingStringTupleElement(runtimeTuple)(element)
             |> duplicatePatternOwnerChild(element) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
                 | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
@@ -30666,7 +30686,9 @@ let ownContractHeadForTmcCell (request: ConsumerRequest) (headExpression: Expr) 
 // The transformed cons's own head prelude, deliberately identical to `lowerCons`'s up to the point
 // the tail would be lowered — a candidate tail is a saturated self-call, so the reuse-token rule
 // reaches the same request either way, and only the finisher differs. Keeping the prelude shared is
-// what lets `finishConsTmc` decline after the head is lowered without lowering it a second time.
+// what lets `finishConsTmc` decline after the head is lowered without lowering it a second time. The
+// head is lowered for a reference-counted list whether or not the cell reuses a token, as stage 0's
+// `LowerCons` asks for one for every candidate cell.
 let lowerConsTmc head tail lower state =
     match consumerRequestOf(state) with
         | outerRequest ->
@@ -30679,7 +30701,7 @@ let lowerConsTmc head tail lower state =
                     | (Some(frame), Some(loop)) ->
                         state
                         |> markResourceArgumentsMoved([head, tail])
-                        |> withConsumerRequest(listElementRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
+                        |> withConsumerRequest(listElementRequest((outerRequest with runtimeList = true))(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
                         |> lower(head)
                         |> normalizeRuntimeManagedConsHead(request)(head)(tail)
                         |> normalizePatternOwnerHead(request)(head)

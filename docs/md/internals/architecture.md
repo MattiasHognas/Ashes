@@ -1644,7 +1644,12 @@ reference-counted heap because it owns a fresh string) is that value's only hold
 walks the list copies it with references of its own, so the cell's reference goes to an owned slot
 (`GRC_NO_ARENALISTFRESHHEAD`, both stages). A fresh string a call returned (`[label(n)]`) is
 such a value too: wherever a callee keeps it, a tuple or cell storing it takes a reference of its
-own (`GRC_NO_LITERALFRESHSTRHEAD`, both stages). A constrained call of unresolved result (a generic
+own (`GRC_NO_LITERALFRESHSTRHEAD`, both stages). Inside a loop, a non-tail producer's head is
+lowered for a reference-counted list whether or not its cell reuses a token, and a bare string
+variable its tuple head stores (`(name, base) :: blocks(base + 1)(rest)`) is copied into an owned string; stage 1
+had built that tuple in the arena with a retain of the string, which the cell's copy of the tuple
+retained again (stage 1's `materializeEscapingStringTupleElement`, stage 0's
+`MaterializeEscapingStringTupleElement`). A constrained call of unresolved result (a generic
 lookup applied in a generic loop) hands the reference it took for that result to an owned slot
 too, released where the function's own result is out of the call's reach
 (`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0). Inside a loop, such a slot first moves what an earlier
