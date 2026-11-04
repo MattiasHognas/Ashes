@@ -211,6 +211,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new TransferredRootOptionResultTemplate());
         registry.Register(new ArenaHolderOwnerRetainTemplate());
         registry.Register(new ListLiteralFreshStringHeadTemplate());
+        registry.Register(new CurriedChainPredecessorTemplate());
     }
 }
 

@@ -1,5 +1,7 @@
-// expect: 75
+// expect: 69
 import Ashes.Collection.List.length
+import Ashes.Collection.List.append
+import Ashes.Collection.Map.MapTree
 type Expr =
     | ExprAt(Int, Expr)
     | ExprVar(Str)
@@ -73,16 +75,36 @@ let itemSize (item: Item) =
         | ItemFn(f) -> f(1)
         | ItemAt(_span, _inner) -> 1
 
-let recursive lowerItems (items: List(Item)) trailing seen environment (analysis: Analysis) (pending: List(Str)) (state: LState) =
+type DuplicateCheck =
+    | seenNames: MapTree(Str, Bool)
+    | duplicate: Maybe(Str)
+
+let recursive checkNames (names: List(Str)) (seen: MapTree(Str, Bool)) =
+    match names with
+        | [] -> DuplicateCheck(seenNames = seen, duplicate = None)
+        | name :: rest ->
+            match Ashes.Collection.Map.getStr(name)(seen) with
+                | Some(_declared) -> DuplicateCheck(seenNames = seen, duplicate = Some(name))
+                | None ->
+                    seen
+                    |> Ashes.Collection.Map.setStr(name)(true)
+                    |> checkNames(rest)
+
+let recursive lowerItems (items: List(Item)) trailing (seen: MapTree(Str, Bool)) environment (analysis: Analysis) (pending: List(Str)) (state: LState) =
     match items with
-        | [] -> state.counter + length(state.emitted) + size(analysis.remainingBody) + escapeSize(analysis.escapeOfChain) + seen
+        | [] -> state.counter + length(state.emitted) + size(analysis.remainingBody) + escapeSize(analysis.escapeOfChain) + 1
         | ItemAt(_span, inner) :: rest -> lowerItems(inner :: rest)(trailing)(seen)(environment)(analysis)(pending)(state)
         | item :: rest ->
-            let nextAnalysis = peelAnalysis(1)(analysis)
-            in
-                match openChain("x")(trailing)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(itemSize(item) > 5)(environment)(1)(2)(pending)(state) with
-                    | Opened { chainState = failed, chainError = Some(_error) } -> failed.counter
-                    | Opened { chainState = opened, chainPending = nextPending, chainError = None } -> lowerItems(rest)(trailing)(seen + 1)(environment)(nextAnalysis)(nextPending)(opened)
+            match checkNames([pending
+            |> length
+            |> Ashes.Text.fromInt])(seen) with
+                | DuplicateCheck { duplicate = Some(_name) } -> 0
+                | DuplicateCheck { seenNames = nextSeen, duplicate = None } ->
+                    let nextAnalysis = peelAnalysis(1)(analysis)
+                    in
+                        match openChain("x")(trailing)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(itemSize(item) > 5)(environment)(1)(2)(pending)(state) with
+                            | Opened { chainState = failed, chainError = Some(_error) } -> failed.counter
+                            | Opened { chainState = opened, chainPending = nextPending, chainError = None } -> lowerItems(rest)(trailing)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
 
 let recursive build (k: Int) (n: Int) =
     if k == 0
@@ -105,7 +127,7 @@ let recursive loop (n: Int) (acc: Int) =
         in
             let analysis = Analysis(nonCalleeUses = ["a"], remainingBody = build(3)(n), escapeOfChain = Some(trailing), escapeOfTrailing = Some(trailing), trailingFinalVar = None)
             in
-                loop(n - 1)(acc + lowerItems([ItemExpr(ExprVar("a")), ItemAt(1)(ItemFn(given (x) -> x + 1)), ItemExpr(ExprVar("c"))])(trailing)(0)(4)(analysis)([])(LState(emitted = [], counter = 0, request = None)))
+                loop(n - 1)(acc + lowerItems([ItemExpr(ExprVar("a")), ItemAt(1)(ItemFn(given (x) -> x + 1)), ItemExpr(ExprVar("c"))])(trailing)(Ashes.Collection.Map.empty)(4)(analysis)([])(LState(emitted = [], counter = 0, request = None)))
 in
     0
     |> loop(3)
