@@ -45,7 +45,7 @@ Function: mark
     result fresh: no
   perceus [lambda_6]
     dup:                  8
-    drop:                 7
+    drop:                 8
     uniqueness checks:    3
   representation [lambda_6]
     conservative unknown: 13

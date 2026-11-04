@@ -2361,6 +2361,13 @@ is not made a reference-counted tuple on its account: in stage 1's `buildLineTre
 `(LineLeaf, starts)` otherwise went to the heap with a copy of `starts` beside an arm through the
 function's own call that builds an arena pair, and the caller, reading an arena result, released
 neither (`GRC_NO_NULLARYTUPLEELEMENT`, both stages).
+A pattern owner's duplicate an arena constructor cell takes is still a marker while the cell is
+built, so the rule that hands a retain taken for an arena cell to an owned slot did not see it: stage
+1's `listAt` returns `Some(head)` in the arena from a loop over the block list it normalized at its
+entry, and once the marker became a retain, every call left the record copy with its successor list
+behind. The marker now goes to an owned slot holding zero, and the marker is stored into it once the
+pattern owners are placed and the marker turned out to be a retain (`GRC_NO_CTORMARKERSLOT`, both
+stages).
 
 ### One-shot resumptive arms: the pre/post split
 

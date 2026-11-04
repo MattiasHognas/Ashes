@@ -562,6 +562,9 @@ type CoreProgramState =
     | entryRunsUnderLiveHandlerPost: Bool
     | anyRunsUnderLiveHandlerPost: Bool
     | patternOwnerSites: List(PatternOwnerSite)
+    // Arena cells' pattern-owner markers handed to owned slots: (slot, marker, zero temp the slot
+    // holds until the marker is promoted).
+    | cellMarkerSlots: List((Int, Int, Int))
     // The binders matched out of a reference-counted tuple scrutinee at a loop parameter's own
     // position, each with that parameter's slot (stage 0's `_tupleBinderParameterSlots`).
     | tupleBinderParameters: List((Int, Int))
@@ -1129,6 +1132,14 @@ let statePatternOwnerSites (state: CoreLoweringState) =
 let withStatePatternOwnerSites value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with patternOwnerSites = value))
+
+let stateCellMarkerSlots (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.cellMarkerSlots)
+
+let withStateCellMarkerSlots value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with cellMarkerSlots = value))
 
 let stateReachSummaries (state: CoreLoweringState) =
     (let group = state.programState
@@ -2570,6 +2581,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             entryRunsUnderLiveHandlerPost = false,
             anyRunsUnderLiveHandlerPost = false,
             patternOwnerSites = [],
+            cellMarkerSlots = [],
             tupleBinderParameters = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
             generalRcOwnedResultLabels = [],
@@ -14282,6 +14294,32 @@ let recursive splicePatternOwnerDups (sites: List(PatternOwnerSite)) (state: Cor
             |> splicePatternOwnerDup(site)
             |> splicePatternOwnerDups(rest)
 
+let recursive isPromotedMarker (marker: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest -> target == marker && runtimeManaged || isPromotedMarker(marker)(rest)
+        | _instruction :: rest -> isPromotedMarker(marker)(rest)
+
+let recursive storeMarkerIntoSlot (slot: Int) (marker: Int) (zeroTemp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = StoreLocal(storeSlot, source) } as instruction) :: rest ->
+            if storeSlot == slot && source == zeroTemp
+            then (instruction with instruction = StoreLocal(slot)(marker)) :: rest
+            else instruction :: storeMarkerIntoSlot(slot)(marker)(zeroTemp)(rest)
+        | instruction :: rest -> instruction :: storeMarkerIntoSlot(slot)(marker)(zeroTemp)(rest)
+
+// Stage 0's `SettleHandedOverMarkerSlots` for arena cells: once the pattern owners are placed, a
+// marker handed to an owned slot that became a real retain is stored into it; one that stayed an
+// identity took no reference.
+let recursive settleCellMarkerSlots (slots: List((Int, Int, Int))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> withStateCellMarkerSlots([])(state)
+        | (slot, marker, zeroTemp) :: rest ->
+            if isPromotedMarker(marker)(state.reversedInstructions)
+            then settleCellMarkerSlots(rest)((state with reversedInstructions = storeMarkerIntoSlot(slot)(marker)(zeroTemp)(state.reversedInstructions)))
+            else settleCellMarkerSlots(rest)(state)
+
 // Stage 0's `FinalizePerceusPatternBindingOwners`, run once the loop's parameter placements are
 // known and before the entry normalization is spliced in below every site.
 let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
@@ -14290,6 +14328,8 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
     |> (given (placed: List(PatternOwnerSite)) ->
         state
         |> promotePatternOwnerSites(placed)
+        |> (given (promoted: CoreLoweringState) ->
+            settleCellMarkerSlots(stateCellMarkerSlots(promoted))(promoted))
         |> splicePatternOwnerDups(placed)
         |> (given (finalized: CoreLoweringState) -> withStatePatternOwnerSites([])(finalized)))
 
@@ -25235,12 +25275,9 @@ let onlyFieldlessTypeArgumentsUnresolved (resultType: SemanticType) (fieldTypes:
 // value the cell keeps) is the arena's to hold with nothing to release it, as a fresh value is.
 let arenaCellOwnsArgumentReference (argument: Expr) (temp: Int) (state: CoreLoweringState) = isFreshOwnedConstructorArgument(argument)(temp)(state) || retainTakenForCell(temp)(state)
 
-// Stage 0's `HandFreshConstructorChildrenToOwnedSlots` for one argument: the arena cell never
-// releases what it holds, so a fresh reference-counted value stored into it goes to an owned slot
-// the function releases.
-// A retain taken for the cell goes there the same way.
-let handFreshChildToOwnedSlot (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if resultSurvivesReset(semanticType)(state) || containsUnresolvedLayout(semanticType)(state) || arenaCellOwnsArgumentReference(argument)(temp)(state) == false
+// A fresh value or a retain taken for the arena cell goes to an owned slot the function releases.
+let handOwnedChildToSlot (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if arenaCellOwnsArgumentReference(argument)(temp)(state) == false
     then state
     else
         match freshLocal(state) with
@@ -25248,6 +25285,33 @@ let handFreshChildToOwnedSlot (argument: Expr) (temp: Int) (semanticType: Semant
                 allocated
                 |> emit(StoreLocal(ownedSlot)(temp))
                 |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+
+// Stage 0's `HandArenaCellMarkerToOwnedSlot`: a pattern owner's duplicate taken for the arena cell
+// is still a marker while the cell is built (the `Some(head)` of a loop over a list normalized at
+// its entry); promoted, it is a retain the arena cell holds with nothing to release it. Its slot
+// holds zero until `settleCellMarkerSlots` sees the promotion.
+let handCellMarkerToOwnedSlot (marker: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = ownedSlot } ->
+            match freshTemp(allocated) with
+                | FreshTemp { state = withTemp, temp = zeroTemp } ->
+                    withTemp
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> emit(StoreLocal(ownedSlot)(zeroTemp))
+                    |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                    |> (given (registered: CoreLoweringState) -> withStateCellMarkerSlots((ownedSlot, marker, zeroTemp) :: stateCellMarkerSlots(registered))(registered))
+
+// Stage 0's `HandFreshConstructorChildrenToOwnedSlots` for one argument: the arena cell never
+// releases what it holds, so a fresh reference-counted value stored into it goes to an owned slot
+// the function releases.
+// A retain taken for the cell goes there the same way, and a pattern owner's marker the cell took.
+let handFreshChildToOwnedSlot (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(semanticType)(state) || containsUnresolvedLayout(semanticType)(state)
+    then state
+    else
+        if isPromotableCellMarker(temp)(state) && isBorrowedRetainableParameterType(semanticType)(state)
+        then handCellMarkerToOwnedSlot(temp)(semanticType)(state)
+        else handOwnedChildToSlot(argument)(temp)(semanticType)(state)
 
 let recursive handFreshChildrenToOwnedSlots (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) =
     match (arguments, temps, semanticTypes) with
@@ -25269,6 +25333,11 @@ let recursive anyCellOwnedArgument (request: ConsumerRequest) (arguments: List(E
         | (argument :: restArguments, temp :: restTemps) -> isFreshOwnedConstructorArgument(argument)(temp)(state) || holdsReferenceTakenForCell(request)(argument)(temp)(state) || anyCellOwnedArgument(request)(restArguments)(restTemps)(state)
         | _ -> false
 
+let recursive anyPromotableCellMarker (temps: List(Int)) (state: CoreLoweringState) =
+    match temps with
+        | [] -> false
+        | temp :: rest -> isPromotableCellMarker(temp)(state) || anyPromotableCellMarker(rest)(state)
+
 // A constructor whose arena cell would hold a fresh reference-counted value hands it to an owned
 // slot, ahead of the retains the constructor's preparation takes. A cell placed on the
 // reference-counted heap or on the stack, and a zero-cost constructor, own nothing of the kind.
@@ -25276,7 +25345,7 @@ let handConstructorFreshChildren (layout: CoreConstructorLayout) arguments (resu
     match (layout, lowered) with
         | (CoreConstructorLayout { isZeroCost = true }, _lowered) -> lowered
         | (_layout, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
-            if generalRcEnabled(state) == false || runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
+            if generalRcEnabled(state) == false || runtimeManaged || stackAllocate || anyArenaCellOwnedArgument(arguments)(temps)(state) == false && anyPromotableCellMarker(temps)(state) == false || handsFreshChildrenToOwnedSlots(resultType)(state) == false && onlyFieldlessTypeArgumentsUnresolved(resultType)(semanticTypes)(state) == false
             then lowered
             else lowered with state = handFreshChildrenToOwnedSlots(arguments)(temps)(semanticTypes)(state)
         | _ -> lowered

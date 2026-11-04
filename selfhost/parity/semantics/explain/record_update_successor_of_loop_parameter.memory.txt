@@ -64,7 +64,7 @@ Function: scan
     result fresh: no
   perceus [lambda_7]
     dup:                  18
-    drop:                 33
+    drop:                 35
     uniqueness checks:    9
   perceus [lambda_6]
     dup:                  0

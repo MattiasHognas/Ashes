@@ -21347,6 +21347,68 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("nullary leaf pair", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildListAtSomeRecordHeadProgram(int rounds)
+        => $$"""
+            type Block =
+                | blockStart: Int
+                | blockSuccessors: List(Int)
+
+            let recursive listAt (items: List(Block)) (index: Int) =
+                match items with
+                    | [] -> None
+                    | head :: rest ->
+                        if index == 0
+                        then Some(head)
+                        else listAt(rest)(index - 1)
+
+            let successorsOfIndex (blocks: List(Block)) (index: Int) =
+                match listAt(blocks)(index) with
+                    | Some(Block { blockSuccessors = successors }) -> successors
+                    | None -> []
+
+            let recursive total (xs: List(Int)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> x + total(rest)
+
+            let probe (n: Int) =
+                (let blocks = [Block(blockStart = n, blockSuccessors = [1]), Block(blockStart = 1, blockSuccessors = [n, 3])]
+                in total(successorsOfIndex(blocks)(1)))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_list_at_some_record_head_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // listAt walks the block list it normalized onto the reference-counted heap at its entry and
+        // returns `Some(head)` in the arena. The head's pattern-owner duplicate is still a marker while
+        // that cell is built; it goes to an owned slot settled once the marker is promoted, so the
+        // retained record copy is released with the function's other owned values instead of staying
+        // with the arena cell every call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildListAtSomeRecordHeadProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{((long)rounds * (rounds + 1) / 2) + (3L * rounds)}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list at some record head", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildArenaConstructorFreshListProgram(int rounds)
         => $$"""
             capability Cap =

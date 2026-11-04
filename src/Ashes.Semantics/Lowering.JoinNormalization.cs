@@ -613,9 +613,18 @@ public sealed partial class Lowering
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(argumentTypes[i]);
-            if (CanArenaReset(fieldType)
-                || ContainsUnresolvedLayoutType(fieldType, [])
-                || !(IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]) || IsArenaCellRetainHandedToSlot(argumentTemps[i])))
+            if (CanArenaReset(fieldType) || ContainsUnresolvedLayoutType(fieldType, []))
+            {
+                continue;
+            }
+
+            if (IsArenaCellPatternOwnerMarker(argumentTemps[i]) && IsBorrowedRetainableParameterType(fieldType))
+            {
+                HandArenaCellMarkerToOwnedSlot(argumentTemps[i], fieldType);
+                continue;
+            }
+
+            if (!(IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]) || IsArenaCellRetainHandedToSlot(argumentTemps[i])))
             {
                 continue;
             }
@@ -625,6 +634,30 @@ public sealed partial class Lowering
             RegisterGeneralRcOwnedSlot(ownedSlot, fieldType);
             _ownedSlotConstructorArguments.Add(arguments[i]);
         }
+    }
+
+    // A pattern owner's duplicate taken for an arena cell is still a marker while the cell is built
+    // (the `Some(head)` of a loop that walked a list normalized at its entry); once the owner is
+    // placed it becomes a real retain the arena cell holds with nothing to release it. The marker
+    // goes to an owned slot that holds zero until SettleHandedOverMarkerSlots sees it promoted.
+    private bool IsArenaCellPatternOwnerMarker(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORMARKERSLOT") is null
+            && FindLastInstruction(instruction => instruction switch
+            {
+                IrInst.RcDup duplicate => duplicate.Target == temp,
+                IrInst.LoadLocal load => load.Target == temp,
+                _ => false,
+            }) is int index and >= 0
+            && _inst[index] is IrInst.RcDup { RuntimeManaged: false };
+
+    private void HandArenaCellMarkerToOwnedSlot(int markerTemp, TypeRef fieldType)
+    {
+        int ownedSlot = NewLocal();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+        _handedOverMarkerSlots.Add(new HandedOverMarkerSlot(_inst, markerTemp, ownedSlot, zeroTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, fieldType);
     }
 
     // A real retain taken for the arena cell (a let-bound owned value the cell keeps) is the arena's
