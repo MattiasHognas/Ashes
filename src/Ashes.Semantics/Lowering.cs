@@ -17216,7 +17216,7 @@ public sealed partial class Lowering
             || Environment.GetEnvironmentVariable("GRC_NO_ARENALISTFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
-            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
+            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type)) || IsLiteralFreshStringHead(head.Type)))
         {
             return;
         }
@@ -17225,6 +17225,13 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
+
+    // A fresh string a literal's arena cell holds is retained wherever a callee keeps it (a tuple or
+    // cell storing it takes a reference of its own), so the cell's reference is released like any other
+    // fresh head.
+    private bool IsLiteralFreshStringHead(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_LITERALFRESHSTRHEAD") is null
+            && Prune(type) is TypeRef.TStr;
 
     // A literal's cell over a reference-counted cell is reference-counted too. An arena cell would
     // be the only holder of the cell after it, and the arena is reclaimed without releasing what

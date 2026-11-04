@@ -22959,4 +22959,64 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("iteration slot unnamed successor", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildListLiteralOfCallStringsProgram(int rounds)
+        => $$"""
+            type Context2465 =
+                | width: Int
+                | labelBlocks: List((Str, Int))
+
+            let recursive blocks2465 (base: Int) (names: List(Str)) =
+                match names with
+                    | [] -> []
+                    | name :: rest -> (name, base) :: blocks2465(base + 1)(rest)
+
+            let build2465 (width: Int) (names: List(Str)) (instructions: List(Int)) =
+                (let labelBlocks = blocks2465(width)(names)
+                in
+                    let cx = Context2465(width = width, labelBlocks = labelBlocks)
+                    in (cx, width))
+
+            let recursive size2465 (entries: List((Str, Int))) (n: Int) =
+                match entries with
+                    | [] -> n
+                    | (_name, b) :: rest -> size2465(rest)(n + b)
+
+            let label2465 (n: Int) = "shared_" + Ashes.Text.fromInt(n)
+
+            let run (seed: Int) =
+                match build2465(seed)([label2465(seed + 0), label2465(seed + 1), label2465(seed + 2)])([seed]) with
+                    | (cx, _other) -> size2465(cx.labelBlocks)(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + run(3))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_list_literal_of_call_strings_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A list literal of strings a call just returned is passed to a builder whose result keeps
+        // them in a record inside a tuple. The literal's arena cells held the only references the
+        // calls handed back, and nothing released them.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildListLiteralOfCallStringsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{12L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("list literal of call strings", samples, maxRssKb: 16_000);
+    }
 }

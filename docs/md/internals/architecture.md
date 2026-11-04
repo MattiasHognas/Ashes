@@ -1642,7 +1642,9 @@ after the call unless the callee adopted it, whatever the result's layout
 A list literal's arena cell holding a value produced right there (a constructor placed on the
 reference-counted heap because it owns a fresh string) is that value's only holder: a callee that
 walks the list copies it with references of its own, so the cell's reference goes to an owned slot
-(`GRC_NO_ARENALISTFRESHHEAD`, both stages). A constrained call of unresolved result (a generic
+(`GRC_NO_ARENALISTFRESHHEAD`, both stages). A fresh string a call returned (`[label(n)]`) is
+such a value too: wherever a callee keeps it, a tuple or cell storing it takes a reference of its
+own (`GRC_NO_LITERALFRESHSTRHEAD`, both stages). A constrained call of unresolved result (a generic
 lookup applied in a generic loop) hands the reference it took for that result to an owned slot
 too, released where the function's own result is out of the call's reach
 (`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0). Inside a loop, such a slot first moves what an earlier

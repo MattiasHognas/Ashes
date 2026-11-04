@@ -209,6 +209,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ScalarVariantListResultTemplate());
         registry.Register(new TransferredRootOptionResultTemplate());
         registry.Register(new ArenaHolderOwnerRetainTemplate());
+        registry.Register(new ListLiteralFreshStringHeadTemplate());
     }
 }
 
