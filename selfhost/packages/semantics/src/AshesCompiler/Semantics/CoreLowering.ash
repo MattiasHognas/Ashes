@@ -475,6 +475,9 @@ type CoreTcoReset =
     // type test); per successor, the owned slot it is a plain read of (-1 for none) and whether it
     // is a loop parameter or a part of one (stage 0's `IsLoopParameterPart`).
     | generalRcSlotFacts: List((Int, SemanticType, Int, List(Int)))
+    // Per such slot holding a value bound to names, the successors naming nothing bound from it, on a
+    // path that did not normalize the successors and on one that did (stage 0's `NoSuccessorNamesPartOf`).
+    | generalRcSlotUnnamed: List((Int, List(Int), List(Int)))
     | argumentOwnedSlots: List(Int)
     | argumentParameterParts: List(Bool)
     | arenaCursorSlot: Int
@@ -9479,6 +9482,26 @@ let emitFreshGeneralRcSlotRelease (slot: Int) (semanticType: SemanticType) (fres
                 |> emit(LoadConstInt(zeroTemp)(0))
                 |> emit(StoreLocal(freshSlot)(zeroTemp)))
 
+// The successors that name nothing bound from the value of `slot`, on the path taken.
+let recursive slotUnnamedSuccessors (slot: Int) (normalized: Bool) (unnamed: List((Int, List(Int), List(Int)))) =
+    match unnamed with
+        | [] -> []
+        | (candidate, plain, onNormalized) :: rest ->
+            if candidate == slot
+            then
+                if normalized
+                then onNormalized
+                else plain
+            else slotUnnamedSuccessors(slot)(normalized)(rest)
+
+let recursive blockersNamingTheValue (blockers: List(Int)) (unnamed: List(Int)) =
+    match blockers with
+        | [] -> []
+        | ordinal :: rest ->
+            if containsInt(ordinal)(unnamed)
+            then blockersNamingTheValue(rest)(unnamed)
+            else ordinal :: blockersNamingTheValue(rest)(unnamed)
+
 let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List(Int)))) released (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (tmc: Bool) (normalized: Bool) (state: CoreLoweringState) =
     match facts with
         | [] -> state
@@ -9487,7 +9510,9 @@ let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List
             then emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)(state)
             else
                 state
-                |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(blockers)(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
+                |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(blockers)(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
+                |> slotUnnamedSuccessors(slot)(normalized)
+                |> blockersNamingTheValue(blockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
                 |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
 
 // Stage 0's `EmitGeneralRcBackEdgeDrops`: the earlier iterations' values first, then the owned
@@ -29095,24 +29120,33 @@ let unnamedSuccessorsWith (loop: CoreTcoLoop) (binders: List(Str)) (handedTo: Ma
         | ([], Some(positions)) -> flowSuccessorsNamingNoHandedParameter(loop.parameterNames)(loop.callFlow)(flow)(positions)(ownReferences)(cuts)(arguments)
         | _ -> flowSuccessorsNamingNoPartOf(loop.selfName)(loop.parameterNames)(loop.callFlow)(loop.body)(flow)(binders)(ownReferences)(cuts)(arguments)
 
-let predecessorUnnamedSuccessors (predecessorSlot: Int) (handedTo: Maybe(List(Int))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+let unnamedSuccessorsOf (binders: List(Str)) (handedTo: Maybe(List(Int))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match stateTcoLoop(state) with
         | None -> ([], [])
         | Some(loop) ->
-            let binders = predecessorBindersOf(predecessorSlot)(state)
+            let ownReferences =
+                state
+                |> generalRcParameterPositions(frame.parameterSlots)(0)
+                |> tcoOwnReferencePositions(loop.selfName)(loop.parameterNames)(state
+                |> stateConstructorLayouts
+                |> constructorNamesOf)(loop.body)
             in
-                let ownReferences =
-                    state
-                    |> generalRcParameterPositions(frame.parameterSlots)(0)
-                    |> tcoOwnReferencePositions(loop.selfName)(loop.parameterNames)(state
-                    |> stateConstructorLayouts
-                    |> constructorNamesOf)(loop.body)
+                let flow = flowOmittingInlineHeads(loop)(frame)(state)
                 in
-                    let flow = flowOmittingInlineHeads(loop)(frame)(state)
-                    in
-                        (unnamedSuccessorsWith(loop)(binders)(handedTo)(flow)(ownReferences)(frame.parameterSlots
-                        |> length
-                        |> unmanagedFlags)(arguments), unnamedSuccessorsWith(loop)(binders)(handedTo)(flow)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+                    (unnamedSuccessorsWith(loop)(binders)(handedTo)(flow)(ownReferences)(frame.parameterSlots
+                    |> length
+                    |> unmanagedFlags)(arguments), unnamedSuccessorsWith(loop)(binders)(handedTo)(flow)(ownReferences)(managedParameterFlags(frame.parameterSlots)(frame)(loop)(state))(arguments))
+
+let predecessorUnnamedSuccessors (predecessorSlot: Int) (handedTo: Maybe(List(Int))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    unnamedSuccessorsOf(predecessorBindersOf(predecessorSlot)(state))(handedTo)(arguments)(frame)(state)
+
+// Stage 0's `NoSuccessorNamesPartOf`: for a value this iteration stored, the successors naming
+// nothing bound from it, on a path that did not normalize the successors and on one that did; none
+// for a value no name was bound to.
+let iterationSlotUnnamedSuccessors (slot: Int) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match slotBindersOf(stateActiveFunctionOrigin(state))(slot)(stateGeneralRcSlotBinders(state))([]) with
+        | [] -> ([], [])
+        | binders -> unnamedSuccessorsOf(binders)(None)(arguments)(frame)(state)
 
 let recursive withoutStringParts (parts: List(SemanticType)) =
     match parts with
@@ -29341,6 +29375,16 @@ let recursive generalRcSlotFactsOf (slots: List((Int, SemanticType))) (predecess
                 |> stateGeneralRcFreshSlots
                 |> freshSlotOf(stateActiveFunctionOrigin(state))(slot), typeBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(state)) :: generalRcSlotFactsOf(rest)(predecessors)(argumentTypes)(state)
 
+let recursive generalRcSlotUnnamedOf (facts: List((Int, SemanticType, Int, List(Int)))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match facts with
+        | [] -> []
+        | (slot, _semanticType, freshSlot, blockers) :: rest ->
+            match (freshSlot < 0, blockers) with
+                | (false, _first :: _others) ->
+                    match iterationSlotUnnamedSuccessors(slot)(arguments)(frame)(state) with
+                        | (plain, normalized) -> (slot, plain, normalized) :: generalRcSlotUnnamedOf(rest)(arguments)(frame)(state)
+                | _ -> generalRcSlotUnnamedOf(rest)(arguments)(frame)(state)
+
 let recursive argumentOwnedSlotsOf (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (state: CoreLoweringState) =
     match temps with
         | [] -> []
@@ -29429,6 +29473,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     ownedDrops = drops,
                     generalRcPredecessorDrops = predecessorDrops,
                     generalRcSlotFacts = generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state),
+                    generalRcSlotUnnamed = generalRcSlotUnnamedOf(generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state))(arguments)(frame)(state),
                     argumentOwnedSlots = argumentOwnedSlotsOf(temps)(loopSlots)(state),
                     argumentParameterParts = argumentParameterPartsOf(arguments)(state),
                     arenaCursorSlot = frame.arenaCursorSlot,

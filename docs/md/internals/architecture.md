@@ -1847,6 +1847,12 @@ loop's exit. A join takes its ownership from the arms that reach it: when every 
 over a value it just produced (a loop exit building its result while the other arms jump back), the
 join's value is fresh and the function's return takes it over rather than retaining it again, and a
 `let` passing a join's value on keeps that fact.
+A value the iteration itself stored is released at a back edge whose successors may hold a part of
+it by type when none of them names anything bound from it. A loop matching `Some((definition,
+through))` that conses a value built from `definition` onto one accumulator and, behind `if
+through`, an integer onto a second one, left the matched result to leak, since a list of integers
+could hold a part of it. The second successor only tests the flag, and a condition hands nothing on,
+so the result is released behind its fresh flag (`GRC_NO_ITERATIONSLOTNAMES`, `GRC_NO_IFCONDFLOW`).
 A value an earlier iteration left in an owned slot (the slot's predecessor) is released at the back
 edge once no successor can still reach it. A pipeline step (`[] |> prepare(x)(state) |> relabel(id)
 |> open(outer)`) is never bound to a name and is only ever the argument of the next call, whose result

@@ -1662,7 +1662,8 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (NoSuccessorCanHoldPartOf(info, owned.Type, parameterParts, successorsNormalized, useParameterParts: true))
+            if (NoSuccessorCanHoldPartOf(info, owned.Type, parameterParts, successorsNormalized, useParameterParts: true)
+                || NoSuccessorNamesPartOf(info, owned, successorsNormalized))
             {
                 int freshTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(freshTemp, owned.FreshSlot));
@@ -1867,6 +1868,30 @@ public sealed partial class Lowering
             && index < info.ParamSlots.Length
             && info.Tco.ParamFacts.TryGetValue(info.ParamSlots[index], out TcoParamStaticFacts? facts)
             && (facts.LoopInvariant || (facts.ConsumedListTail && info.ConsumedListTail[index]));
+
+    // A value this iteration produced is out of every successor's reach when each successor that
+    // could hold a part of it by its type names none of the value's binders, nor anything derived
+    // from them (`closureTemp :: deadLoads` beside a successor built from the matched `definition`).
+    private bool NoSuccessorNamesPartOf(PendingTcoReset info, GeneralRcOwnedSlot owned, bool successorsNormalized)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_ITERATIONSLOTNAMES") is not null
+            || owned.Binders is not { Count: > 0 }
+            || SuccessorsNamingNoPartOf(info, owned, successorsNormalized) is not { } unnamed
+            || unnamed.Length != info.ArgTypes.Length)
+        {
+            return false;
+        }
+
+        List<TypeRef> parts = HeapPartTypes(owned.Type);
+        bool[] strictParts = _generalRcBackEdgeStrictParameterParts.GetValueOrDefault(_generalRcBackEdgeId, []);
+        return Enumerable.Range(0, info.ArgTypes.Length).All(index =>
+            unnamed[index]
+            || CanArenaReset(Prune(info.ArgTypes[index]))
+            || info.PassThrough[index]
+            || (index < strictParts.Length && strictParts[index])
+            || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
+            || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
+    }
 
     // Whether every successor either owns its parts or is of a type that cannot hold any heap part
     // of an owned value of this type (a list of integer pairs never holds a record of strings): the

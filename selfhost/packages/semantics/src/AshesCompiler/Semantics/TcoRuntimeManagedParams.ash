@@ -1427,6 +1427,8 @@ let recursive flowReadsName (name: Str) (parameters: List(Str)) (policy: List((S
                     | Some(flags) ->
                         match shapeCallSpine(call)([]) with
                             | (root, arguments) -> flowReadsName(name)(parameters)(policy)(depth + 1)(root) || flowFlaggedReadsName(name)(parameters)(policy)(depth + 1)(arguments)(flags)
+            // The condition is a Bool: only the branches can hand on a part of the value.
+            | ExprIf(_condition, thenBranch, elseBranch) -> flowReadsName(name)(parameters)(policy)(depth + 1)(thenBranch) || flowReadsName(name)(parameters)(policy)(depth + 1)(elseBranch)
             | ExprCons(head, tail) -> flowReadsName(name)(parameters)(policy)(depth + 1)(head) || flowReadsName(name)(parameters)(policy)(depth + 1)(tail)
             | ExprTuple(elements) -> flowListReadsName(name)(parameters)(policy)(depth + 1)(elements)
             | ExprList(elements, _isMultiline) -> flowListReadsName(name)(parameters)(policy)(depth + 1)(elements)

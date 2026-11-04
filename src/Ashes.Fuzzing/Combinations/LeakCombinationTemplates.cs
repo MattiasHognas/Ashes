@@ -199,6 +199,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new QualifiedCalleeResultArgumentTemplate());
         registry.Register(new NilBesideFreshCellTemplate());
         registry.Register(new JoinCopiedUpdateTemplate());
+        registry.Register(new IterationSlotUnnamedSuccessorTemplate());
         registry.Register(new DeferredCallCopyOutRecordFieldTemplate());
         registry.Register(new ArenaCellFreshHeadTemplate());
         registry.Register(new SelfCallResultArgumentTemplate());
