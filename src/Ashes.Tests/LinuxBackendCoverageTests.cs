@@ -23467,4 +23467,60 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("arena head tuple owner duplicate", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildCurriedStageClosureProgram(int rounds)
+        => $$"""
+            let recursive build (n: Int) =
+                if n == 0
+                then []
+                else n :: build(n - 1)
+
+            let recursive member (x: Int) (xs: List(Int)) =
+                match xs with
+                    | [] -> false
+                    | y :: rest -> y == x || member(x)(rest)
+
+            let probe (n: Int) (xs: List(Int)) =
+                (let seen = build(3)
+                in
+                    let recursive find items idx acc =
+                        match items with
+                            | [] -> acc
+                            | x :: tail ->
+                                if member(x)(seen)
+                                then find(tail)(idx + 1)(acc + idx)
+                                else find(tail)(idx + 1)(acc)
+                    in find(xs)(0)(0))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n)([n, 2]))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_curried_stage_closure_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A local let recursive capturing a list is applied to all three arguments at once. The
+        // stage find(xs)(0) returns a closure on the reference-counted heap that only the call
+        // held, and it was never released. The call now releases it once its result is settled.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildCurriedStageClosureProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("curried stage closure", samples, maxRssKb: 16_000);
+    }
 }

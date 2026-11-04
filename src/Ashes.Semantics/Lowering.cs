@@ -11159,6 +11159,7 @@ public sealed partial class Lowering
         }
         if (runtimeManagedCaptures.Count > 0)
         {
+            _runtimeManagedCaptureLambdaLabels.Add(label);
             string dropperLabel = SynthesizeRuntimeManagedClosureDropper(runtimeManagedCaptures);
             int dropperTemp = NewTemp();
             Emit(new IrInst.LoadFuncAddr(dropperTemp, dropperLabel));
@@ -11438,7 +11439,9 @@ public sealed partial class Lowering
                 && ResolveUncopyableResultRuntimeManaged(
                     rootExpr, applied, new TypeRef.TFun(NewTypeVar(), NewTypeVar()), CopyOutKind.None, runtimeManagedResult: false))
             {
-                return LowerExpr(AppliedClosureLet(call, rootExpr, collectedArgs, applied), request).AsPair();
+                Expr.Let appliedLet = AppliedClosureLet(call, rootExpr, collectedArgs, applied);
+                _appliedClosureOrigins[appliedLet.Name] = (rootExpr, applied);
+                return LowerExpr(appliedLet, request).AsPair();
             }
         }
 
@@ -13809,13 +13812,14 @@ public sealed partial class Lowering
 
         List<ConsumedRuntimeArgument> consumedRuntimeArguments = [];
         int elementSpecializationScopeDepth = -1;
+        List<int> stageClosures = [];
         CallArgumentRetainFrame? outerRetainFrame = EnterCallArgumentRetainFrame();
         (int, TypeRef)? result = null;
         try
         {
             if (LowerCallApplyArgs(call, ref rootExpr, collectedArgs, ref currentTemp, ref currentType,
                     consumedRuntimeArguments, out int runtimeManagedResultFlagTemp,
-                    ref elementSpecializationScopeDepth) is { } earlyResult)
+                    ref elementSpecializationScopeDepth, stageClosures) is { } earlyResult)
             {
                 return earlyResult;
             }
@@ -13832,6 +13836,7 @@ public sealed partial class Lowering
                 consumedRuntimeArguments,
                 runtimeManagedResultFlagTemp,
                 _discardedResultCalls.Contains(call));
+            ReleaseIntermediateStageClosures(rootExpr, stageClosures, result.Value.Item2);
             return result.Value;
         }
         finally
@@ -13839,6 +13844,135 @@ public sealed partial class Lowering
             LeaveCallArgumentRetainFrame(outerRetainFrame, result);
             LeaveElementSpecializationRoot(elementSpecializationScopeDepth);
         }
+    }
+
+    // A curried call applies each argument but the last to the closure the previous one returned.
+    // A stage whose environment holds a reference-counted capture (a local `let recursive` reading
+    // a list) is built on the reference-counted heap and owned by the call alone, so it is released
+    // once the final result is settled. An arena stage goes with the call's window; the test is on
+    // the address alone, so it needs no bookkeeping while the window is open. Only a callee whose
+    // closure object took over reference-counted captures builds such stages, so the release is
+    // emitted for those callees alone.
+    private void ReleaseIntermediateStageClosures(Expr rootExpr, List<int> stageTemps, TypeRef resultType)
+    {
+        if (stageTemps.Count == 0
+            || !GeneralRcEnabled
+            || Prune(resultType) is TypeRef.TFun
+            || Environment.GetEnvironmentVariable("GRC_NO_STAGECLOSURERELEASE") is not null
+            || !CalleeBuildsRuntimeManagedStages(rootExpr, stageTemps.Count))
+        {
+            return;
+        }
+
+        string releaser = SynthesizeStageClosureReleaser();
+        foreach (int stageTemp in stageTemps)
+        {
+            Emit(new IrInst.RcDrop(stageTemp, "Function", RuntimeManaged: true, StructuralDropperLabel: releaser));
+        }
+    }
+
+    // The test and the release live in one helper per program, so a call site adds a single
+    // instruction: stage 1 has tens of thousands of curried calls, and the inline form grew stage 0
+    // past its build cap. The captures belong to the first stage, whose release runs the dropper; a
+    // later stage copied them without references, so only its own cells are freed.
+    private string SynthesizeStageClosureReleaser()
+    {
+        if (_stageClosureReleaserLabel is { } existing)
+        {
+            return existing;
+        }
+
+        string label = $"__rc_stage_release_{_nextLambdaId++}";
+        _stageClosureReleaserLabel = label;
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+        NewLocal(); // slot 0: env (implicit)
+        int stageSlot = NewLocal(); // slot 1: the stage closure (implicit)
+        int stageTemp = NewTemp();
+        int countedTemp = NewTemp();
+        string arenaLabel = NewLabel("rc_stage_closure_arena");
+        Emit(new IrInst.LoadLocal(stageTemp, stageSlot));
+        Emit(new IrInst.IsReferenceCounted(countedTemp, stageTemp));
+        Emit(new IrInst.JumpIfFalse(countedTemp, arenaLabel));
+        int noDropperTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(noDropperTemp, 0));
+        Emit(new IrInst.StoreMemOffset(stageTemp, 24, noDropperTemp));
+        Emit(new IrInst.RcDrop(stageTemp, "Function", RuntimeManaged: true));
+        Emit(new IrInst.Label(arenaLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
+        AddFunction(
+            new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.StructuralOwnerDropper,
+                CompilerOwner: new CompilerFunctionOwner(CompilerFunctionOwnerKind.RuntimeLayout, "stage-closure"),
+                StableDiscriminator: "stage-closure"));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    private string? _stageClosureReleaserLabel;
+
+    // The callee and applied-argument count behind each `__applied_closure` let (see AppliedClosureLet).
+    private readonly Dictionary<string, (Expr Root, int Applied)> _appliedClosureOrigins = new(StringComparer.Ordinal);
+
+    // The label of the stage a call applies its first argument to: a known function's own label, or
+    // for an applied-closure let, the known callee's label advanced by the stages already applied.
+    private bool TryResolveStageEntryLabel(Expr rootExpr, out string label)
+    {
+        if (rootExpr is not Expr.Var variable
+            || !_appliedClosureOrigins.TryGetValue(variable.Name, out (Expr Root, int Applied) origin))
+        {
+            return TryResolveKnownFunctionLabel(rootExpr, out label);
+        }
+
+        if (!TryResolveStageEntryLabel(origin.Root, out label))
+        {
+            return false;
+        }
+
+        for (int applied = 0; applied < origin.Applied; applied++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? returned))
+            {
+                return false;
+            }
+
+            label = returned;
+        }
+
+        return true;
+    }
+
+    // Labels of the lambdas whose closure object holds reference-counted captures.
+    private readonly HashSet<string> _runtimeManagedCaptureLambdaLabels = new(StringComparer.Ordinal);
+
+    // Whether a known callee returns, within the first stageCount stages, a closure whose object holds
+    // reference-counted captures: the chain of returned closure labels is followed from its entry.
+    private bool CalleeBuildsRuntimeManagedStages(Expr rootExpr, int stageCount)
+    {
+        if (!TryResolveStageEntryLabel(rootExpr, out string label))
+        {
+            return false;
+        }
+
+        for (int stage = 0; stage < stageCount; stage++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? returned))
+            {
+                return false;
+            }
+
+            if (_runtimeManagedCaptureLambdaLabels.Contains(returned))
+            {
+                return true;
+            }
+
+            label = returned;
+        }
+
+        return false;
     }
 
     // The tail of LowerCallGeneral once every argument is applied: unify the result type, normalize
@@ -14493,7 +14627,8 @@ public sealed partial class Lowering
         ref int currentTemp, ref TypeRef currentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments,
         out int runtimeManagedResultFlagTemp,
-        ref int elementSpecializationScopeDepth)
+        ref int elementSpecializationScopeDepth,
+        List<int> stageClosures)
     {
         runtimeManagedResultFlagTemp = -1;
         PreconstrainKnownCallArgumentTypes(collectedArgs, currentType);
@@ -14538,6 +14673,10 @@ public sealed partial class Lowering
                 call, rootExpr, collectedArgs, i, funType, argTemp, argType,
                 ref currentTemp, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
+            if (i < collectedArgs.Count - 1)
+            {
+                stageClosures.Add(currentTemp);
+            }
         }
 
         return null;

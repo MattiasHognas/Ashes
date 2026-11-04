@@ -1571,6 +1571,19 @@ a call now reads the returns bit for any ADT the runtime can copy into an owned 
 reference-counted result over and copies an arena one, so it owns the result on both paths
 (`GRC_NO_LOOPSELFADTRESULT`).
 
+A curried call applies every argument but the last to the closure the previous one returned. When
+the callee is a local `let recursive` whose environment holds a reference-counted capture (`find`
+reading a list in `find(xs)(0)([])`), each stage closure is built on the reference-counted heap and
+only the call holds it. The lowering knows which lambdas' closure objects take over reference-counted
+captures, and follows a known callee's chain of returned closures (through an applied-closure let's
+binding) to see whether one of the call's intermediate stages is such a closure. If so, once its
+result is settled the call hands every intermediate stage to one synthesized helper per program,
+which tests the address alone (an arena stage goes with the call's window) and releases a
+reference-counted one. A later stage copies the captures from the one before it without references
+of its own, so the helper clears its dropper word first and only its own cells are freed
+(`GRC_NO_STAGECLOSURERELEASE`). The helper keeps a call site at one instruction: inline, the test
+and release on stage 1's curried calls grew stage 0's build past its memory cap.
+
 A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
 as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry
 adopts it; for a callee it knows to normalize, the caller then gives the reference up. A body
