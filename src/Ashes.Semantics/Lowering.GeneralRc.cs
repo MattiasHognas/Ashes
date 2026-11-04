@@ -514,7 +514,7 @@ public sealed partial class Lowering
     private bool AllStoredIntoOwnedResults(HashSet<int> callTargets, List<GeneralRcOwnedSlot> loopSlots)
     {
         HashSet<int> ownedResultSlots = loopSlots.Where(owned => !owned.Predecessor).Select(owned => owned.Slot).ToHashSet();
-        HashSet<int> pending = [.. callTargets];
+        HashSet<int> pending = CurriedChainEnabled ? [.. callTargets.Select(CurriedChainResult)] : [.. callTargets];
         foreach (IrInst inst in _inst)
         {
             if (inst is IrInst.StoreLocal store && pending.Contains(store.Source) && ownedResultSlots.Contains(store.Slot))
@@ -524,6 +524,53 @@ public sealed partial class Lowering
         }
 
         return pending.Count == 0;
+    }
+
+    private static bool CurriedChainEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_CURRIEDCHAINRESULT") is null;
+
+    // The result a curried call ends in: a call's result that is only ever the closure of the next
+    // call of the chain (or has its header read for that call's flags) is a partial application,
+    // which holds the argument only until the chain's last call returns.
+    private int CurriedChainResult(int callTarget)
+    {
+        int current = callTarget;
+        for (int hop = 0; hop < 64; hop++)
+        {
+            int next = -1;
+            foreach (IrInst inst in _inst)
+            {
+                switch (inst)
+                {
+                    case IrInst.CallClosure call when call.ClosureTemp == current && call.ArgTemp != current && call.RuntimeManagedArgumentFlagTemp != current:
+                        if (next >= 0)
+                        {
+                            return current;
+                        }
+
+                        next = call.Target;
+                        break;
+                    case IrInst.LoadMemOffset read when read.BasePtr == current:
+                        break;
+                    default:
+                        if (StateMachineTransform.GetUsedTemps(inst).Contains(current))
+                        {
+                            return current;
+                        }
+
+                        break;
+                }
+            }
+
+            if (next < 0)
+            {
+                return current;
+            }
+
+            current = next;
+        }
+
+        return current;
     }
 
     // The loop parameter positions an earlier iteration's value no name was bound to was handed to

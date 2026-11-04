@@ -29300,6 +29300,30 @@ let recursive slotReadTemps (slot: Int) (instructions: List(IrInstruction)) =
             else slotReadTemps(slot)(rest)
         | _ :: rest -> slotReadTemps(slot)(rest)
 
+// The next calls of a curried chain a call's result is the closure of: None when the result is
+// used any other way than as such a closure or by a read of its header for that call's flags.
+let recursive curriedChainCalls (temp: Int) (instructions: List(IrInstruction)) (calls: List(Int)) =
+    match instructions with
+        | [] -> Some(calls)
+        | IrInstruction { instruction = CallClosure(target, closure, argument, flag) } :: rest when closure == temp && argument != temp && flag != temp -> curriedChainCalls(temp)(rest)(target :: calls)
+        | IrInstruction { instruction = LoadMemOffset(_target, base, _offset) } :: rest when base == temp -> curriedChainCalls(temp)(rest)(calls)
+        | IrInstruction { instruction = instruction } :: rest ->
+            if instruction
+            |> getUsedTemps
+            |> containsInt(temp)
+            then None
+            else curriedChainCalls(temp)(rest)(calls)
+
+// Stage 0's `CurriedChainResult`: the result a curried call ends in, a partial application holding
+// the argument only until the chain's last call returns.
+let recursive curriedChainResult (temp: Int) (instructions: List(IrInstruction)) (hops: Int) =
+    if hops >= 64
+    then temp
+    else
+        match curriedChainCalls(temp)(instructions)([]) with
+            | Some(next :: []) -> curriedChainResult(next)(instructions)(hops + 1)
+            | _ -> temp
+
 let recursive storedIntoOwnedSlot (target: Int) (ownedResultSlots: List(Int)) (instructions: List(IrInstruction)) =
     match instructions with
         | [] -> false
@@ -29309,7 +29333,8 @@ let recursive storedIntoOwnedSlot (target: Int) (ownedResultSlots: List(Int)) (i
 let recursive allStoredIntoOwnedSlots (targets: List(Int)) (ownedResultSlots: List(Int)) (instructions: List(IrInstruction)) =
     match targets with
         | [] -> true
-        | target :: rest -> storedIntoOwnedSlot(target)(ownedResultSlots)(instructions) && allStoredIntoOwnedSlots(rest)(ownedResultSlots)(instructions)
+        | target :: rest ->
+            storedIntoOwnedSlot(curriedChainResult(target)(instructions)(0))(ownedResultSlots)(instructions) && allStoredIntoOwnedSlots(rest)(ownedResultSlots)(instructions)
 
 let recursive slotsOtherThan (slots: List((Int, SemanticType))) (excluded: List(Int)) =
     match slots with

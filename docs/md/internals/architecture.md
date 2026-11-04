@@ -1868,6 +1868,12 @@ parameter, so the parameters the body's flow can carry it into stand in for its 
 released once no successor names one of them. Without this, a loop kept in the arena by a list arm
 (`| Wrapped(inner) :: rest -> loop(inner :: rest)(seen)`) released only its last two trees, at its
 exit, and each call kept every earlier tree (`GRC_NO_UNNAMEDPREDECESSORFLOW`).
+Such a value may also be one argument of a curried call
+(`open(name)(value)(remaining)(escapeBody(next))(forwarded)(state)`). The result of the call it is
+handed to is then a partial application, which holds it only until the chain's last call returns,
+so the result counted as kept in an owned slot is the chain's last one. Without this, the
+whole-program lowering kept every top-level `let`'s escape body, and with it the program's trailing
+expression, until the end (`GRC_NO_CURRIEDCHAINRESULT`).
 A join whose arms mix an owned value with one it does not own normalizes the unowned arms, so the
 join owns its value as a whole. A tuple joins the same way when each element is a scalar or a value
 that normalizes (`("", "")` beside a tuple of fresh strings): the arena arm is copied into a counted
