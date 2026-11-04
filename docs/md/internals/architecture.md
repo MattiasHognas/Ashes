@@ -2378,6 +2378,21 @@ built, so the rule that hands a retain taken for an arena cell to an owned slot 
 entry, and once the marker became a retain, every call left the record copy with its successor list
 behind. The marker now goes to an owned slot holding zero, and the marker is stored into it once the
 pattern owners are placed and the marker turned out to be a retain (`GRC_NO_CTORMARKERSLOT`, both
+A pattern owner's reference handed to a constrained (trait-dictionary) call for its result is released
+right after the call when the callee's summary proves the result never holds that argument, as
+itself or as a part: `lookupAssociation(site)(known)` returns a value of `known`, never `site`. Parked
+in an owned slot instead, it waited for the loop's successors to hold references of their own, and
+the arm whose accumulator keeps the call's arena result (`(site, label) :: acc` in a generic loop)
+never released it: the label pairs stage 1's optimizer builds in `computeKnownCapturedClosureLabels`
+(`GRC_NO_DICTUNREACHEDRELEASE`, stage 0; stage 1 calls such a callee through its ordinary call
+path and keeps no such slot).
+A curry stage's argument the caller retained for the final result (`devirt(firstKnownLabels)` handed
+to a map, whose final result may keep parts of the list) is settled even though the stage's own
+result is a closure: a stage that does not adopt the reference stores the pointer in an arena
+environment, so the reference goes to an owned slot the function releases. Before, the settling
+stopped at a function-typed result, and every such call left the whole list behind: stage 1's
+optimizer kept every `firstKnownLabels` list to the end (`GRC_NO_CURRYSTAGESLOT`, stage 0; stage 1
+already releases it).
 stages).
 
 ### One-shot resumptive arms: the pre/post split

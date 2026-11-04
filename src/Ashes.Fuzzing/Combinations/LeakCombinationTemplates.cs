@@ -205,6 +205,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new SelfCallResultArgumentTemplate());
         registry.Register(new NullaryTupleElementTemplate());
         registry.Register(new ArenaCellPatternOwnerMarkerTemplate());
+        registry.Register(new DictionaryUnreachedArgumentTemplate());
+        registry.Register(new CurryStageRetainTemplate());
         registry.Register(new LoopSelfCallAdtResultTemplate());
         registry.Register(new DictionaryKeyInLoopTemplate());
         registry.Register(new ScalarVariantListResultTemplate());

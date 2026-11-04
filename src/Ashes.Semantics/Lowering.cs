@@ -15696,6 +15696,7 @@ public sealed partial class Lowering
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
+            ParkArgumentsHandedToCurryStage(consumedRuntimeArguments);
             return;
         }
 
@@ -15751,6 +15752,43 @@ public sealed partial class Lowering
                     resultCopiedWithElements,
                     resultType);
             }
+        }
+    }
+
+    // A curry stage's result is a closure whose environment keeps the argument (`devirt(known)` handed
+    // to a map): a stage that does not adopt a reference stores the pointer in an arena environment,
+    // so the reference handed over for the final result waits in an owned slot, released once the
+    // function's result or the loop's successors hold references of their own, as one kept by an
+    // arena result does. Released by nobody, every such call left the whole argument behind.
+    private void ParkArgumentsHandedToCurryStage(IReadOnlyList<ConsumedRuntimeArgument> consumedRuntimeArguments)
+    {
+        if (!GeneralRcEnabled || Environment.GetEnvironmentVariable("GRC_NO_CURRYSTAGESLOT") is not null)
+        {
+            return;
+        }
+
+        HashSet<int> parked = [];
+        foreach (ConsumedRuntimeArgument argument in consumedRuntimeArguments)
+        {
+            TypeRef valueType = Prune(argument.Type);
+            if (argument.AdoptionFlagTemp < 0
+                || CanArenaReset(valueType)
+                || valueType is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(valueType, [])
+                || !parked.Add(argument.Temp))
+            {
+                continue;
+            }
+
+            int ownedSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(ownedSlot, argument.Temp));
+            string keptLabel = NewLabel("rc_curry_stage_kept");
+            Emit(new IrInst.JumpIfFalse(argument.AdoptionFlagTemp, keptLabel));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+            Emit(new IrInst.Label(keptLabel));
+            RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
         }
     }
 

@@ -2220,7 +2220,7 @@ public sealed partial class Lowering
             int ownerTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
             if (ownerTemp != argumentTemp)
             {
-                handedOver.Add(new HandedOverDictionaryArgument(ownerTemp, function.Arg, Marker: true));
+                handedOver.Add(new HandedOverDictionaryArgument(ownerTemp, function.Arg, Marker: true, ResultCannotReach: DictionaryCallResultCannotReach(functionName, argumentTemps.Count)));
             }
             int keptTemp = RetainOwnedDictionaryCallArgumentKeptByResult(
                 functionName, argumentTemps.Count, argument, ownerTemp, function.Arg);
@@ -2246,7 +2246,7 @@ public sealed partial class Lowering
     /// owner is placed, or a retain of an owned value
     /// (<see cref="RetainOwnedDictionaryCallArgumentKeptByResult"/>).
     /// </summary>
-    private readonly record struct HandedOverDictionaryArgument(int Temp, TypeRef Type, bool Marker);
+    private readonly record struct HandedOverDictionaryArgument(int Temp, TypeRef Type, bool Marker, bool ResultCannotReach = false);
 
     // A fresh reference-counted argument (a call's owned result) passed to a constrained callee
     // whose result does not keep it whole: the callee borrows it, and nothing else releases the
@@ -2311,8 +2311,24 @@ public sealed partial class Lowering
 
             GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
             RegisterGeneralRcOwnedPredecessor(predecessorSlot, valueType, owned.Binders, ownedSlot);
+            if (argument.ResultCannotReach)
+            {
+                EmitGeneralRcOwnedSlotDrops([owned]);
+            }
         }
     }
+
+    // A constrained callee whose result provably never holds the argument at this position, as
+    // itself or as any of its parts (`lookup(key)(entries)` returns a value of `entries`): the
+    // reference a pattern owner took for the result is released right after the call. Parked, it
+    // waited for successors to hold references of their own, which a loop arm keeping the call's
+    // arena result in its accumulator never did.
+    private bool DictionaryCallResultCannotReach(string functionName, int realIndex)
+        => Environment.GetEnvironmentVariable("GRC_NO_DICTUNREACHEDRELEASE") is null
+            && GetOwnershipSummary(functionName) is { } summary
+            && realIndex < summary.Parameters.Count
+            && summary.ResultReachFacts.ReachEnumerated
+            && !summary.ResultReaches(summary.Parameters[realIndex]);
 
     /// <summary>
     /// Once the function's pattern owners are placed, a marker handed over to an owned slot that

@@ -21409,6 +21409,197 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("list at some record head", samples, maxRssKb: 16_000);
     }
 
+    private const string GenericLookupKeyReferenceDeclarations = """
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let recursive lookupAssociation key entries =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail ->
+                        if k == key
+                        then Some(v)
+                        else lookupAssociation(key)(tail)
+
+            let recursive addKnown (names: List(Str)) known changed =
+                match names with
+                    | [] -> (known, changed)
+                    | name :: rest ->
+                        match lookupAssociation(name)(known) with
+                            | Some(_) -> addKnown(rest)(known)(changed)
+                            | None -> addKnown(rest)(setAssociation(name)(name + "_next")(known))(true)
+
+            let recursive runKnown (names: List(Str)) known =
+                match addKnown(names)(known)(false) with
+                    | (next, true) -> runKnown(names)(next)
+                    | (next, false) -> next
+
+            let computeKnown (names: List(Str)) known = runKnown(names)(known)
+
+            let devirt known (name: Str) =
+                match lookupAssociation(name)(known) with
+                    | Some(label) -> Ashes.Text.byteLength(label)
+                    | None -> 0
+
+            let recursive total (xs: List(Int)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> x + total(rest)
+
+            let recursive collectSites (names: List(Str)) (sites: List(Str)) (bad: List(Str)) =
+                match names with
+                    | [] -> (sites, bad)
+                    | name :: rest -> collectSites(rest)(name :: sites)(bad)
+
+            let recursive computeCaptured (sites: List(Str)) acc (bad: List(Str)) known =
+                match sites with
+                    | [] -> acc
+                    | site :: rest ->
+                        match lookupAssociation(site)(known) with
+                            | Some(label) -> computeCaptured(rest)((site, label) :: acc)(bad)(known)
+                            | None -> computeCaptured(rest)(acc)(bad)(known)
+
+            let recursive countPairs (xs: List((Str, Str))) =
+                match xs with
+                    | [] -> 0
+                    | _ :: rest -> 1 + countPairs(rest)
+
+            let devirtCaptured (entry: Str) (names: List(Str)) =
+                (let all = entry :: names
+                in
+                    let knownReturned = computeKnown(all)([])
+                    in
+                        match collectSites(all)([])([]) with
+                            | (sites, unresolvable) -> countPairs(computeCaptured(sites)([])(unresolvable)(knownReturned)))
+
+            let probe (n: Int) = devirtCaptured("e" + Ashes.Text.fromInt(n))(["a", "b", "c"])
+            """;
+
+    private static string BuildGenericLookupKeyReferenceProgram(int rounds)
+        => GenericLookupKeyReferenceDeclarations + $$"""
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_generic_lookup_key_reference_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A generic loop looks each site up through a constrained (Eq) lookup whose result is a
+        // value of the entries, never the key. The reference the site's pattern owner took for that
+        // result is released after the call; parked for the loop's successors, it stayed with
+        // nobody on the arm whose accumulator keeps the call's arena result.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildGenericLookupKeyReferenceProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{4L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic lookup key reference", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildCurryStageLetListProgram(int rounds)
+        => $$"""
+            type Fn =
+                | label: Str
+                | body: List(Int)
+
+            let recursive pairsOf (fns: List(Fn)) acc =
+                match fns with
+                    | [] -> acc
+                    | fn :: rest -> pairsOf(rest)((fn.label, fn.label + "_next") :: acc)
+
+            let recursive lookupLabel (key: Str) (entries: List((Str, Str))) =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail ->
+                        if k == key
+                        then Some(v)
+                        else lookupLabel(key)(tail)
+
+            let devirt (known: List((Str, Str))) (fn: Fn) =
+                match lookupLabel(fn.label)(known) with
+                    | Some(next) -> fn with label = next
+                    | None -> fn
+
+            let stage (entry: Fn) (fns: List(Fn)) = (entry, fns)
+
+            let captured (entry: Fn) (fns: List(Fn)) = (entry, fns)
+
+            let recursive weight (fns: List(Fn)) =
+                match fns with
+                    | [] -> 0
+                    | fn :: rest -> Ashes.Text.byteLength(fn.label) + weight(rest)
+
+            let recursive mapFns (f: Fn -> Fn) (fns: List(Fn)) =
+                match fns with
+                    | [] -> []
+                    | fn :: rest -> f(fn) :: mapFns(f)(rest)
+
+            let optimize (entry: Fn) (fns: List(Fn)) =
+                (let firstKnown = pairsOf(fns)([])
+                in weight(mapFns(devirt(firstKnown))(fns)) + Ashes.Text.byteLength(entry.label))
+
+            let probe (n: Int) = optimize(Fn(label = "e", body = []))([Fn(label = "f" + Ashes.Text.fromInt(n), body = [1]), Fn(label = "g", body = [])])
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_curry_stage_let_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `devirt(firstKnown)` is a curry stage handed to a map: the caller retains the let-bound list
+        // for the final result, which may keep parts of it, and the stage stores the pointer in an
+        // arena environment without adopting that reference. The call's result is a closure, so the
+        // reference goes to an owned slot the function releases; settled by nobody, every call left
+        // the whole list behind.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildCurryStageLetListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += 13 + n.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
+            }
+
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("curry stage let list", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildArenaConstructorFreshListProgram(int rounds)
         => $$"""
             capability Cap =
