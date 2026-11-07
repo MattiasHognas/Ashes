@@ -1562,6 +1562,30 @@ copy-out does: the copy shares nothing with the argument, so a perform's list pa
 callee that returns one of its heads (`first(perform Fetch.get(Unit))`) no longer keeps that head
 (`GRC_NO_SHALLOWCOPYPARTS`). The owned branch keeps the spine-only release.
 
+A reference handed over to a closure the caller cannot name, where the result's type has no place
+for the argument itself but may hold its parts (a fresh `List(Str)` passed to a `List((Str, Int))`
+producer: `instructions |> collectLabelNames |> consume`), used to take the spine-only release at
+the call when the callee did not adopt it, leaving one reference on every head for an arena result
+that holds the heads as raw references. The record the result is then stored in copies the heads,
+and nothing released the originals (stage 1's own `createLabelBlocks` leaked every label name of
+every function this way). Such an argument now goes to an owned slot instead, released with its
+parts at the function's exit or the loop's back edge, once the function's result or the loop's
+successors hold references of their own (`GRC_NO_HANDEDPARTSSLOT`, both stages); a callee whose
+result is verified reference-counted, deep-copied or copied with its elements keeps the release at
+the call. Where the function's own result stays an arena value that reaches such a slot, the slot
+is not released behind it; a slot whose value the result's type has no place for is then released
+child-preserving at the return (its cells, not its parts), which is the release the call would have
+made, so the shape leaks no more than before the rule.
+
+A value of an `external type` with no destructor is a foreign handle the program only passes along:
+one word copied like an integer that needs no release (`IsOpaqueHandleWord`; stage 1's
+`resultSurvivesReset` and the layout classification's `canArenaResetLayoutIn`). It used to keep every aggregate holding one outside the contract, so stage
+1's own `CodegenContext`, a record of LLVM handles beside the label blocks, was returned as an arena
+tuple that kept the label-name list's owned slot to the end (the `56_26` exit class, ten strings per
+compiled function). Such a record is now a contract value, normalized at the return like one of
+integers, and the slot is released behind it (`GRC_NO_OPAQUEHANDLEWORD`, both stages). A resource
+type (`external type Name resource destructor close`) stays a heap value with its cleanup.
+
 A loop's own non-tail self call reaches a body that is still being lowered, and the loop's exit
 may yet place its result on the reference-counted heap. A loop matching such a result (`match
 tailForwarded(nestedBody) with | Some(name) -> ...` inside a function whose other arm calls itself

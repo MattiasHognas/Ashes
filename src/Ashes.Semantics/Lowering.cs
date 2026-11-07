@@ -15953,6 +15953,14 @@ public sealed partial class Lowering
             return;
         }
 
+        KeepHandedOverArgumentInOwnedSlot(temp, valueType, adoptionFlagTemp);
+    }
+
+    // The owned slot a handed-over reference waits in until the function's result or the loop's
+    // successors hold references of their own; a callee that adopted the reference consumed it, so
+    // the slot is left empty.
+    private void KeepHandedOverArgumentInOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp)
+    {
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, temp));
         string keptLabel = NewLabel("rc_handed_over_kept");
@@ -15963,6 +15971,15 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(keptLabel));
         RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
     }
+
+    // A reference handed over for the callee's result to keep, where the result's type has no place
+    // for the argument itself but may hold its parts and the result is an arena value the caller does
+    // not copy at the call: the arena result holds the parts as raw references, so the argument goes
+    // to an owned slot and is released with its parts once the function's result or the loop's
+    // successors hold references of their own, where releasing only its spine at the call would leave
+    // one reference on every part the result did not keep.
+    private static bool HandedOverPartsSlotRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_HANDEDPARTSSLOT") is null;
 
     // A call whose result an applied lambda discards (`body(x) |> (given (_) -> ...)`): nothing reads
     // the result, so a reference handed over for it to keep is released right after the call when
@@ -16011,6 +16028,17 @@ public sealed partial class Lowering
 
         bool resultMayHoldParts = HeapPartTypes(valueType).Exists(part =>
             CallResultMayContainArgumentType(resultType, part, new HashSet<string>(StringComparer.Ordinal)));
+        if (resultMayHoldParts
+            && GeneralRcEnabled
+            && HandedOverPartsSlotRuleEnabled
+            && !calleeCompiledResultVerifiedRuntimeManaged
+            && !resultDeepCopied
+            && !resultCopiedWithElements)
+        {
+            KeepHandedOverArgumentInOwnedSlot(temp, valueType, adoptionFlagTemp);
+            return;
+        }
+
         string adoptedLabel = NewLabel("rc_handed_over_adopted");
         string releaseLabel = NewLabel("rc_handed_over_release");
         Emit(new IrInst.JumpIfFalse(adoptionFlagTemp, releaseLabel));

@@ -23273,6 +23273,173 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("list literal of call strings", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildHandedOverPartsSlotProgram(int rounds)
+        => $$"""
+            type Kind2466 =
+                | Label(Str)
+                | Other(Int)
+
+            type Instr2466 =
+                | instruction: Kind2466
+                | line: Int
+
+            type Context2466 =
+                | width: Int
+                | labelBlocks: List((Str, Int))
+
+            let recursive collect2466 (instructions: List(Instr2466)) =
+                match instructions with
+                    | [] -> []
+                    | instruction :: rest ->
+                        match instruction with
+                            | Instr2466 { instruction = kind } ->
+                                match kind with
+                                    | Label(name) -> name :: collect2466(rest)
+                                    | _ -> collect2466(rest)
+
+            let recursive blocks2466 (base: Int) (names: List(Str)) =
+                match names with
+                    | [] -> []
+                    | name :: rest -> (name, base) :: blocks2466(base + 1)(rest)
+
+            let build2466 (width: Int) consume (instructions: List(Instr2466)) =
+                (let labelBlocks =
+                    instructions
+                    |> collect2466
+                    |> consume
+                in
+                    let cx = Context2466(width = width, labelBlocks = labelBlocks)
+                    in (cx, instructions))
+
+            let recursive size2466 (entries: List((Str, Int))) (n: Int) =
+                match entries with
+                    | [] -> n
+                    | (_name, b) :: rest -> size2466(rest)(n + b)
+
+            let recursive ops2466 (seed: Int) (k: Int) (acc: List(Instr2466)) =
+                if k == 0
+                then acc
+                else ops2466(seed)(k - 1)(Instr2466(instruction = Label("end_" + Ashes.Text.fromInt(seed + k)), line = k) :: Instr2466(instruction = Other(k), line = k) :: acc)
+
+            let run (seed: Int) =
+                match []
+                |> ops2466(seed)(3)
+                |> build2466(seed)(blocks2466(seed)) with
+                    | (cx, instructions) -> size2466(cx.labelBlocks)(0) + Ashes.Collection.List.length(instructions)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + run(3))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_handed_over_list_parts_in_arena_closure_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A fresh list of strings is handed to a closure the caller cannot name, whose arena result
+        // pairs each string with a number. The result's type holds the strings but not the list, so
+        // the call released only the list's spine; the record holding the result copied the strings,
+        // and the spine's reference to each string was never released.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildHandedOverPartsSlotProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{18L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handed-over list parts in arena closure result", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildHandleRecordResultProgram(int rounds)
+        => $$"""
+            external type Handle2467
+            external handleOf2467(Str) -> Handle2467 = "strlen"
+
+            type Instr2467 =
+                | label: Str
+                | line: Int
+
+            type Context2467 =
+                | width: Int
+                | labelBlocks: List((Str, Handle2467))
+
+            let recursive collect2467 (instructions: List(Instr2467)) =
+                match instructions with
+                    | [] -> []
+                    | Instr2467 { label = name } :: rest -> name :: collect2467(rest)
+
+            let recursive blocks2467 (names: List(Str)) =
+                match names with
+                    | [] -> []
+                    | name :: rest -> (name, handleOf2467(name)) :: blocks2467(rest)
+
+            let build2467 (width: Int) consume (instructions: List(Instr2467)) =
+                (let labelBlocks =
+                    instructions
+                    |> collect2467
+                    |> consume
+                in
+                    let cx = Context2467(width = width, labelBlocks = labelBlocks)
+                    in (cx, instructions))
+
+            let recursive count2467 (entries: List((Str, Handle2467))) (n: Int) =
+                match entries with
+                    | [] -> n
+                    | (_name, _handle) :: rest -> count2467(rest)(n + 1)
+
+            let recursive ops2467 (seed: Int) (k: Int) (acc: List(Instr2467)) =
+                if k == 0
+                then acc
+                else ops2467(seed)(k - 1)(Instr2467(label = "end_" + Ashes.Text.fromInt(seed + k), line = k) :: acc)
+
+            let run (seed: Int) =
+                match []
+                |> ops2467(seed)(3)
+                |> build2467(seed)(blocks2467) with
+                    | (cx, _instructions) -> count2467(cx.labelBlocks)(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + run(3))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_handle_record_result_releases_handed_over_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The record holding the closure's result also holds a foreign handle; with the handle kept
+        // outside the contract the record was returned as an arena tuple that kept the handed-over
+        // list's owned slot to the end, so every label name leaked once per round.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildHandleRecordResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("handle record result releases handed-over list", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildCurriedChainPredecessorProgram(int rounds)
         => CurriedChainPredecessorDeclarations + BuildCurriedChainPredecessorEntry(rounds);
 

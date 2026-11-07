@@ -1209,6 +1209,7 @@ public sealed partial class Lowering
 
         List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
         ReleaseOwnedSlotsBehindIndependentForwardedResult(resultTemp, resultType, releasable, inLoop);
+        EmitKeptOwnedSlotChildPreservingDrops(resultType, [.. _generalRcOwnedSlots.Except(releasable)]);
         int handedTemp = TryHandOverOwnedResultWhole(label, resultTemp, resultType, releasable, inLoop);
         if (handedTemp >= 0)
         {
@@ -1217,6 +1218,43 @@ public sealed partial class Lowering
 
         EmitGeneralRcOwnedSlotDrops(releasable);
         return resultTemp;
+    }
+
+    // An owned slot the result reaches but whose value the result's type has no place for holds the
+    // value only for its parts (a handed-over list whose heads an arena result borrows): the value's
+    // own cells are released here, child-preserving, as the call would have released them had it
+    // not kept the value for the result. The parts keep the one reference the result relies on.
+    private void EmitKeptOwnedSlotChildPreservingDrops(TypeRef resultType, List<GeneralRcOwnedSlot> kept)
+    {
+        if (!HandedOverPartsSlotRuleEnabled)
+        {
+            return;
+        }
+
+        foreach (GeneralRcOwnedSlot owned in kept)
+        {
+            if (owned.Type is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(owned.Type, [])
+                || CallResultMayContainArgumentType(resultType, owned.Type, new HashSet<string>(StringComparer.Ordinal)))
+            {
+                continue;
+            }
+
+            int valueTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(valueTemp, owned.Slot));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int presentTemp = NewTemp();
+            Emit(new IrInst.CmpIntNe(presentTemp, valueTemp, zeroTemp));
+            string skipLabel = NewLabel("general_rc_kept_absent");
+            Emit(new IrInst.JumpIfFalse(presentTemp, skipLabel));
+            int referenceCountedTemp = NewTemp();
+            Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(referenceCountedTemp, skipLabel));
+            EmitRuntimeManagedChildPreservingDrop(valueTemp, owned.Type, resultType);
+            Emit(new IrInst.StoreLocal(owned.Slot, zeroTemp));
+            Emit(new IrInst.Label(skipLabel));
+        }
     }
 
     // A type variable of a function's result that is quantified by the function's scheme and occurs

@@ -5029,6 +5029,10 @@ let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) 
                     |> resolveType(state)
                     |> canArenaResetLayout
                 | None -> false
+        // Stage 0's `IsOpaqueHandleWord`: a value of an external type with no destructor is a
+        // foreign handle the program only passes along, one word copied like an integer that
+        // needs no release; a declared resource owns what its handle names.
+        | SemOpaque(name) -> isDeclaredResourceName(name)(state) == false
         | resolved -> canArenaResetLayout(resolved)
 
 // A live owner retained into a runtime cell shares its graph with the cell from then on, so its
@@ -6575,7 +6579,7 @@ let listHeadCopyKindOf (element: SemanticType) (state: CoreLoweringState) =
             then Some(InnerListHead)
             else None
         | resolved ->
-            if canArenaResetLayout(resolved)
+            if resultSurvivesReset(resolved)(state)
             then Some(InlineListHead)
             else None
 
@@ -6863,7 +6867,7 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Sem
                                 | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
                                 | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
                                 | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
-        | resolved -> canArenaResetLayout(resolved)
+        | resolved -> resultSurvivesReset(resolved)(state)
 and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
@@ -6921,7 +6925,7 @@ let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: Co
                         then Some(NormalizerArgumentCopy(named))
                         else None
         | resolved ->
-            if canArenaResetLayout(resolved)
+            if resultSurvivesReset(resolved)(state)
             then Some(ScalarArgumentCopy)
             else None
 and copyPlansOf (general: Bool) (types: List(SemanticType)) (state: CoreLoweringState) =
@@ -11864,6 +11868,135 @@ let releaseOwnedSlotsBehindIndependentForwardedResult (resultTemp: Int) (resultT
                             | behindCall ->
                                 emitIndependentForwardedResultDrops(behindCall)(stateActiveFunctionOrigin(state))(state)
 
+// Stage 0's `EmitRuntimeManagedShallowAggregateDrop`: a non-null aggregate cell is released
+// without walking its children.
+let emitRuntimeShallowAggregateDrop (valueTemp: Int) (typeName: Str) (state: CoreLoweringState) =
+    match freshLabel("rcdrop_shallow_end")(state) with
+        | FreshLabel { state = labelled, label = endLabel } ->
+            match freshTempRun(2)(labelled) with
+                | FreshTemp { state = reserved, temp = zeroTemp } ->
+                    reserved
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+                    |> emit(JumpIfFalse(zeroTemp + 1)(endLabel))
+                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
+                    |> emit(Label(endLabel))
+
+// The loop, shared-cell, and end labels of a list release walk, allocated in that order.
+let freshListDropLabels (prefix: Str) (state: CoreLoweringState) =
+    match freshLabel(prefix)(state) with
+        | FreshLabel { state = loopLabelled, label = loopLabel } ->
+            match freshLabel(prefix + "_shared")(loopLabelled) with
+                | FreshLabel { state = sharedLabelled, label = sharedLabel } ->
+                    match freshLabel(prefix + "_end")(sharedLabelled) with
+                        | FreshLabel { state = labelled, label = endLabel } -> (loopLabel, sharedLabel, endLabel, labelled)
+
+// Loads the walk's current cell from its slot and leaves the loop on the empty list; yields the
+// state and the current cell temp.
+let emitListDropTest (currentSlot: Int) (endLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = reserved, temp = currentTemp } ->
+            reserved
+            |> emit(LoadLocal(currentTemp)(currentSlot))
+            |> emit(LoadConstInt(currentTemp + 1)(0))
+            |> emit(CmpIntNe(currentTemp + 2)(currentTemp)(currentTemp + 1))
+            |> emit(JumpIfFalse(currentTemp + 2)(endLabel))
+            |> (given (tested) -> (tested, currentTemp))
+
+// Jumps to the shared exit unless the cell is uniquely owned.
+let emitUniqueCellTest (cellTemp: Int) (sharedLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = uniqueTemp } ->
+            reserved
+            |> emit(RcIsUnique(uniqueTemp)(cellTemp))
+            |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
+
+// Releases the unique cell and continues the walk through its tail.
+let emitListDropAdvance (cellTemp: Int) (currentSlot: Int) (loopLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = tailTemp } ->
+            reserved
+            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
+            |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+            |> emit(StoreLocal(currentSlot)(tailTemp))
+            |> emit(Jump(loopLabel))
+
+let emitListDropSharedExit (cellTemp: Int) (sharedLabel: Str) (endLabel: Str) (state: CoreLoweringState) =
+    state
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
+// Stage 0's `EmitRuntimeManagedListSpineDrop`: the spine's cells are released one by one, the
+// elements left in place.
+let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = currentSlot } ->
+            match allocated
+            |> emit(StoreLocal(currentSlot)(listTemp))
+            |> freshListDropLabels("rcdrop_list_spine") with
+                | (loopLabel, sharedLabel, endLabel, labelled) ->
+                    match labelled
+                    |> emit(Label(loopLabel))
+                    |> emitListDropTest(currentSlot)(endLabel) with
+                        | (tested, currentTemp) ->
+                            tested
+                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
+                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
+                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
+
+// Stage 0's `EmitRuntimeManagedChildPreservingDrop` for a kept owned value: a list gives up its
+// spine, an aggregate its own cell, and a value with no parts is released with its children.
+let emitKeptValueChildPreservingDrop (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
+    match valueType with
+        | SemList(_element) -> emitRuntimeListSpineDrop(valueTemp)(state)
+        | SemTuple(_elements) -> emitRuntimeShallowAggregateDrop(valueTemp)("Tuple")(state)
+        | SemNamed(_symbolId, name, _arguments) ->
+            emitRuntimeShallowAggregateDrop(valueTemp)(runtimeManagedAdtTypeName(name))(state)
+        | other -> emitOwnedValueChildDrop(valueTemp)(other)(state)
+
+// Stage 0's `EmitKeptOwnedSlotChildPreservingDrops`: an owned slot the result reaches but whose
+// value the result's type has no place for holds the value only for its parts (a handed-over list
+// whose heads an arena result borrows). The value's own cells are released here, child-preserving,
+// as the call would have released them had it not kept the value for the result; the parts keep the
+// one reference the result relies on.
+let recursive emitKeptOwnedSlotChildPreservingDrops (resultType: SemanticType) (kept: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match kept with
+        | [] -> state
+        | (_owner, slot, semanticType) :: rest ->
+            match resolveType(state)(semanticType) with
+                | SemFunction(_parameter, _result, _row) -> emitKeptOwnedSlotChildPreservingDrops(resultType)(rest)(state)
+                | valueType ->
+                    if containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(resultType)(valueType)([])(state)
+                    then emitKeptOwnedSlotChildPreservingDrops(resultType)(rest)(state)
+                    else
+                        match freshTemp(state) with
+                            | FreshTemp { state = valueState, temp = valueTemp } ->
+                                match valueState
+                                |> emit(LoadLocal(valueTemp)(slot))
+                                |> freshTemp with
+                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                        match zeroState
+                                        |> emit(LoadConstInt(zeroTemp)(0))
+                                        |> freshTemp with
+                                            | FreshTemp { state = presentState, temp = presentTemp } ->
+                                                match presentState
+                                                |> emit(CmpIntNe(presentTemp)(valueTemp)(zeroTemp))
+                                                |> freshLabel("general_rc_kept_absent") with
+                                                    | FreshLabel { state = labelled, label = skipLabel } ->
+                                                        match labelled
+                                                        |> emit(JumpIfFalse(presentTemp)(skipLabel))
+                                                        |> freshTemp with
+                                                            | FreshTemp { state = testedState, temp = referenceCountedTemp } ->
+                                                                testedState
+                                                                |> emit(IsReferenceCounted(referenceCountedTemp)(valueTemp))
+                                                                |> emit(JumpIfFalse(referenceCountedTemp)(skipLabel))
+                                                                |> emitKeptValueChildPreservingDrop(valueTemp)(valueType)
+                                                                |> emit(StoreLocal(slot)(zeroTemp))
+                                                                |> emit(Label(skipLabel))
+                                                                |> emitKeptOwnedSlotChildPreservingDrops(resultType)(rest)
+
 // Stage 0's `TryHandOverOwnedResultWhole` behind a result outside the contract's types: the owned
 // slots out of the result's reach are released, and when the caller asked and the result is, at
 // run time, the reference-counted value one of the other owned slots holds, or an arena cell of a
@@ -11880,7 +12013,10 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
             let releasable =
                 ownedSlotsOutsideResult(resultType)(resultReachedSlots(resultTemp)(state))(registered)(state)
             in
-                let released = releaseOwnedSlotsBehindIndependentForwardedResult(resultTemp)(resultType)(registered)(releasable)(state)
+                let released =
+                    state
+                    |> releaseOwnedSlotsBehindIndependentForwardedResult(resultTemp)(resultType)(registered)(releasable)
+                    |> emitKeptOwnedSlotChildPreservingDrops(resultType)(ownedSlotsNotIn(origin)(releasable)(registered))
                 in
                     match (stateTcoLoopFrame(released), wholeResultCandidates(origin)(releasable)(registered)) with
                         | (None, first :: others) ->
@@ -13490,7 +13626,7 @@ let isWalkedOrRefilledElement (element: SemanticType) (state: CoreLoweringState)
     match resolveType(state)(element) with
         | SemString -> true
         | SemList(inner) -> resolveType(state)(inner) == SemString
-        | resolved -> canArenaResetLayout(resolved)
+        | resolved -> resultSurvivesReset(resolved)(state)
 
 let recursive anyHeapTupleTailPartner (partners: List(Int)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match partners with
@@ -17328,84 +17464,6 @@ let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: 
             |> ensureFunctionType(functionType)
             |> lowerCoreCallTyped(context)(arity)(argument)(transfers)(consumed)(lower)(functionTemp)
 
-// Stage 0's `EmitRuntimeManagedShallowAggregateDrop`: a non-null aggregate cell is released
-// without walking its children.
-let emitRuntimeShallowAggregateDrop (valueTemp: Int) (typeName: Str) (state: CoreLoweringState) =
-    match freshLabel("rcdrop_shallow_end")(state) with
-        | FreshLabel { state = labelled, label = endLabel } ->
-            match freshTempRun(2)(labelled) with
-                | FreshTemp { state = reserved, temp = zeroTemp } ->
-                    reserved
-                    |> emit(LoadConstInt(zeroTemp)(0))
-                    |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
-                    |> emit(JumpIfFalse(zeroTemp + 1)(endLabel))
-                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
-                    |> emit(Label(endLabel))
-
-// The loop, shared-cell, and end labels of a list release walk, allocated in that order.
-let freshListDropLabels (prefix: Str) (state: CoreLoweringState) =
-    match freshLabel(prefix)(state) with
-        | FreshLabel { state = loopLabelled, label = loopLabel } ->
-            match freshLabel(prefix + "_shared")(loopLabelled) with
-                | FreshLabel { state = sharedLabelled, label = sharedLabel } ->
-                    match freshLabel(prefix + "_end")(sharedLabelled) with
-                        | FreshLabel { state = labelled, label = endLabel } -> (loopLabel, sharedLabel, endLabel, labelled)
-
-// Loads the walk's current cell from its slot and leaves the loop on the empty list; yields the
-// state and the current cell temp.
-let emitListDropTest (currentSlot: Int) (endLabel: Str) (state: CoreLoweringState) =
-    match freshTempRun(3)(state) with
-        | FreshTemp { state = reserved, temp = currentTemp } ->
-            reserved
-            |> emit(LoadLocal(currentTemp)(currentSlot))
-            |> emit(LoadConstInt(currentTemp + 1)(0))
-            |> emit(CmpIntNe(currentTemp + 2)(currentTemp)(currentTemp + 1))
-            |> emit(JumpIfFalse(currentTemp + 2)(endLabel))
-            |> (given (tested) -> (tested, currentTemp))
-
-// Jumps to the shared exit unless the cell is uniquely owned.
-let emitUniqueCellTest (cellTemp: Int) (sharedLabel: Str) (state: CoreLoweringState) =
-    match freshTemp(state) with
-        | FreshTemp { state = reserved, temp = uniqueTemp } ->
-            reserved
-            |> emit(RcIsUnique(uniqueTemp)(cellTemp))
-            |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
-
-// Releases the unique cell and continues the walk through its tail.
-let emitListDropAdvance (cellTemp: Int) (currentSlot: Int) (loopLabel: Str) (state: CoreLoweringState) =
-    match freshTemp(state) with
-        | FreshTemp { state = reserved, temp = tailTemp } ->
-            reserved
-            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
-            |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
-            |> emit(StoreLocal(currentSlot)(tailTemp))
-            |> emit(Jump(loopLabel))
-
-let emitListDropSharedExit (cellTemp: Int) (sharedLabel: Str) (endLabel: Str) (state: CoreLoweringState) =
-    state
-    |> emit(Label(sharedLabel))
-    |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
-    |> emit(Jump(endLabel))
-    |> emit(Label(endLabel))
-
-// Stage 0's `EmitRuntimeManagedListSpineDrop`: the spine's cells are released one by one, the
-// elements left in place.
-let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
-    match freshLocal(state) with
-        | FreshLocal { state = allocated, local = currentSlot } ->
-            match allocated
-            |> emit(StoreLocal(currentSlot)(listTemp))
-            |> freshListDropLabels("rcdrop_list_spine") with
-                | (loopLabel, sharedLabel, endLabel, labelled) ->
-                    match labelled
-                    |> emit(Label(loopLabel))
-                    |> emitListDropTest(currentSlot)(endLabel) with
-                        | (tested, currentTemp) ->
-                            tested
-                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
-                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
-                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
-
 // Names the constructor-switching dropper of a named type (stage 0's
 // `SynthesizeRuntimeManagedAdtDropper`), synthesizing it once through the state's label cache.
 let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
@@ -17750,10 +17808,33 @@ let recursive resultMayHoldAnyPart (resultType: SemanticType) (parts: List(Seman
         | [] -> false
         | part :: rest -> callResultMayContainArgumentType(resultType)(part)([])(state) || resultMayHoldAnyPart(resultType)(rest)(state)
 
+// Stage 0's `KeepHandedOverArgumentInOwnedSlot`: the owned slot a handed-over reference waits in
+// until the function's result or the loop's successors hold references of their own; a callee that
+// adopted the reference consumed it, so the slot is left empty.
+let keepHandedOverArgumentInOwnedSlot (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = ownedSlot } ->
+            match slotted
+            |> emit(StoreLocal(ownedSlot)(temp))
+            |> freshLabel("rc_handed_over_kept") with
+                | FreshLabel { state = labelled, label = keptLabel } ->
+                    match labelled
+                    |> emit(JumpIfFalse(adoptionFlagTemp)(keptLabel))
+                    |> freshTemp with
+                        | FreshTemp { state = allocated, temp = zeroTemp } ->
+                            allocated
+                            |> emit(LoadConstInt(zeroTemp)(0))
+                            |> emit(StoreLocal(ownedSlot)(zeroTemp))
+                            |> emit(Label(keptLabel))
+                            |> registerGeneralRcOwnedSlot(ownedSlot)(valueType)
+
 // Stage 0's `LowerCallDropHandedOverArgumentResultCannotHold`: a reference handed over for the
 // callee's result to keep is not in a result whose type has no place for a value of the
 // argument's type, so a callee that did not adopt it left it with the caller, which releases it
-// here, child-preserving when a part of the argument could be in the result.
+// here. Where a part of the argument could be in an arena result the caller does not copy at the
+// call, the argument goes to an owned slot and is released with its parts once the function's
+// result or the loop's successors hold references of their own, since releasing only its spine
+// here would leave one reference on every part the result did not keep.
 let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
     match valueType with
         | SemFunction(_parameter, _result, _row) -> state
@@ -17761,18 +17842,24 @@ let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (
             if resultSurvivesReset(valueType)(state) || containsUnresolvedLayout(valueType)(state) || containsUnresolvedLayout(policy.resultType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state)
             then state
             else
-                let unconditional = policy with elementCopyingFlagTemp = -1
+                let mayHoldParts =
+                    resultMayHoldAnyPart(policy.resultType)(heapPartTypesInto([valueType])([])([])(state))(state)
                 in
-                    match freshLabel("rc_handed_over_adopted")(state) with
-                        | FreshLabel { state = adoptedLabelled, label = adoptedLabel } ->
-                            match freshLabel("rc_handed_over_release")(adoptedLabelled) with
-                                | FreshLabel { state = releaseLabelled, label = releaseLabel } ->
-                                    releaseLabelled
-                                    |> emit(JumpIfFalse(adoptionFlagTemp)(releaseLabel))
-                                    |> emit(Jump(adoptedLabel))
-                                    |> emit(Label(releaseLabel))
-                                    |> emitConsumedValueDrop(unconditional)(temp)(valueType)(resultMayHoldAnyPart(policy.resultType)(heapPartTypesInto([valueType])([])([])(state))(state))
-                                    |> emit(Label(adoptedLabel))
+                    if mayHoldParts && generalRcEnabled(state) && policy.verifiedRuntimeResult == false && policy.resultDeepCopied == false
+                    then keepHandedOverArgumentInOwnedSlot(temp)(valueType)(adoptionFlagTemp)(state)
+                    else
+                        let unconditional = policy with elementCopyingFlagTemp = -1
+                        in
+                            match freshLabel("rc_handed_over_adopted")(state) with
+                                | FreshLabel { state = adoptedLabelled, label = adoptedLabel } ->
+                                    match freshLabel("rc_handed_over_release")(adoptedLabelled) with
+                                        | FreshLabel { state = releaseLabelled, label = releaseLabel } ->
+                                            releaseLabelled
+                                            |> emit(JumpIfFalse(adoptionFlagTemp)(releaseLabel))
+                                            |> emit(Jump(adoptedLabel))
+                                            |> emit(Label(releaseLabel))
+                                            |> emitConsumedValueDrop(unconditional)(temp)(valueType)(mayHoldParts)
+                                            |> emit(Label(adoptedLabel))
 
 // Stage 0's `HandOverArgumentKeptByArenaResultToOwnedSlot`: a reference handed over for the
 // callee's result to keep, where the result is an arena value that may hold the argument and that
@@ -17787,22 +17874,7 @@ let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp:
         | _ ->
             if generalRcEnabled(state) == false || policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
             then state
-            else
-                match freshLocal(state) with
-                    | FreshLocal { state = slotted, local = ownedSlot } ->
-                        match slotted
-                        |> emit(StoreLocal(ownedSlot)(temp))
-                        |> freshLabel("rc_handed_over_kept") with
-                            | FreshLabel { state = labelled, label = keptLabel } ->
-                                match labelled
-                                |> emit(JumpIfFalse(adoptionFlagTemp)(keptLabel))
-                                |> freshTemp with
-                                    | FreshTemp { state = allocated, temp = zeroTemp } ->
-                                        allocated
-                                        |> emit(LoadConstInt(zeroTemp)(0))
-                                        |> emit(StoreLocal(ownedSlot)(zeroTemp))
-                                        |> emit(Label(keptLabel))
-                                        |> registerGeneralRcOwnedSlot(ownedSlot)(valueType)
+            else keepHandedOverArgumentInOwnedSlot(temp)(valueType)(adoptionFlagTemp)(state)
 
 let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with

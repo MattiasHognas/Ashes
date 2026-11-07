@@ -2634,8 +2634,18 @@ public sealed partial class Lowering
     private bool CanArenaReset(TypeRef type)
     {
         TypeRef pruned = EraseZeroCostTypeRepresentation(type);
-        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool or TypeRef.TNever;
+        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool or TypeRef.TNever
+            || IsOpaqueHandleWord(pruned);
     }
+
+    // A value of an external type with no destructor is a foreign handle the program only passes
+    // along: one word that is copied like an integer and needs no release, so an aggregate holding
+    // one is placed and copied like one of integers. A resource type (an external type with a
+    // destructor) owns what its handle names and stays a heap value with a cleanup.
+    private bool IsOpaqueHandleWord(TypeRef pruned)
+        => pruned is TypeRef.TOpaque opaque
+            && !_externalResourceTypes.ContainsKey(opaque.Name)
+            && Environment.GetEnvironmentVariable("GRC_NO_OPAQUEHANDLEWORD") is null;
 
     /// <summary>
     /// Whether a call's concrete (post-unification) result type is one the runtime-managed drop/copy
