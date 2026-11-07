@@ -17254,7 +17254,8 @@ let recursive finalApplicationResult (resultType: SemanticType) (remaining: Int)
             | SemFunction(_argument, result, _row) -> finalApplicationResult(result)(remaining - 1)(state)
             | _ -> None
 
-// Stage 0's `OwnsGenericStringArgument`: a string passed to a generic parameter of a call whose
+// Stage 0's `OwnsGenericStringArgument` and `OwnsGenericAdtArgument`: a string, or a value of the
+// contract's types, passed to a generic parameter of a call whose
 // final result holds no closure goes as an owned reference-counted reference instead of a copy in
 // the persistent blob region, which nothing reclaims. Only the final result can keep it: no curry
 // stage's closure escapes the call, and the final result is a value the caller settles the
@@ -17266,11 +17267,27 @@ let ownsGenericStringArgument (argumentType: SemanticType) (resultType: Semantic
                 | Some(SemFunction(_argument, _result, _row)) -> false
                 | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
                 | None -> false
+        | SemNamed(_symbolId, _name, _arguments) as named ->
+            match finalApplicationResult(resultType)(arity - 1)(state) with
+                | Some(SemFunction(_argument, _result, _row)) -> false
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && specializationFieldRelocatable(named)(state) && isGeneralRcValueType(named)(state) && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | None -> false
         | _ -> false
 
 let rcStringCopyOut (sourceTemp: Int) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = allocated, temp = copyTemp } -> (rcNormalizationCopyOut(copyTemp)(sourceTemp)(-1)(allocated), copyTemp)
+
+// The owned reference a handed-over generic argument goes as: a string's reference or copy, or a
+// value of the contract's types retained or copied onto the reference-counted heap (stage 0's
+// `EmitRuntimeManagedTcoDeepCopy`).
+let handedOverArgumentCopy (argumentType: SemanticType) (argumentTemp: Int) (state: CoreLoweringState) =
+    match (resolveType(state)(argumentType), generalCopyPlanOf(argumentType)(state)) with
+        | (SemString, _plan) ->
+            emitReferenceOrCopy(argumentTemp)(rcStringCopyOut(argumentTemp))(state)
+        | (_named, Some(plan)) -> emitGuardedDeepCopy(argumentTemp)(plan)(state)
+        | (_named, None) ->
+            emitReferenceOrCopy(argumentTemp)(rcStringCopyOut(argumentTemp))(state)
 
 // Stage 0's `EmitHandedOverGenericStringArgument`: the reference is handed over and never adopted,
 // so the caller releases it once the result was copied out, and parks it in an owned slot while
@@ -17280,7 +17297,7 @@ let handOverGenericStringArgument (context: CoreCallContext) (arity: Int) (argum
         | Some(TypeScheme { quantified = quantified, body = body }) ->
             if parameterQuantifiedAt(quantified)(context.argumentCount - arity)(body) && ownsGenericStringArgument(argumentType)(resultType)(arity)(state)
             then
-                match emitReferenceOrCopy(argumentTemp)(rcStringCopyOut(argumentTemp))(state) with
+                match handedOverArgumentCopy(argumentType)(argumentTemp)(state) with
                     | (owned, ownedTemp) ->
                         match freshTemp(owned) with
                             | FreshTemp { state = flagged, temp = notAdoptedTemp } ->

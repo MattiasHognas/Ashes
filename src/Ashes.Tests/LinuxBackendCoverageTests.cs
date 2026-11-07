@@ -23690,4 +23690,48 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("curried stage closure", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildGenericParameterAdtArgumentProgram(int rounds)
+        => $$"""
+            type Expr =
+                | ExprAt(Int, Expr)
+                | ExprVar(Str)
+
+            let recursive walk (items: List(Int)) trailing (total: Int) =
+                match items with
+                    | [] -> total
+                    | item :: rest -> walk(rest)(trailing)(total + item)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    let trailing = ExprAt(n, ExprVar("z"))
+                    in loop(n - 1)(acc + walk([1, 2, 3])(trailing)(0))
+            in Ashes.IO.print(Ashes.Text.fromInt(loop({{rounds}})(0)))
+            """;
+
+    [Test]
+    public async Task Linux_backend_generic_parameter_adt_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A fresh syntax tree goes to a loop's generic parameter every round. The caller copied it
+        // into the persistent to-space region before each call, which nothing reclaims; it now hands
+        // the tree over as an owned reference-counted reference and releases it after the call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildGenericParameterAdtArgumentProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{6L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic parameter adt argument", samples, maxRssKb: 16_000);
+    }
 }

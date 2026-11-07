@@ -14762,6 +14762,7 @@ public sealed partial class Lowering
             if (IsToSpaceCopySafeType(prunedArgType))
             {
                 argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
+                    || OwnsGenericAdtArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
                     ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
                     : EmitDeepCopyToSpace(argTemp, prunedArgType);
             }
@@ -14810,6 +14811,27 @@ public sealed partial class Lowering
             return false;
         }
 
+        return FinalResultSettlesHandedOverArgument(funType, remainingArguments);
+    }
+
+    private static bool GenericAdtArgumentEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_GENERICADTARG") is null;
+
+    // A value of the contract's types passed to a generic parameter goes the same way: an owned
+    // reference-counted reference, or a reference-counted copy of an arena value, instead of a deep
+    // copy into the persistent to-space region, which nothing reclaims.
+    private bool OwnsGenericAdtArgument(TypeRef argumentType, TypeRef.TFun funType, int remainingArguments)
+        => GenericAdtArgumentEnabled
+            && GeneralRcEnabled
+            && CanTestRepresentation
+            && argumentType is TypeRef.TNamedType
+            && IsGeneralRcValueType(argumentType)
+            && FinalResultSettlesHandedOverArgument(funType, remainingArguments);
+
+    // Whether the call's final result is a value the caller copies out and settles a handed-over
+    // argument's reference against: no closure, and a layout the copy-out knows.
+    private bool FinalResultSettlesHandedOverArgument(TypeRef.TFun funType, int remainingArguments)
+    {
         TypeRef resultType = Prune(funType.Ret);
         for (int remaining = remainingArguments; remaining > 0; remaining--)
         {
@@ -14833,7 +14855,9 @@ public sealed partial class Lowering
         TypeRef argumentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments)
     {
-        int ownedTemp = EmitReferenceOrCopy(argumentTemp, () =>
+        int ownedTemp = argumentType is TypeRef.TNamedType
+            ? EmitRuntimeManagedTcoDeepCopy(argumentTemp, argumentType)
+            : EmitReferenceOrCopy(argumentTemp, () =>
         {
             int copiedTemp = NewTemp();
             Emit(new IrInst.CopyOutArena(

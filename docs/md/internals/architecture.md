@@ -2107,6 +2107,12 @@ copies, since its closure may outlive the call, and so does a call inside a
 generic body whose result type is still unresolved there (`Map`'s own worker,
 for one), which has no point at which the result is copied out.
 
+A value of the contract's types passed to a quantified parameter goes the same way: it is
+retained when it is reference-counted, or copied onto the reference-counted heap when it is still
+in the arena, and released after the call (`GRC_NO_GENERICADTARG`, both stages). A loop handing a
+fresh syntax tree to a generic walker (`walk(items)(trailing)(0)`, `trailing` never annotated)
+used to grow by one to-space copy of the tree per call.
+
 ### Cycles
 
 Reference counting does not collect cycles. RC admission is limited to acyclic
