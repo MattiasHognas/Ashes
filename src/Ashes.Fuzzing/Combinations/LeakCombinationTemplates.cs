@@ -215,6 +215,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ListLiteralFreshStringHeadTemplate());
         registry.Register(new CurriedChainPredecessorTemplate());
         registry.Register(new PatternStringTupleHeadTemplate());
+        registry.Register(new NormalizedHeadTupleDuplicateTemplate());
     }
 }
 

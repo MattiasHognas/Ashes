@@ -2378,6 +2378,7 @@ built, so the rule that hands a retain taken for an arena cell to an owned slot 
 entry, and once the marker became a retain, every call left the record copy with its successor list
 behind. The marker now goes to an owned slot holding zero, and the marker is stored into it once the
 pattern owners are placed and the marker turned out to be a retain (`GRC_NO_CTORMARKERSLOT`, both
+stages).
 A pattern owner's reference handed to a constrained (trait-dictionary) call for its result is released
 right after the call when the callee's summary proves the result never holds that argument, as
 itself or as a part: `lookupAssociation(site)(known)` returns a value of `known`, never `site`. Parked
@@ -2393,7 +2394,15 @@ environment, so the reference goes to an owned slot the function releases. Befor
 stopped at a function-typed result, and every such call left the whole list behind: stage 1's
 optimizer kept every `firstKnownLabels` list to the end (`GRC_NO_CURRYSTAGESLOT`, stage 0; stage 1
 already releases it).
-stages).
+A tuple literal placed in the arena as the head of a reference-counted cell (`(fn.label, n) :: acc`
+over a reference-counted accumulator) holds the duplicates its pattern owners took for its elements,
+and the cell does not store it: it normalizes the tuple into a reference-counted copy that retains the
+elements itself. The arena tuple is garbage from then on, so its duplicates are released once the copy
+is made, as a reference-counted tuple releases the duplicate of an element it normalizes, and the
+late release the back edge would have made after copying the successor is withdrawn (the cell is
+reference-counted already, so that copy never happens). Released by nobody, every pair left one string
+behind: the `(label, index)` groups and `(label, next label)` entries stage 1's optimizer collects
+(`GRC_NO_NORMALIZEDHEADTUPLEDUP`, stage 0; stage 1 miscompiles the shape, see SELF_HOSTING.md).
 
 ### One-shot resumptive arms: the pre/post split
 

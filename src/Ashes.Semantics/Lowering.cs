@@ -17481,6 +17481,10 @@ public sealed partial class Lowering
         else if (CanRuntimeManageTcoListElement(elementType))
         {
             normalizedTemp = EmitRuntimeManagedTcoDeepCopy(lowered.Temp, elementType);
+            if (elementType is TypeRef.TTuple && normalizedTemp != lowered.Temp)
+            {
+                ReleaseNormalizedHeadTupleDuplicates(lowered.Temp);
+            }
         }
         else
         {
@@ -17556,6 +17560,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elements[i].Temp));
         }
         RecordAggregateBytesProvenance(tupleTemp, elements);
+        RecordArenaTupleOwnerDuplicates(tupleTemp, duplicates, runtimeManaged);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 

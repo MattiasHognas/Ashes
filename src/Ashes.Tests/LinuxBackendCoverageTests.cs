@@ -23412,4 +23412,59 @@ public sealed class LinuxBackendCoverageTests
         // rather than the memory.)
         DropperCallsInLoop(BuildCurriedChainPredecessorProgram(2), "lowerItems", "__rcdrop_general").ShouldBe(18);
     }
+
+    private static string BuildArenaHeadTupleOwnerDuplicateProgram(int rounds)
+        => $$"""
+            type Fn =
+                | label: Str
+                | body: List(Int)
+
+            let recursive collectGroups (fns: List(Fn)) acc =
+                match fns with
+                    | [] -> acc
+                    | fn :: rest -> collectGroups(rest)((fn.label, Ashes.Text.byteLength(fn.label)) :: acc)
+
+            let recursive walk groups (n: Int) =
+                match groups with
+                    | [] -> n
+                    | (label, index) :: tail -> walk(tail)(n + index + Ashes.Text.byteLength(label))
+
+            let probe (n: Int) (fns: List(Fn)) =
+                (let all = Fn(label = "e", body = []) :: fns
+                in walk(collectGroups(all)([]))(n))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n)([Fn(label = "f", body = [n]), Fn(label = "g", body = []), Fn(label = "h", body = [2])]))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_head_tuple_owner_duplicate_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `(fn.label, n) :: acc` over a reference-counted accumulator: the tuple literal is placed in
+        // the arena and holds the duplicate its pattern owner `fn` took for the label, and the cell
+        // normalizes the tuple into a reference-counted copy that retains the label itself. The arena
+        // tuple's duplicate is released once the copy is made; released by nobody, every pair left
+        // one string behind.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildArenaHeadTupleOwnerDuplicateProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = (long)rounds * (rounds + 1) / 2 + 8L * rounds;
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena head tuple owner duplicate", samples, maxRssKb: 16_000);
+    }
 }
