@@ -17517,6 +17517,29 @@ let usesAdtDropper (named: SemanticType) (state: CoreLoweringState) =
             |> coverageEnvironment
             |> heapRuntimeRecursiveCopyAdtLayout(named)
 
+// Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type that neither the fixed
+// copy-out nor the inline runtime-managed layouts express is released by the dropper synthesized
+// for its type, never by walking its fields inline, which a type reaching itself would never end.
+let usesGeneralAdtDropper (named: SemanticType) (state: CoreLoweringState) =
+    match heapFactsOf(named)(state) with
+        | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
+        | facts -> runtimeManagedAdtLayout(facts) == false && isGeneralRcAdmissible(named)([])(state)
+
+// Stage 0's `EmitGeneralRuntimeManagedAdtDrop`: the value is handed to the dropper synthesized
+// once per type through the state's label cache.
+let emitGeneralAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+            match synthesizeGeneralAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
+                | DropperSynthesis { label = Some(label), cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    match freshTempRun(2)(withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
+                        | FreshTemp { state = reserved, temp = environmentTemp } ->
+                            reserved
+                            |> emit(LoadConstInt(environmentTemp)(0))
+                            |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
+                | _ ->
+                    emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+
 // The layout of a named type's first constructor.
 let recursive firstConstructorLayoutOf (typeName: Str) (layouts: List(CoreConstructorLayout)) =
     match layouts with
@@ -17607,9 +17630,12 @@ and emitRuntimeAdtDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (s
         if usesAdtDropper(named)(state)
         then emitAdtDropperCall(valueTemp)(typeName)(named)(state)
         else
-            if usesRecordDropper(named)(state)
-            then emitRecordDropperCall(valueTemp)(named)(state)
-            else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
+            if usesGeneralAdtDropper(named)(state)
+            then emitGeneralAdtDropperCall(valueTemp)(typeName)(named)(state)
+            else
+                if usesRecordDropper(named)(state)
+                then emitRecordDropperCall(valueTemp)(named)(state)
+                else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
 and emitFirstConstructorDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
     match state
     |> stateConstructorLayouts
