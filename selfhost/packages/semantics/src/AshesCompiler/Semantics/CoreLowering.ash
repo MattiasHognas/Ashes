@@ -9135,7 +9135,7 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
         // reference-counted list is stored as it is, the parameter's own value is retained, since
         // the predecessor release still runs, and anything else is taken by reference when it
         // turns out reference-counted and copied otherwise.
-        | TcoResetArgument { managedList = Some((activeSlot, _elementType)), shape = TcoChoiceAccumulatorShape, parameterSlot = slot, argumentTemp = temp, argumentType = argumentType, argumentRuntime = isRuntime, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
+        | TcoResetArgument { managedList = Some((activeSlot, elementType)), shape = TcoChoiceAccumulatorShape, parameterSlot = slot, argumentTemp = temp, argumentType = argumentType, argumentRuntime = isRuntime, argumentExpression = expression, passesThrough = passesThrough } :: rest ->
             if isRuntime
             then normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
             else
@@ -9148,7 +9148,11 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                             |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                             |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
                 else
-                    match argumentCopyPlanOf(argumentType)(state) with
+                    // A list of the contract's values has only the general plan, which copies its
+                    // elements through their normalizer.
+                    match if isGeneralRcNamedType(elementType)(state)
+                    then generalCopyPlanOf(argumentType)(state)
+                    else argumentCopyPlanOf(argumentType)(state) with
                         | None -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
                         | Some(plan) ->
                             match emitBackEdgeReferenceOrCopy(temp)(argumentType)(backEdgeListCopy(temp)(plan))(state) with
@@ -13663,14 +13667,17 @@ let isGeneralTupleScrutineeTail (element: SemanticType) (shape: TcoArgumentShape
 // A grown accumulator is placed on the reference-counted heap when every back edge stores a counted
 // cell into it, or, as stage 0 places any list of Bytes-holding values under the general contract,
 // when its elements hold Bytes: a cell over a head of unknown Bytes origin stays in the arena and the
-// back edge copies the successor.
+// back edge copies the successor. A choice accumulator of values of the contract's types (a call
+// spine's argument list, handed on by one self-call and consed onto by another) is placed too, as
+// stage 0's `IsChoiceAccumulatorElement` does: left in the arena it would also keep its sibling
+// parameters there, which the loop's callers take as placed.
 let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match slotResolvedType(slot)(state.bindings)(state) with
         | Some(SemList(element)) ->
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || isGeneralTupleScrutineeTail(element)(shape)(ordinal)(loop)(state) || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && (tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || containsBytesLayout(element)(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || shape == TcoChoiceAccumulatorShape && isGeneralRcValueType(element)(state) || isGeneralTupleScrutineeTail(element)(shape)(ordinal)(loop)(state) || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && (tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || containsBytesLayout(element)(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
