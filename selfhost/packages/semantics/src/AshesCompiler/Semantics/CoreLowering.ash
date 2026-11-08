@@ -16374,6 +16374,24 @@ let adtSlotBlockedBySibling (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTco
     |> (given (candidates: List(TcoManagedCandidate)) ->
         anyBlockingSibling(candidates)(state) && !candidateAdtManagedAt(slot)(demoteBlockedCandidates(candidates)(candidates)(loop)(state)))
 
+// Whether the list candidate of `slot` survives the sibling demotion the loop's finalize pass makes
+// (`unblockedCandidates`): a list a heap-typed sibling keeps in the arena is never normalized at the
+// loop's entry, so reading it as reference-counted would retain or release the caller's borrowed
+// value.
+let recursive listCandidateSurvives (slot: Int) (candidates: List(TcoManagedCandidate)) =
+    match candidates with
+        | [] -> false
+        | TcoManagedCandidate { slot = candidateSlot, listElement = Some(_element) } :: rest -> candidateSlot == slot || listCandidateSurvives(slot)(rest)
+        | _candidate :: rest -> listCandidateSurvives(slot)(rest)
+
+let listSlotUnblocked (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    state
+    |> tcoManagedCandidates(0)(frame.parameterSlots)(loop.argumentShapes)(loop)
+    |> (given (candidates: List(TcoManagedCandidate)) ->
+        state
+        |> unblockedCandidates(candidates)(loop)
+        |> listCandidateSurvives(slot))
+
 let loopSlotIsRuntimeManaged (slot: Int) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match ordinalOfSlot(slot)(frame.parameterSlots)(0) with
         | Some(ordinal) ->
@@ -16525,6 +16543,23 @@ let readsEntryPlacedPatternRoot (argument: Expr) (state: CoreLoweringState) =
                 | None -> false
         | _ -> false
 
+// A read of a list loop parameter the finalize pass keeps in the arena for a heap-typed sibling's
+// sake: its placement is pending, as stage 0 leaves it, so its retain follows the flag the finalize
+// pass settles rather than being taken outright on a value that may be an arena list.
+let readsDemotedLoopList (argument: Expr) (state: CoreLoweringState) =
+    match (unspanArgument(argument), stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (ExprVar(name), Some(frame), Some(loop)) ->
+            match parameterSlotOfName(name)(frame)(state) with
+                | Some(slot) ->
+                    match slotResolvedType(slot)(state.bindings)(state) with
+                        | Some(resolved) ->
+                            match resolveType(state)(resolved) with
+                                | SemList(_element) -> !listSlotUnblocked(slot)(frame)(loop)(state)
+                                | _ -> false
+                        | None -> false
+                | None -> false
+        | _ -> false
+
 // Stage 0's `CalleeResultMayReachOrKeepPatternBinding`: a pattern binding of a loop parameter
 // the callee's result may keep is retained outright, its flag registered as pending. A value of
 // the contract's types is always passed borrowed, whatever the callee's own summary says; the type
@@ -16552,7 +16587,7 @@ let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argum
                             normalizes = calleeNormalizesArgument(facts)(index)(state),
                             borrowedReach = rootSlot != None && !selfCallee && calleeResultReachesArgument(facts)(index),
                             cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
-                            pendingRootSlot = if runtimeArgument
+                            pendingRootSlot = if runtimeArgument && !readsDemotedLoopList(argument)(state)
                             then None
                             else rootSlot
                         )
