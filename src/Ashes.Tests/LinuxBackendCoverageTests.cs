@@ -24660,4 +24660,62 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("arena record owned field", samples, maxRssKb: 16_000);
     }
+
+
+    private static string BuildSpecializationCallerAliasProgram(int rounds)
+        => $$"""
+            let recursive parseParams reversed (tokens: List(Str)) =
+                match tokens with
+                    | [] -> (Ashes.Collection.List.reverse(reversed), 0)
+                    | parameter :: rest -> parseParams((parameter, Some(parameter + "!")) :: reversed)(rest)
+
+            let recursive parameterNames parameters =
+                match parameters with
+                    | [] -> []
+                    | (name, _annotation) :: tail -> name :: parameterNames(tail)
+
+            let probe (n: Int) =
+                (let header =
+                    if n < 0
+                    then ([], [n])
+                    else
+                        match parseParams([])(["seen" + Ashes.Text.fromInt(n), "h"]) with
+                            | (parameters, after) -> (parameters, [after])
+                in
+                    match header with
+                        | (parameters, requirements) -> Ashes.Collection.List.length(parameterNames(parameters)) + Ashes.Collection.List.length(requirements))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_specialization_caller_alias_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The generic walker's element specialization is lowered on demand inside `probe`, where a
+        // pattern binding of the same name as the walker's parameter aliases a reference-counted
+        // tuple. The specialization resolved its own pattern owners through that alias and retained
+        // every tail at its back edge for an owner it never released. Its ownership scopes are now
+        // its own, as its bindings already were.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildSpecializationCallerAliasProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{3L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("specialization caller alias", samples, maxRssKb: 16_000);
+    }
 }

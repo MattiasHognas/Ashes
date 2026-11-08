@@ -2536,6 +2536,16 @@ release guard stage 1's call lowering passes through `deepCopiedResultSevers` an
 `normalizedOwnedResultSevers`. Inside such a function a scalar tuple join is now normalized like a
 mixed join of any other type, its arena arms copied, so it is owned on every arm and returned as it is
 (`GRC_NO_PASSTHROUGHSCALARJOIN`, both stages).
+An element specialization (a generic list function lowered again at a call's concrete element types)
+is lowered on demand, in the middle of the caller's body. Its bindings were always kept apart from the
+caller's, but its ownership scopes, owned-value index and ownership aliases were not. A pattern
+binding of the specialization resolved its owner through a caller alias of the same name: stage 1's
+`parserParameterNames parameters` resolved its `tail` owner through the caller's `parameters` alias to
+the reference-counted `header` tuple. So the specialization retained every tail at its back edge for an
+owner whose release its own body never emitted, and each sugar parameter after the first leaked its
+cell, tuple, annotation and name. The specialization now saves, clears and restores the caller's
+ownership state around its body, as it does the bindings (`GRC_NO_SPECIALIZATIONOWNERSHIPSCOPE`, stage 0;
+stage 1 has no element specialization).
 
 ### One-shot resumptive arms: the pre/post split
 

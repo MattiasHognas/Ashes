@@ -230,6 +230,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new PassthroughScalarJoinTemplate());
         registry.Register(new IterationStringPartsTemplate());
         registry.Register(new ArenaRecordOwnedFieldTemplate());
+        registry.Register(new SpecializationOwnershipScopeTemplate());
     }
 }
 
