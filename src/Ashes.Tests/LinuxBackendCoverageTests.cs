@@ -24787,4 +24787,63 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop flag record beside instruction list", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildOwnedResultSuccessorPartsProgram(int rounds)
+        => $$"""
+            type Expr =
+                | Var(Str)
+                | Call(Expr, Expr)
+
+            let recursive spine (expression: Expr) (arguments: List(Expr)) =
+                match expression with
+                    | Call(function, argument) -> spine(function)(argument :: arguments)
+                    | root -> (root, arguments)
+
+            let recursive append (xs: List(Expr)) (ys: List(Expr)) =
+                match xs with
+                    | [] -> ys
+                    | x :: rest -> x :: append(rest)(ys)
+
+            let recursive nodes (pending: List(Expr)) (count: Int) =
+                match pending with
+                    | [] -> count
+                    | (Call(_function, _argument) as call) :: rest ->
+                        match spine(call)([]) with
+                            | (root, arguments) -> nodes(root :: append(arguments)(rest))(count + 1)
+                    | _ :: rest -> nodes(rest)(count + 1)
+
+            let probe (n: Int) = nodes([Call(Call(Var("f" + Ashes.Text.fromInt(n)), Call(Var("g"), Var("a"))), Call(Var("h"), Var("c")))])(0)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_owned_result_successor_parts_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The worklist loop keeps the spine tuple and the appended list in owned slots that shift
+        // into predecessor slots at every back edge. Its successor names only the tuple's parts and
+        // hands the old tail to the append, whose owned result holds a reference of its own, so the
+        // earlier iteration's values are released instead of being overwritten unreleased.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildOwnedResultSuccessorPartsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{8L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("owned result successor parts", samples, maxRssKb: 16_000);
+    }
 }

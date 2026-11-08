@@ -2553,6 +2553,20 @@ owner whose release its own body never emitted, and each sugar parameter after t
 cell, tuple, annotation and name. The specialization now saves, clears and restores the caller's
 ownership state around its body, as it does the bindings (`GRC_NO_SPECIALIZATIONOWNERSHIPSCOPE`, stage 0;
 stage 1 has no element specialization).
+A loop's owned call results shift into predecessor slots at every back edge, and a predecessor is
+released only once no successor can still hold a part of it. An earlier iteration's value reaches
+this iteration's successors only through the loop's parameters, since they are what the earlier
+successors were, and through this iteration's owned call results, which hold references of their own
+to everything they keep. So when no successor names a parameter part bare, the predecessor is
+released. "Bare" means as itself, or inside a cons, tuple, list or constructor the successor builds.
+Two things don't count. A part handed to a call whose compiled result is owned on the
+reference-counted heap is held by that result. A name bound out of this iteration's owned call
+results is that result's part. Example: a worklist step
+`match spine(call)([]) with | (root, arguments) -> walk(root :: append(arguments)(rest))` releases
+the tuple and the appended list from two iterations back, where they were overwritten unreleased
+before. A successor that conses the head it matched onto an arena accumulator (`call :: nodes`) still
+keeps them, since that head may be a part the earlier tuple borrowed
+(`GRC_NO_OWNEDRESULTSUCCESSORPARTS`, both stages).
 
 ### One-shot resumptive arms: the pre/post split
 

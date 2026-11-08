@@ -30026,13 +30026,99 @@ let unnamedPredecessorParameterPositions (predecessorSlot: Int) (predecessors: L
                                 else None
             | _ -> None)
 
+// Stage 0's `IsOwnedResultCall`: a full application of a function compiled to return its result
+// owned on the reference-counted heap.
+let isOwnedResultCall (call: Expr) (state: CoreLoweringState) =
+    match callSpineRootAndArity(call)(0) with
+        | (ExprVar(name), applied) ->
+            match constructorLayout(name)(state) with
+                | Some(_layout) -> false
+                | None ->
+                    match state
+                    |> stateLetLambdaLabels
+                    |> lookupLetLambdaLabel(name) with
+                        | Some(label) ->
+                            match state
+                            |> stateFunctionReturnedClosureLabels
+                            |> innermostStageLabel(applied - 1)(label) with
+                                | Some(stage) -> bodyReturnsRuntimeManaged(stage)(state)
+                                | None -> false
+                        | None -> false
+        | _ -> false
+
+let recursive mentionsAnyName (names: List(Str)) (expression: Expr) =
+    match names with
+        | [] -> false
+        | name :: rest -> exprMentionsName(name)(expression) || mentionsAnyName(rest)(expression)
+
+// Stage 0's `NamesPartBare`: whether the successor holds one of the parts as itself, or inside a
+// cons, tuple, list or constructor it builds, rather than through an owned call result.
+let recursive namesPartBare (parts: List(Str)) (state: CoreLoweringState) (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprVar(name) -> containsLabel(name)(parts)
+        | ExprCons(head, tail) -> namesPartBare(parts)(state)(head) || namesPartBare(parts)(state)(tail)
+        | ExprTuple(elements) -> namesAnyPartBare(parts)(state)(elements)
+        | ExprList(elements, _multiline) -> namesAnyPartBare(parts)(state)(elements)
+        | ExprCall(callee, argument, _sugar, _layout) as call ->
+            if isOwnedResultCall(call)(state)
+            then false
+            else
+                match callSpineRootAndArity(call)(0) with
+                    | (ExprVar(name), _applied) ->
+                        match constructorLayout(name)(state) with
+                            | Some(_layout) -> namesPartBare(parts)(state)(callee) || namesPartBare(parts)(state)(argument)
+                            | None -> mentionsAnyName(parts)(call)
+                    | _ -> mentionsAnyName(parts)(call)
+        | other -> mentionsAnyName(parts)(other)
+and namesAnyPartBare (parts: List(Str)) (state: CoreLoweringState) (expressions: List(Expr)) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> namesPartBare(parts)(state)(expression) || namesAnyPartBare(parts)(state)(rest)
+
+let recursive withoutNames (names: List(Str)) (removed: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            if containsLabel(name)(removed)
+            then withoutNames(rest)(removed)
+            else name :: withoutNames(rest)(removed)
+
+let recursive ownedSlotBinderNames (slots: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | (slot, _semanticType) :: rest ->
+            state
+            |> ownedSlotBinderNames(rest)
+            |> append(slotBindersOf(stateActiveFunctionOrigin(state))(slot)(stateGeneralRcSlotBinders(state))([]))
+
+let recursive successorsNamePartBare (parts: List(Str)) (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match (arguments, argumentTypes) with
+        | (argument :: rest, argumentType :: restTypes) -> !resultSurvivesReset(argumentType)(state) && namesPartBare(parts)(state)(argument) || successorsNamePartBare(parts)(rest)(restTypes)(state)
+        | _ -> false
+
+// Stage 0's `SuccessorsHoldNoParameterPartBare`: an earlier iteration's value reaches this
+// iteration's successors only through the loop's parameters and through this iteration's owned
+// call results, which hold references of their own. When no successor names a parameter part bare
+// (a name bound out of an owned call result is that result's part), whatever of the earlier value
+// is still reachable is held by references of its own, and the slot keeping it releases it.
+let successorsHoldNoParameterPartBare (arguments: List(Expr)) (argumentTypes: List(SemanticType)) (ownedSlots: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | None -> false
+        | Some(loop) ->
+            match flowDerivedFrom(loop.body)(loop.parameterNames)(loop.parameterNames)(loop.callFlow) with
+                | None -> false
+                | Some((_nodes, named)) ->
+                    !successorsNamePartBare(state
+                    |> ownedSlotBinderNames(ownedSlots)
+                    |> withoutNames(named))(arguments)(argumentTypes)(state)
+
 let recursive predecessorDropsWith (all: List((Int, SemanticType))) (predecessors: List((Int, SemanticType))) (argumentTypes: List(SemanticType)) (temps: List(Int)) (ownedSlots: List((Int, SemanticType))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match predecessors with
         | [] -> []
         | (slot, semanticType) :: rest ->
             match predecessorUnnamedSuccessors(slot)(unnamedPredecessorParameterPositions(slot)(all)(ownedSlots)(temps)(frame)(state))(arguments)(frame)(state) with
                 | (unnamedPlain, unnamedNormalized) ->
-                    (slot, semanticType, if predecessorOnlyHandedOn(slot)(all)(ownedSlots)(state)
+                    (slot, semanticType, if predecessorOnlyHandedOn(slot)(all)(ownedSlots)(state) || successorsHoldNoParameterPartBare(arguments)(argumentTypes)(ownedSlots)(state)
                     then []
                     else
                         predecessorBlockers(0)(predecessorPartTypes(semanticType)(state))(argumentTypes)(temps)(ownedSlots)(state), unnamedPlain, unnamedNormalized) :: predecessorDropsWith(all)(rest)(argumentTypes)(temps)(ownedSlots)(arguments)(frame)(state)

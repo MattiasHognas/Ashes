@@ -1855,12 +1855,86 @@ public sealed partial class Lowering
                 || SuccessorPredatesTheLoop(info, index)
                 || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
                 || (index < unnamed.Length && unnamed[index])
-                || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
+                || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))))
+                || (predecessor.Origin >= 0 && SuccessorsHoldNoParameterPartBare(info));
             if (unreachable)
             {
                 EmitGeneralRcOwnedSlotDrops([predecessor]);
             }
         }
+    }
+
+    private static bool OwnedResultSuccessorPartsEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_OWNEDRESULTSUCCESSORPARTS") is null;
+
+    // An earlier iteration's value reaches this iteration's successors only through the loop's parameters,
+    // which are what the earlier successors were, and through this iteration's owned call results, which hold
+    // references of their own to everything they keep. A successor holds a parameter's part without a
+    // reference of its own only by naming it bare: as itself, or inside a cons, tuple, list or constructor it
+    // builds. A part handed to a call whose result is owned is kept by that result with a reference of its
+    // own, and a name bound out of an owned call result is that result's part. When no successor names a
+    // parameter part bare, whatever of the earlier value is still reachable is held by references of its own,
+    // and the slot keeping it releases its reference.
+    private bool SuccessorsHoldNoParameterPartBare(PendingTcoReset info)
+    {
+        if (!OwnedResultSuccessorPartsEnabled
+            || info.Tco.Body is not { } body
+            || !_generalRcBackEdgeSlots.TryGetValue(_generalRcBackEdgeId, out List<GeneralRcOwnedSlot>? loopSlots))
+        {
+            return false;
+        }
+
+        List<string> parameters = info.Tco.ParamNames;
+        HashSet<string> parameterParts = CollectDerivedNames(body, parameters, parameters, info.Tco.FlowPolicy);
+        foreach (GeneralRcOwnedSlot owned in loopSlots)
+        {
+            if (!owned.Predecessor && owned.Binders is { } binders)
+            {
+                parameterParts.ExceptWith(binders);
+            }
+        }
+
+        for (int index = 0; index < info.ArgExpressions.Length; index++)
+        {
+            if (!CanArenaReset(Prune(info.ArgTypes[index])) && NamesPartBare(info.ArgExpressions[index], parameterParts, 0))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool NamesPartBare(Expr expression, HashSet<string> parts, int depth)
+    {
+        if (depth > 256)
+        {
+            return true;
+        }
+
+        switch (expression)
+        {
+            case Expr.Var variable:
+                return parts.Contains(variable.Name);
+            case Expr.Cons or Expr.TupleLit or Expr.ListLit:
+                return EnumerateChildren(expression).Any(child => NamesPartBare(child, parts, depth + 1));
+            case Expr.Call call when IsOwnedResultCall(call):
+                return false;
+            case Expr.Call when TryDescribeConstructorExpression(expression, out _, out List<Expr>? arguments, out _) && arguments is not null:
+                return arguments.Any(argument => NamesPartBare(argument, parts, depth + 1));
+            default:
+                return parts.Any(part => ExprMentionsName(expression, part, depth));
+        }
+    }
+
+    // A full application of a function compiled to return its result owned on the reference-counted heap.
+    private bool IsOwnedResultCall(Expr.Call call)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(call, arguments);
+        return TryResolveKnownFunctionLabel(root, out string label)
+            && TryGetCompiledFunctionResultRuntimeManaged(label, arguments.Count, out bool runtimeManaged)
+            && runtimeManaged;
     }
 
     // The parts of an earlier iteration's value a successor could hold without a reference of its

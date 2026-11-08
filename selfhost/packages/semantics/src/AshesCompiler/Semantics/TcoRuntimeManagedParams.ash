@@ -48,6 +48,7 @@ export (
     value tcoOwnReferencePositions,
     value flowCallKeyOf,
     value flowNodes,
+    value flowDerivedFrom,
     value tcoTupleTailPartnerOrdinals,
 )
 
