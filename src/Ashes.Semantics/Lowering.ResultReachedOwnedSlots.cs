@@ -20,7 +20,32 @@ public sealed partial class Lowering
         }
 
         HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots), independentTemps);
+        AddPredecessorsOfReachedSlots(reached, ownedSlots);
         return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot) || !ResultTypeMayHoldPartOf(resultType, owned.Type))];
+    }
+
+    private static bool ReachedPredecessorRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_REACHEDPREDECESSOR") is null;
+
+    // A predecessor slot holds what its owned slot held in an earlier iteration, and that value flowed
+    // on the way this iteration's does, through a loop parameter the reach walk does not follow back
+    // (`acc |> expandedArms(expand(pattern)(environment)) |> loop(rest)`: each iteration's expanded
+    // patterns end up in the accumulator). A result reaching the owned slot reaches its predecessor
+    // too, so the earlier value is not released while the result still holds its parts.
+    private static void AddPredecessorsOfReachedSlots(HashSet<int> reached, List<GeneralRcOwnedSlot> ownedSlots)
+    {
+        if (!ReachedPredecessorRuleEnabled)
+        {
+            return;
+        }
+
+        foreach (GeneralRcOwnedSlot owned in ownedSlots)
+        {
+            if (owned.Predecessor && owned.Origin >= 0 && reached.Contains(owned.Origin))
+            {
+                reached.Add(owned.Slot);
+            }
+        }
     }
 
     private static bool IndependentOwnedSlotsEnabled =>

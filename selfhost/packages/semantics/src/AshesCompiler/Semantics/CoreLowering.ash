@@ -9027,13 +9027,23 @@ let recursive ownedSlotsOutside (reached: List(Int)) (slots: List((Maybe(IrFunct
             then ownedSlotsOutside(reached)(rest)
             else owned :: ownedSlotsOutside(reached)(rest)
 
+// Stage 0's `AddPredecessorsOfReachedSlots`: a predecessor slot holds what its owned slot held in an
+// earlier iteration, which flowed on through a loop parameter the reach walk does not follow back,
+// so a result reaching the owned slot reaches its predecessor too.
+let slotOrOriginReached (owner: Maybe(IrFunctionOrigin)) (slot: Int) (reached: List(Int)) (state: CoreLoweringState) =
+    containsInt(slot)(reached) || (match state
+    |> stateGeneralRcPredecessorOwners
+    |> predecessorOwnerOf(owner)(slot) with
+        | -1 -> false
+        | origin -> containsInt(origin)(reached))
+
 // The owned slots a result of the given type cannot point into: none of the reached slots, and none
 // whose type no part of occurs in the result's type.
 let recursive ownedSlotsOutsideResult (resultType: SemanticType) (reached: List(Int)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
     match slots with
         | [] -> []
-        | ((_owner, slot, semanticType) as owned) :: rest ->
-            if containsInt(slot)(reached) && resultTypeMayHoldPartOf(resultType)(semanticType)(state)
+        | ((owner, slot, semanticType) as owned) :: rest ->
+            if slotOrOriginReached(owner)(slot)(reached)(state) && resultTypeMayHoldPartOf(resultType)(semanticType)(state)
             then ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
             else owned :: ownedSlotsOutsideResult(resultType)(reached)(rest)(state)
 
