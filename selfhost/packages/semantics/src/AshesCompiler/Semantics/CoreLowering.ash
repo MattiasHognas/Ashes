@@ -478,6 +478,10 @@ type CoreTcoReset =
     // Per such slot holding a value bound to names, the successors naming nothing bound from it, on a
     // path that did not normalize the successors and on one that did (stage 0's `NoSuccessorNamesPartOf`).
     | generalRcSlotUnnamed: List((Int, List(Int), List(Int)))
+    // Per such slot with a fresh flag, the successors whose type may hold a part of its value other
+    // than a string: a string a successor keeps holds a reference of its own (stage 0's
+    // `NoSuccessorCanHoldPartOf` on the fresh path).
+    | generalRcFreshSlotBlockers: List((Int, List(Int)))
     | argumentOwnedSlots: List(Int)
     | argumentParameterParts: List(Bool)
     | arenaCursorSlot: Int
@@ -9575,6 +9579,15 @@ let recursive blockersNamingTheValue (blockers: List(Int)) (unnamed: List(Int)) 
             then blockersNamingTheValue(rest)(unnamed)
             else ordinal :: blockersNamingTheValue(rest)(unnamed)
 
+// A fresh slot's blockers without its string parts, or its full blockers when none were recorded.
+let recursive freshSlotBlockersOf (slot: Int) (fallback: List(Int)) (entries: List((Int, List(Int)))) =
+    match entries with
+        | [] -> fallback
+        | (candidate, blockers) :: rest ->
+            if candidate == slot
+            then blockers
+            else freshSlotBlockersOf(slot)(fallback)(rest)
+
 let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List(Int)))) released (reset: CoreTcoReset) (arguments: List(TcoResetArgument)) (tmc: Bool) (normalized: Bool) (state: CoreLoweringState) =
     match facts with
         | [] -> state
@@ -9583,7 +9596,7 @@ let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List
             then emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)(state)
             else
                 state
-                |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(blockers)(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
+                |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(freshSlotBlockersOf(slot)(blockers)(reset.generalRcFreshSlotBlockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
                 |> slotUnnamedSuccessors(slot)(normalized)
                 |> blockersNamingTheValue(blockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
                 |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
@@ -29922,6 +29935,15 @@ let recursive generalRcSlotFactsOf (slots: List((Int, SemanticType))) (predecess
                 |> stateGeneralRcFreshSlots
                 |> freshSlotOf(stateActiveFunctionOrigin(state))(slot), typeBlockers(0)(heapPartTypesInto([semanticType])([])([])(state))(argumentTypes)(state)) :: generalRcSlotFactsOf(rest)(predecessors)(argumentTypes)(state)
 
+let recursive generalRcFreshSlotBlockersOf (facts: List((Int, SemanticType, Int, List(Int)))) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match facts with
+        | [] -> []
+        | (slot, semanticType, freshSlot, _blockers) :: rest ->
+            if freshSlot < 0
+            then generalRcFreshSlotBlockersOf(rest)(argumentTypes)(state)
+            else
+                (slot, typeBlockers(0)(predecessorPartTypes(semanticType)(state))(argumentTypes)(state)) :: generalRcFreshSlotBlockersOf(rest)(argumentTypes)(state)
+
 let recursive generalRcSlotUnnamedOf (facts: List((Int, SemanticType, Int, List(Int)))) (arguments: List(Expr)) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
     match facts with
         | [] -> []
@@ -30021,6 +30043,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     generalRcPredecessorDrops = predecessorDrops,
                     generalRcSlotFacts = generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state),
                     generalRcSlotUnnamed = generalRcSlotUnnamedOf(generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state))(arguments)(frame)(state),
+                    generalRcFreshSlotBlockers = generalRcFreshSlotBlockersOf(generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state))(argumentTypes)(state),
                     argumentOwnedSlots = argumentOwnedSlotsOf(temps)(loopSlots)(state),
                     argumentParameterParts = argumentParameterPartsOf(arguments)(state),
                     arenaCursorSlot = frame.arenaCursorSlot,

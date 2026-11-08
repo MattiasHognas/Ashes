@@ -1938,6 +1938,11 @@ through))` that conses a value built from `definition` onto one accumulator and,
 through`, an integer onto a second one, left the matched result to leak, since a list of integers
 could hold a part of it. The second successor only tests the flag, and a condition hands nothing on,
 so the result is released behind its fresh flag (`GRC_NO_ITERATIONSLOTNAMES`, `GRC_NO_IFCONDFLOW`).
+The type test behind the fresh flag leaves the value's strings out, as the predecessor's test does:
+a string a successor keeps holds a reference of its own. A loop over declarations that pushed a
+restore record onto a normalized list of pending closes, beside a set of the names seen so far,
+otherwise kept every record it built, since the set could hold the records' strings
+(`GRC_NO_ITERATIONSTRINGPARTS`).
 A value an earlier iteration left in an owned slot (the slot's predecessor) is released at the back
 edge once no successor can still reach it. A pipeline step (`[] |> prepare(x)(state) |> relabel(id)
 |> open(outer)`) is never bound to a name and is only ever the argument of the next call, whose result

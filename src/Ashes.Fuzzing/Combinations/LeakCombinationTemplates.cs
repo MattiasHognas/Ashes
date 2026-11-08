@@ -228,6 +228,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new InlineConsOverParameterTemplate());
         registry.Register(new LoopPassthroughResultTemplate());
         registry.Register(new PassthroughScalarJoinTemplate());
+        registry.Register(new IterationStringPartsTemplate());
     }
 }
 

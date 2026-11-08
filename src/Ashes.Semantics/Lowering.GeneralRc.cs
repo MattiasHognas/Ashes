@@ -2046,12 +2046,18 @@ public sealed partial class Lowering
             || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
     }
 
+    // A string a successor keeps of this iteration's value holds a reference of its own, as one of an
+    // earlier iteration's does, so it does not hold the value back: a set of names threaded beside a
+    // list of records naming the same strings kept every record the loop produced.
+    private static bool IterationStringPartsRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ITERATIONSTRINGPARTS") is null;
+
     // Whether every successor either owns its parts or is of a type that cannot hold any heap part
     // of an owned value of this type (a list of integer pairs never holds a record of strings): the
     // iteration's reference to such a value is released whatever the other successors borrow.
     private bool NoSuccessorCanHoldPartOf(PendingTcoReset info, TypeRef ownedType, bool[] parameterParts, bool successorsNormalized, bool useParameterParts)
     {
-        List<TypeRef> parts = HeapPartTypes(ownedType);
+        List<TypeRef> parts = useParameterParts && IterationStringPartsRuleEnabled ? PredecessorPartTypes(ownedType) : HeapPartTypes(ownedType);
         bool[] strictParts = _generalRcBackEdgeStrictParameterParts.GetValueOrDefault(_generalRcBackEdgeId, []);
         return Enumerable.Range(0, info.ArgTypes.Length).All(index =>
             CanArenaReset(Prune(info.ArgTypes[index]))
