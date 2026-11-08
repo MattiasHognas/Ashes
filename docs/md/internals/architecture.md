@@ -2514,6 +2514,15 @@ in stage 1's currying-stage inlining, which holds a `List(Int)` by its type, sta
 the next iteration overwrote it. A head that is not a scalar (`record.positions :: removed`, a field
 of the released value) is a part the successor really holds, and the rule does not apply to it
 (`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 keeps such a slot for a different reason, still open).
+A function returning its parameter on some arms and a fresh value on the others copies the
+parameter's arm into an owned reference-counted value and promises its result reference-counted. A
+tuple of scalars only is otherwise placed in the arena like any scalar, so a join of such tuples was
+left alone: the fresh arena arm and the retained parameter met unnormalized, and the promise, kept at
+the return, retained the joined value a second time. One reference leaked per call: the `(Bool, Int)`
+release guard stage 1's call lowering passes through `deepCopiedResultSevers` and
+`normalizedOwnedResultSevers`. Inside such a function a scalar tuple join is now normalized like a
+mixed join of any other type, its arena arms copied, so it is owned on every arm and returned as it is
+(`GRC_NO_PASSTHROUGHSCALARJOIN`, both stages).
 
 ### One-shot resumptive arms: the pre/post split
 

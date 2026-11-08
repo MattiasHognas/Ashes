@@ -24373,4 +24373,99 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop returning passthrough result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildPassthroughScalarTupleGuardProgram(int rounds)
+        => $$"""
+            type Stage =
+                | copied: Bool
+                | general: Bool
+                | flag: Int
+                | normalized: Bool
+
+            let makeGuard (stage: Stage) (n: Int) =
+                if n > 100
+                then (true, -1)
+                else
+                    if stage.general
+                    then (n > 1, -1)
+                    else (n > 2, stage.flag)
+
+            let copiedSevers (stage: Stage) (guard: (Bool, Int)) =
+                match guard with
+                    | (false, _flagTemp) ->
+                        if stage.copied
+                        then
+                            (true, if stage.general
+                            then -1
+                            else stage.flag)
+                        else guard
+                    | _ -> guard
+
+            let normalizedSevers (stage: Stage) (guard: (Bool, Int)) =
+                if stage.normalized
+                then (true, -1)
+                else guard
+
+            let probe (n: Int) =
+                (let stage = Stage(copied = n > 5, general = n > 3, flag = n, normalized = false)
+                in
+                    match n
+                    |> makeGuard(stage)
+                    |> copiedSevers(stage)
+                    |> normalizedSevers(stage) with
+                        | (severs, flag) ->
+                            if severs
+                            then flag + 2
+                            else flag)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_passthrough_scalar_tuple_guard_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Each helper returns its (Bool, Int) parameter on some arms and a fresh tuple on the others.
+        // The passthrough arm retained the parameter, the scalar tuple's join was left alone, and the
+        // promised reference-counted result retained the joined value again at the return, one tuple
+        // leaked per helper call. The join is now normalized on every arm and returned as it is.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildPassthroughScalarTupleGuardProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += ExpectedPassthroughScalarTupleGuard(n);
+            }
+
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("passthrough scalar tuple guard", samples, maxRssKb: 16_000);
+    }
+
+    private static long ExpectedPassthroughScalarTupleGuard(int n)
+    {
+        bool general = n > 3;
+        (bool Severs, int Flag) guard = n > 100 ? (true, -1) : general ? (n > 1, -1) : (n > 2, n);
+        if (!guard.Severs && n > 5)
+        {
+            guard = (true, general ? -1 : n);
+        }
+
+        return guard.Severs ? guard.Flag + 2 : guard.Flag;
+    }
 }

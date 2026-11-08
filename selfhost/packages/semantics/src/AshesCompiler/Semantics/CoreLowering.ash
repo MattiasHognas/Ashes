@@ -19566,6 +19566,19 @@ let recursive joinTupleHoldsHeapElement (elements: List(SemanticType)) (state: C
         | [] -> false
         | element :: rest -> !resultSurvivesReset(element)(state) || joinTupleHoldsHeapElement(rest)(state)
 
+// Stage 0's `IsPassthroughScalarJoinTuple`: a tuple of scalars only is placed in the arena like any
+// scalar value, so its joins are left alone, except in a function returning its passthrough
+// parameter: that arm is copied into an owned reference-counted tuple, and the promised
+// reference-counted result would otherwise retain it a second time at the return. The arena arms
+// are copied too, so the join is owned on every arm and returned as it is.
+let isPassthroughScalarJoinTuple (semanticType: SemanticType) (state: CoreLoweringState) =
+    match statePassthroughParameter(state) with
+        | Some((_name, _slot, parameterType)) ->
+            match resolveType(state)(parameterType) with
+                | SemTuple(_parameterElements) -> isPassthroughNormalizableParameterType(semanticType)(state)
+                | _ -> false
+        | None -> false
+
 // The copy a mixed join's arms are normalized with: stage 0's `CanNormalizeIntoOwnedRuntimeValue`,
 // and a tuple every element of which normalizes (an arena arm is copied into an owned tuple that
 // retains each reference-counted element it keeps), and stage 0's `IsGeneralRcValueType`: a tuple of the
@@ -19578,7 +19591,10 @@ let joinNormalizationPlanOf (semanticType: SemanticType) (state: CoreLoweringSta
             else
                 if isGeneralRcValueType(semanticType)(state)
                 then generalCopyPlanOf(semanticType)(state)
-                else None
+                else
+                    if isPassthroughScalarJoinTuple(semanticType)(state)
+                    then argumentCopyPlanOf(semanticType)(state)
+                    else None
         | _ -> ownedResultPlanOf(semanticType)(state)
 
 // The element copy of a list result whose arms may cons onto the function's own recursive

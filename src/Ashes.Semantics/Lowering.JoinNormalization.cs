@@ -34,7 +34,7 @@ public sealed partial class Lowering
             || reaching.Any(arm => arm.Store is null)
             || CanArenaReset(pruned)
             || ContainsUnresolvedLayoutType(pruned, [])
-            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned) || IsNormalizableJoinTuple(pruned)))
+            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned) || IsNormalizableJoinTuple(pruned) || IsPassthroughScalarJoinTuple(pruned)))
         {
             return false;
         }
@@ -62,6 +62,21 @@ public sealed partial class Lowering
 
         return true;
     }
+
+    // A tuple of scalars only is placed in the arena like any scalar value, so its joins are left
+    // alone, except in a function returning its passthrough parameter: that arm is copied into an
+    // owned reference-counted tuple (NormalizeParameterPassthroughBranch), and the promised
+    // reference-counted result would otherwise retain it a second time at the return. The arena
+    // arms are copied too, so the join is owned on every arm and returned as it is.
+    private bool IsPassthroughScalarJoinTuple(TypeRef type)
+        => PassthroughScalarJoinTupleEnabled
+            && type is TypeRef.TTuple tuple
+            && _passthroughParameter is { } parameter
+            && Prune(parameter.Type) is TypeRef.TTuple
+            && IsPassthroughNormalizableParameterType(tuple);
+
+    private static bool PassthroughScalarJoinTupleEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_PASSTHROUGHSCALARJOIN") is null;
 
     // A tuple join every element of which is a scalar or normalizes into an owned value: an arena
     // arm is copied into an owned tuple that retains each reference-counted element it keeps.
