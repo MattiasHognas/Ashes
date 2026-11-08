@@ -2472,7 +2472,15 @@ is made, as a reference-counted tuple releases the duplicate of an element it no
 late release the back edge would have made after copying the successor is withdrawn (the cell is
 reference-counted already, so that copy never happens). Released by nobody, every pair left one string
 behind: the `(label, index)` groups and `(label, next label)` entries stage 1's optimizer collects
-(`GRC_NO_NORMALIZEDHEADTUPLEDUP`, stage 0; stage 1 miscompiles the shape, see SELF_HOSTING.md).
+(`GRC_NO_NORMALIZEDHEADTUPLEDUP`, stage 0; stage 1 keeps such a tuple's duplicate balanced already).
+A trait method applied to a concrete operand (`Ashes.Trait.Show.show(counter)`) is its
+implementation's closure applied in place, outside the call path that settles a reference-counted
+result. Without a request in its ownership word the closure hands its result over owned, and the
+caller, reading the call as an arena value, released it nowhere: the one-character strings stage 1's
+optimizer concatenates into each scalar-environment variant's label. The last application now asks
+for the result in the arena (bit 1 of the ownership word, as a post call does) whenever the result
+has a complete copy-out and is not one of the contract's types, so the method copies a
+reference-counted result out and releases its original (`GRC_NO_TRAITMETHODARENARESULT`, both stages).
 
 ### One-shot resumptive arms: the pre/post split
 

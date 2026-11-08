@@ -23918,4 +23918,56 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("constrained curried stage closure", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildTraitMethodStringResultProgram(int rounds)
+        => $$"""
+            type Fn =
+                | label: Str
+                | body: List(Int)
+
+            let variantOf (callee: Fn) (counter: Int) = Some(callee with label = callee.label + "__scalarenv" + Ashes.Trait.Show.show(counter))
+
+            let probe (n: Int) =
+                match variantOf(Fn(label = "f" + Ashes.Text.fromInt(n), body = [1]))(n % 10) with
+                    | Some(v) -> Ashes.Text.byteLength(v.label)
+                    | None -> 0
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_trait_method_string_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `Ashes.Trait.Show.show(counter)` is the implementation's closure applied in place. Without
+        // a request in its ownership word it handed over the string `fromInt` made, and the caller,
+        // reading the call as an arena value, released it nowhere. The call now asks for an arena
+        // result, so the method copies the string out and releases its own.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildTraitMethodStringResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            long expected = 0;
+            for (int n = 1; n <= rounds; n++)
+            {
+                expected += 13 + n.ToString(CultureInfo.InvariantCulture).Length;
+            }
+
+            sample.Stdout.ShouldBe($"{expected}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("trait method string result", samples, maxRssKb: 16_000);
+    }
 }

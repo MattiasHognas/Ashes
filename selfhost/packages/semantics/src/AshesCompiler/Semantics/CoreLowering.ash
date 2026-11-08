@@ -27618,12 +27618,27 @@ let emitResolvedCoreEquality name intKind floatKind stringKind lower binary =
 
 // The one-argument counterpart of `emitTraitMethodCalls`: a unary trait method takes its operand
 // directly rather than through a curried pair.
+// A trait method is an implementation's closure applied in place, outside the ordinary call path
+// that settles a reference-counted result. Without a request in its ownership word the closure
+// hands its result over owned, and the caller, reading the call as an arena value, released it
+// nowhere: the call asks for the result in the arena (bit 1), so the method copies a
+// reference-counted result out and releases the original itself (stage 0's
+// `RequestsArenaTraitMethodResult`).
+let requestsArenaTraitMethodResult (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemFunction(_argument, _result, _row) -> false
+        | resolved -> !resultSurvivesReset(resolved)(state) && !containsUnresolvedLayout(resolved)(state) && !isGeneralRcValueType(resolved)(state) && hasCallCopyOut(resolved)(state)
+
 let emitTraitMethodCall (closureTemp: Int) (operandTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
-    match freshTemp(state) with
-        | FreshTemp { state = callState, temp = target } ->
-            callState
-            |> emit(CallClosure(target)(closureTemp)(operandTemp)(-1))
-            |> success(target)(resultType)
+    match if requestsArenaTraitMethodResult(resultType)(state)
+    then emitRequestWord(-1)(state)
+    else (state, -1) with
+        | (requested, wordTemp) ->
+            match freshTemp(requested) with
+                | FreshTemp { state = callState, temp = target } ->
+                    callState
+                    |> emit(CallClosure(target)(closureTemp)(operandTemp)(wordTemp))
+                    |> success(target)(resultType)
 
 // A trait goal's site, named the same way by every pass: the passes lower one source, so the
 // innermost enclosing span and what is asked for there identify the same site in all of them.
