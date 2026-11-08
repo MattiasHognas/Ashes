@@ -137,7 +137,7 @@ public sealed partial class Lowering
     // Binders are the source names bound to the value or to its parts (the let it is bound by, the
     // pattern bindings of a match on it), shared between the slot and its predecessor slot.
     // Origin, on a predecessor, is the owned slot whose earlier value it holds.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1);
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1, bool HandedOverParts = false);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -1220,10 +1220,12 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
-    // An owned slot the result reaches but whose value the result's type has no place for holds the
-    // value only for its parts (a handed-over list whose heads an arena result borrows): the value's
-    // own cells are released here, child-preserving, as the call would have released them had it
-    // not kept the value for the result. The parts keep the one reference the result relies on.
+    // A handed-over argument kept in an owned slot for its parts (KeepHandedOverArgumentInOwnedSlot
+    // with handedOverParts), that the result reaches but whose type the result's has no place for:
+    // the value's own cells are released here, child-preserving, as the call would have released
+    // them had it not kept the value for the result. The parts keep the one reference the result
+    // relies on. Any other owned slot is left as it is: its value may be a cell a reuse token already
+    // took for the result.
     private void EmitKeptOwnedSlotChildPreservingDrops(TypeRef resultType, List<GeneralRcOwnedSlot> kept)
     {
         if (!HandedOverPartsSlotRuleEnabled)
@@ -1233,7 +1235,8 @@ public sealed partial class Lowering
 
         foreach (GeneralRcOwnedSlot owned in kept)
         {
-            if (owned.Type is TypeRef.TFun
+            if (!owned.HandedOverParts
+                || owned.Type is TypeRef.TFun
                 || ContainsUnresolvedLayoutType(owned.Type, [])
                 || CallResultMayContainArgumentType(resultType, owned.Type, new HashSet<string>(StringComparer.Ordinal)))
             {

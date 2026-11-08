@@ -723,6 +723,9 @@ type CoreOwnerState =
     | generalRcPredecessorOwners: List((Maybe(IrFunctionOrigin), Int, Int))
     // Each owned slot stored inside a loop with the flag slot saying this iteration stored it.
     | generalRcFreshSlots: List((Maybe(IrFunctionOrigin), Int, Int))
+    // The owned slots a handed-over argument was kept in for its parts (stage 0's
+    // `GeneralRcOwnedSlot.HandedOverParts`): only these are released child-preserving at the return.
+    | generalRcHandedOverPartsSlots: List((Maybe(IrFunctionOrigin), Int))
     // The match arms and if branches being lowered, innermost first, each by its join label and a
     // label of its own; and, per owned slot, the ones it was stored inside.
     | generalRcBranches: List((Str, Str))
@@ -1732,6 +1735,14 @@ let withStateGeneralRcFreshSlots value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFreshSlots = value))
 
+let stateGeneralRcHandedOverPartsSlots (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcHandedOverPartsSlots)
+
+let withStateGeneralRcHandedOverPartsSlots value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcHandedOverPartsSlots = value))
+
 let withGeneralRcFinishedResult (temp: Int) (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFinishedResult = Some((stateActiveFunctionOrigin(state), temp))))
@@ -2652,6 +2663,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             generalRcSlotBinders = [],
             generalRcPredecessorOwners = [],
             generalRcFreshSlots = [],
+            generalRcHandedOverPartsSlots = [],
             generalRcBranches = [],
             generalRcSlotBranches = [],
             generalRcFinishedResult = None,
@@ -11964,19 +11976,24 @@ let emitKeptValueChildPreservingDrop (valueTemp: Int) (valueType: SemanticType) 
             emitRuntimeShallowAggregateDrop(valueTemp)(runtimeManagedAdtTypeName(name))(state)
         | other -> emitOwnedValueChildDrop(valueTemp)(other)(state)
 
-// Stage 0's `EmitKeptOwnedSlotChildPreservingDrops`: an owned slot the result reaches but whose
-// value the result's type has no place for holds the value only for its parts (a handed-over list
-// whose heads an arena result borrows). The value's own cells are released here, child-preserving,
-// as the call would have released them had it not kept the value for the result; the parts keep the
-// one reference the result relies on.
+let recursive containsHandedOverPartsSlot (owner: Maybe(IrFunctionOrigin)) (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int))) =
+    match slots with
+        | [] -> false
+        | (candidateOwner, candidate) :: rest -> candidate == slot && candidateOwner == owner || containsHandedOverPartsSlot(owner)(slot)(rest)
+
+// Stage 0's `EmitKeptOwnedSlotChildPreservingDrops`: a handed-over argument kept in an owned slot
+// for its parts, that the result reaches but whose type the result's has no place for, has its own
+// cells released here, child-preserving, as the call would have released them had it not kept the
+// value for the result; the parts keep the one reference the result relies on. Any other owned
+// slot is left as it is: its value may be a cell a reuse token already took for the result.
 let recursive emitKeptOwnedSlotChildPreservingDrops (resultType: SemanticType) (kept: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
     match kept with
         | [] -> state
-        | (_owner, slot, semanticType) :: rest ->
+        | (owner, slot, semanticType) :: rest ->
             match resolveType(state)(semanticType) with
                 | SemFunction(_parameter, _result, _row) -> emitKeptOwnedSlotChildPreservingDrops(resultType)(rest)(state)
                 | valueType ->
-                    if containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(resultType)(valueType)([])(state)
+                    if !containsHandedOverPartsSlot(owner)(slot)(stateGeneralRcHandedOverPartsSlots(state)) || containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(resultType)(valueType)([])(state)
                     then emitKeptOwnedSlotChildPreservingDrops(resultType)(rest)(state)
                     else
                         match freshTemp(state) with
@@ -17915,7 +17932,7 @@ let recursive resultMayHoldAnyPart (resultType: SemanticType) (parts: List(Seman
 // Stage 0's `KeepHandedOverArgumentInOwnedSlot`: the owned slot a handed-over reference waits in
 // until the function's result or the loop's successors hold references of their own; a callee that
 // adopted the reference consumed it, so the slot is left empty.
-let keepHandedOverArgumentInOwnedSlot (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
+let keepHandedOverArgumentInOwnedSlot (handedOverParts: Bool) (temp: Int) (valueType: SemanticType) (adoptionFlagTemp: Int) (state: CoreLoweringState) =
     match freshLocal(state) with
         | FreshLocal { state = slotted, local = ownedSlot } ->
             match slotted
@@ -17931,6 +17948,10 @@ let keepHandedOverArgumentInOwnedSlot (temp: Int) (valueType: SemanticType) (ado
                             |> emit(StoreLocal(ownedSlot)(zeroTemp))
                             |> emit(Label(keptLabel))
                             |> registerGeneralRcOwnedSlot(ownedSlot)(valueType)
+                            |> (given (registered: CoreLoweringState) ->
+                                if handedOverParts
+                                then withStateGeneralRcHandedOverPartsSlots((stateActiveFunctionOrigin(registered), ownedSlot) :: stateGeneralRcHandedOverPartsSlots(registered))(registered)
+                                else registered)
 
 // Stage 0's `LowerCallDropHandedOverArgumentResultCannotHold`: a reference handed over for the
 // callee's result to keep is not in a result whose type has no place for a value of the
@@ -17950,7 +17971,7 @@ let emitHandedOverArgumentResultCannotHold (policy: CoreConsumedReleasePolicy) (
                     resultMayHoldAnyPart(policy.resultType)(heapPartTypesInto([valueType])([])([])(state))(state)
                 in
                     if mayHoldParts && generalRcEnabled(state) && policy.verifiedRuntimeResult == false && policy.resultDeepCopied == false
-                    then keepHandedOverArgumentInOwnedSlot(temp)(valueType)(adoptionFlagTemp)(state)
+                    then keepHandedOverArgumentInOwnedSlot(true)(temp)(valueType)(adoptionFlagTemp)(state)
                     else
                         let unconditional = policy with elementCopyingFlagTemp = -1
                         in
@@ -17978,7 +17999,7 @@ let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp:
         | _ ->
             if generalRcEnabled(state) == false || policy.verifiedRuntimeResult || containsUnresolvedLayout(valueType)(state) || callResultMayContainArgumentType(policy.resultType)(valueType)([])(state) == false
             then state
-            else keepHandedOverArgumentInOwnedSlot(temp)(valueType)(adoptionFlagTemp)(state)
+            else keepHandedOverArgumentInOwnedSlot(false)(temp)(valueType)(adoptionFlagTemp)(state)
 
 let handedOverValueIsClosure (valueType: SemanticType) =
     match valueType with

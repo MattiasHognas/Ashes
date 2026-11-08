@@ -16027,7 +16027,7 @@ public sealed partial class Lowering
     // The owned slot a handed-over reference waits in until the function's result or the loop's
     // successors hold references of their own; a callee that adopted the reference consumed it, so
     // the slot is left empty.
-    private void KeepHandedOverArgumentInOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp)
+    private void KeepHandedOverArgumentInOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp, bool handedOverParts = false)
     {
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, temp));
@@ -16037,7 +16037,11 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
         Emit(new IrInst.Label(keptLabel));
-        RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+        if (handedOverParts)
+        {
+            _generalRcOwnedSlots[_generalRcOwnedSlots.IndexOf(owned)] = owned with { HandedOverParts = true };
+        }
     }
 
     // A reference handed over for the callee's result to keep, where the result's type has no place
@@ -16103,7 +16107,7 @@ public sealed partial class Lowering
             && !resultDeepCopied
             && !resultCopiedWithElements)
         {
-            KeepHandedOverArgumentInOwnedSlot(temp, valueType, adoptionFlagTemp);
+            KeepHandedOverArgumentInOwnedSlot(temp, valueType, adoptionFlagTemp, handedOverParts: true);
             return;
         }
 
