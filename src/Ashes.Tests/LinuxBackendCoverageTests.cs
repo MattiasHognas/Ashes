@@ -23422,6 +23422,68 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("loop result record around whole parameter", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildLoopResultRecordConsedParameterPartProgram(int rounds)
+        => $$"""
+            type Node2470 =
+                | NodeName(Str)
+                | NodeInt(Int)
+                | NodeAt(Int, Node2470)
+                | NodeCall(Node2470, Node2470)
+
+            type Spine2470 =
+                | root: Node2470
+                | arguments: List(Node2470)
+
+            let recursive collect2470 (expression: Node2470) =
+                match expression with
+                    | NodeAt(_span, inner) -> collect2470(inner)
+                    | NodeCall(function, argument) ->
+                        match collect2470(function) with
+                            | Spine2470 { root = root, arguments = arguments } -> Spine2470(root = root, arguments = argument :: arguments)
+                    | root -> Spine2470(root = root, arguments = [])
+
+            let isName2470 (expression: Node2470) =
+                match expression with
+                    | NodeName(_name) -> 1
+                    | _ -> 0
+
+            let run (seed: Int) =
+                match collect2470(NodeAt(1, NodeCall(NodeName("walk" + Ashes.Text.fromInt(seed)), NodeName("arg" + Ashes.Text.fromInt(seed))))) with
+                    | Spine2470 { root = root, arguments = arguments } -> isName2470(root) + Ashes.Collection.List.length(arguments)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + run(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_result_record_consed_parameter_part_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // At a call node the function conses the call's argument, a part of its variant parameter, onto
+        // the list of the record its recursive call returned. The arena cons cell took a duplicate of
+        // the argument, the return copied the record into a reference-counted one that retained the
+        // argument again, and the duplicate was never released: the argument leaked once per call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildLoopResultRecordConsedParameterPartProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{2L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop result record consed parameter part", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildLoopWorklistOfCallListsProgram(int rounds)
         => $$"""
             type Block2468 =

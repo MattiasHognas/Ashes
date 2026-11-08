@@ -1600,10 +1600,13 @@ the self-call callee's name, once per compiled function). Such a duplicate, of a
 whole loop parameter in a cell built at the loop's result, now goes to an owned slot released behind
 the function's result (`GRC_NO_LOOPRESULTCELLOWNERDUP`, both stages; stage 1 keys it on a pattern
 binding fact of extraction depth 0). A part matched out of the parameter is released after the copy
-by the copy's own rules, and a second release there would free it twice. Still open: the same
-function's other arm conses a part of the parameter onto the rebuilt record's list (`arguments =
-argument :: arguments`), and the duplicate that arena cons cell takes of its head is not released
-either (one cell per such call, the rest of `32_8`).
+by the copy's own rules, and a second release there would free it twice. The same function's other
+arm conses a part of the parameter onto the rebuilt record's list (`arguments = argument ::
+arguments`): the arena cons cell, itself a constructor argument of the result, takes a duplicate of
+its head that the return's copy retains again. That duplicate goes to an owned slot too
+(`GRC_NO_LOOPRESULTFIELDCELLHEADDUP`, both stages), but only for a cell built as a field of a
+constructor at the loop's result: applied to any result-position arena cell it released heads a
+caller still reads, and stage 0 miscompiled stage 1.
 
 A value of an `external type` with no destructor is a foreign handle the program only passes along:
 one word copied like an integer that needs no release (`IsOpaqueHandleWord`; stage 1's

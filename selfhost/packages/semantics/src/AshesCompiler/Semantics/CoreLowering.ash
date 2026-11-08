@@ -25349,6 +25349,39 @@ let keepLoopResultCellOwnerDuplicateOwned (arenaResultCell: Bool) (argument: Exp
             else after
         | _ -> after
 
+// The temp a cell's construction stored at an offset, the most recent store first.
+let recursive cellWordSource (cell: Int) (offset: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(basePtr, storedOffset, source) } :: rest ->
+            if basePtr == cell && storedOffset == offset
+            then Some(source)
+            else cellWordSource(cell)(offset)(rest)
+        | _instruction :: rest -> cellWordSource(cell)(offset)(rest)
+
+// Stage 0's `KeepLoopResultFieldCellHeadDuplicateOwned`: an arena cons cell built as a constructor
+// argument at a loop function's result (`Spine(root = root, arguments = argument :: arguments)`
+// over a part of the loop parameter) holds the pattern-owner duplicate of its head; the return
+// normalizes the result into a copy that retains the head itself and the arena cell releases
+// nothing, so the duplicate goes to an owned slot released behind the result.
+let keepLoopResultFieldCellHeadDuplicateOwned (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
+    match (lowered, unspanArgument(argument)) with
+        | (LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None }, ExprCons(headExpression, _tail)) ->
+            match (cellWordSource(cellTemp)(0)(state.reversedInstructions), unspanArgument(headExpression), resolveType(state)(listType)) with
+                | (Some(headTemp), ExprVar(name), SemList(headType)) ->
+                    if !runtimeManaged && request.tailPosition && generalRcEnabled(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot, patternOwnerBinding(name)(state)) with
+                        | (Some(_frame), None, None, Some(_fact)) -> true
+                        | _ -> false) && (match (definitionOfTemp(headTemp)(state.reversedInstructions), definitionOfTemp(cellTemp)(state.reversedInstructions)) with
+                        | (Some(RcDup(_target, _source, false, _mayBeEmpty)), Some(Alloc(_cell, 16, false))) -> true
+                        | _ -> false)
+                    then
+                        match freshLocal(state) with
+                            | FreshLocal { state = allocated, local = ownedSlot } ->
+                                lowered with state = allocated |> emit(StoreLocal(ownedSlot)(headTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(headType))
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
 // Stage 0's `RetainEscapingConstructorArgument`: a constructor whose consumer owns the value (a
 // runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
 // pattern-owner duplicate of an argument that reads one, before the transfer retain; an
@@ -25366,6 +25399,7 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
                     |> keepLoopResultCellOwnerDuplicateOwned(runtimeManaged == false && tailPosition)(argument)(value)
                 else value)
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
+            |> keepLoopResultFieldCellHeadDuplicateOwned(request)(runtimeManaged)(argument)
 
 // Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: after every argument is lowered, a
 // loop-parameter read (or a heap-typed field read out of one) stored into the cell takes the

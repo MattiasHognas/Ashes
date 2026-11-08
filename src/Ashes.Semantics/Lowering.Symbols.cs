@@ -2005,6 +2005,22 @@ public sealed partial class Lowering
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(argumentType));
     }
 
+    // A constructor argument lowered as the field it becomes: a cell built as the argument itself
+    // knows it is a field of the value (KeepLoopResultFieldCellHeadDuplicateOwned).
+    private LoweredValue LowerConstructorFieldElement(Expr argument, LoweredValueRequest request, bool escapesArenaParent)
+    {
+        Expr? savedConstructorFieldArgument = _constructorFieldArgument;
+        _constructorFieldArgument = argument;
+        try
+        {
+            return LowerArenaAggregateElement(argument, request, escapesArenaParent);
+        }
+        finally
+        {
+            _constructorFieldArgument = savedConstructorFieldArgument;
+        }
+    }
+
     private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
         Expr argument,
         TypeRef fieldType,
@@ -2016,7 +2032,7 @@ public sealed partial class Lowering
             fieldType,
             runtimeManagedParent,
             parentRequest);
-        LoweredValue loweredValue = LowerArenaAggregateElement(
+        LoweredValue loweredValue = LowerConstructorFieldElement(
             argument,
             request,
             !runtimeManagedParent && EscapesArenaParent(parentRequest));

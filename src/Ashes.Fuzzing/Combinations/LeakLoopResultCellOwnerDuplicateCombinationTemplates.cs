@@ -8,7 +8,8 @@ namespace Ashes.Fuzzing.Combinations;
 /// a call spine collected from a syntax tree. The record is built in the arena with a duplicate of the
 /// parameter, the return copies it into a reference-counted record that retains the field itself,
 /// and the arena cell's duplicate was never released. It goes to an owned slot released behind the
-/// result.
+/// result. At a call node the other arm conses the call's argument, a part of the parameter, onto
+/// the rebuilt record's list, and the duplicate that consed cell takes of it is kept the same way.
 /// </summary>
 internal sealed class LoopResultCellOwnerDuplicateTemplate() : LeakCombinationTemplate(
     "leak.loop-result-cell-owner-duplicate", "loopResultCellOwnerDuplicate", GeneratedFeature.Match, GeneratedFeature.Adt, GeneratedFeature.Record)
@@ -26,6 +27,13 @@ internal sealed class LoopResultCellOwnerDuplicateTemplate() : LeakCombinationTe
         if (numbered)
         {
             tree = $"NodeName(\"{prefix}\" + Ashes.Text.fromInt(seed * 2))";
+        }
+
+        // A call node makes the other arm cons a part of the parameter onto the rebuilt record's list.
+        int calls = names.Between(0, 2);
+        for (int i = 0; i < calls; i++)
+        {
+            tree = $"NodeCall({tree}, NodeName(\"arg{i}\" + Ashes.Text.fromInt(seed)))";
         }
 
         for (int i = 0; i < wraps; i++)

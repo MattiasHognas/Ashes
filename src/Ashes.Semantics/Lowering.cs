@@ -12744,6 +12744,38 @@ public sealed partial class Lowering
         }
     }
 
+    // The constructor argument being lowered, for the cells built as a field of the value.
+    private Expr? _constructorFieldArgument;
+
+    // The pattern-owner duplicate an arena cons cell took of its head, where the cell is a field of a
+    // constructor built at a loop function's result (`Spine(root = root, arguments = argument ::
+    // arguments)` over a part of the loop parameter): the return normalizes the result into a
+    // reference-counted copy that retains the head itself, and the arena cell releases nothing, so
+    // the duplicate goes to an owned slot released behind the result. A reference-counted cell owns
+    // its duplicate, and a back edge's successor cell has its duplicates released after the back
+    // edge's copy.
+    private void KeepLoopResultFieldCellHeadDuplicateOwned(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
+    {
+        if (duplicateTemp < 0
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTFIELDCELLHEADDUP") is not null
+            || _tcoCtx?.InTailPosition != true
+            || _backEdgeArgumentPosition is not null
+            || _tcoArgumentDestination is not null
+            || _constructorFieldArgument is null
+            || !ReferenceEquals(StripOrSelf(_constructorFieldArgument), cons)
+            || IsRuntimeManagedResultTemp(cellTemp)
+            || _inst.FindLast(instruction => instruction is IrInst.Alloc allocation && allocation.Target == cellTemp) is not IrInst.Alloc { RuntimeManaged: false }
+            || ContainsUnresolvedLayoutType(Prune(headType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, duplicateTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(headType));
+    }
+
     private void RecordLateCopiedCellHeadDuplicate(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
     {
         if (duplicateTemp >= 0
@@ -18369,6 +18401,7 @@ public sealed partial class Lowering
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
+        KeepLoopResultFieldCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
