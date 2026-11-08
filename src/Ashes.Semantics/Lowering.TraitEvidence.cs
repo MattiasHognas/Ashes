@@ -1453,16 +1453,36 @@ public sealed partial class Lowering
             instantiatedConstraints,
             span);
 
-        int applied = ApplyStaticEvidenceArguments(function.functionTemp, dictionaries);
-        foreach (int argumentTemp in loweredArguments.Value.Temps)
+        return ApplyTraitDictionaryCallChain(rootExpression, function.functionTemp, dictionaries, loweredArguments.Value);
+    }
+
+    // The dictionary call's chain: the dictionaries, then the real arguments. Every closure the chain
+    // returns before its last argument is an intermediate stage the call alone holds; with one
+    // dictionary the dictionary-applied closure is the first of them.
+    private (int Temp, TypeRef Type) ApplyTraitDictionaryCallChain(
+        Expr rootExpression,
+        int functionTemp,
+        List<int> dictionaries,
+        (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver) loweredArguments)
+    {
+        int applied = ApplyStaticEvidenceArguments(functionTemp, dictionaries);
+        List<int> stageTemps = dictionaries.Count == 1 ? [applied] : [];
+        for (int i = 0; i < loweredArguments.Temps.Count; i++)
         {
             int next = NewTemp();
-            Emit(new IrInst.CallClosure(next, applied, argumentTemp));
+            Emit(new IrInst.CallClosure(next, applied, loweredArguments.Temps[i]));
             applied = next;
+            if (i < loweredArguments.Temps.Count - 1 && stageTemps.Count > 0)
+            {
+                stageTemps.Add(next);
+            }
         }
-        TypeRef resultType = Prune(loweredArguments.Value.Result);
-        HandOverDictionaryCallArgumentsToOwnedSlots(loweredArguments.Value.HandedOver, resultType);
-        return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
+
+        TypeRef resultType = Prune(loweredArguments.Result);
+        HandOverDictionaryCallArgumentsToOwnedSlots(loweredArguments.HandedOver, resultType);
+        int resultTemp = NormalizeStaticEvidenceResult(applied, resultType);
+        ReleaseIntermediateStageClosures(rootExpression, stageTemps, resultType, dictionaryEntry: true);
+        return (resultTemp, resultType);
     }
 
     private (int Temp, TypeRef Type)? TryLowerConcreteTraitOperatorSpecializedCall(

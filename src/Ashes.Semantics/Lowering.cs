@@ -13853,21 +13853,24 @@ public sealed partial class Lowering
     // the address alone, so it needs no bookkeeping while the window is open. Only a callee whose
     // closure object took over reference-counted captures builds such stages, so the release is
     // emitted for those callees alone.
-    private void ReleaseIntermediateStageClosures(Expr rootExpr, List<int> stageTemps, TypeRef resultType)
+    private void ReleaseIntermediateStageClosures(Expr rootExpr, List<int> stageTemps, TypeRef resultType, bool dictionaryEntry = false)
     {
         if (stageTemps.Count == 0
             || !GeneralRcEnabled
             || Prune(resultType) is TypeRef.TFun
             || Environment.GetEnvironmentVariable("GRC_NO_STAGECLOSURERELEASE") is not null
-            || !CalleeBuildsRuntimeManagedStages(rootExpr, stageTemps.Count))
+            || !CalleeBuildsRuntimeManagedStages(rootExpr, stageTemps.Count, dictionaryEntry))
         {
             return;
         }
 
-        string releaser = SynthesizeStageClosureReleaser();
-        foreach (int stageTemp in stageTemps)
+        // The first stage a dictionary entry returns is the closure the entry built over its own
+        // environment, so its dropper releases the captures; the later stages copied them.
+        string releaser = SynthesizeStageClosureReleaser(keepsDropper: false);
+        for (int i = 0; i < stageTemps.Count; i++)
         {
-            Emit(new IrInst.RcDrop(stageTemp, "Function", RuntimeManaged: true, StructuralDropperLabel: releaser));
+            string stageReleaser = i == 0 && dictionaryEntry ? SynthesizeStageClosureReleaser(keepsDropper: true) : releaser;
+            Emit(new IrInst.RcDrop(stageTemps[i], "Function", RuntimeManaged: true, StructuralDropperLabel: stageReleaser));
         }
     }
 
@@ -13875,15 +13878,24 @@ public sealed partial class Lowering
     // instruction: stage 1 has tens of thousands of curried calls, and the inline form grew stage 0
     // past its build cap. The captures belong to the first stage, whose release runs the dropper; a
     // later stage copied them without references, so only its own cells are freed.
-    private string SynthesizeStageClosureReleaser()
+    private string SynthesizeStageClosureReleaser(bool keepsDropper)
     {
-        if (_stageClosureReleaserLabel is { } existing)
+        string? cached = keepsDropper ? _owningStageClosureReleaserLabel : _stageClosureReleaserLabel;
+        if (cached is { } existing)
         {
             return existing;
         }
 
         string label = $"__rc_stage_release_{_nextLambdaId++}";
-        _stageClosureReleaserLabel = label;
+        if (keepsDropper)
+        {
+            _owningStageClosureReleaserLabel = label;
+        }
+        else
+        {
+            _stageClosureReleaserLabel = label;
+        }
+
         SynthesizedBodyState saved = BeginSynthesizedBody();
         NewLocal(); // slot 0: env (implicit)
         int stageSlot = NewLocal(); // slot 1: the stage closure (implicit)
@@ -13893,9 +13905,13 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(stageTemp, stageSlot));
         Emit(new IrInst.IsReferenceCounted(countedTemp, stageTemp));
         Emit(new IrInst.JumpIfFalse(countedTemp, arenaLabel));
-        int noDropperTemp = NewTemp();
-        Emit(new IrInst.LoadConstInt(noDropperTemp, 0));
-        Emit(new IrInst.StoreMemOffset(stageTemp, 24, noDropperTemp));
+        if (!keepsDropper)
+        {
+            int noDropperTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(noDropperTemp, 0));
+            Emit(new IrInst.StoreMemOffset(stageTemp, 24, noDropperTemp));
+        }
+
         Emit(new IrInst.RcDrop(stageTemp, "Function", RuntimeManaged: true));
         Emit(new IrInst.Label(arenaLabel));
         int resultTemp = NewTemp();
@@ -13906,13 +13922,15 @@ public sealed partial class Lowering
             new IrFunctionOrigin(
                 label,
                 IrFunctionOriginKind.StructuralOwnerDropper,
-                CompilerOwner: new CompilerFunctionOwner(CompilerFunctionOwnerKind.RuntimeLayout, "stage-closure"),
-                StableDiscriminator: "stage-closure"));
+                CompilerOwner: new CompilerFunctionOwner(CompilerFunctionOwnerKind.RuntimeLayout, keepsDropper ? "stage-closure-owning" : "stage-closure"),
+                StableDiscriminator: keepsDropper ? "stage-closure-owning" : "stage-closure"));
         RestoreEnclosingBodyState(saved);
         return label;
     }
 
     private string? _stageClosureReleaserLabel;
+
+    private string? _owningStageClosureReleaserLabel;
 
     // The callee and applied-argument count behind each `__applied_closure` let (see AppliedClosureLet).
     private readonly Dictionary<string, (Expr Root, int Applied)> _appliedClosureOrigins = new(StringComparer.Ordinal);
@@ -13948,9 +13966,27 @@ public sealed partial class Lowering
     // Labels of the lambdas whose closure object holds reference-counted captures.
     private readonly HashSet<string> _runtimeManagedCaptureLambdaLabels = new(StringComparer.Ordinal);
 
+    // A trait-constrained callee's entry takes its dictionary and returns the first real stage from
+    // a match over the dictionary, so no returned closure is recorded for it: the entry's own body
+    // building a closure whose object holds reference-counted captures answers instead.
+    private bool DictionaryEntryBuildsRuntimeManagedStage(string entryLabel)
+    {
+        foreach (IrFunction function in _funcs)
+        {
+            if (string.Equals(function.Label, entryLabel, StringComparison.Ordinal))
+            {
+                return function.Instructions.Exists(instruction =>
+                    instruction is IrInst.MakeClosure { RuntimeManaged: true } closure
+                    && _runtimeManagedCaptureLambdaLabels.Contains(closure.FuncLabel));
+            }
+        }
+
+        return false;
+    }
+
     // Whether a known callee returns, within the first stageCount stages, a closure whose object holds
     // reference-counted captures: the chain of returned closure labels is followed from its entry.
-    private bool CalleeBuildsRuntimeManagedStages(Expr rootExpr, int stageCount)
+    private bool CalleeBuildsRuntimeManagedStages(Expr rootExpr, int stageCount, bool dictionaryEntry = false)
     {
         if (!TryResolveStageEntryLabel(rootExpr, out string label))
         {
@@ -13961,7 +13997,7 @@ public sealed partial class Lowering
         {
             if (!_functionReturnedClosureLabels.TryGetValue(label, out string? returned))
             {
-                return false;
+                return stage == 0 && dictionaryEntry && DictionaryEntryBuildsRuntimeManagedStage(label);
             }
 
             if (_runtimeManagedCaptureLambdaLabels.Contains(returned))

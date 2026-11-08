@@ -201,6 +201,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new JoinCopiedUpdateTemplate());
         registry.Register(new IterationSlotUnnamedSuccessorTemplate());
         registry.Register(new CurriedStageClosureTemplate());
+        registry.Register(new ConstrainedCurriedStageClosureTemplate());
         registry.Register(new DeferredCallCopyOutRecordFieldTemplate());
         registry.Register(new ArenaCellFreshHeadTemplate());
         registry.Register(new SelfCallResultArgumentTemplate());

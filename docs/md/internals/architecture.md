@@ -1614,7 +1614,12 @@ which tests the address alone (an arena stage goes with the call's window) and r
 reference-counted one. A later stage copies the captures from the one before it without references
 of its own, so the helper clears its dropper word first and only its own cells are freed
 (`GRC_NO_STAGECLOSURERELEASE`). The helper keeps a call site at one instruction: inline, the test
-and release on stage 1's curried calls grew stage 0's build past its memory cap.
+and release on stage 1's curried calls grew stage 0's build past its memory cap. A constrained
+callee (`idx + step` on unannotated parameters) is called through its trait dictionary: its entry
+takes the dictionary and returns the first real stage from a match over it, so no returned closure
+is recorded and the entry's own body building such a closure answers instead. That first stage is
+the closure the entry built over its own environment, so its dropper releases the captures, and only
+the later stages go through the helper that clears it.
 
 A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
 as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry
