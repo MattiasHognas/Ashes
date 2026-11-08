@@ -726,9 +726,33 @@ public sealed partial class Lowering
     private readonly Dictionary<int, bool[]> _generalRcBackEdgeStrictParameterParts = [];
 
     private bool IsStrictLoopParameterPart(Expr argument, TcoContext tco)
-        => argument is Expr.Var variable
-            && Lookup(variable.Name) is Binding.Local local
-            && (tco.ParamSlots.Contains(local.Slot) || IsLoopParameterPartSlot(local.Slot));
+        => (argument is Expr.Var variable
+                && Lookup(variable.Name) is Binding.Local local
+                && (tco.ParamSlots.Contains(local.Slot) || IsLoopParameterPartSlot(local.Slot)))
+            || IsInlineConsOverLoopParameterPart(argument, tco);
+
+    // Inline heads consed onto a loop parameter (`loadPosition :: removed` over a `List(Int)`): the
+    // new cells hold only scalars and the tail is the parameter's value from before this iteration,
+    // so the successor holds no part of a value this iteration produced, whatever its type allows.
+    private bool IsInlineConsOverLoopParameterPart(Expr argument, TcoContext tco)
+        => Environment.GetEnvironmentVariable("GRC_NO_INLINECONSPARAMETERPART") is null
+            && argument is Expr.Cons cons
+            && InnermostConsTail(cons) is Expr.Var tail
+            && Lookup(tail.Name) is Binding.Local local
+            && Prune(local.T) is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && IsStrictLoopParameterPart(tail, tco);
+
+    private static Expr InnermostConsTail(Expr.Cons cons)
+    {
+        Expr tail = cons.Tail;
+        while (tail is Expr.Cons inner)
+        {
+            tail = inner.Tail;
+        }
+
+        return tail;
+    }
 
     private bool IsLoopParameterPart(Expr argument, TcoContext tco)
         => argument is Expr.Var variable

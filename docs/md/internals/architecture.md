@@ -2493,6 +2493,16 @@ with no fixed copy-out is asked for in the arena as an unknown callee's is. Read
 without the request, the result a callee normalized onto the reference-counted heap was released by
 nobody: `scalarCaptureLayout`'s `Some([])` base case and every cell built on it, from
 `match (value |> f |> g, layout(rest)(index + 1)) with` (`GRC_NO_UNSETTLEDCALLEEARENA`, both stages).
+A back edge keeps a value this iteration produced while any successor could hold a part of it
+without a reference of its own, and judges that by type where the successor names nothing bound
+from the value. A successor of inline heads consed onto a loop parameter (`loadPosition :: removed`
+over a `List(Int)`) counts as a part of that parameter: its new cells hold only scalars and its tail
+is the parameter's value from before this iteration, so it holds nothing of a value this iteration
+produced, whatever its type allows. Kept by type, the record `retargetKnownCallEnvironment` builds
+in stage 1's currying-stage inlining, which holds a `List(Int)` by its type, stayed in its slot until
+the next iteration overwrote it. A head that is not a scalar (`record.positions :: removed`, a field
+of the released value) is a part the successor really holds, and the rule does not apply to it
+(`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 keeps such a slot for a different reason, still open).
 
 ### One-shot resumptive arms: the pre/post split
 
