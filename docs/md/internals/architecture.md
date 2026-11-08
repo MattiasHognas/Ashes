@@ -1167,6 +1167,13 @@ blocking sibling, arena or runtime-RC representation, and the transition from
 earlier evidence. Final per-function traces keep those decisions in parameter
 order for compiler observability without affecting generated code.
 
+A parameter that can never be placed blocks every sibling that may hold it, but not one that holds
+nothing it could share. A list accumulator and a value of the general contract's own types are such
+siblings, and so is a value whose fields are all scalars (a record of flags folded over a program's
+instructions): its producers hand it back on the reference-counted heap, and kept in the arena
+beside the unplaceable instruction list, every iteration's value leaked
+(`GRC_NO_SCALARFIELDACCUMULATOR`).
+
 A list parameter's placement decides who owns what a successor's cells store. A parameter on the
 reference-counted heap has its successor copied at the back edge, with references of its own,
 before the iteration's owners are released; a cell built for it therefore borrows its children,

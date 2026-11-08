@@ -231,6 +231,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new IterationStringPartsTemplate());
         registry.Register(new ArenaRecordOwnedFieldTemplate());
         registry.Register(new SpecializationOwnershipScopeTemplate());
+        registry.Register(new ScalarFieldAccumulatorTemplate());
     }
 }
 

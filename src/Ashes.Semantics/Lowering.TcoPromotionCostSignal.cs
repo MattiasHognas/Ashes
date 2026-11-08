@@ -621,7 +621,8 @@ public sealed partial class Lowering
             && !tco.ParamFacts[tco.ParamSlots[candidateOrdinal]].ConsumedListTail
             && parameterTypes[candidateOrdinal] is { } candidateType
             && (Prune(candidateType) is TypeRef.TList { Element: var element } && IsUnblockedListAccumulatorElement(element)
-                || (tco.SelfCallParameterFlow is not null && IsGeneralRcValueType(Prune(candidateType))))
+                || (tco.SelfCallParameterFlow is not null && IsGeneralRcValueType(Prune(candidateType)))
+                || (tco.SelfCallParameterFlow is not null && ScalarFieldAccumulatorUnblockEnabled && IsScalarFieldVariant(Prune(candidateType))))
                 ? Prune(candidateType)
                 : null;
 
@@ -643,6 +644,13 @@ public sealed partial class Lowering
 
         return null;
     }
+
+    // A value whose fields are all scalars (a record of flags folded over a program) owns no heap
+    // part, and its producers hand it back on the reference-counted heap: kept in the arena for a
+    // sibling's sake, each iteration's value was never released. Only a sibling that may receive the
+    // value itself still blocks it.
+    private static bool ScalarFieldAccumulatorUnblockEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_SCALARFIELDACCUMULATOR") is null;
 
     // A list accumulator a sibling blocks only when it may receive part of it. One of strings, or of
     // any element that owns heap parts, has its cells built on the reference-counted heap whatever its

@@ -24718,4 +24718,73 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("specialization caller alias", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildLoopFlagRecordBesideInstructionListProgram(int rounds)
+        => $$"""
+            type Kind =
+                | PrintInt(Int)
+                | PrintStr(Int)
+                | Other(Int)
+
+            type Instruction =
+                | instruction: Kind
+                | location: Maybe(Int)
+
+            type Uses =
+                | printInt: Bool
+                | printStr: Bool
+
+            let includeInstruction operation (uses: Uses) =
+                match operation with
+                    | PrintInt(_) -> uses with printInt = true
+                    | PrintStr(_) -> uses with printStr = true
+                    | _ -> uses
+
+            let recursive collectUses instructions uses =
+                match instructions with
+                    | [] -> uses
+                    | Instruction { instruction = operation } :: rest ->
+                        uses
+                        |> includeInstruction(operation)
+                        |> collectUses(rest)
+
+            let probe (n: Int) =
+                match collectUses([Instruction(instruction = PrintInt(n), location = None), Instruction(instruction = Other(n), location = Some(n)), Instruction(instruction = PrintInt(2), location = None)])(Uses(printInt = false, printStr = false)) with
+                    | Uses { printInt = printInt } ->
+                        if printInt
+                        then 1
+                        else 0
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_flag_record_beside_instruction_list_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A record of flags is folded over a list of instructions the loop cannot place on the
+        // reference-counted heap. The record was kept in the arena beside it, although it holds no
+        // part of the list, while the step that sets a flag hands it back reference-counted: every
+        // iteration's record leaked.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildLoopFlagRecordBesideInstructionListProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop flag record beside instruction list", samples, maxRssKb: 16_000);
+    }
 }

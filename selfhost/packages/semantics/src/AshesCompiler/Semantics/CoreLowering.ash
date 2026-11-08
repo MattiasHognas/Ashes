@@ -14118,7 +14118,8 @@ let recursive anyBlockingSibling (candidates: List(TcoManagedCandidate)) (state:
 // type of a list field of the contract values the iteration owns. Kept in the arena for a
 // sibling's sake, the list would keep them without the back edge releasing any. So would a value
 // of the contract's own types threaded through the loop (a state each iteration rebuilds), once
-// the self-calls' parameter flow is known.
+// the self-calls' parameter flow is known. So would a value whose fields are all scalars, which its
+// producers hand back on the reference-counted heap (stage 0's `GRC_NO_SCALARFIELDACCUMULATOR`).
 let unblockedAccumulatorType (candidate: TcoManagedCandidate) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     if candidate.shape == TcoConsumedTailShape
     then None
@@ -14126,7 +14127,7 @@ let unblockedAccumulatorType (candidate: TcoManagedCandidate) (loop: CoreTcoLoop
         match (slotResolvedType(candidate.slot)(state.bindings)(state), loop.selfCallParameterFlow) with
             | (Some(SemList(_element) as accumulator), _flow) -> Some(accumulator)
             | (Some(resolved), Some(_flow)) ->
-                if isGeneralRcValueType(resolved)(state)
+                if isGeneralRcValueType(resolved)(state) || isScalarFieldVariant(resolved)(state)
                 then Some(resolved)
                 else None
             | _ -> None
