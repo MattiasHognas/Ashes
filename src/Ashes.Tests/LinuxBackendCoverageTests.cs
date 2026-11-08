@@ -24542,4 +24542,122 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop record list beside name pair", samples, maxRssKb: 16_000);
     }
+
+    private const string ArenaRecordOwnedFieldDeclarations = """
+            type Frame =
+                | bodyLabel: Str
+                | parameterSlots: List((Str, Int))
+
+            type Loop =
+                | name: Str
+                | cached: Maybe(Int)
+
+            type Group =
+                | tcoLoop: Maybe(Loop)
+                | tcoLoopFrame: Maybe(Frame)
+
+            type State =
+                | tcoState: Group
+                | names: List(Str)
+
+            let stateTcoLoop (state: State) =
+                (let group = state.tcoState
+                in group.tcoLoop)
+
+            let stateTcoLoopFrame (state: State) =
+                (let group = state.tcoState
+                in group.tcoLoopFrame)
+
+            type Expr =
+                | ExprVar(Str)
+                | ExprNum(Int)
+
+            let recursive slotIn (name: Str) (entries: List((Str, Int))) =
+                match entries with
+                    | [] -> None
+                    | (key, slot) :: rest ->
+                        if key == name
+                        then Some(slot)
+                        else slotIn(name)(rest)
+
+            let patternBindingRootSlot (name: Str) (loop: Loop) = loop.cached
+
+            let argumentRootSlotOf (argument: Expr) (state: State) =
+                match (stateTcoLoopFrame(state), stateTcoLoop(state), argument) with
+                    | (Some(frame), Some(loop), ExprVar(name)) ->
+                        match slotIn(name)(frame.parameterSlots) with
+                            | Some(slot) -> Some(slot)
+                            | None -> patternBindingRootSlot(name)(loop)
+                    | _ -> None
+
+            type HandOff =
+                | borrowsOnly: Bool
+                | runtimeArgument: Bool
+                | mayReach: Bool
+                | borrowedReach: Bool
+                | pendingRootSlot: Maybe(Int)
+
+            let handOff (argument: Expr) (state: State) =
+                match (Ashes.Collection.List.length(state.names) > 3, argumentRootSlotOf(argument)(state), Ashes.Collection.List.length(state.names) > 5) with
+                    | (runtimeArgument, rootSlot, fresh) ->
+                        HandOff(
+                            borrowsOnly = false,
+                            runtimeArgument = runtimeArgument,
+                            mayReach = rootSlot != None,
+                            borrowedReach = rootSlot != None && !fresh,
+                            pendingRootSlot = if runtimeArgument then None else rootSlot
+                        )
+
+            let makeState (n: Int) =
+                State(
+                    tcoState = Group(tcoLoop = Some(Loop(name = "l" + Ashes.Text.fromInt(n), cached = if n % 2 == 0 then None else Some(n))), tcoLoopFrame = Some(Frame(bodyLabel = "body", parameterSlots = [("a", 0)]))),
+                    names = ["a" + Ashes.Text.fromInt(n)]
+                )
+
+            let score (handOff: HandOff) =
+                match handOff.pendingRootSlot with
+                    | Some(slot) -> slot + 1
+                    | None ->
+                        if handOff.borrowedReach
+                        then 2
+                        else 3
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    let state = makeState(n)
+                    in loop(n - 1)(acc + score(handOff(ExprVar("z"))(state)) + score(handOff(ExprVar("a"))(state)))
+
+            """;
+
+    private static string BuildArenaRecordOwnedFieldProgram(int rounds)
+        => ArenaRecordOwnedFieldDeclarations + $$"""
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_record_owned_field_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // handOff builds its result as an arena record whose Maybe field joins a fresh None with a
+        // retain of the loop's cached slot. The copy onto the reference-counted heap retains the
+        // field again, so the arena record's own reference moves into the copy; before, it stayed
+        // behind once per call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildArenaRecordOwnedFieldProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena record owned field", samples, maxRssKb: 16_000);
+    }
 }

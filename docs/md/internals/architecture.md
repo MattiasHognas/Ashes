@@ -1800,6 +1800,14 @@ the copy, and the copy is handed over the same way. The caller then takes the re
 value of its own type, without copying it. A function returning another call's result of unresolved
 type as it is forwards the request to that call, as for a tuple.
 
+A result built as an arena record of a type with one constructor and copied onto the
+reference-counted heap is garbage once the copy holds references of its own. A field joining
+retains the function took, which no owned slot releases, with arena nullary values moves into the
+copy: the record's reference is released after the copy retains it. A field one arm of which
+stores a borrowed value keeps the copy's retain alone, and so does a value an owned slot
+holds. Without it, a record whose `Maybe` field joined a fresh `None` with a retain of a slot read
+through borrowed state kept the retained value once per call (`GRC_NO_ARENARECORDCHILDMOVE`).
+
 A generic list builder stores results it cannot release. A function whose result is a list of
 unresolved element type built from arena cells, each consing a closure call's result onto the empty
 list or onto the function's own recursive call (`f(head) :: mapGo(tail)`), leaves the reference a

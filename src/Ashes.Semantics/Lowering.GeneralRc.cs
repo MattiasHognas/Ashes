@@ -1690,6 +1690,7 @@ public sealed partial class Lowering
         if (!keeps)
         {
             ReleaseFreshChildrenOfCopiedArenaTuple(bodyTemp, pruned);
+            ReleaseOwnedFieldsOfCopiedArenaRecord(bodyTemp, pruned);
         }
 
         MarkRuntimeManagedTemp(resultTemp);

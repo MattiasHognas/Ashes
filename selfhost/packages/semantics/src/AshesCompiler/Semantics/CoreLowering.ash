@@ -12145,6 +12145,135 @@ let finishGeneralRcFunctionResultOutsideContract (label: Str) (bodyTemp: Int) (b
                 | None -> emitOwnedSlotDropsOrWholeHandOver(label)(bodyTemp)(bodyType)(state)
         | _ -> (state, bodyTemp)
 
+let isArenaRecordCell (instruction: Maybe(IrInstructionKind)) =
+    match instruction with
+        | Some(AllocAdt(_target, _tag, _fieldCount, false, _tagless)) -> true
+        | _ -> isArenaTupleCell(instruction)
+
+// The one arena cell, a tuple or a record, stored into `slot` beside the back edge placeholder; -1
+// otherwise.
+let recursive soleArenaRecordCellStoredIn (slot: Int) (instructions: List(IrInstruction)) (all: List(IrInstruction)) (cell: Int) =
+    match instructions with
+        | [] -> cell
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot != slot
+            then soleArenaRecordCellStoredIn(slot)(rest)(all)(cell)
+            else
+                match definitionOfTemp(source)(all) with
+                    | definition ->
+                        if isBackEdgePlaceholder(definition)
+                        then soleArenaRecordCellStoredIn(slot)(rest)(all)(cell)
+                        else
+                            if isArenaRecordCell(definition) && cell < 0
+                            then soleArenaRecordCellStoredIn(slot)(rest)(all)(source)
+                            else -1
+        | _ :: rest -> soleArenaRecordCellStoredIn(slot)(rest)(all)(cell)
+
+// Stage 0's `SoleArenaCellOf` with records allowed.
+let soleArenaRecordCellOf (temp: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(temp)(state.reversedInstructions) with
+        | Some(LoadLocal(_target, slot)) -> soleArenaRecordCellStoredIn(slot)(state.reversedInstructions)(state.reversedInstructions)(-1)
+        | definition ->
+            if isArenaRecordCell(definition)
+            then temp
+            else -1
+
+let recursive isGeneralRcOwnedSlotIn (slot: Int) (ownedSlots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match ownedSlots with
+        | [] -> false
+        | (_origin, candidate, _semanticType) :: rest -> candidate == slot || isGeneralRcOwnedSlotIn(slot)(rest)
+
+let recursive retainStoredIntoOwnedSlot (temp: Int) (instructions: List(IrInstruction)) (ownedSlots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: rest -> source == temp && isGeneralRcOwnedSlotIn(slot)(ownedSlots) || retainStoredIntoOwnedSlot(temp)(rest)(ownedSlots)
+        | _ :: rest -> retainStoredIntoOwnedSlot(temp)(rest)(ownedSlots)
+
+// A retain this function took that no owned slot releases.
+let isUnparkedRetain (temp: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(temp)(state.reversedInstructions) with
+        | Some(RcDup(_target, _source, _a, _b)) ->
+            !retainStoredIntoOwnedSlot(temp)(state.reversedInstructions)(stateGeneralRcOwnedSlots(state))
+        | _ -> false
+
+let isArenaNothing (instruction: Maybe(IrInstructionKind)) =
+    match instruction with
+        | Some(AllocAdt(_target, _tag, 0, false, _tagless)) -> true
+        | _ -> isBackEdgePlaceholder(instruction)
+
+// Whether every store into `slot` is an unparked retain or an arena nullary value, with at least
+// one of the former: 1 owned, 0 none seen, -1 another store.
+let recursive slotStoresOwnReferences (slot: Int) (instructions: List(IrInstruction)) (seen: Int) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> seen
+        | IrInstruction { instruction = StoreLocal(storeSlot, source) } :: rest ->
+            if storeSlot != slot || isArenaNothing(definitionOfTemp(source)(state.reversedInstructions))
+            then slotStoresOwnReferences(slot)(rest)(seen)(state)
+            else
+                if isUnparkedRetain(source)(state)
+                then slotStoresOwnReferences(slot)(rest)(1)(state)
+                else -1
+        | _ :: rest -> slotStoresOwnReferences(slot)(rest)(seen)(state)
+
+// Stage 0's `HoldsOwnReference`: a join holding a reference this function took on every arm, a
+// retain no owned slot releases or a fresh arena value that owns nothing. A join with a borrowed
+// arm does not.
+let holdsOwnReference (temp: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(temp)(state.reversedInstructions) with
+        | Some(LoadLocal(_target, slot)) -> slotStoresOwnReferences(slot)(state.reversedInstructions)(0)(state) == 1
+        | _ -> false
+
+let recursive ownedRecordFieldIndices (cell: Int) (fieldTypes: List(SemanticType)) (instructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = SetAdtField(ptr, index, source, tagless) } :: rest ->
+            if ptr == cell && index < length(fieldTypes) && !resultSurvivesReset(nthElementType(index)(fieldTypes))(state) && holdsOwnReference(source)(state)
+            then (index, nthElementType(index)(fieldTypes), tagless) :: ownedRecordFieldIndices(cell)(fieldTypes)(rest)(state)
+            else ownedRecordFieldIndices(cell)(fieldTypes)(rest)(state)
+        | _ :: rest -> ownedRecordFieldIndices(cell)(fieldTypes)(rest)(state)
+
+let recursive releaseRecordFieldsAt (bodyTemp: Int) (fields: List((Int, SemanticType, Bool))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> state
+        | (index, fieldType, tagless) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = childTemp } ->
+                    allocated
+                    |> emit(GetAdtField(childTemp)(bodyTemp)(index)(tagless))
+                    |> emitOwnedValueChildDrop(childTemp)(fieldType)
+                    |> releaseRecordFieldsAt(bodyTemp)(rest)
+
+let recursive soleConstructorFieldTypes (typeName: Str) (arguments: List(SemanticType)) (layouts: List(CoreConstructorLayout)) (found: Maybe(List(SemanticType))) (count: Int) (state: CoreLoweringState) =
+    match layouts with
+        | [] ->
+            if count == 1
+            then found
+            else None
+        | layout :: rest ->
+            if constructorResultNameIs(typeName)(layout)
+            then
+                soleConstructorFieldTypes(typeName)(arguments)(rest)(state
+                |> layoutInstantiatedFieldTypes(layout)(arguments)
+                |> Some)(count + 1)(state)
+            else soleConstructorFieldTypes(typeName)(arguments)(rest)(found)(count)(state)
+
+// Stage 0's `ReleaseOwnedFieldsOfCopiedArenaRecord`: the same move for an arena record of one
+// constructor. A field joining retains no owned slot releases with arena nullary values moves into
+// the reference-counted copy; a field any arm of which is borrowed keeps the copy's retain.
+let releaseOwnedFieldsOfCopiedArenaRecord (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(bodyType) with
+        | SemNamed(_symbolId, name, arguments) ->
+            match soleConstructorFieldTypes(name)(arguments)(stateConstructorLayouts(state))(None)(0)(state) with
+                | Some(fieldTypes) ->
+                    let cell = soleArenaRecordCellOf(bodyTemp)(state)
+                    in
+                        if cell < 0
+                        then state
+                        else
+                            releaseRecordFieldsAt(bodyTemp)(ownedRecordFieldIndices(cell)(fieldTypes)(reverse(state.reversedInstructions))(state))(state)
+                | None -> state
+        | _ -> state
+
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcFinishedResult(bodyTemp)(state)
     then (state, bodyTemp)
@@ -12158,7 +12287,10 @@ let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (
                     then emitOwnedResultOrCopy(bodyTemp)(plan)(state)
                     else
                         match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
-                            | (copied, copyTemp) -> (releaseFreshChildrenOfCopiedArenaTuple(bodyTemp)(bodyType)(copied), copyTemp) with
+                            | (copied, copyTemp) ->
+                                (copied
+                                |> releaseFreshChildrenOfCopiedArenaTuple(bodyTemp)(bodyType)
+                                |> releaseOwnedFieldsOfCopiedArenaRecord(bodyTemp)(bodyType), copyTemp) with
                         | (copied, resultTemp) ->
                             (copied
                             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)

@@ -124,12 +124,97 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool ArenaRecordChildMoveEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDCHILDMOVE") is null;
+
+    /// <summary>
+    /// The same move for a result built as an arena record of one constructor: a field joining
+    /// retains the function took, which no owned slot releases, with fresh arena values that own
+    /// nothing is released from the arena record once the record is copied onto the
+    /// reference-counted heap, so the copy holds the only reference. A field joined with a value the
+    /// function only borrows keeps its reference where it is.
+    /// </summary>
+    private void ReleaseOwnedFieldsOfCopiedArenaRecord(int bodyTemp, TypeRef type)
+    {
+        if (!ArenaRecordChildMoveEnabled
+            || Prune(type) is not TypeRef.TNamedType { Symbol.Constructors: [var constructor] } named)
+        {
+            return;
+        }
+
+        int cell = SoleArenaCellOf(bodyTemp, allowRecord: true);
+        if (cell < 0)
+        {
+            return;
+        }
+
+        foreach (IrInst instruction in _inst.ToList())
+        {
+            if (instruction is not IrInst.SetAdtField { Ptr: var ptr, FieldIndex: var index, Source: var source, Tagless: var tagless }
+                || ptr != cell
+                || index >= constructor.Arity)
+            {
+                continue;
+            }
+
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, index, named));
+            if (CanArenaReset(fieldType) || !HoldsOwnReference(source))
+            {
+                continue;
+            }
+
+            int childTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(childTemp, bodyTemp, index, tagless));
+            EmitRuntimeManagedChildDrop(childTemp, fieldType);
+        }
+    }
+
+    // A join holding a reference this function took on every arm: a retain no owned slot releases,
+    // or a fresh arena value that owns nothing. Values produced or retained outside a join are left
+    // to the owned slots that hold them.
+    private bool HoldsOwnReference(int temp)
+    {
+        if (DefinitionOf(temp) is not IrInst.LoadLocal load)
+        {
+            return false;
+        }
+
+        bool anyOwned = false;
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.StoreLocal store || store.Slot != load.Slot)
+            {
+                continue;
+            }
+
+            IrInst? stored = DefinitionOf(store.Source);
+            if (stored is IrInst.AllocAdt { RuntimeManaged: false, FieldCount: 0 } or IrInst.LoadConstInt { Value: 0 })
+            {
+                continue;
+            }
+
+            if (stored is not IrInst.RcDup || StoredIntoOwnedSlot(store.Source))
+            {
+                return false;
+            }
+
+            anyOwned = true;
+        }
+
+        return anyOwned;
+    }
+
+    private bool StoredIntoOwnedSlot(int temp)
+        => _inst.Any(instruction => instruction is IrInst.StoreLocal store
+            && store.Source == temp
+            && _generalRcOwnedSlots.Any(owned => owned.Slot == store.Slot));
+
     // The arena cell a value is, directly or through the one store into a local that is not the
     // placeholder a back edge writes; -1 otherwise.
-    private int SoleArenaCellOf(int temp)
+    private int SoleArenaCellOf(int temp, bool allowRecord = false)
     {
         IrInst? definition = DefinitionOf(temp);
-        if (definition is IrInst.Alloc { RuntimeManaged: false })
+        if (definition is IrInst.Alloc { RuntimeManaged: false } || (allowRecord && definition is IrInst.AllocAdt { RuntimeManaged: false }))
         {
             return temp;
         }
@@ -153,7 +238,9 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (stored is not IrInst.Alloc { RuntimeManaged: false } || cell >= 0)
+            bool arenaCell = stored is IrInst.Alloc { RuntimeManaged: false }
+                || (allowRecord && stored is IrInst.AllocAdt { RuntimeManaged: false });
+            if (!arenaCell || cell >= 0)
             {
                 return -1;
             }
