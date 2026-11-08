@@ -1277,7 +1277,12 @@ lifetime operations from lexical anchors to control-flow-precise positions:
   own reference (a list moved out of a call's result tuple). Such a result may still be the very list
   a parameter holds, which the exit then releases like every other parameter. A fixpoint loop
   returning the list its helper handed back in a tuple otherwise kept one reference to it per call
-  (`GRC_NO_FRESHEXITRESULT`).
+  (`GRC_NO_FRESHEXITRESULT`). A join every reaching arm of which stores a retain it just took
+  (`let next = settle(xs) in if done then next else loop(next)`, where the helper may hand its
+  argument straight back) holds a reference of its own the same way, and so does a result the loop's
+  scope copies out to the reference-counted heap, since that copy retains a list already there: a
+  fixpoint over a table that stops changing kept the whole table once per call
+  (`GRC_NO_RETAINEDARMJOIN`).
 
 A task frame carries its own ownership description. The transform publishes
 where it saves each value; lowering turns those offsets and the capture words

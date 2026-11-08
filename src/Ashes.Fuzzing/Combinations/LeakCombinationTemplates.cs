@@ -226,6 +226,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ViewedBackingBehindUnarenaedResultTemplate());
         registry.Register(new UnsettledSelfCallResultTemplate());
         registry.Register(new InlineConsOverParameterTemplate());
+        registry.Register(new LoopPassthroughResultTemplate());
     }
 }
 

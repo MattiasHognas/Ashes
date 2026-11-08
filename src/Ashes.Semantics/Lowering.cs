@@ -10845,6 +10845,7 @@ public sealed partial class Lowering
     private bool TcoExitResultMayBeParameter(Expr.Lambda lam, TcoContext tco, int bodyTemp)
         => bodyTemp != _generalRcIndependentResultTemp
             && !IsNormalizedJoinTemp(bodyTemp)
+            && !IsRetainedArmJoinTemp(bodyTemp)
             && !(ExitResultOwnsItsReference && (IsNewlyProducedRcTemp(bodyTemp) || IsOwnedScopeJoinTemp(bodyTemp)))
             && (IsRuntimeManagedResultTemp(bodyTemp)
                 || ResultReachesRuntimeManagedLoopParameter(lam, tco)

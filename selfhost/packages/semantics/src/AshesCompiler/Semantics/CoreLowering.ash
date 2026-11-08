@@ -772,6 +772,10 @@ type CoreOwnerState =
     // reference of its own, borrowing nothing from a loop parameter. A loop exit returning one
     // releases every parameter rather than transferring the one it equals.
     | ownedReferenceJoins: List((Maybe(IrFunctionOrigin), Int))
+    // Stage 0's `_retainedArmJoinTempsByBody`: the joins every reaching arm of which stores a retain
+    // it just took, even of a value a loop parameter owns. A loop exit returning one releases every
+    // parameter rather than transferring the one it equals.
+    | retainedArmJoins: List((Maybe(IrFunctionOrigin), Int))
 
 type CoreTcoState =
     // The identity duplicates of loop-parameter reads stored into constructor cells, with the
@@ -1672,6 +1676,15 @@ let recursive containsOwnedReferenceJoin (origin: Maybe(IrFunctionOrigin)) (temp
     match joins with
         | [] -> false
         | (joinOrigin, joinTemp) :: rest -> joinTemp == temp && joinOrigin == origin || containsOwnedReferenceJoin(origin)(temp)(rest)
+
+let recordRetainedArmJoin (temp: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with retainedArmJoins = (stateActiveFunctionOrigin(state), temp) :: group.retainedArmJoins))
+
+let isRetainedArmJoin (temp: Int) (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in
+        containsOwnedReferenceJoin(stateActiveFunctionOrigin(state))(temp)(group.retainedArmJoins))
 
 // Whether `temp` is a join of the function being lowered that holds a reference of its own.
 let isOwnedReferenceJoin (temp: Int) (state: CoreLoweringState) =
@@ -2674,7 +2687,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             runtimeOwnerAliases = [],
             pendingRuntimeArgumentFlags = [],
             genericDeepCopiedListTemps = [],
-            ownedReferenceJoins = []
+            ownedReferenceJoins = [],
+            retainedArmJoins = []
         ),
         tcoState = CoreTcoState(
             tcoParameterRetainSites = [],
@@ -3416,12 +3430,25 @@ let isRuntimeTemp (temp: Int) (state: CoreLoweringState) =
         | Some(_runtimeState) -> true
         | None -> false
 
+// Whether a temp is defined by a reference-counted list copy-out: the copy is fresh, or a retain of
+// a list already reference-counted, so the temp holds a reference of its own either way.
+let recursive definedByRuntimeListCopyOut (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CopyOutList(destTemp, _source, _headCopy, runtimeManaged, _purpose) } :: rest ->
+            if destTemp == temp
+            then runtimeManaged
+            else definedByRuntimeListCopyOut(temp)(rest)
+        | _ :: rest -> definedByRuntimeListCopyOut(temp)(rest)
+
 // Stage 0's exit test in `TcoExitResultMayBeParameter`: a join that holds a reference of its own
 // is never one of the parameters' own references, though it may be the very value a parameter
 // holds, so the exit releases every parameter instead of transferring one. Stage 0 also exempts a
 // result its facts call newly produced; a runtime temp marked newly produced here can still be a
-// parameter handed on through a join, so this lowering does not.
-let exitResultOwnsItsReference (temp: Int) (state: CoreLoweringState) = isOwnedReferenceJoin(temp)(state)
+// parameter handed on through a join, so this lowering does not. A result the scope copied out to
+// the reference-counted heap holds its own reference too: where stage 0 retains in the arm, this
+// lowering borrows there and the copy-out retains.
+let exitResultOwnsItsReference (temp: Int) (state: CoreLoweringState) = isOwnedReferenceJoin(temp)(state) || isRetainedArmJoin(temp)(state) || definedByRuntimeListCopyOut(temp)(state.reversedInstructions)
 
 let markRuntimeTemp (temp: Int) (runtimeState: RuntimeTempState) (state: CoreLoweringState) = state with runtimeTemps = Ashes.Collection.Map.setInt(temp)(runtimeState)(state.runtimeTemps)
 
@@ -19628,6 +19655,12 @@ let recursive anyArmReachesJoin (arms: List(MatchArmResult)) =
 
 let reachingArmsOwnTheirReference (arms: List(MatchArmResult)) (state: CoreLoweringState) = anyArmReachesJoin(arms) && armsOwnTheirReference(arms)(state)
 
+// Stage 0's `RecordRetainedArmJoin`: every reaching arm stores a retain it just took.
+let recursive armsStoreRetains (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> true
+        | arm :: rest -> (arm.armStoreTemp < 0 || isRuntimeTemp(arm.armStoreTemp)(state) && definedByRetain(arm.armStoreTemp)(state.reversedInstructions)) && armsStoreRetains(rest)(state)
+
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     ((given (marked: CoreLoweringState) ->
         marked
@@ -19638,7 +19671,11 @@ let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: C
         |> (given (owned: CoreLoweringState) ->
             if reachingArmsOwnTheirReference(arms)(owned)
             then recordOwnedReferenceJoin(resultTemp)(owned)
-            else owned)))(match (joinIsRuntimeManaged(arms) || reachingArmsAllNewlyProduced(arms), joinIsNewlyProduced(arms) || reachingArmsAllNewlyProduced(arms)) with
+            else owned)
+        |> (given (retained: CoreLoweringState) ->
+            if anyArmReachesJoin(arms) && armsStoreRetains(arms)(retained)
+            then recordRetainedArmJoin(resultTemp)(retained)
+            else retained)))(match (joinIsRuntimeManaged(arms) || reachingArmsAllNewlyProduced(arms), joinIsNewlyProduced(arms) || reachingArmsAllNewlyProduced(arms)) with
         | (true, true) ->
             state
             |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)

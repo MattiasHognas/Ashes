@@ -24316,4 +24316,61 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("inline cons over parameter", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildLoopReturningPassthroughResultProgram(int rounds)
+        => $$"""
+            let recursive bump (order: List(Int)) (xs: List(Int)) =
+                match order with
+                    | [] -> xs
+                    | o :: rest ->
+                        if o < 0
+                        then bump(rest)(o :: xs)
+                        else bump(rest)(xs)
+
+            let recursive settle (k: Int) (xs: List(Int)) =
+                (let next = bump([1, 2])(xs)
+                in
+                    if k == 0
+                    then next
+                    else settle(k - 1)(next))
+
+            let recursive sum (xs: List(Int)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> x + sum(rest)
+
+            let probe (n: Int) = sum(settle(1)([n, 2, 3]))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + probe(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_returning_passthrough_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop returns a let-bound call result that may be its own parameter handed straight
+        // through (`bump` returns its argument when nothing changes). The result is a retain of its
+        // own, yet the exit transferred the parameter's reference to it when the two were equal,
+        // so the list kept one reference too many on every call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildLoopReturningPassthroughResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop returning passthrough result", samples, maxRssKb: 16_000);
+    }
 }

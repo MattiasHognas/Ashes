@@ -285,7 +285,43 @@ public sealed partial class Lowering
         {
             RecordOwnedScopeJoinTemp(resultTemp);
         }
+
+        RecordRetainedArmJoin(resultTemp, arms);
     }
+
+    // The joins every reaching arm of which stores a retain it just took, even of a value a loop
+    // parameter owns: the join holds a reference of its own, so a loop exit returning one releases
+    // every parameter rather than transferring the one it equals.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _retainedArmJoinTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordRetainedArmJoin(int resultTemp, IReadOnlyList<JoinArm> arms)
+    {
+        List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
+        if (RetainedArmJoinRuleEnabled
+            && reaching.Count > 0
+            && reaching.All(arm => arm.Store is { } retained && IsRuntimeRetainTemp(retained.Source)))
+        {
+            RecordRetainedArmJoinTemp(resultTemp);
+        }
+    }
+
+    private void RecordRetainedArmJoinTemp(int temp)
+    {
+        if (!_retainedArmJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _retainedArmJoinTempsByBody[_inst] = temps;
+        }
+
+        temps.Add(temp);
+    }
+
+    private bool IsRetainedArmJoinTemp(int temp)
+        => _retainedArmJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps) && temps.Contains(temp);
+
+    private static bool RetainedArmJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_RETAINEDARMJOIN") is null;
 
     private static bool NormalizedFreshJoinRuleEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDFRESHJOIN") is null;
@@ -945,6 +981,7 @@ public sealed partial class Lowering
             new JoinArm(then.Store, then.Type, IsRuntimeManagedResultTemp(then.Temp), BranchJoinsRuntimeManagedResult(iff.Then, resultType), iff.Then),
             new JoinArm(otherwise.Store, otherwise.Type, IsRuntimeManagedResultTemp(otherwise.Temp), BranchJoinsRuntimeManagedResult(iff.Else, resultType), iff.Else),
         ];
+        RecordRetainedArmJoin(resultTemp, arms);
         RecordNeutralJoin(resultTemp, arms);
         if (ReachingArmsAllReferenceCounted(arms))
         {
