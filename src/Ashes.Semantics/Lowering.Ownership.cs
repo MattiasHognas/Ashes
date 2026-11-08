@@ -4730,6 +4730,11 @@ public sealed partial class Lowering
 
         if (_inCoroutineBody || !CanNormalizeRuntimeManagedResultIntoArena(resultType))
         {
+            if (!_inCoroutineBody && ViewedBackingNormalizeEnabled && IsGeneralRcValueType(resultType))
+            {
+                return NormalizeViewingResultBeforeBackings(resultTemp, resultType);
+            }
+
             KeepViewedBackingsAlive();
             return resultTemp;
         }
@@ -4750,6 +4755,22 @@ public sealed partial class Lowering
         => Environment.GetEnvironmentVariable("GRC_NO_VIEWCOPYRELEASE") is null
             && IsRuntimeManagedResultTemp(resultTemp)
             && (IsNormalizedJoinTemp(resultTemp) || IsOwnedScopeJoinTemp(resultTemp) || IsNewlyProducedRcTemp(resultTemp));
+
+    private static bool ViewedBackingNormalizeEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_VIEWBACKINGNORMALIZE") is null;
+
+    // A result of the contract's types with no arena copy is normalized onto the reference-counted
+    // heap instead: retained when it is already reference-counted, which holds no view, and copied
+    // otherwise, the copy materializing every view. The scope then owns a reference of its own
+    // either way, so the backings it might have viewed are released behind it, and the result is
+    // handed on as a value just produced, owned by whoever takes the scope's result.
+    private int NormalizeViewingResultBeforeBackings(int resultTemp, TypeRef resultType)
+    {
+        int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(resultTemp, resultType);
+        MarkRuntimeManagedTemp(normalizedTemp, type: Prune(resultType));
+        RecordNormalizedJoinTemp(normalizedTemp);
+        return normalizedTemp;
+    }
 
     private void KeepViewedBackingsAlive()
     {

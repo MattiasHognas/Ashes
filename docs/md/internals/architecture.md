@@ -1470,7 +1470,13 @@ A scope that releases a value its result may view (a split of a let-bound string
 into the arena first. When the result is a join that owns its reference (normalized, or every arm
 handing over one of its own: nil, a value it just produced, a retain it took, or another such join),
 the join is released behind the copy (`GRC_NO_VIEWCOPYRELEASE`); before, a path function returning
-its parts this way leaked the tuple, its strings and the parts list on every call. An explicit
+its parts this way leaked the tuple, its strings and the parts list on every call. A result of the
+contract's types that has no arena copy (a record with a recursive child) is normalized onto the
+reference-counted heap instead, retained when it already is and copied otherwise, and the values
+it may view are released behind it; it is handed on as a value just produced
+(`GRC_NO_VIEWBACKINGNORMALIZE`, stage 0 only, since stage 1 keeps no such backing). Before, the
+backing was kept for the program's life: stage 1's optimizer kept one label table per program
+this way. An explicit
 `deepCopy` of a value just produced on the reference-counted heap (a call's owned result) releases
 that value once the clone stands in for it, in both stages (`GRC_NO_DEEPCOPYRELEASE`).
 

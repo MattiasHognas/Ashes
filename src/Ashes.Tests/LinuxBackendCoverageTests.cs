@@ -23970,4 +23970,88 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("trait method string result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildViewedBackingProgram(int rounds)
+        => $$"""
+            type Tree =
+                | Leaf(Str)
+                | Node(Tree, Tree)
+
+            type Module =
+                | names: List(Str)
+                | tree: Tree
+
+            let recursive table (names: List(Str)) (acc: List((Str, Str))) =
+                match names with
+                    | [] -> acc
+                    | name :: rest -> table(rest)((name, name + "_next") :: acc)
+
+            let recursive lookup (key: Str) (entries: List((Str, Str))) =
+                match entries with
+                    | [] -> key
+                    | (k, v) :: rest ->
+                        if k == key
+                        then v
+                        else lookup(key)(rest)
+
+            let recursive renamed (known: List((Str, Str))) (items: List(Str)) =
+                match items with
+                    | [] -> []
+                    | item :: rest -> lookup(item)(known) :: renamed(known)(rest)
+
+            let recursive count (items: List(Str)) (acc: Int) =
+                match items with
+                    | [] -> acc
+                    | _ :: rest -> count(rest)(acc + 1)
+
+            let renamePair (left: List(Str)) (right: List(Str)) = (left, right)
+
+            let rewrite (mod: Module) =
+                let known = table(mod.names)([])
+                in
+                    match mod.names
+                    |> renamed(known)
+                    |> renamePair(mod.names) with
+                        | (_original, fresh) -> Module(names = fresh, tree = mod.tree)
+
+            let recursive size (tree: Tree) (acc: Int) =
+                match tree with
+                    | Leaf(_) -> acc + 1
+                    | Node(left, right) -> size(right)(size(left)(acc))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    let built = Module(names = ["a" + Ashes.Text.fromInt(n), "b"], tree = Node(Leaf("x"), Leaf("y")))
+                    in
+                        match rewrite(built) with
+                            | Module { names = names, tree = tree } -> loop(n - 1)(acc + count(names)(0) + size(tree)(0))
+            in Ashes.IO.print(Ashes.Text.fromInt(loop({{rounds}})(0)))
+            """;
+
+    [Test]
+    public async Task Linux_backend_viewed_backing_behind_unarenaed_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A let-bound table handed to a call the scope's result is destructured from may be viewed
+        // by that result, whose type (a record with a recursive child) has no arena copy. The scope
+        // used to keep the table alive for good; it now normalizes the result onto the
+        // reference-counted heap and releases the table behind it.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildViewedBackingProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{4L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("viewed backing behind an unarenaed result", samples, maxRssKb: 16_000);
+    }
 }

@@ -223,6 +223,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new LoopCellFreshListHeadTemplate());
         registry.Register(new LoopResultCellOwnerDuplicateTemplate());
         registry.Register(new TraitMethodResultTemplate());
+        registry.Register(new ViewedBackingBehindUnarenaedResultTemplate());
     }
 }
 
