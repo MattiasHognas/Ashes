@@ -2487,6 +2487,12 @@ optimizer concatenates into each scalar-environment variant's label. The last ap
 for the result in the arena (bit 1 of the ownership word, as a post call does) whenever the result
 has a complete copy-out and is not one of the contract's types, so the method copies a
 reference-counted result out and releases its original (`GRC_NO_TRAITMETHODARENARESULT`, both stages).
+A call whose label resolves to a function whose body is not lowered yet (a function's non-tail call
+to itself, or to one later in its group) has no compiled result fact to read, so its variant result
+with no fixed copy-out is asked for in the arena as an unknown callee's is. Read as an arena value
+without the request, the result a callee normalized onto the reference-counted heap was released by
+nobody: `scalarCaptureLayout`'s `Some([])` base case and every cell built on it, from
+`match (value |> f |> g, layout(rest)(index + 1)) with` (`GRC_NO_UNSETTLEDCALLEEARENA`, both stages).
 
 ### One-shot resumptive arms: the pre/post split
 

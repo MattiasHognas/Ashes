@@ -24054,4 +24054,68 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("viewed backing behind an unarenaed result", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildUnsettledSelfCallResultProgram(int rounds)
+        => $$"""
+            type Sem =
+                | SemInt
+                | SemNamed(Str, List(Sem))
+
+            let toSem (value: Int) =
+                if value > 100
+                then SemNamed("big", [])
+                else SemInt
+
+            let semText (semanticType: Sem) =
+                match semanticType with
+                    | SemInt -> Some("Int")
+                    | _ -> None
+
+            let recursive layout (values: List(Int)) (index: Int) =
+                match values with
+                    | [] -> Some([])
+                    | value :: rest ->
+                        match (value
+                        |> toSem
+                        |> semText, layout(rest)(index + 1)) with
+                            | (Some(text), Some(found)) -> Some((index * 8, text) :: found)
+                            | _ -> None
+
+            let layoutSize (values: List(Int)) =
+                match layout(values)(0) with
+                    | Some(found) -> Ashes.Collection.List.length(found)
+                    | None -> 0
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + layoutSize([n % 50]))
+            in Ashes.IO.print(Ashes.Text.fromInt(loop({{rounds}})(0)))
+            """;
+
+    [Test]
+    public async Task Linux_backend_unsettled_self_call_result_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // `layout(rest)(index + 1)` is the function's non-tail call to itself, lowered before its
+        // result protocol is settled. The caller read the variant result as an arena value while the
+        // callee handed over a reference-counted one, so the base case's `Some([])` and every cell
+        // built on it were left behind. The call now asks for an arena result, as a call to an
+        // unknown callee does.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildUnsettledSelfCallResultProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("unsettled self call result", samples, maxRssKb: 16_000);
+    }
 }

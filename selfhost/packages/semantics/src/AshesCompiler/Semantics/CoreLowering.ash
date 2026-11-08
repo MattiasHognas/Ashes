@@ -17098,9 +17098,20 @@ let siblingResultPinned (context: CoreCallContext) (resultType: SemanticType) (s
 // keeps that result as an arena value and never releases it. A callee that normalized its result
 // onto the reference-counted heap would hand over a reference nothing releases, so the call asks
 // for an arena result, which such a callee deep-copies into the arena before releasing its own.
+// A callee whose label resolves but whose body has not been lowered yet (a function's non-tail
+// call to itself, or to one later in its group) has no compiled result fact to read either, so its
+// result is asked for in the arena the same way (stage 0's `CalleeResultUnsettled`).
+let calleeResultUnsettled (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
+    match state
+    |> stateBodyRuntimeManagedByLabel
+    |> compiledResultRuntimeManaged(facts)(stateFunctionReturnedClosureLabels(state)) with
+        | Some(_runtimeManaged) -> false
+        | None -> true
+
 let requestsArenaResultFromUnknownCallee (context: CoreCallContext) (readsResult: Bool) (resultType: SemanticType) (state: CoreLoweringState) =
     match (readsResult, context.facts, context.appliedLambdaLabel, resolveType(state)(resultType)) with
         | (false, None, None, SemNamed(_symbolId, _name, _arguments) as named) -> !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
+        | (false, Some(_facts) as facts, None, SemNamed(_symbolId, _name, _arguments) as named) -> calleeResultUnsettled(facts)(state) && !resultSurvivesReset(named)(state) && !containsUnresolvedLayout(named)(state) && !hasCallCopyOut(named)(state) && !isGeneralRcValueType(named)(state) && canNormalizeResultIntoArena(named)(state)
         | _ -> false
 
 // The request word itself: bit 1 beside the argument ownership flag, when the call passes one.

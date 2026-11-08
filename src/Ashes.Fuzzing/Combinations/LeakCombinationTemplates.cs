@@ -224,6 +224,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new LoopResultCellOwnerDuplicateTemplate());
         registry.Register(new TraitMethodResultTemplate());
         registry.Register(new ViewedBackingBehindUnarenaedResultTemplate());
+        registry.Register(new UnsettledSelfCallResultTemplate());
     }
 }
 

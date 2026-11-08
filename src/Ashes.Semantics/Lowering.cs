@@ -14827,7 +14827,7 @@ public sealed partial class Lowering
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
             RequestsArenaResult(funType.Ret)
-                || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, resultType, needsResultOwnership)),
+                || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, collectedArgs.Count, resultType, needsResultOwnership)),
             i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
@@ -14969,7 +14969,7 @@ public sealed partial class Lowering
     // reference-counted heap (a join of a fresh `None` beside a field it read) would hand over a
     // reference nothing releases, so the call asks for an arena result, which such a callee
     // deep-copies into the arena before releasing its own.
-    private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, TypeRef resultType, bool needsResultOwnership)
+    private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, int argumentCount, TypeRef resultType, bool needsResultOwnership)
         => Environment.GetEnvironmentVariable("GRC_NO_UNKNOWNCALLEEARENA") is null
             && !needsResultOwnership
             && rootExpr is not Expr.Lambda
@@ -14979,7 +14979,15 @@ public sealed partial class Lowering
             && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None
             && !IsGeneralRcValueType(resultType)
             && CanNormalizeRuntimeManagedResultIntoArena(resultType)
-            && !TryResolveKnownFunctionLabel(rootExpr, out _);
+            && (!TryResolveKnownFunctionLabel(rootExpr, out string label) || CalleeResultUnsettled(label, argumentCount));
+
+    // A callee whose label resolves but whose body has not been lowered yet (a function's non-tail call
+    // to itself, or to one later in its group) has no compiled result fact to read, so the caller takes
+    // its result as an arena value: without the request, a callee that turns out to normalize its
+    // result onto the reference-counted heap hands over a reference nothing releases.
+    private bool CalleeResultUnsettled(string label, int argumentCount)
+        => Environment.GetEnvironmentVariable("GRC_NO_UNSETTLEDCALLEEARENA") is null
+            && !TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out _);
 
     // The hidden ownership word carrying the arena-result request (bit 1) beside the argument
     // ownership flag (bit 0), when the call passes one.
