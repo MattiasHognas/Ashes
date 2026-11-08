@@ -345,10 +345,10 @@ let expectNormalizedArmMovesTheLaterPatternOwnerRetain unit =
     in
         let armLabel = lineIndexFrom("  match_next_2:")(0)(lines)
         in
-            let retain = lineIndexFrom("    RcDup                 Target=34 SourceTemp=33 RuntimeManaged=true")(0)(lines)
+            let retain = lineIndexFrom("    RcDup                 Target=39 SourceTemp=38 RuntimeManaged=true")(0)(lines)
             in
                 lines
-                |> expectLine("    IsReferenceCounted    Target=29 SourceTemp=4")
+                |> expectLine("    IsReferenceCounted    Target=34 SourceTemp=4")
                 |> (given (_) -> test.assertEqual(true)(armLabel >= 0 && retain > armLabel)))
 
 let runMatchArmScopeTests unit =
