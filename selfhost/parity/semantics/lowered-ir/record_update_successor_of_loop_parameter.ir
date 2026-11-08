@@ -231,7 +231,7 @@ function lambda_0  [SourceFunction from extend]
     Return                Source=2   (record_update_successor_of_loop_parameter.ash:6:1)
 
 function lambda_7  [ClosureHelper from scan]
-  locals=56 temps=261
+  locals=56 temps=260
     LoadEnv               Target=0 Index=0   (record_update_successor_of_loop_parameter.ash:19:1)
     StoreLocal            Slot=2 Source=0   (record_update_successor_of_loop_parameter.ash:19:1)
     LoadLocal             Target=88 Slot=2   (record_update_successor_of_loop_parameter.ash:19:1)
@@ -617,95 +617,91 @@ function lambda_7  [ClosureHelper from scan]
   rc_representation_done_110:
     LoadLocal             Target=229 Slot=52
     SetAdtField           Ptr=219 FieldIndex=2 Source=229 Tagless=true
-    IsReferenceCounted    Target=230 SourceTemp=220
+    IsReferenceCounted    Target=230 SourceTemp=225
     JumpIfFalse           CondTemp=230 Target=rc_source_child_in_arena_111
-    RcDrop                SourceTemp=220 TypeName=String RuntimeManaged=true
-  rc_source_child_in_arena_111:
-    IsReferenceCounted    Target=231 SourceTemp=225
-    JumpIfFalse           CondTemp=231 Target=rc_source_child_in_arena_112
     StoreLocal            Slot=53 Source=225
-  rcdrop_list_113:
-    LoadLocal             Target=232 Slot=53
-    LoadConstInt          Target=233 Value=0
-    CmpIntNe              Target=234 Left=232 Right=233
-    JumpIfFalse           CondTemp=234 Target=rcdrop_list_end_115
-    RcIsUnique            Target=235 SourceTemp=232
-    JumpIfFalse           CondTemp=235 Target=rcdrop_list_shared_114
-    LoadMemOffset         Target=236 BasePtr=232 OffsetBytes=0
-    RcDrop                SourceTemp=236 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=237 BasePtr=232 OffsetBytes=8
-    RcDrop                SourceTemp=232 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=53 Source=237
-    Jump                  Target=rcdrop_list_113
-  rcdrop_list_shared_114:
-    RcDrop                SourceTemp=232 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_115
-  rcdrop_list_end_115:
-  rc_source_child_in_arena_112:
+  rcdrop_list_112:
+    LoadLocal             Target=231 Slot=53
+    LoadConstInt          Target=232 Value=0
+    CmpIntNe              Target=233 Left=231 Right=232
+    JumpIfFalse           CondTemp=233 Target=rcdrop_list_end_114
+    RcIsUnique            Target=234 SourceTemp=231
+    JumpIfFalse           CondTemp=234 Target=rcdrop_list_shared_113
+    LoadMemOffset         Target=235 BasePtr=231 OffsetBytes=0
+    RcDrop                SourceTemp=235 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=236 BasePtr=231 OffsetBytes=8
+    RcDrop                SourceTemp=231 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=53 Source=236
+    Jump                  Target=rcdrop_list_112
+  rcdrop_list_shared_113:
+    RcDrop                SourceTemp=231 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_114
+  rcdrop_list_end_114:
+  rc_source_child_in_arena_111:
     StoreLocal            Slot=50 Source=219
   rc_representation_done_106:
-    LoadLocal             Target=238 Slot=50
-    LoadLocal             Target=239 Slot=6
-    JumpIfFalse           CondTemp=239 Target=rc_tco_drop_inactive_116
+    LoadLocal             Target=237 Slot=50
+    LoadLocal             Target=238 Slot=6
+    JumpIfFalse           CondTemp=238 Target=rc_tco_drop_inactive_115
     StoreLocal            Slot=54 Source=77
-  rcdrop_list_117:
-    LoadLocal             Target=240 Slot=54
-    LoadConstInt          Target=241 Value=0
-    CmpIntNe              Target=242 Left=240 Right=241
-    JumpIfFalse           CondTemp=242 Target=rcdrop_list_end_119
-    RcIsUnique            Target=243 SourceTemp=240
-    JumpIfFalse           CondTemp=243 Target=rcdrop_list_shared_118
-    LoadMemOffset         Target=244 BasePtr=240 OffsetBytes=0
-    RcDrop                SourceTemp=244 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=245 BasePtr=240 OffsetBytes=8
-    RcDrop                SourceTemp=240 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=54 Source=245
-    Jump                  Target=rcdrop_list_117
-  rcdrop_list_shared_118:
-    RcDrop                SourceTemp=240 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_119
-  rcdrop_list_end_119:
-  rc_tco_drop_inactive_116:
-    LoadLocal             Target=246 Slot=7
-    JumpIfFalse           CondTemp=246 Target=lambda_7_rc_edge_18_96
-    LoadConstInt          Target=247 Value=0
-    CallKnown             Target=248 FuncLabel=__rcdrop_record_4 EnvTemp=247 ArgTemp=78
+  rcdrop_list_116:
+    LoadLocal             Target=239 Slot=54
+    LoadConstInt          Target=240 Value=0
+    CmpIntNe              Target=241 Left=239 Right=240
+    JumpIfFalse           CondTemp=241 Target=rcdrop_list_end_118
+    RcIsUnique            Target=242 SourceTemp=239
+    JumpIfFalse           CondTemp=242 Target=rcdrop_list_shared_117
+    LoadMemOffset         Target=243 BasePtr=239 OffsetBytes=0
+    RcDrop                SourceTemp=243 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=244 BasePtr=239 OffsetBytes=8
+    RcDrop                SourceTemp=239 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=54 Source=244
+    Jump                  Target=rcdrop_list_116
+  rcdrop_list_shared_117:
+    RcDrop                SourceTemp=239 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_118
+  rcdrop_list_end_118:
+  rc_tco_drop_inactive_115:
+    LoadLocal             Target=245 Slot=7
+    JumpIfFalse           CondTemp=245 Target=lambda_7_rc_edge_18_94
+    LoadConstInt          Target=246 Value=0
+    CallKnown             Target=247 FuncLabel=__rcdrop_record_4 EnvTemp=246 ArgTemp=78
     RcDrop                SourceTemp=10 TypeName=String OwnerSlot=18 RuntimeManaged=true
-  rc_tco_drop_inactive_120:
+  rc_tco_drop_inactive_119:
     StoreLocal            Slot=55 Source=75
-  rcdrop_list_121:
-    LoadLocal             Target=249 Slot=55
-    LoadConstInt          Target=250 Value=0
-    CmpIntNe              Target=251 Left=249 Right=250
-    JumpIfFalse           CondTemp=251 Target=rcdrop_list_end_123
-    RcIsUnique            Target=252 SourceTemp=249
-    JumpIfFalse           CondTemp=252 Target=rcdrop_list_shared_122
-    LoadMemOffset         Target=253 BasePtr=249 OffsetBytes=0
-    RcDrop                SourceTemp=253 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=254 BasePtr=249 OffsetBytes=8
-    RcDrop                SourceTemp=249 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=55 Source=254
-    Jump                  Target=rcdrop_list_121
-  rcdrop_list_shared_122:
-    RcDrop                SourceTemp=249 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_123
-  rcdrop_list_end_123:
-    LoadLocal             Target=255 Slot=29
-    LoadConstInt          Target=256 Value=0
-    CmpIntNe              Target=257 Left=255 Right=256
-    JumpIfFalse           CondTemp=257 Target=general_rc_owned_absent_124
-    IsReferenceCounted    Target=258 SourceTemp=255
-    JumpIfFalse           CondTemp=258 Target=general_rc_owned_absent_124
-    RcDrop                SourceTemp=255 TypeName=String RuntimeManaged=true
-    StoreLocal            Slot=29 Source=256
-  general_rc_owned_absent_124:
+  rcdrop_list_120:
+    LoadLocal             Target=248 Slot=55
+    LoadConstInt          Target=249 Value=0
+    CmpIntNe              Target=250 Left=248 Right=249
+    JumpIfFalse           CondTemp=250 Target=rcdrop_list_end_122
+    RcIsUnique            Target=251 SourceTemp=248
+    JumpIfFalse           CondTemp=251 Target=rcdrop_list_shared_121
+    LoadMemOffset         Target=252 BasePtr=248 OffsetBytes=0
+    RcDrop                SourceTemp=252 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=253 BasePtr=248 OffsetBytes=8
+    RcDrop                SourceTemp=248 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=55 Source=253
+    Jump                  Target=rcdrop_list_120
+  rcdrop_list_shared_121:
+    RcDrop                SourceTemp=248 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_122
+  rcdrop_list_end_122:
+    LoadLocal             Target=254 Slot=29
+    LoadConstInt          Target=255 Value=0
+    CmpIntNe              Target=256 Left=254 Right=255
+    JumpIfFalse           CondTemp=256 Target=general_rc_owned_absent_123
+    IsReferenceCounted    Target=257 SourceTemp=254
+    JumpIfFalse           CondTemp=257 Target=general_rc_owned_absent_123
+    RcDrop                SourceTemp=254 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=29 Source=255
+  general_rc_owned_absent_123:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=49
     StoreLocal            Slot=2 Source=74
+    LoadConstInt          Target=258 Value=1
+    StoreLocal            Slot=6 Source=258
+    StoreLocal            Slot=1 Source=237
     LoadConstInt          Target=259 Value=1
-    StoreLocal            Slot=6 Source=259
-    StoreLocal            Slot=1 Source=238
-    LoadConstInt          Target=260 Value=1
-    StoreLocal            Slot=7 Source=260
+    StoreLocal            Slot=7 Source=259
     ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=49
     RestoreStackPointer   Slot=10   (record_update_successor_of_loop_parameter.ash:28:22)
     Jump                  Target=lambda_7_body   (record_update_successor_of_loop_parameter.ash:28:22)
@@ -820,9 +816,9 @@ function lambda_7  [ClosureHelper from scan]
   lambda_7_rc_edge_18_28:
     RcDrop                SourceTemp=10 TypeName=String OwnerSlot=18 RuntimeManaged=true
     Jump                  Target=rc_tco_drop_inactive_87
-  lambda_7_rc_edge_18_96:
+  lambda_7_rc_edge_18_94:
     RcDrop                SourceTemp=10 TypeName=String OwnerSlot=18 RuntimeManaged=true
-    Jump                  Target=rc_tco_drop_inactive_120
+    Jump                  Target=rc_tco_drop_inactive_119
 
 function lambda_6  [SourceFunction from scan]
   locals=2 temps=7
@@ -927,44 +923,44 @@ function lambda_9  [ClosureHelper from joinAll]
     StoreLocal            Slot=2 Source=18   (record_update_successor_of_loop_parameter.ash:33:27)
     StoreLocal            Slot=1 Source=17   (record_update_successor_of_loop_parameter.ash:33:27)
     LoadLocal             Target=75 Slot=8
-    JumpIfFalse           CondTemp=75 Target=rc_tco_drop_inactive_125
+    JumpIfFalse           CondTemp=75 Target=rc_tco_drop_inactive_124
     StoreLocal            Slot=31 Source=21
-  rcdrop_list_126:
+  rcdrop_list_125:
     LoadLocal             Target=76 Slot=31
     LoadConstInt          Target=77 Value=0
     CmpIntNe              Target=78 Left=76 Right=77
-    JumpIfFalse           CondTemp=78 Target=rcdrop_list_end_128
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_end_127
     RcIsUnique            Target=79 SourceTemp=76
-    JumpIfFalse           CondTemp=79 Target=rcdrop_list_shared_127
+    JumpIfFalse           CondTemp=79 Target=rcdrop_list_shared_126
     LoadMemOffset         Target=80 BasePtr=76 OffsetBytes=0
     RcDrop                SourceTemp=80 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=81 BasePtr=76 OffsetBytes=8
     RcDrop                SourceTemp=76 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=31 Source=81
-    Jump                  Target=rcdrop_list_126
-  rcdrop_list_shared_127:
+    Jump                  Target=rcdrop_list_125
+  rcdrop_list_shared_126:
     RcDrop                SourceTemp=76 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_128
-  rcdrop_list_end_128:
-  rc_tco_drop_inactive_125:
+    Jump                  Target=rcdrop_list_end_127
+  rcdrop_list_end_127:
+  rc_tco_drop_inactive_124:
     StoreLocal            Slot=32 Source=19
-  rcdrop_list_129:
+  rcdrop_list_128:
     LoadLocal             Target=82 Slot=32
     LoadConstInt          Target=83 Value=0
     CmpIntNe              Target=84 Left=82 Right=83
-    JumpIfFalse           CondTemp=84 Target=rcdrop_list_end_131
+    JumpIfFalse           CondTemp=84 Target=rcdrop_list_end_130
     RcIsUnique            Target=85 SourceTemp=82
-    JumpIfFalse           CondTemp=85 Target=rcdrop_list_shared_130
+    JumpIfFalse           CondTemp=85 Target=rcdrop_list_shared_129
     LoadMemOffset         Target=86 BasePtr=82 OffsetBytes=0
     RcDrop                SourceTemp=86 TypeName=String RuntimeManaged=true
     LoadMemOffset         Target=87 BasePtr=82 OffsetBytes=8
     RcDrop                SourceTemp=82 TypeName=List RuntimeManaged=true
     StoreLocal            Slot=32 Source=87
-    Jump                  Target=rcdrop_list_129
-  rcdrop_list_shared_130:
+    Jump                  Target=rcdrop_list_128
+  rcdrop_list_shared_129:
     RcDrop                SourceTemp=82 TypeName=List RuntimeManaged=true
-    Jump                  Target=rcdrop_list_end_131
-  rcdrop_list_end_131:
+    Jump                  Target=rcdrop_list_end_130
+  rcdrop_list_end_130:
     RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=30
     LoadConstInt          Target=88 Value=0
     StoreLocal            Slot=2 Source=18

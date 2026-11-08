@@ -621,6 +621,13 @@ public sealed partial class Lowering
             if (IsArenaCellPatternOwnerMarker(argumentTemps[i]) && IsBorrowedRetainableParameterType(fieldType))
             {
                 HandArenaCellMarkerToOwnedSlot(argumentTemps[i], fieldType);
+                if (Environment.GetEnvironmentVariable("GRC_NO_CTORMARKERSKIP") is null)
+                {
+                    // The slot releases the promoted retain, so a release of the cell's children
+                    // (a successor's copy dropping the source it copied) skips this field too.
+                    _ownedSlotConstructorArguments.Add(arguments[i]);
+                }
+
                 continue;
             }
 

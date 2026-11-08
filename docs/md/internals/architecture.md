@@ -2454,7 +2454,10 @@ built, so the rule that hands a retain taken for an arena cell to an owned slot 
 entry, and once the marker became a retain, every call left the record copy with its successor list
 behind. The marker now goes to an owned slot holding zero, and the marker is stored into it once the
 pattern owners are placed and the marker turned out to be a retain (`GRC_NO_CTORMARKERSLOT`, both
-stages).
+stages). The constructor argument whose marker went to such a slot is recorded with the fresh ones
+handed to slots, so a back edge that copies the arena cell as a successor and releases the
+source's children skips that field: releasing it there as well released the promoted retain twice
+(`GRC_NO_CTORMARKERSKIP`, stage 0).
 A pattern owner's reference handed to a constrained (trait-dictionary) call for its result is released
 right after the call when the callee's summary proves the result never holds that argument, as
 itself or as a part: `lookupAssociation(site)(known)` returns a value of `known`, never `site`. Parked
