@@ -572,6 +572,9 @@ type CoreProgramState =
     // The functions whose compiled result is owned under the contract: each normalizes a result of
     // the contract's types at its return, so a caller that names one takes the result over as it is.
     | generalRcOwnedResultLabels: List(Str)
+    // The spans of calls whose result an applied lambda discards (`body(x) |> (given (_) -> ...)`),
+    // noted when the lambda's call is lowered and taken by the discarded call itself.
+    | discardedResultSpans: List(TextSpan)
     // The functions whose generic tuple result hands its contract elements over when a caller asks,
     // by label: the element indices whose references the caller takes.
     | tupleResultPartLabels: MapTree(Str, List(Int))
@@ -2585,6 +2588,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             tupleBinderParameters = [],
             bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
             generalRcOwnedResultLabels = [],
+            discardedResultSpans = [],
             tupleResultPartLabels = Ashes.Collection.Map.empty,
             normalizableRecordTypes = Ashes.Collection.Map.empty,
             letLambdaLabels = Ashes.Collection.Map.empty,
@@ -16201,6 +16205,8 @@ type CoreCallContext =
     | appliedLambdaLabel: Maybe(Str)
     // The span the call is lowered under, the site stage 0's `CallResultTypeKey` names it by.
     | siteSpan: Maybe(TextSpan)
+    // Stage 0's `_discardedResultCalls`: an applied lambda discards this call's result.
+    | resultDiscarded: Bool
 
 // A self callee whose result type was unresolved when the body being lowered began: its call's
 // result is deferred (`deferSelfCallResultType`), so the call asks for an arena result without
@@ -17798,6 +17804,8 @@ type CoreConsumedReleasePolicy =
     // A result normalized into an owned value on both of its branches, which holds a handed-over
     // argument only as itself; -1 otherwise.
     | normalizedOwnedResultTemp: Int
+    // Stage 0's `resultDiscarded`: nothing reads the call's result.
+    | resultDiscarded: Bool
 
 // Stage 0's `ConsumedDeepCopiedListStaysWithCallee`: a consumed list that an earlier call's
 // generic deep copy produced is left with a callee whose result was neither copied out here
@@ -17919,20 +17927,28 @@ let handOverArgumentKeptByArenaResult (policy: CoreConsumedReleasePolicy) (temp:
             then state
             else keepHandedOverArgumentInOwnedSlot(temp)(valueType)(adoptionFlagTemp)(state)
 
+let handedOverValueIsClosure (valueType: SemanticType) =
+    match valueType with
+        | SemFunction(_parameter, _result, _row) -> true
+        | _ -> false
+
 let emitConsumedArgumentDrop (policy: CoreConsumedReleasePolicy) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, adoptionFlagTemp = adoptionFlagTemp } when adoptionFlagTemp >= 0 ->
             match resolveType(state)(semanticType) with
                 | valueType ->
-                    if policy.resultCopySevers
-                    then
-                        emitHandedOverArgumentRelease(temp)(valueType)(adoptionFlagTemp)(
-                            handedOverArgumentResultFlag(policy.resultType)(valueType)(policy.resultCopyFlagTemp)(state)
-                        )(policy.normalizedOwnedResultTemp)(state)
+                    if policy.resultDiscarded && containsUnresolvedLayout(policy.resultType)(state) && handedOverValueIsClosure(valueType) == false
+                    then emitHandedOverArgumentRelease(temp)(valueType)(adoptionFlagTemp)(-1)(-1)(state)
                     else
-                        state
-                        |> emitHandedOverArgumentResultCannotHold(policy)(temp)(valueType)(adoptionFlagTemp)
-                        |> handOverArgumentKeptByArenaResult(policy)(temp)(valueType)(adoptionFlagTemp)
+                        if policy.resultCopySevers
+                        then
+                            emitHandedOverArgumentRelease(temp)(valueType)(adoptionFlagTemp)(
+                                handedOverArgumentResultFlag(policy.resultType)(valueType)(policy.resultCopyFlagTemp)(state)
+                            )(policy.normalizedOwnedResultTemp)(state)
+                        else
+                            state
+                            |> emitHandedOverArgumentResultCannotHold(policy)(temp)(valueType)(adoptionFlagTemp)
+                            |> handOverArgumentKeptByArenaResult(policy)(temp)(valueType)(adoptionFlagTemp)
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
                 | SemFunction(_parameter, _result, _row) ->
@@ -18035,7 +18051,8 @@ let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticTyp
                         resultCopySevers = resultCopySevers,
                         resultCopyFlagTemp = resultCopyFlagTemp,
                         resultType = resultType,
-                        normalizedOwnedResultTemp = normalizedOwnedResultTempOf(stage)
+                        normalizedOwnedResultTemp = normalizedOwnedResultTempOf(stage),
+                        resultDiscarded = context.resultDiscarded
                     ))([])(stage.consumedArguments)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
@@ -18706,7 +18723,7 @@ let appliedLambdaLabelOf (spine: CoreCallSpine) (state: CoreLoweringState) =
         | ExprLambda(_parameter, _body, _annotation) -> Some("lambda_" + Ashes.Text.fromInt(state.nextLambdaId))
         | _ -> None
 
-let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(SemanticType)) (state: CoreLoweringState) =
+let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(SemanticType)) (resultDiscarded: Bool) (state: CoreLoweringState) =
     (let selfCallee = isSelfCallee(spine)(state)
     in
         CoreCallContext(
@@ -18719,7 +18736,8 @@ let callContextOf (spine: CoreCallSpine) (tailCall: Bool) (expected: Maybe(Seman
             expectedResult = expected,
             calleeScheme = calleeSchemeOf(spine)(state),
             appliedLambdaLabel = appliedLambdaLabelOf(spine)(state),
-            siteSpan = state.currentSpan
+            siteSpan = state.currentSpan,
+            resultDiscarded = resultDiscarded
         ))
 
 // The consumed arguments whose parts the callee's result may still name: released spine-only unless
@@ -19028,13 +19046,13 @@ let pinSiblingCallResult (context: CoreCallContext) (stage: CoreCallStage) =
                 | None -> stage
         | _ -> stage
 
-let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
+let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) (resultDiscarded: Bool) lower state =
     match state
     |> ensureResultRcEligibility
     |> openArenaBracket with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
-            |> callContextOf(spine)(tailCall)(expected)
+            |> callContextOf(spine)(tailCall)(expected)(resultDiscarded)
             |> (given (context: CoreCallContext) ->
                 match opened |> lowerCallSpineStage(function)(argument)(context)(expected)(site)(1)(transfers)(lower) with
                     | applied ->
@@ -19055,13 +19073,52 @@ let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
             let group = state.tcoState
             in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start))
 
+// Stage 0's `NoteDiscardedResultArgument`: a lambda ignoring its parameter applied to a call.
+let noteDiscardedResultArgument (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match (unspanArgument(spine.root), spine.arguments) with
+        | (ExprLambda("_", _body, _annotation), ExprAt(span, inner) :: []) ->
+            match unspanArgument(inner) with
+                | ExprCall(_function, _argument, _layout, _arguments) ->
+                    let group = state.programState
+                    in state with programState = (group with discardedResultSpans = span :: group.discardedResultSpans)
+                | _ -> state
+        | _ -> state
+
+let recursive spanListed (span: TextSpan) (spans: List(TextSpan)) =
+    match spans with
+        | [] -> false
+        | candidate :: rest -> candidate == span || spanListed(span)(rest)
+
+let recursive withoutSpan (span: TextSpan) (spans: List(TextSpan)) =
+    match spans with
+        | [] -> []
+        | candidate :: rest ->
+            if candidate == span
+            then rest
+            else candidate :: withoutSpan(span)(rest)
+
+// Whether the call lowered under the current span is a noted discarded one, which it takes.
+let takeDiscardedResultSite (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        match state.currentSpan with
+            | Some(span) ->
+                if spanListed(span)(group.discardedResultSpans)
+                then (true, (state with programState = (group with discardedResultSpans = withoutSpan(span)(group.discardedResultSpans))))
+                else (false, state)
+            | None -> (false, state))
+
 // A call opens its own frame of argument retains; the enclosing call's is restored after it.
 let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) lower state =
-    state
-    |> withCallArgumentRetainFrame([])(false)
-    |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(lower)
-    |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
-    |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))
+    match state
+    |> noteDiscardedResultArgument(spine)
+    |> takeDiscardedResultSite with
+        | (resultDiscarded, noted) ->
+            noted
+            |> withCallArgumentRetainFrame([])(false)
+            |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
+            |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
+            |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))
 
 let failedIfPlan state error =
     CoreIfPlan(

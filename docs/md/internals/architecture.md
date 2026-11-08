@@ -1675,7 +1675,7 @@ A program that handles a capability is lowered without the general contract, so 
 slots to wait for the function's result: when an applied lambda discards a call's result
 (`body(x) |> (given (_) -> ...)`), a reference handed over for that result to keep is released right
 after the call unless the callee adopted it, whatever the result's layout
-(`GRC_NO_DISCARDEDRESULTRELEASE`, stage 0 only so far).
+(`GRC_NO_DISCARDEDRESULTRELEASE`, both stages: stage 1 notes the argument call's span when it lowers the lambda's call).
 A list literal's arena cell holding a value produced right there (a constructor placed on the
 reference-counted heap because it owns a fresh string) is that value's only holder: a callee that
 walks the list copies it with references of its own, so the cell's reference goes to an owned slot
