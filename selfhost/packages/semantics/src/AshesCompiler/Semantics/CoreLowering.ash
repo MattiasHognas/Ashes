@@ -29806,6 +29806,52 @@ let recursive unresolvedParameterTypes (slots: List(Int)) (state: CoreLoweringSt
                 | Some(SemVariable(_id) as unresolved) -> unresolved :: unresolvedParameterTypes(rest)(state)
                 | _ -> unresolvedParameterTypes(rest)(state)
 
+// The value a transfer takes for a root whose placement the loop's finalize pass settles only
+// after the body: `ifSet` when the root's active flag is set (the root was placed on the
+// reference-counted heap at the entry, and at every back edge since), `otherwise` when it is not.
+// A root the finalize pass leaves in the arena was never normalized, so it is the caller's
+// borrowed value: the transfer takes no reference of it and the back edge releases nothing.
+let selectUnderActiveFlag (activeSlot: Int) (otherwise: Int) emitIfSet (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = flagState, temp = flagTemp } ->
+            match freshLocal(flagState) with
+                | FreshLocal { state = slotState, local = resultSlot } ->
+                    match freshLabel("rc_transfer_inactive")(slotState) with
+                        | FreshLabel { state = labelState, label = skipLabel } ->
+                            match labelState
+                            |> emit(LoadLocal(flagTemp)(activeSlot))
+                            |> emit(StoreLocal(resultSlot)(otherwise))
+                            |> emit(JumpIfFalse(flagTemp)(skipLabel))
+                            |> emitIfSet with
+                                | (setState, setTemp) ->
+                                    match freshTemp(setState) with
+                                        | FreshTemp { state = resultState, temp = resultTemp } ->
+                                            (resultState
+                                            |> emit(StoreLocal(resultSlot)(setTemp))
+                                            |> emit(Label(skipLabel))
+                                            |> emit(LoadLocal(resultTemp)(resultSlot)), resultTemp)
+
+let retainUnderActiveFlag (rootSlot: Int) (temp: Int) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = duplicate } ->
+            match lookupListActiveSlot(rootSlot)(frame.listActiveSlots) with
+                | Some(activeSlot) ->
+                    allocated |> selectUnderActiveFlag(activeSlot)(temp)(given (current: CoreLoweringState) ->
+                        (emit(RcDup(duplicate)(temp)(true)(true))(current), duplicate))
+                | None ->
+                    (emit(RcDup(duplicate)(temp)(true)(true))(allocated), duplicate)
+
+// A list root is released as the empty list when its flag is clear.
+let listRootUnderActiveFlag (rootSlot: Int) (rootTemp: Int) (rootType: SemanticType) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match (resolveType(state)(rootType), lookupListActiveSlot(rootSlot)(frame.listActiveSlots)) with
+        | (SemList(_element), Some(activeSlot)) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = emptyTemp } ->
+                    allocated
+                    |> emit(LoadConstInt(emptyTemp)(0))
+                    |> selectUnderActiveFlag(activeSlot)(emptyTemp)(given (current: CoreLoweringState) -> (current, rootTemp))
+        | _ -> (state, rootTemp)
+
 // Stage 0's `LowerCallTcoTransferPatternBindings`, first half: a tail self-call argument that
 // reads the unchanged successor of a root placed on the reference-counted heap takes one
 // reference of its own before the old root graph is released. A parameter whose type is still a
@@ -29824,10 +29870,9 @@ let recursive transferPatternBindingArguments (arguments: List(Expr)) (temps: Li
                         | [] ->
                             if rootPlacedAtBackEdge(rootSlot)(frame)(loop)(state)
                             then
-                                match freshTemp(state) with
-                                    | FreshTemp { state = allocated, temp = duplicate } ->
+                                match retainUnderActiveFlag(rootSlot)(temp)(frame)(state) with
+                                    | (allocated, duplicate) ->
                                         allocated
-                                        |> emit(RcDup(duplicate)(temp)(true)(true))
                                         |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
                                         |> (given (retained: CoreLoweringState) ->
                                             transferPatternBindingArguments(restArguments)(restTemps)(frame)(loop)(retained)(duplicate :: reversedTemps)(if containsInt(rootSlot)(reversedRoots)
@@ -29877,8 +29922,10 @@ let recursive releaseTransferredRoots (roots: List(Int)) (arguments: List(Expr))
                                 then
                                     match allocated
                                     |> emit(LoadLocal(rootTemp)(rootSlot))
-                                    |> clearListActiveFlag(rootSlot)(frame) with
-                                        | loaded -> releaseTransferredRoots(rest)(arguments)(frame)(loaded)((rootTemp, rootType) :: deferred)
+                                    |> listRootUnderActiveFlag(rootSlot)(rootTemp)(rootType)(frame) with
+                                        | (selected, releasedTemp) ->
+                                            match clearListActiveFlag(rootSlot)(frame)(selected) with
+                                                | loaded -> releaseTransferredRoots(rest)(arguments)(frame)(loaded)((releasedTemp, rootType) :: deferred)
                                 else
                                     match allocated
                                     |> emit(LoadLocal(rootTemp)(rootSlot))
