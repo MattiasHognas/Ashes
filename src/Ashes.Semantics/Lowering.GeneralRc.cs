@@ -588,10 +588,51 @@ public sealed partial class Lowering
         }
 
         HashSet<int> positions = [];
-        return HandedOnCallTargets(predecessor.Origin, SavedInto(predecessor, loopSlots), info.ParamSlots, positions) is { } callTargets
-            && AllStoredIntoOwnedResults(callTargets, loopSlots)
-            ? positions
-            : null;
+        if (HandedOnCallTargets(predecessor.Origin, SavedInto(predecessor, loopSlots), info.ParamSlots, positions) is not { } callTargets
+            || !AllStoredIntoOwnedResults(callTargets, loopSlots))
+        {
+            return null;
+        }
+
+        AddCallResultSuccessorPositions(predecessor.Origin, callTargets, info.ParamSlots, positions);
+        return positions;
+    }
+
+    // The loop parameters a call's result is handed to as a successor: the result may keep the
+    // argument it was given (a key stored into an association list), so those parameters can hold
+    // the earlier iteration's value as much as a parameter it was handed to directly. The calls are
+    // the ones reading the owned slot and the ones given the value the slot was stored from.
+    private void AddCallResultSuccessorPositions(int ownedSlot, HashSet<int> callTargets, int[] parameterSlots, HashSet<int> positions)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_CHAINRESULTSUCCESSOR") is not null)
+        {
+            return;
+        }
+
+        HashSet<int> storedValues = _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == ownedSlot).Select(store => store.Source).ToHashSet();
+        HashSet<int> targets = [.. callTargets];
+        foreach (IrInst inst in _inst)
+        {
+            if (inst is IrInst.CallClosure call && storedValues.Contains(call.ArgTemp) && !storedValues.Contains(call.ClosureTemp))
+            {
+                targets.Add(call.Target);
+            }
+            else if (inst is IrInst.CallKnown known && storedValues.Contains(known.ArgTemp) && !storedValues.Contains(known.EnvTemp))
+            {
+                targets.Add(known.Target);
+            }
+        }
+
+        HashSet<int> results = CurriedChainEnabled ? [.. targets.Select(CurriedChainResult)] : targets;
+        foreach (IrInst inst in _inst)
+        {
+            if (inst is IrInst.StoreLocal store
+                && results.Contains(store.Source)
+                && Array.IndexOf(parameterSlots, store.Slot) is >= 0 and var position)
+            {
+                positions.Add(position);
+            }
+        }
     }
 
     // The results of the calls an owned slot's value is the argument of, or null when it is read
