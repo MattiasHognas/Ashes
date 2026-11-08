@@ -25277,6 +25277,29 @@ let transferSlotRequested (transferSlot: Maybe(Int)) =
         | Some(_slot) -> true
         | None -> false
 
+// Stage 0's `KeepLoopResultCellOwnerDuplicateOwned`: the duplicate a binding of the whole loop
+// parameter (a catch-all arm's `root`) took for an arena cell built as a loop function's result
+// goes to an owned slot, released once the function's result holds references of its own, since
+// the return normalizes the cell into a copy that retains the field itself and the arena cell
+// releases nothing. A part matched out of the parameter is released after the copy by its rules.
+let keepLoopResultCellOwnerDuplicateOwned (arenaResultCell: Bool) (argument: Expr) (before: LoweredCoreValue) (after: LoweredCoreValue) =
+    match (before, after) with
+        | (LoweredCoreValue { temp = readTemp }, LoweredCoreValue { state = state, temp = duplicateTemp, semanticType = semanticType, error = None }) ->
+            if arenaResultCell && duplicateTemp != readTemp && generalRcEnabled(state) && !containsUnresolvedLayout(resolveType(state)(semanticType))(state) && (match stateTcoLoopFrame(state) with
+                | Some(_frame) -> true
+                | None -> false) && (match unspanArgument(argument) with
+                | ExprVar(name) ->
+                    match patternOwnerBinding(name)(state) with
+                        | Some(PatternBindingFact { extractionDepth = 0 }) -> true
+                        | _ -> false
+                | _ -> false)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownedSlot } ->
+                        after with state = allocated |> emit(StoreLocal(ownedSlot)(duplicateTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(semanticType))
+            else after
+        | _ -> after
+
 // Stage 0's `RetainEscapingConstructorArgument`: a constructor whose consumer owns the value (a
 // runtime-managed candidate, a transfer slot, or the loop body's tail position) takes a
 // pattern-owner duplicate of an argument that reads one, before the transfer retain; an
@@ -25288,7 +25311,10 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
             lowered
             |> (given (value: LoweredCoreValue) ->
                 if runtimeManaged || tailPosition || transferSlotRequested(transferSlot) || transfers && !callArgument
-                then duplicatePatternOwnerChild(argument)(value)
+                then
+                    value
+                    |> duplicatePatternOwnerChild(argument)
+                    |> keepLoopResultCellOwnerDuplicateOwned(runtimeManaged == false && tailPosition)(argument)(value)
                 else value)
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
 

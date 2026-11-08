@@ -221,6 +221,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new HandedOverPartsSlotTemplate());
         registry.Register(new GenericParameterAdtArgumentTemplate());
         registry.Register(new LoopCellFreshListHeadTemplate());
+        registry.Register(new LoopResultCellOwnerDuplicateTemplate());
     }
 }
 

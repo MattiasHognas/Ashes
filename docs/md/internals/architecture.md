@@ -1585,6 +1585,20 @@ owned slot that held such a head before kept only the last iteration's value: ea
 left to a successor that never released it (the `32_16..100` exit class, the successor lists of
 every CFG block). Outside a loop the owned slot stays, released at the function's exit.
 
+A function that loops through wrappers of its variant parameter and, in its catch-all arm, builds a
+record around the whole parameter (stage 1's `collectCallSpine`: `| root -> CoreCallSpine(root =
+root, arguments = [])`) builds that record in the arena with a duplicate of the parameter for the
+owning consumer, the return. The return normalizes the record into a reference-counted copy that
+retains the field itself, so the arena cell's duplicate was never released (the `32_8` exit class:
+the self-call callee's name, once per compiled function). Such a duplicate, of a binding of the
+whole loop parameter in a cell built at the loop's result, now goes to an owned slot released behind
+the function's result (`GRC_NO_LOOPRESULTCELLOWNERDUP`, both stages; stage 1 keys it on a pattern
+binding fact of extraction depth 0). A part matched out of the parameter is released after the copy
+by the copy's own rules, and a second release there would free it twice. Still open: the same
+function's other arm conses a part of the parameter onto the rebuilt record's list (`arguments =
+argument :: arguments`), and the duplicate that arena cons cell takes of its head is not released
+either (one cell per such call, the rest of `32_8`).
+
 A value of an `external type` with no destructor is a foreign handle the program only passes along:
 one word copied like an integer that needs no release (`IsOpaqueHandleWord`; stage 1's
 `resultSurvivesReset` and the layout classification's `canArenaResetLayoutIn`). It used to keep every aggregate holding one outside the contract, so stage

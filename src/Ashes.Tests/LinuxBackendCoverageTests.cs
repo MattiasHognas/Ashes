@@ -23360,6 +23360,68 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("handed-over list parts in arena closure result", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildLoopResultRecordAroundParameterProgram(int rounds)
+        => $$"""
+            type Node2469 =
+                | NodeName(Str)
+                | NodeInt(Int)
+                | NodeAt(Int, Node2469)
+                | NodeCall(Node2469, Node2469)
+
+            type Spine2469 =
+                | root: Node2469
+                | arguments: List(Node2469)
+
+            let recursive collect2469 (expression: Node2469) =
+                match expression with
+                    | NodeAt(_span, inner) -> collect2469(inner)
+                    | NodeCall(function, argument) ->
+                        match collect2469(function) with
+                            | Spine2469 { root = root, arguments = arguments } -> Spine2469(root = root, arguments = argument :: arguments)
+                    | root -> Spine2469(root = root, arguments = [])
+
+            let isName2469 (expression: Node2469) =
+                match expression with
+                    | NodeName(_name) -> 1
+                    | _ -> 0
+
+            let run (seed: Int) =
+                match collect2469(NodeAt(1, NodeAt(2, NodeName("walk" + Ashes.Text.fromInt(seed))))) with
+                    | Spine2469 { root = root, arguments = arguments } -> isName2469(root) + Ashes.Collection.List.length(arguments)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + run(n))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_result_record_around_whole_parameter_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A function loops through wrappers of its variant parameter and, in its catch-all arm, builds
+        // a record around the whole parameter. The arena record took a duplicate of the parameter, the
+        // return copied it into a reference-counted record that retained the field again, and the
+        // duplicate was never released: the parameter's name leaked once per call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildLoopResultRecordAroundParameterProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{1L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop result record around whole parameter", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildLoopWorklistOfCallListsProgram(int rounds)
         => $$"""
             type Block2468 =

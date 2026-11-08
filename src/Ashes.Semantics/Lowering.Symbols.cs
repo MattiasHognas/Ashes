@@ -1946,7 +1946,16 @@ public sealed partial class Lowering
             || _tcoCtx?.InTailPosition == true;
         if (owningConsumer)
         {
-            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+            int duplicatedTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+            if (duplicatedTemp != argumentTemp
+                && !runtimeManagedCandidate
+                && _tcoCtx?.InTailPosition == true
+                && BindsWholeLoopParameter(argument))
+            {
+                KeepLoopResultCellOwnerDuplicateOwned(duplicatedTemp, argumentType);
+            }
+
+            argumentTemp = duplicatedTemp;
         }
 
         if (!runtimeManagedCandidate && request.TransfersRuntimeManagedChildren)
@@ -1955,6 +1964,45 @@ public sealed partial class Lowering
         }
 
         return argumentTemp;
+    }
+
+    // The duplicate a pattern owner took for an arena cell built as a loop function's result
+    // (`| root -> Spine(root = root, arguments = [])` in a function whose other arm loops): the
+    // return normalizes the cell into a reference-counted copy that retains the field itself, and
+    // the arena cell releases nothing. The duplicate goes to an owned slot, released once the
+    // function's result holds references of its own.
+    // A pattern binding of the whole loop parameter (a catch-all arm's `root` over the matched
+    // parameter): its slot was stored from a read of one of the loop's parameter slots. A part matched
+    // out of the parameter is released after the result's copy by the copy's own rules.
+    private bool BindsWholeLoopParameter(Expr argument)
+    {
+        if (argument is not Expr.Var variable
+            || _tcoCtx is not { } tco
+            || Lookup(variable.Name) is not Binding.Local local)
+        {
+            return false;
+        }
+
+        int storeIndex = _inst.FindLastIndex(instruction => instruction is IrInst.StoreLocal store && store.Slot == local.Slot);
+        return storeIndex >= 0
+            && _inst[storeIndex] is IrInst.StoreLocal { Source: var source }
+            && _inst.FindLast(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(source))
+                is IrInst.LoadLocal { Slot: var readSlot }
+            && tco.ParamSlots.Contains(readSlot);
+    }
+
+    private void KeepLoopResultCellOwnerDuplicateOwned(int duplicatedTemp, TypeRef argumentType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTCELLOWNERDUP") is not null
+            || ContainsUnresolvedLayoutType(Prune(argumentType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, duplicatedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(argumentType));
     }
 
     private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
