@@ -1817,6 +1817,10 @@ copy: the record's reference is released after the copy retains it. A field one 
 stores a borrowed value keeps the copy's retain alone, and so does a value an owned slot
 holds. Without it, a record whose `Maybe` field joined a fresh `None` with a retain of a slot read
 through borrowed state kept the retained value once per call (`GRC_NO_ARENARECORDCHILDMOVE`).
+A result joining that record with arena record updates of it (`if c then built with f = v else
+built`) is the same move: a field every update copies from the record without a retain is the same
+reference whichever arm returned, and moves into the copy (`GRC_NO_ARENARECORDJOINMOVE`). A field
+an update replaces keeps its reference.
 
 A generic list builder stores results it cannot release. A function whose result is a list of
 unresolved element type built from arena cells, each consing a closure call's result onto the empty

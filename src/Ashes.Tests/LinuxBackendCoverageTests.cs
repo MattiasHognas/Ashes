@@ -24917,4 +24917,40 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop result record update field", samples, maxRssKb: 16_000);
     }
+
+
+    private static string BuildArenaRecordReadBeforeReturnProgram(int rounds)
+        => ArenaRecordOwnedFieldDeclarations
+            .Replace("\n            HandOff(\n", "\n            let built = HandOff(\n", StringComparison.Ordinal)
+            .Replace(
+                "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n",
+                "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> if s > 1000 then (built with borrowsOnly = true) else built\n                | None -> built\n",
+                StringComparison.Ordinal)
+            + $$"""
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_record_read_before_return_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // handOff binds the arena record, reads its Maybe field and returns either the record or an
+        // update of it that copies the field without a retain. The field is the same reference on
+        // both arms, so it moves into the result's copy; before, it stayed behind once per call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildArenaRecordReadBeforeReturnProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena record read before return", samples, maxRssKb: 16_000);
+    }
 }

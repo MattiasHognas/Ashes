@@ -142,8 +142,9 @@ public sealed partial class Lowering
             return;
         }
 
+        List<int> updates = [];
         int cell = SoleArenaCellOf(bodyTemp, allowRecord: true);
-        if (cell < 0)
+        if (cell < 0 && (!ArenaRecordJoinMoveEnabled || !TryArenaRecordWithRawUpdates(bodyTemp, out cell, updates)))
         {
             return;
         }
@@ -158,7 +159,7 @@ public sealed partial class Lowering
             }
 
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, index, named));
-            if (CanArenaReset(fieldType) || !HoldsOwnReference(source))
+            if (CanArenaReset(fieldType) || !HoldsOwnReference(source) || !updates.All(update => CopiesFieldRaw(update, index, cell)))
             {
                 continue;
             }
@@ -167,6 +168,114 @@ public sealed partial class Lowering
             Emit(new IrInst.GetAdtField(childTemp, bodyTemp, index, tagless));
             EmitRuntimeManagedChildDrop(childTemp, fieldType);
         }
+    }
+
+    private static bool ArenaRecordJoinMoveEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDJOINMOVE") is null;
+
+    // A result joining one arena record with arena record updates of it (`if c then built with
+    // { f = v } else built`): the record, and each update, whose fields are read from the record
+    // without a retain. A field every update copies that way is the same reference on every arm.
+    private bool TryArenaRecordWithRawUpdates(int bodyTemp, out int cell, List<int> updates)
+    {
+        cell = -1;
+        HashSet<int> cells = [];
+        if (!CollectArenaRecordsOfJoin(bodyTemp, cells, 8))
+        {
+            return false;
+        }
+
+        foreach (int candidate in cells)
+        {
+            if (!_inst.Any(instruction => instruction is IrInst.SetAdtField { Ptr: var ptr, Source: var source }
+                && ptr == candidate
+                && DefinitionOf(source) is IrInst.GetAdtField))
+            {
+                if (cell >= 0)
+                {
+                    return false;
+                }
+
+                cell = candidate;
+            }
+        }
+
+        if (cell < 0)
+        {
+            return false;
+        }
+
+        int record = cell;
+        updates.AddRange(cells.Where(candidate => candidate != record));
+        return updates.Count > 0;
+    }
+
+    // The arena records a value is, through locals and borrows; false when a store is anything else
+    // than an arena record, the value a match without an arm stores, or a back edge's placeholder.
+    private bool CollectArenaRecordsOfJoin(int temp, HashSet<int> cells, int budget)
+    {
+        if (budget == 0)
+        {
+            return false;
+        }
+
+        switch (DefinitionOf(temp))
+        {
+            case IrInst.AllocAdt { RuntimeManaged: false, FieldCount: > 0 }:
+                cells.Add(temp);
+                return true;
+            case IrInst.Borrow borrow:
+                return CollectArenaRecordsOfJoin(borrow.SourceTemp, cells, budget - 1);
+            case IrInst.LoadLocal load:
+                bool any = false;
+                foreach (IrInst instruction in _inst)
+                {
+                    if (instruction is not IrInst.StoreLocal store || store.Slot != load.Slot)
+                    {
+                        continue;
+                    }
+
+                    if (DefinitionOf(store.Source) is IrInst.LoadConstInt { Value: 0 })
+                    {
+                        continue;
+                    }
+
+                    if (!CollectArenaRecordsOfJoin(store.Source, cells, budget - 1))
+                    {
+                        return false;
+                    }
+
+                    any = true;
+                }
+
+                return any;
+            default:
+                return false;
+        }
+    }
+
+    // Whether an arena record update stores the record's own field `index`, read without a retain.
+    private bool CopiesFieldRaw(int update, int index, int cell)
+    {
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.SetAdtField { Ptr: var ptr, FieldIndex: var field, Source: var source }
+                || ptr != update
+                || field != index)
+            {
+                continue;
+            }
+
+            if (DefinitionOf(source) is not IrInst.GetAdtField { FieldIndex: var read, Ptr: var from } || read != index)
+            {
+                return false;
+            }
+
+            HashSet<int> origins = [];
+            return CollectArenaRecordsOfJoin(from, origins, 8) && origins.Count == 1 && origins.Contains(cell);
+        }
+
+        return false;
     }
 
     // A join holding a reference this function took on every arm: a retain no owned slot releases,

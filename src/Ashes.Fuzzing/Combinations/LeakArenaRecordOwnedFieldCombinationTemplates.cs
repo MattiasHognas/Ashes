@@ -20,9 +20,19 @@ internal sealed partial class ArenaRecordOwnedFieldTemplate() : LeakCombinationT
         "handOff", "makeState", "score", "loop",
     ];
 
-    protected override string Declarations(LeakNames names)
+    protected override string Declarations(LeakNames names) => Render(names, readBeforeReturn: false);
+
+    internal static string Render(LeakNames names, bool readBeforeReturn)
     {
-        string program = Program.Replace("ENTRY", names.Entry, StringComparison.Ordinal)
+        string source = readBeforeReturn
+            ? Program
+                .Replace("\n            HandOff(\n", "\n            let built = HandOff(\n", StringComparison.Ordinal)
+                .Replace(
+                    "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n",
+                    "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> if s > 1000 then (built with borrowsOnly = true) else built\n                | None -> built\n",
+                    StringComparison.Ordinal)
+            : Program;
+        string program = source.Replace("ENTRY", names.Entry, StringComparison.Ordinal)
             .Replace("WIDTH", names.Between(3, 9).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         Dictionary<string, string> renamed = new(StringComparer.Ordinal);
         foreach (string identifier in Identifiers)
@@ -124,4 +134,15 @@ internal sealed partial class ArenaRecordOwnedFieldTemplate() : LeakCombinationT
 
         let ENTRY (seed: Int) = loop(WIDTH)(seed)
         """;
+}
+
+/// <summary>
+/// The same function binds the arena record, reads its <c>Maybe</c> field, and returns either the
+/// record or an update of it that copies that field without a retain. The field is the same
+/// reference on both arms, so it moves into the result's copy whichever arm returned.
+/// </summary>
+internal sealed class ArenaRecordReadBeforeReturnTemplate() : LeakCombinationTemplate(
+    "leak.arena-record-read-before-return", "arenaRecordReadBeforeReturn", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.TailCall)
+{
+    protected override string Declarations(LeakNames names) => ArenaRecordOwnedFieldTemplate.Render(names, readBeforeReturn: true);
 }
