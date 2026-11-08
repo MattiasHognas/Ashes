@@ -23805,6 +23805,14 @@ let chainTailKeepsCellInArena (request: ConsumerRequest) (tailExpression: Expr) 
         | (ExprCons(_head, _tail), Some(_slot)) -> !isRuntimeTemp(tailTemp)(state)
         | _ -> false
 
+// Stage 0's `CopiesFreshScalarListHeadIntoLoopCell`: inside a loop an owned slot holds one
+// iteration's value and loses the others to the successors, so a fresh reference-counted list of
+// scalars an arena cell would hold is copied into the arena instead.
+let copiesFreshScalarListHeadIntoLoopCell (headTemp: Int) (resolved: SemanticType) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), resolved) with
+        | (Some(_frame), SemList(element)) -> resultSurvivesReset(element)(state) && isFreshRuntimeTemp(headTemp)(state)
+        | _ -> false
+
 // Stage 0's `CopyFreshStringHeadIntoArenaCell`: an arena cell never releases its head, so a newly
 // produced reference-counted string, or a reference the cell took on a binding's string, is stored
 // as an arena copy and released right away. A cell whose parts the back edge copies, or whose
@@ -23832,6 +23840,34 @@ let arenaCellHeadOf (request: ConsumerRequest) (headTemp: Int) (headType: Semant
                                 |> emit(RcDrop(headTemp)("String")(-1)(true)(false)(None))
                                 |> forgetCallArgumentTransferRetain(headTemp), copyTemp))
 
+// Stage 0's `TryCopyFreshScalarListHeadIntoArenaCell`: inside a loop, a newly produced
+// reference-counted list of scalars (a call's owned `List(Int)` result pushed onto an arena worklist
+// of lists) is stored as an arena copy of its spine and the original is released right away, where
+// the arena cell would otherwise be its only holder and never release it.
+let copyFreshScalarListHeadIntoArenaCell (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    match freshTempRun(4)(state) with
+        | FreshTemp { state = reserved, temp = copyTemp } ->
+            match freshLabel("arena_cell_list_head_released")(reserved) with
+                | FreshLabel { state = labelled, label = skipLabel } ->
+                    (labelled
+                    |> emit(CopyOutList(copyTemp)(headTemp)(InlineListHead)(false)(IndependentClone))
+                    |> emit(LoadConstInt(copyTemp + 1)(0))
+                    |> emit(CmpIntNe(copyTemp + 2)(headTemp)(copyTemp + 1))
+                    |> emit(JumpIfFalse(copyTemp + 2)(skipLabel))
+                    |> emit(IsReferenceCounted(copyTemp + 3)(headTemp))
+                    |> emit(JumpIfFalse(copyTemp + 3)(skipLabel))
+                    |> emitRuntimeChildDrop(headTemp)(headType)
+                    |> emit(Label(skipLabel))
+                    |> markRuntimeTemp(headTemp)(RuntimeTransferred), copyTemp)
+
+// The head an arena cell stores: a fresh scalar list inside a loop as its arena copy, a string by
+// `arenaCellHeadOf`'s rule, anything else as it is.
+let arenaCellHeadFor (request: ConsumerRequest) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
+    if copiesFreshScalarListHeadIntoLoopCell(headTemp)(resolveType(state)(headType))(state) && !request.borrowsCellParts && !request.recordFieldCell
+    then
+        copyFreshScalarListHeadIntoArenaCell(headTemp)(resolveType(state)(headType))(state)
+    else arenaCellHeadOf(request)(headTemp)(headType)(state)
+
 let finishCons (request: ConsumerRequest) (headExpression: Expr) (tailExpression: Expr) head tail =
     match (head, tail) with
         | (LoweredCoreValue { state = failedState, error = Some(error) }, _tail) -> failure(failedState)(error)
@@ -23843,7 +23879,7 @@ let finishCons (request: ConsumerRequest) (headExpression: Expr) (tailExpression
                     if cellIsRuntimeManaged(request)(headExpression)(headTemp)(headType)(typedState) && !chainTailKeepsCellInArena(request)(tailExpression)(tailTemp)(typedState)
                     then allocateListCell(headTemp)(tailTemp)(headType)(true)(typedState)
                     else
-                        match arenaCellHeadOf(request)(headTemp)(headType)(typedState) with
+                        match arenaCellHeadFor(request)(headTemp)(headType)(typedState) with
                             | (headedState, cellHeadTemp) -> allocateListCell(cellHeadTemp)(tailTemp)(headType)(false)(headedState)
 
 // Stage 0's `EmitReferenceCountedListTail`: the tail a reference-counted cell takes over from the
@@ -24016,7 +24052,7 @@ let keepEscapingArenaCellFreshHeadOwned (arenaCell: Bool) (headTemp: Int) (headT
         | LoweredCoreValue { state = state, error = None } ->
             let resolved = resolveType(state)(headType)
             in
-                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
+                if arenaCell && isFreshRuntimeTemp(headTemp)(state) && !copiesFreshScalarListHeadIntoLoopCell(headTemp)(resolved)(state) && !containsUnresolvedLayout(resolved)(state) && (isGeneralRcValueType(resolved)(state) || isCopiedOutFreshHeadType(resolved)(state) && !lowersBackEdgeArgument(state))
                 then
                     match freshLocal(state) with
                         | FreshLocal { state = allocated, local = ownedSlot } ->

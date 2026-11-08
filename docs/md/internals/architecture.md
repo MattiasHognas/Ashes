@@ -1577,6 +1577,14 @@ is not released behind it; a slot whose value the result's type has no place for
 child-preserving at the return (its cells, not its parts), which is the release the call would have
 made, so the shape leaks no more than before the rule.
 
+An arena cell built inside a loop around a newly produced reference-counted list of scalars (a
+call's owned `List(Int)` result pushed onto an arena worklist of lists, as a control-flow graph's
+postorder walk does with each block's successors) stores an arena copy of the list's spine, and the
+original is released right away (`GRC_NO_ARENACELLFRESHLISTHEAD`, both stages). The escaping cell's
+owned slot that held such a head before kept only the last iteration's value: each earlier list was
+left to a successor that never released it (the `32_16..100` exit class, the successor lists of
+every CFG block). Outside a loop the owned slot stays, released at the function's exit.
+
 A value of an `external type` with no destructor is a foreign handle the program only passes along:
 one word copied like an integer that needs no release (`IsOpaqueHandleWord`; stage 1's
 `resultSurvivesReset` and the layout classification's `canArenaResetLayoutIn`). It used to keep every aggregate holding one outside the contract, so stage

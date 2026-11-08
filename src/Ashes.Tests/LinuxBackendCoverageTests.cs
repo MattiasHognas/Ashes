@@ -23360,6 +23360,72 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("handed-over list parts in arena closure result", samples, maxRssKb: 16_000);
     }
 
+    private static string BuildLoopWorklistOfCallListsProgram(int rounds)
+        => $$"""
+            type Block2468 =
+                | start: Int
+                | successors: List(Int)
+
+            let recursive listAt2468 (items: List(Block2468)) (index: Int) =
+                match items with
+                    | [] -> None
+                    | head :: rest ->
+                        if index == 0
+                        then Some(head)
+                        else listAt2468(rest)(index - 1)
+
+            let successorsOf2468 (blocks: List(Block2468)) (index: Int) =
+                match listAt2468(blocks)(index) with
+                    | Some(Block2468 { successors = found }) -> found
+                    | None -> []
+
+            let recursive postorder2468 (blocks: List(Block2468)) (pending: List(List(Int))) (order: List(Int)) =
+                match pending with
+                    | [] :: pendingRest -> postorder2468(blocks)(pendingRest)(order)
+                    | (successor :: more) :: pendingRest -> postorder2468(blocks)(successorsOf2468(blocks)(successor) :: more :: pendingRest)(successor :: order)
+                    | _ -> order
+
+            let recursive total2468 (xs: List(Int)) =
+                match xs with
+                    | [] -> 0
+                    | x :: rest -> x + total2468(rest)
+
+            let run (seed: Int) =
+                (let blocks = [Block2468(start = seed, successors = [1]), Block2468(start = 1, successors = [2]), Block2468(start = 2, successors = [3]), Block2468(start = 3, successors = [])]
+                in total2468(postorder2468(blocks)([successorsOf2468(blocks)(0)])([seed])))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + run(3))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_worklist_of_call_result_lists_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop pushes a call's owned list of block successors onto an arena worklist of lists, the
+        // shape of a control-flow graph's postorder walk. The arena cell never released the list, and
+        // the owned slot its head took held only the last iteration's value.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildLoopWorklistOfCallListsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{9L * rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop worklist of call result lists", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildHandleRecordResultProgram(int rounds)
         => $$"""
             external type Handle2467

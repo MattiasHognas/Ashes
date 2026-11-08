@@ -18414,6 +18414,7 @@ public sealed partial class Lowering
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
+            || CopiesFreshScalarListHeadIntoLoopCell(head)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
             || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
         {
@@ -18432,6 +18433,11 @@ public sealed partial class Lowering
     // original or the reference is released right away. A duplicate kept for a late release stays.
     private LoweredValue CopyFreshStringHeadIntoArenaCell(Expr.Cons cons, LoweredValue head, LoweredValueRequest request, bool lateDuplicate)
     {
+        if (TryCopyFreshScalarListHeadIntoArenaCell(cons, head, request, lateDuplicate) is { } copiedList)
+        {
+            return copiedList;
+        }
+
         bool retained = DefinitionOf(head.Temp) is IrInst.RcDup { RuntimeManaged: true };
         if (Environment.GetEnvironmentVariable("GRC_NO_ARENACELLFRESHHEAD") is not null
             || Prune(head.Type) is not TypeRef.TStr
@@ -18458,6 +18464,47 @@ public sealed partial class Lowering
 
         return CreateLoweredValue(copiedTemp, head.Type);
     }
+
+    // The same holds for a newly produced reference-counted list of scalars (a call's owned `List(Int)`
+    // result pushed onto an arena worklist of lists): the arena cell stores an arena copy of its spine
+    // and the original is released right away, where the cell would otherwise be its only holder and
+    // never release it.
+    // Only inside a loop: an owned slot there holds one iteration's value and loses the others to the
+    // successors, while outside a loop the escaping cell's owned slot releases the head at the exit.
+    private LoweredValue? TryCopyFreshScalarListHeadIntoArenaCell(Expr.Cons cons, LoweredValue head, LoweredValueRequest request, bool lateDuplicate)
+    {
+        if (!CopiesFreshScalarListHeadIntoLoopCell(head)
+            || lateDuplicate
+            || IsBackEdgeCopiedCell(cons)
+            || (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+                && IsRuntimeManageableListElement(head.Type, head.Temp)))
+        {
+            return null;
+        }
+
+        int copiedTemp = NewTemp();
+        Emit(new IrInst.CopyOutList(copiedTemp, head.Temp, IrInst.ListHeadCopyKind.Inline, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+        string skipLabel = NewLabel("arena_cell_list_head_released");
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int presentTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(presentTemp, head.Temp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(presentTemp, skipLabel));
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, head.Temp));
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, skipLabel));
+        EmitRuntimeManagedChildDrop(head.Temp, head.Type);
+        Emit(new IrInst.Label(skipLabel));
+        _tempOwnershipFacts[head.Temp] = _tempOwnershipFacts[head.Temp] with { Ownership = LoweredTempOwnershipKind.Transferred };
+        return CreateLoweredValue(copiedTemp, head.Type);
+    }
+
+    private bool CopiesFreshScalarListHeadIntoLoopCell(LoweredValue head)
+        => Environment.GetEnvironmentVariable("GRC_NO_ARENACELLFRESHLISTHEAD") is null
+            && _tcoCtx is not null
+            && Prune(head.Type) is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && IsNewlyProducedRcTemp(head.Temp);
 
     private bool IsInnermostLoopChainCell(Expr.Cons cons)
         => _loopChainTailCells.Contains(cons)
