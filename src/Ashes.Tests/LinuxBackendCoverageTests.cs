@@ -3076,8 +3076,10 @@ public sealed class LinuxBackendCoverageTests
         // map or hands the map on unchanged, on the map's general path. The map position only ever
         // receives the parameter itself or a call's owned result, which holds the earlier record's
         // parts by references of its own, so the earlier record is released at the edge that hands
-        // the map on unchanged.
-        DropperCallsInLoop(BuildTableMergedOrHandedOnProgram(3), "solve", "__rcdrop_record").ShouldBe(5);
+        // the map on unchanged. The merged record handed to the generic setStr is an owned
+        // reference-counted copy, released after the call when the map did not adopt it (the sixth
+        // record release), instead of a deep copy into the to-space region, which nothing reclaims.
+        DropperCallsInLoop(BuildTableMergedOrHandedOnProgram(3), "solve", "__rcdrop_record").ShouldBe(6);
     }
 
     [Test]
