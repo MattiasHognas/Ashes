@@ -10456,6 +10456,83 @@ let recursive copyTransferRetainedSuccessors (arguments: List(TcoResetArgument))
             |> copyTransferRetainedSuccessors(rest)(restFlags)
         | _ -> state
 
+// Whether a successor temp is a transfer retain: the temp a runtime-managed duplicate defines
+// (the retain `retainTransferredChild` takes of a live owner's read).
+let recursive isTransferRetainIn (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then runtimeManaged
+            else isTransferRetainIn(temp)(rest)
+        | _ :: rest -> isTransferRetainIn(temp)(rest)
+
+// The fields of an arena constructor cell, back to the allocation that made it: its tag, whether it
+// is tagless, and each (field index, stored temp). None when the cell is reference-counted or was
+// not allocated in this body.
+let recursive arenaCellFields (cell: Int) (instructions: List(IrInstruction)) (fields: List((Int, Int))) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = AllocAdt(target, tag, _fieldCount, runtimeManaged, tagless) } :: rest ->
+            if target == cell
+            then
+                if runtimeManaged
+                then None
+                else Some((tag, tagless, fields))
+            else arenaCellFields(cell)(rest)(fields)
+        | IrInstruction { instruction = SetAdtField(pointer, fieldIndex, source, _tagless) } :: rest ->
+            if pointer == cell
+            then arenaCellFields(cell)(rest)((fieldIndex, source) :: fields)
+            else arenaCellFields(cell)(rest)(fields)
+        | _ :: rest -> arenaCellFields(cell)(rest)(fields)
+
+// Stage 0's `CopyTransferDuplicatedChildrenIntoArena` for one field: a value of bounded, resolved
+// type takes an arena copy, stored back into the cell, and its retain is released.
+let copyTransferDuplicatedField (cell: Int) (tagless: Bool) (fieldIndex: Int) (source: Int) (fieldType: Maybe(SemanticType)) (state: CoreLoweringState) =
+    match fieldType with
+        | Some(semanticType) ->
+            if isTransferRetainIn(source)(state.reversedInstructions) && !resultSurvivesReset(semanticType)(state) && !containsUnresolvedLayout(semanticType)(state) && hasBoundedCopy(semanticType)([])(state)
+            then
+                match emitArenaCopyOfReferenceCounted(source)(semanticType)(true)(state) with
+                    | (copied, copyTemp) ->
+                        emit(SetAdtField(cell)(fieldIndex)(copyTemp)(tagless))(copied)
+            else state
+        | None -> state
+
+let recursive copyTransferDuplicatedFields (cell: Int) (typeName: Str) (typeArguments: List(SemanticType)) (tag: Int) (tagless: Bool) (fields: List((Int, Int))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> state
+        | (fieldIndex, source) :: rest ->
+            state
+            |> copyTransferDuplicatedField(cell)(tagless)(fieldIndex)(source)(constructorFieldTypeAt(typeName)(typeArguments)(tag)(fieldIndex)(stateConstructorLayouts(state))(state))
+            |> copyTransferDuplicatedFields(cell)(typeName)(typeArguments)(tag)(tagless)(rest)
+
+// Stage 0's `CopyTransferDuplicatedChildrenIntoArena`: an arena parameter's successor that is a
+// constructor cell built for it, whose fields hold references retained for the transfer out of an
+// owner the iteration releases (`Some(label)`). Neither the arena cell nor the parameter releases
+// them, so each field takes an arena copy and its retain is released.
+let copyTransferDuplicatedChildren (argument: TcoResetArgument) (state: CoreLoweringState) =
+    match argument with
+        | TcoResetArgument { argumentTemp = cell, argumentType = argumentType, managedList = None, managedAdt = None, managedStr = None } ->
+            match resolveType(state)(argumentType) with
+                | SemNamed(_symbolId, typeName, typeArguments) ->
+                    match arenaCellFields(cell)(state.reversedInstructions)([]) with
+                        | Some((tag, tagless, fields)) ->
+                            (state with currentSpan = None)
+                            |> copyTransferDuplicatedFields(cell)(typeName)(typeArguments)(tag)(tagless)(fields)
+                            |> (given (copied: CoreLoweringState) -> copied with currentSpan = state.currentSpan)
+                        | None -> state
+                | _ -> state
+        | _ -> state
+
+let recursive copyAllTransferDuplicatedChildren (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> state
+        | argument :: rest ->
+            state
+            |> copyTransferDuplicatedChildren(argument)
+            |> copyAllTransferDuplicatedChildren(rest)
+
 // Whether a successor at one of these ordinals is a call's result left in the arena: neither
 // handed on unchanged nor of a type a reset leaves alone.
 let recursive arenaCallResultAmong (ordinals: List(Int)) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
@@ -10501,7 +10578,10 @@ let emitArenaTcoReset (reset: CoreTcoReset) (frame: CoreTcoLoopFrame) (arguments
                         if compactionUsesFixedWatermark(arguments)(released)
                         then emitCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
                         else emitAdvancingCompactingTcoReset(frame)(arguments)(preRestoreSlot)(released)
-                    else copyTransferRetainedSuccessors(arguments)(reset.argumentTransferRetained)(released))
+                    else
+                        released
+                        |> copyTransferRetainedSuccessors(arguments)(reset.argumentTransferRetained)
+                        |> copyAllTransferDuplicatedChildren(arguments))
 
 // Stage 0's `TcoBackEdgeTryEmitRuntimeManagedSuccessorsWithoutReset`: a loop that can neither
 // reset its arena plainly nor copy every argument out still owns the list and aggregate parameters
@@ -26950,17 +27030,6 @@ let retainConstructorLoopParameterArguments (runtimeManaged: Bool) arguments low
             match retainLoopParameterArguments(runtimeManaged)(arguments)(temps)(semanticTypes)(state)([]) with
                 | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
         | _ -> lowered
-
-// Whether a successor temp is a transfer retain: the temp a runtime-managed duplicate defines
-// (the retain `retainTransferredChild` takes of a live owner's read).
-let recursive isTransferRetainIn (temp: Int) (instructions: List(IrInstruction)) =
-    match instructions with
-        | [] -> false
-        | IrInstruction { instruction = RcDup(target, _source, runtimeManaged, _mayBeEmpty) } :: rest ->
-            if target == temp
-            then runtimeManaged
-            else isTransferRetainIn(temp)(rest)
-        | _ :: rest -> isTransferRetainIn(temp)(rest)
 
 // Stage 0's `IsFreshOwnedConstructorArgument`: a value produced by the argument expression itself
 // (not read from a binding) that is owned on the reference-counted heap. A self call's
