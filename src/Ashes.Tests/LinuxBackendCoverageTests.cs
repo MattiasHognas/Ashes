@@ -22880,6 +22880,110 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("arena successor child", samples, maxRssKb: 16_000);
     }
 
+    private const string ConstrainedSnapshotHelpers = """
+            type Facts =
+                | ints: List((Int, Int))
+                | bools: List((Int, Bool))
+
+            let recursive lookupAssociation key entries =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail ->
+                        if k == key
+                        then Some(v)
+                        else lookupAssociation(key)(tail)
+
+            let recursive setAssociation key value entries =
+                match entries with
+                    | [] -> [(key, value)]
+                    | (k, v) :: tail ->
+                        if k == key
+                        then (key, value) :: tail
+                        else (k, v) :: setAssociation(key)(value)(tail)
+
+            let recordEdgeSnapshot target facts saved =
+                match lookupAssociation(target)(saved) with
+                    | Some(snapshots) -> setAssociation(target)(Ashes.Collection.List.append(snapshots)([facts]))(saved)
+                    | None -> setAssociation(target)([facts])(saved)
+
+            type Case =
+                | tag: Int
+                | label: Str
+
+            let switchCaseLabel (switchCase: Case) = switchCase.label
+
+            let recursive recordSwitchCaseSnapshots cases facts saved =
+                match cases with
+                    | [] -> saved
+                    | switchCase :: tail ->
+                        saved
+                        |> recordEdgeSnapshot(switchCaseLabel(switchCase))(facts)
+                        |> recordSwitchCaseSnapshots(tail)(facts)
+
+            """;
+
+    private static string BuildConstrainedLoopAtCallerTypesProgram(int rounds)
+        => ConstrainedSnapshotHelpers + $$"""
+            type Inst =
+                | Switch(Int, List(Case), Str)
+                | Goto(Str)
+                | Nop
+
+            let recursive walk (insts: List(Inst)) (n: Int) saved =
+                match insts with
+                    | [] -> saved
+                    | inst :: rest ->
+                        let facts = Facts(ints = [(n, n)], bools = [(n, true)])
+                        in
+                            match inst with
+                                | Switch(_tagTemp, cases, defaultLabel) ->
+                                    walk(rest)(n + 1)(saved
+                                    |> recordSwitchCaseSnapshots(cases)(facts)
+                                    |> recordEdgeSnapshot(defaultLabel)(facts))
+                                | Goto(target) -> walk(rest)(n + 1)(recordEdgeSnapshot(target)(facts)(saved))
+                                | Nop -> walk(rest)(n + 1)(saved)
+
+            let recursive count (saved: List((Str, List(Facts)))) (acc: Int) =
+                match saved with
+                    | [] -> acc
+                    | (_, snapshots) :: rest -> count(rest)(acc + Ashes.Collection.List.length(snapshots))
+
+            let programOf (n: Int) = [Goto("a"), Switch(1, [Case(tag = 0, label = "a" + Ashes.Text.fromInt(n % 1)), Case(tag = 1, label = "b")], "c"), Nop, Switch(2, [Case(tag = 0, label = "c"), Case(tag = 1, label = "a")], "a"), Goto("b")]
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + count(walk(programOf(n))(0)([]))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_constrained_loop_at_caller_types_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A walk with string labels records snapshots through Eq-constrained association helpers, a
+        // constrained wrapper over them, and a generic loop over switch cases. Lowered generically, the
+        // lookup's Some and every replaced entry stayed arena values holding handed-over references;
+        // each helper is now lowered again at the walk's concrete types.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildConstrainedLoopAtCallerTypesProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 8}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("constrained loop at caller types", samples, maxRssKb: 16_000);
+    }
+
+
     private static string BuildScalarVariantListResultProgram(int rounds)
         => $$"""
             type TextSpan =

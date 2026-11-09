@@ -41,13 +41,14 @@ public sealed partial class Lowering
         if (!ConstrainedSpecializationEnabled
             || !_configuration.EnableElementSpecialization
             || !_emitTraitDictionaries
-            || !usesTraitDictionary
             || _lambdaDepth != 0
             || _elementSpecializationDepth != 0
             || (_abstractElementTmcDeclines == declinesBeforeValue && binder is not Expr.LetRecursive)
             || value is not Expr.Lambda lambda
             || scheme is null
-            || scheme.Quantified.Count == 0)
+            || scheme.Quantified.Count == 0
+            || !ContainsFreeTypeVariable(scheme.Body)
+            || (!usesTraitDictionary && (_topLevelFunctionRefs.ContainsKey(name) || !MentionsConstrainedCandidate(lambda))))
         {
             return;
         }
@@ -77,6 +78,26 @@ public sealed partial class Lowering
             || (bound.Quantified.Count == registered.Quantified.Count
                 && bound.Constraints.Count == registered.Constraints.Count
                 && string.Equals(Pretty(Prune(bound.Body)), Pretty(Prune(registered.Body)), StringComparison.Ordinal));
+
+    // A generic function that captures a constrained candidate has no label of its own and is no
+    // element specialization candidate; it is lowered again at its caller's types like the candidate.
+    private bool MentionsConstrainedCandidate(Expr.Lambda lambda)
+    {
+        foreach (Expr? node in EnumerateFlowNodes(lambda))
+        {
+            if (node is null)
+            {
+                return false;
+            }
+
+            if (node is Expr.Var { Name: var name } && _constrainedSpecializationCandidates.ContainsKey(name))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     // A constrained copy's call to itself: lowered as an ordinary self call.
     private bool IsConstrainedSpecializationSelfCall(Expr rootExpression)
