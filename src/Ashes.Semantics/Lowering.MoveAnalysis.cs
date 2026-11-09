@@ -911,6 +911,30 @@ public sealed partial class Lowering
                 : null;
     }
 
+    // A recursive group's dispatch is synthesized while the group is lowered, after the move analysis
+    // ran, so it is registered and summarized on its own: its loop then gets the structural
+    // parameter facts an ordinary recursive loop gets from the analysis. Facts that come from the
+    // whole-program passes (result reach, call census) are the conservative defaults.
+    private FuncKey? RegisterSynthesizedLoopFunction(Expr.Lambda lambda, string name, SourceFunctionOrigin origin, FuncKey enclosingMember)
+    {
+        if (!_maAnalyzed || _collectInferredTraitElaboration)
+        {
+            return null;
+        }
+
+        var key = new FuncKey(lambda);
+        _maFuncs[key] = (CollectLambdaParams(lambda), GetInnermostBody(lambda));
+        _maFunctionOrigins[key] = origin;
+        _maKeyName[key] = name;
+        var scope = new Dictionary<string, FuncKey>(_maFunctionScopes.GetValueOrDefault(enclosingMember) ?? new Dictionary<string, FuncKey>(), StringComparer.Ordinal)
+        {
+            [name] = key,
+        };
+        _maFunctionScopes[key] = scope;
+        _ownershipSummaries[key] = CreateOwnershipSummary(key, name, _maFuncs[key]);
+        return key;
+    }
+
     private FuncKey? GetRegisteredFunctionKey(Expr binder)
     {
         FuncKey key = GetCanonicalFuncKey(binder);

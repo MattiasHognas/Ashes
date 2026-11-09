@@ -7017,8 +7017,14 @@ public sealed partial class Lowering
         Expr.LetRecursive binding,
         List<string> parameterNames,
         int parameterCount)
+        => CreateRecursiveTcoContext(binding.Name, GetRegisteredFunctionKey(binding), parameterNames, parameterCount);
+
+    private TcoContext CreateRecursiveTcoContext(
+        string selfName,
+        FuncKey? ownershipFunction,
+        List<string> parameterNames,
+        int parameterCount)
     {
-        FuncKey? ownershipFunction = GetRegisteredFunctionKey(binding);
         var facts = GetTcoParameterOrdinalFacts(ownershipFunction);
         int evidenceCount = parameterNames.TakeWhile(parameter =>
             _traitDictionaryParameterMetadata.ContainsKey(parameter)
@@ -7035,7 +7041,7 @@ public sealed partial class Lowering
                 : fact with { RootParameterOrdinal = fact.RootParameterOrdinal + evidenceCount })
             .ToArray();
         return new TcoContext(
-            binding.Name, parameterCount, parameterNames, loopInvariant,
+            selfName, parameterCount, parameterNames, loopInvariant,
             Shift(facts.ArenaSelfContainedListRebuild),
             Shift(facts.FreshClosureRebuild),
             Shift(facts.BytesProvenanceSafeListRebuild),

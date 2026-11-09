@@ -1168,6 +1168,24 @@ public sealed partial class Lowering
         return value is not null;
     }
 
+    // The dispatch loop is summarized like a source function (GRC_NO_DISPATCHFACTS turns it off), so its
+    // parameters are placed from the same structural facts an ordinary recursive loop's are: a fresh
+    // reference-counted value a member hands its sibling then has an owner the loop releases.
+    private TcoContext CreateDispatchTcoContext(RecursiveGroupExpr group, Expr.Lambda dispatchLambda, string dispatchName, int paramCount)
+    {
+        List<string> parameterNames = CollectLambdaParams(dispatchLambda);
+        if (Environment.GetEnvironmentVariable("GRC_NO_DISPATCHFACTS") is not null
+            || RegisterSynthesizedLoopFunction(dispatchLambda, dispatchName, _maFunctionOrigins[GetRecursiveGroupMemberKey(group, 0)], GetRecursiveGroupMemberKey(group, 0)) is not { } key)
+        {
+            return new TcoContext(dispatchName, paramCount, parameterNames) { InTailPosition = false };
+        }
+
+        TcoContext tco = CreateRecursiveTcoContext(dispatchName, key, parameterNames, paramCount);
+        tco.Body = GetInnermostBody(dispatchLambda);
+        RecomputeTcoParameterFlow(tco, routed: false);
+        return tco;
+    }
+
     private int[] MutualRecursionTcoLowerDispatchAndWrappers(
         RecursiveGroupExpr group,
         IReadOnlyList<(string Name, Expr Value)> bindings,
@@ -1206,10 +1224,7 @@ public sealed partial class Lowering
         int paramCount = layout.SlotCount + 1; // the dispatch tag plus the parameter slots
         var savedTcoCtx = _tcoCtx;
         _tcoCtx = HasTailSelfCalls(GetInnermostBody(dispatchLambda), dispatchName, paramCount)
-            ? new TcoContext(dispatchName, paramCount, CollectLambdaParams(dispatchLambda))
-            {
-                InTailPosition = false
-            }
+            ? CreateDispatchTcoContext(group, dispatchLambda, dispatchName, paramCount)
             : null;
         var (dispatchTemp, dispatchType) = LowerLambdaCore(
             dispatchLambda,
