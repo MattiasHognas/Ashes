@@ -50,7 +50,7 @@ public sealed class BorrowedChildEscapeOwnershipTests
     }
 
     [Test]
-    public void A_view_inside_a_result_the_scope_cannot_copy_keeps_its_backing_alive()
+    public void A_view_inside_a_result_the_scope_cannot_copy_releases_its_backing_behind_the_result_copy()
     {
         const string source =
             """
@@ -80,12 +80,28 @@ public sealed class BorrowedChildEscapeOwnershipTests
             """;
         IrProgram ir = LowerProgram(source);
 
-        // `rest` views `trimmed`, and a result of a self-recursive type is not deep-copied at the
-        // scope exit, so releasing `trimmed` there would leave the returned view dangling.
-        FunctionsOf(ir, "parseValue")
-            .SelectMany(function => function.Instructions.OfType<IrInst.RcDrop>())
-            .Where(release => release.RuntimeManaged && string.Equals(release.TypeName, "String", StringComparison.Ordinal))
-            .ShouldBeEmpty();
+        // `rest` views `trimmed`, and a result of a self-recursive type cannot be deep-copied into
+        // the arena at the scope exit. The result is normalized onto the reference-counted heap
+        // instead, the copy materializing the view, so `trimmed` is released only behind that copy:
+        // every release of a reference-counted string follows a call of the result's normalizer, and
+        // there is one, since keeping `trimmed` alive to the program's end was a leak per call.
+        int releases = 0;
+        foreach (IrFunction function in FunctionsOf(ir, "parseValue"))
+        {
+            List<IrInst> instructions = [.. function.Instructions];
+            int firstNormalize = instructions.FindIndex(instruction => instruction is IrInst.CallKnown { FuncLabel: var label }
+                && label.StartsWith("__rcnorm", StringComparison.Ordinal));
+            int firstStringRelease = instructions.FindIndex(instruction => instruction is IrInst.RcDrop { RuntimeManaged: true, TypeName: var typeName }
+                && string.Equals(typeName, "String", StringComparison.Ordinal));
+            if (firstStringRelease >= 0)
+            {
+                releases++;
+                firstNormalize.ShouldBeGreaterThanOrEqualTo(0);
+                firstNormalize.ShouldBeLessThan(firstStringRelease);
+            }
+        }
+
+        releases.ShouldBeGreaterThan(0);
     }
 
     private static IrFunction[] FunctionsOf(IrProgram ir, string sourceName)
