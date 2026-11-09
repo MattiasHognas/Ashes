@@ -1023,6 +1023,19 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   until it lands, the selfhost rejects `==` on a list of a `deriving {Eq}` record
   (`tests/reuse_specialization_declines_unreachable_helper.ash`, `CoreOperatorTypeMismatch` on
   `List(Live)`), the one shared fixture that needs a derived implementation at run time.
+- [ ] Copy constrained bindings at concrete types once they are let-polymorphic. Stage 1 does not
+  generalize a constrained top-level binding today: a constrained lookup or association update is
+  lowered at its one use type, which is why the stage-0 leak below does not arise here (a second
+  use at another type is rejected, ASH002). Stage 0 lowers such a function generically with
+  dictionaries, where a lookup's `Some` or a replaced entry stays an arena value holding a
+  handed-over reference that nothing releases, so it routes every call whose parameter types all
+  settle to a copy lowered from the function's source at those types
+  (`GRC_NO_CONSTRAINEDSPECIALIZATION`, `Lowering.ConstrainedSpecialization.cs`; see
+  [architecture.md](../internals/architecture.md)). When this milestone lets stage 1 generalize
+  constrained bindings, stage 1 must copy them at concrete types the same way, or it gains this
+  leak. The generic loops that call them already leak on stage 1, because stage 1 has no element
+  specialization: `recordSwitchCaseSnapshots` in `tests/constrained_loop_lowered_at_caller_types_releases_snapshots.ash`
+  leaks five cells a round on stage 1 and is flat with its parameters annotated.
 
 ### Modules, projects, externals, and whole-program semantics
 
