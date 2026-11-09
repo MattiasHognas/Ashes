@@ -11800,6 +11800,14 @@ public sealed partial class Lowering
                 missingCapabilityOperation,
                 arguments);
         }
+        if (IsConstrainedSpecializationSelfCall(rootExpression))
+        {
+            return null;
+        }
+        if (TryLowerConstrainedSpecializedCall(call, rootExpression, arguments, request) is { } constrained)
+        {
+            return constrained;
+        }
         if (TryLowerTraitDictionaryReuseSpecialization(call, rootExpression, arguments) is { } reuse)
         {
             return reuse;
@@ -14783,6 +14791,7 @@ public sealed partial class Lowering
     {
         runtimeManagedResultFlagTemp = -1;
         PreconstrainKnownCallArgumentTypes(collectedArgs, currentType);
+        RecordConstrainedCallTypes(rootExpr, collectedArgs.Count, currentType);
         ElementSpecializationCandidate? elementCandidate =
             _configuration.EnableElementSpecialization
                 ? ResolveElementSpecializationCandidate(rootExpr, collectedArgs.Count)

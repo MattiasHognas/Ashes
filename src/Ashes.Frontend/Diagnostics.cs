@@ -175,6 +175,16 @@ public sealed class Diagnostics
         _entries.Add(new DiagnosticEntry(span, message, code));
     }
 
+    /// <summary>Drops the entries reported after the first <paramref name="count"/>: a speculative
+    /// lowering that is abandoned takes back what it reported.</summary>
+    public void TruncateTo(int count)
+    {
+        if (count < _entries.Count)
+        {
+            _entries.RemoveRange(count, _entries.Count - count);
+        }
+    }
+
     /// <summary>Throws a <see cref="CompileDiagnosticException"/> carrying every collected diagnostic
     /// when at least one has been recorded; otherwise returns without effect.</summary>
     public void ThrowIfAny()
