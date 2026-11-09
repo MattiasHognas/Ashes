@@ -1174,6 +1174,17 @@ instructions): its producers hand it back on the reference-counted heap, and kep
 beside the unplaceable instruction list, every iteration's value leaked
 (`GRC_NO_SCALARFIELDACCUMULATOR`).
 
+A list accumulator a self-call replaces with a call's result is placed on the reference-counted
+heap whatever its element holds, a list inside it included (`List(Maybe(List(Str)))`,
+`List((Str, List((Int, Int))))`; `GRC_NO_UNBOUNDEDACCUMULATOR`): left in the arena, the call's
+results were built over values the iteration owned, which then had no owner to release them. A
+sibling may still receive a part of such an element rather than the whole accumulator: a loop
+handing `si` out of `Some(si) = lookupAssociation(name)(savedInts)` on as its `knownInts`. Kept in
+the arena, that sibling would hold the inner list without a reference of its own while the back
+edge releases the accumulator it came from, so a sibling whose type an accumulator element may
+contain blocks the accumulator like one that may receive it whole
+(`GRC_NO_ACCUMULATORPARTSIBLING`, both stages).
+
 A list parameter's placement decides who owns what a successor's cells store. A parameter on the
 reference-counted heap has its successor copied at the back edge, with references of its own,
 before the iteration's owners are released; a cell built for it therefore borrows its children,

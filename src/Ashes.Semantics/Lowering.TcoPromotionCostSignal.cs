@@ -583,7 +583,10 @@ public sealed partial class Lowering
             || (Environment.GetEnvironmentVariable("GRC_NO_HEAPACCUMULATOR") is null
                 && !CanArenaReset(Prune(element))
                 && CanRuntimeManageTcoListElement(element)
-                && HasBoundedCopy(element, []));
+                && (HasBoundedCopy(element, []) || UnboundedAccumulatorEnabled));
+
+    private static bool UnboundedAccumulatorEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_UNBOUNDEDACCUMULATOR") is null;
 
     private bool IsChoiceAccumulatorElement(TypeRef element)
         => Environment.GetEnvironmentVariable("GRC_NO_BRANCHACCUMULATOR") is null
@@ -669,9 +672,19 @@ public sealed partial class Lowering
         int siblingOrdinal,
         int accumulatorOrdinal,
         TypeRef accumulatorType)
-        => TypeMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal), instantiated: false)
+        => (TypeMayContainArgumentType(siblingType, accumulatorType, new HashSet<string>(StringComparer.Ordinal), instantiated: false)
+                || SiblingMayReceiveAccumulatorPart(siblingType, accumulatorType))
             && (AccumulatorFlowFor(tco, accumulatorType) is not { } flow
                 || (flow.TryGetValue(siblingOrdinal, out HashSet<int>? sources) && sources.Contains(accumulatorOrdinal)));
+
+    // A sibling whose value may be a part of the accumulator (a list one of its elements holds,
+    // matched out of it and handed on) receives that part without a reference of its own when it
+    // is kept in the arena, and the back edge releases the accumulator it came from.
+    private bool SiblingMayReceiveAccumulatorPart(TypeRef siblingType, TypeRef accumulatorType)
+        => Environment.GetEnvironmentVariable("GRC_NO_ACCUMULATORPARTSIBLING") is null
+            && !CanArenaReset(Prune(siblingType))
+            && Prune(accumulatorType) is TypeRef.TList { Element: var element }
+            && TypeMayContainArgumentType(element, siblingType, new HashSet<string>(StringComparer.Ordinal), instantiated: false);
 
     // A list of strings reaches a sibling only through its spine: a string head matched out of it
     // is retained wherever it is kept, so the sibling holding one keeps a reference of its own. A

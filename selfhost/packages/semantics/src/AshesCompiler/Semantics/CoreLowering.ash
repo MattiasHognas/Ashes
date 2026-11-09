@@ -7936,11 +7936,11 @@ let placesTcoListElement (element: SemanticType) (state: CoreLoweringState) =
         | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
 
 // Stage 0's `IsCallResultAccumulatorElement`: an accumulator a self-call replaces with a call's
-// result holds the contract's values or any other heap element the loop can place whose graph is
-// bounded (no list): its arena cells would otherwise keep values the iteration owns with no owner
-// left to release them. A list inside an element may be handed to an arena sibling parameter,
-// which would keep it past the predecessor the back edge releases.
-let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcNamedType(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state) && hasBoundedCopy(element)([])(state)
+// result holds the contract's values or any other heap element the loop can place, a list inside
+// it included: its arena cells would otherwise keep values the iteration owns with no owner left to
+// release them. An arena sibling that may receive such an inner list blocks the accumulator
+// (`siblingReceivesAccumulatorPart`).
+let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcNamedType(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state)
 
 // A list placed on the reference-counted heap as an accumulator rebuild is normalized and released
 // at a back edge like a choice accumulator: its reset argument carries that shape.
@@ -14480,7 +14480,7 @@ let tcoListSlotElement (slot: Int) (shape: TcoArgumentShape) (ordinal: Int) (loo
             match tcoListCopyPlanOf(element)(state) with
                 | None -> None
                 | Some(_plan) ->
-                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || shape == TcoChoiceAccumulatorShape && isGeneralRcValueType(element)(state) || isGeneralTupleScrutineeTail(element)(shape)(ordinal)(loop)(state) || isCallResultAccumulatorElement(element)(state) && shape == TcoAccumulatorRebuildShape || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && (tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || containsBytesLayout(element)(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
+                    if isGeneralRcNamedType(element)(state) && shape == TcoGrownConsShape || shape == TcoChoiceAccumulatorShape && isGeneralRcValueType(element)(state) || isGeneralTupleScrutineeTail(element)(shape)(ordinal)(loop)(state) || isCallResultAccumulatorElement(element)(state) && (shape == TcoAccumulatorRebuildShape || containsInt(ordinal)(loop.accumulatorRebuildOrdinals)) || (shape == TcoWalkedOrRefilledShape || shape == TcoRefilledFreshListShape) && isWalkedOrRefilledElement(element)(state) || tcoListElementSupported(element)(state) && (shape == TcoGrownConsShape && (tcoBackEdgesAllocateRuntimeCells(ordinal)(statePendingTcoResets(state)) || containsBytesLayout(element)(state)) || shape == TcoConsumedTailShape && (!resultSurvivesReset(element)(state) || tupleTailBesideHeapParameter(ordinal)(loop)(state)) || shape == TcoChoiceAccumulatorShape && !resultSurvivesReset(element)(state))
                     then Some(element)
                     else None
         | _ -> None
@@ -14770,10 +14770,19 @@ let accumulatorFlowFor (accumulatorType: SemanticType) (loop: CoreTcoLoop) (stat
 
 // Stage 0's `SiblingMayReceiveAccumulator`: a sibling that could hold the accumulator, or a part of
 // it, would keep that part without a reference of its own, so it still blocks.
+// Stage 0's `SiblingMayReceiveAccumulatorPart`: a sibling whose value may be a part of an accumulator
+// element (an inner list matched out of it and handed on) receives that part without a reference
+// of its own when it is kept in the arena, and the back edge releases the accumulator it came from.
+let siblingReceivesAccumulatorPart (siblingType: SemanticType) (accumulatorType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(accumulatorType) with
+        | SemList(element) ->
+            !(siblingType |> resolveType(state) |> canArenaResetLayout) && typeMayContainArgumentType(false)(element)(siblingType)([])(state)
+        | _ -> false
+
 let siblingMayReceiveAccumulator (sibling: TcoManagedCandidate) (candidate: TcoManagedCandidate) (accumulator: Maybe(SemanticType)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (accumulator, slotResolvedType(sibling.slot)(state.bindings)(state)) with
         | (Some(accumulatorType), Some(siblingType)) ->
-            flowMayPass(sibling.ordinal)(candidate.ordinal)(accumulatorFlowFor(accumulatorType)(loop)(state)) && typeMayContainArgumentType(false)(siblingType)(accumulatorType)([])(state)
+            flowMayPass(sibling.ordinal)(candidate.ordinal)(accumulatorFlowFor(accumulatorType)(loop)(state)) && (typeMayContainArgumentType(false)(siblingType)(accumulatorType)([])(state) || siblingReceivesAccumulatorPart(siblingType)(accumulatorType)(state))
         | _ -> true
 
 // Stage 0's `FindBlockingSiblingForCandidate`: whether some other parameter of the frame keeps this
