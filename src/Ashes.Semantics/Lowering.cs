@@ -2131,6 +2131,44 @@ public sealed partial class Lowering
         return index >= 0 && _inst[index] is IrInst.RcDup { RuntimeManaged: true };
     }
 
+    // True when temp is a field read of another value with no retain between, directly or through
+    // the one store of a binding's slot: what a pattern binder or a field access stores.
+    private bool IsBareFieldRead(int temp)
+    {
+        int index = FindLastInstruction(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(temp));
+        if (index < 0)
+        {
+            return false;
+        }
+
+        if (_inst[index] is IrInst.Borrow { SourceTemp: var borrowed })
+        {
+            return IsBareFieldRead(borrowed);
+        }
+
+        if (_inst[index] is IrInst.LoadLocal { Slot: var slot })
+        {
+            List<int> stores = [];
+            for (int i = 0; i < index; i++)
+            {
+                if (_inst[i] is IrInst.StoreLocal store && store.Slot == slot)
+                {
+                    stores.Add(i);
+                }
+            }
+
+            if (stores.Count != 1 || _inst[stores[0]] is not IrInst.StoreLocal { Source: var source })
+            {
+                return false;
+            }
+
+            int sourceIndex = _inst.FindLastIndex(stores[0], instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(source));
+            return sourceIndex >= 0 && _inst[sourceIndex] is IrInst.GetAdtField or IrInst.LoadMemOffset;
+        }
+
+        return _inst[index] is IrInst.GetAdtField or IrInst.LoadMemOffset;
+    }
+
     // True when temp is a cell this function allocated in the arena.
     private bool IsArenaCellConstruction(int temp)
     {
@@ -2746,6 +2784,17 @@ public sealed partial class Lowering
         if (storedTemp is int stored
             && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCHILDKEEP") is null
             && IsUnrealizedConstructionRetain(stored))
+        {
+            return;
+        }
+
+        // A child the construction stored as a bare read of another value's field (a binder matched
+        // out of a call's arena result, `Known(label) -> group(tail)(Some(label))`) is only borrowed
+        // by the cell: the construction took no reference, so the copy's own retain is the only one
+        // the cell's child gained.
+        if (storedTemp is int read
+            && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDFIELDCHILDKEEP") is null
+            && IsBareFieldRead(read))
         {
             return;
         }
