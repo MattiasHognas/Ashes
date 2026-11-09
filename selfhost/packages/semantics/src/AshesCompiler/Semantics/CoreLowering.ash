@@ -19422,7 +19422,8 @@ let emitConditionalNormalizeResult (plan: ArgumentCopyPlan) (resultTemp: Int) (f
 // Stage 0's `LowerCallDeepCopyOutListResult`: the generic list result is walked out of the call
 // window by the per-element deep copy the loop entry normalization uses, unconditionally when
 // the call read no returns flag (the result may be arena-built), else only on the flag's arena
-// branch, the slot's value reloaded as the result either way.
+// branch, where a list the runtime answers is already reference-counted is taken by reference and
+// the copy shares the first reference-counted suffix, the slot's value reloaded as the result either way.
 let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagTemp: Int) cursorSlot endSlot preRestoreSlot (state: CoreLoweringState) =
     if flagTemp < 0
     then
@@ -19444,7 +19445,7 @@ let emitCallDeepCopyOut (elementPlan: ArgumentCopyPlan) (resultTemp: Int) (flagT
                                 |> emit(JumpIfFalse(flagTemp)(copyLabel))
                                 |> emit(Jump(reclaimLabel))
                                 |> emit(Label(copyLabel))
-                                |> emitListDeepCopy(resultTemp)(elementPlan) with
+                                |> emitGuardedListDeepCopy(resultTemp)(elementPlan) with
                                     | (copied, copiedTemp) ->
                                         match copied
                                         |> emit(StoreLocal(resultSlot)(copiedTemp))
