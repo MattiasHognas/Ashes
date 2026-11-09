@@ -12,21 +12,6 @@ Function: isEven
     poisoned: no
     aliases:  (none)
 
-Function: __recgroup_dispatch_2
-  Parameters
-    __recgroup_which
-      ownership: consumed
-      move-safe: yes
-      unique:    no
-    __recgroup_arg0
-      ownership: consumed
-      move-safe: yes
-      unique:    no
-  Result
-    fresh:    no
-    poisoned: yes
-    aliases:  (none)
-
 Function: isOdd
   Parameters
     n

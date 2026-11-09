@@ -12,18 +12,6 @@ Function: isEven
     conservative unknown: 2
     copy value:           3
 
-Function: __recgroup_dispatch_2
-  ownership
-    __recgroup_which: consumed, move-safe yes
-    __recgroup_arg0: consumed, move-safe yes
-    result fresh: no
-  representation [recgroup_0_isEven]
-    region:               1
-    copy value:           9
-  representation [lambda_4]
-    conservative unknown: 2
-    copy value:           3
-
 Function: isOdd
   ownership
     n: consumed, move-safe yes
