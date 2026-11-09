@@ -302,6 +302,7 @@ public sealed partial class Lowering
         EmitGeneralRcOwnedSlotDrops(handedOver);
         Emit(new IrInst.Jump(doneLabel));
         Emit(new IrInst.Label(keepLabel));
+        EmitArenaCopiesOfOwnedPartsWhenRequested(resultTemp, (TypeRef.TTuple)Prune(resultType), parts, [.. _generalRcOwnedSlots.Except(kept)]);
         EmitGeneralRcOwnedSlotDrops(kept);
         Emit(new IrInst.Label(doneLabel));
         _tupleResultPartLabels[label] = parts;
@@ -343,6 +344,72 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(owned.Slot, zeroTemp));
             Emit(new IrInst.Label(nextLabel));
         }
+    }
+
+    // An arena result the caller asked for (bit 1 of the ownership word) holds nothing that needs an
+    // owner, so a part that is the very value an owned slot holds is copied into the arena in the
+    // result's field and the slot's reference is released. The caller reads the part as an arena
+    // value and never releases it; left as it was, the slot's reference was released by nobody.
+    private void EmitArenaCopiesOfOwnedPartsWhenRequested(int resultTemp, TypeRef.TTuple tupleType, int[] parts, List<GeneralRcOwnedSlot> ownedSlots)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARENAREQUESTEDPARTCOPY") is not null
+            || ownedSlots.Count == 0)
+        {
+            return;
+        }
+
+        int[] copied = [.. parts.Where(part => CanNormalizeRuntimeManagedResultIntoArena(Prune(tupleType.Elements[part])))];
+        if (copied.Length == 0)
+        {
+            return;
+        }
+
+        string skipLabel = NewLabel("tuple_parts_arena_not_requested");
+        string copyLabel = NewLabel("tuple_parts_arena_copy");
+        int wordTemp = NewTemp();
+        Emit(new IrInst.LoadArgumentOwnership(wordTemp));
+        int shiftTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(shiftTemp, 1));
+        int shiftedTemp = NewTemp();
+        Emit(new IrInst.ShrInt(shiftedTemp, wordTemp, shiftTemp));
+        int requestedTemp = NewTemp();
+        Emit(new IrInst.AndInt(requestedTemp, shiftedTemp, shiftTemp));
+        Emit(new IrInst.JumpIfFalse(requestedTemp, skipLabel));
+        int countedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(countedTemp, resultTemp));
+        Emit(new IrInst.JumpIfFalse(countedTemp, copyLabel));
+        Emit(new IrInst.Jump(skipLabel));
+        Emit(new IrInst.Label(copyLabel));
+        foreach (int part in copied)
+        {
+            TypeRef elementType = Prune(tupleType.Elements[part]);
+            foreach (GeneralRcOwnedSlot owned in ownedSlots)
+            {
+                EmitArenaCopyOfOwnedPart(resultTemp, part, elementType, owned);
+            }
+        }
+
+        Emit(new IrInst.Label(skipLabel));
+    }
+
+    private void EmitArenaCopyOfOwnedPart(int resultTemp, int part, TypeRef elementType, GeneralRcOwnedSlot owned)
+    {
+        string nextLabel = NewLabel("tuple_part_arena_owner_kept");
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(valueTemp, owned.Slot));
+        EmitSkipUnlessReferenceCounted(valueTemp, nextLabel);
+        int partTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(partTemp, resultTemp, part * 8));
+        int sameTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(sameTemp, valueTemp, partTemp));
+        Emit(new IrInst.JumpIfFalse(sameTemp, nextLabel));
+        int copyTemp = EmitDeepCopy(partTemp, elementType, IrInst.CopyOutPurpose.ArenaResultBoundary);
+        Emit(new IrInst.StoreMemOffset(resultTemp, part * 8, copyTemp));
+        EmitRuntimeManagedChildDrop(valueTemp, owned.Type);
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.StoreLocal(owned.Slot, zeroTemp));
+        Emit(new IrInst.Label(nextLabel));
     }
 
     private static bool ForwardedTupleResultPartsEnabled =>

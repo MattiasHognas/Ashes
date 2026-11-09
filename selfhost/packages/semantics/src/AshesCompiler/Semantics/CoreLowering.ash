@@ -7935,12 +7935,53 @@ let placesTcoListElement (element: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(element)(state) with
         | HeapLayoutFacts { runtimeTcoListElementSupported = supported } -> supported
 
+// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
+// value's layout.
+let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemList(element) -> containsUnresolvedLayout(element)(state)
+        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
+        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
+        | _ -> false
+and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
+
+// Stage 0's `GetCallCopyOutKind`: the scope copy-outs plus the list results whose elements are
+// strings or scalar lists.
+let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match scopeCopyOutOf(semanticType)(state) with
+        | Some(ShallowScopeCopyOut(staticSizeBytes)) -> Some(ShallowCallCopyOut(staticSizeBytes))
+        | Some(ListScopeCopyOut) -> Some(ListCallCopyOut(InlineListHead))
+        | None ->
+            match resolveType(state)(semanticType) with
+                | SemList(element) ->
+                    match element
+                    |> resolveType(state)
+                    |> listHeadCopyOf with
+                        | Some(headCopy) -> Some(ListCallCopyOut(headCopy))
+                        | None -> None
+                | _ -> None
+
+// Stage 0's `IsGeneralRcValueType`: a resolved type that reaches a named type only the
+// normalization helper expresses and has no fixed copy-out. A value of it follows the contract:
+// passed borrowed, returned owned. A reuse specialization keeps its values in the persistent
+// region and takes no part in it, nor does a program where a function may run under a
+// live handler post.
+let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (stateSpecializationFreshInputs(state), callCopyOutOf(semanticType)(state)) with
+        | (None, None) -> programMayRunUnderLiveHandlerPost(state) == false && !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
+        | _ -> false
+
 // Stage 0's `IsCallResultAccumulatorElement`: an accumulator a self-call replaces with a call's
-// result holds the contract's values or any other heap element the loop can place, a list inside
-// it included: its arena cells would otherwise keep values the iteration owns with no owner left to
-// release them. An arena sibling that may receive such an inner list blocks the accumulator
-// (`siblingReceivesAccumulatorPart`).
-let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcNamedType(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state)
+// result holds the contract's values (resolved, as stage 0's `IsGeneralRcValueType` asks) or any
+// other heap element the loop can place, a list inside it included: its arena cells would otherwise
+// keep values the iteration owns with no owner left to release them. An arena sibling that may
+// receive such an inner list blocks the accumulator (`siblingReceivesAccumulatorPart`).
+let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcValueType(element)(state) && !containsUnresolvedLayout(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state)
 
 // A list placed on the reference-counted heap as an accumulator rebuild is normalized and released
 // at a back edge like a choice accumulator: its reset argument carries that shape.
@@ -9780,19 +9821,6 @@ let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
                             |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
                             |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
 
-let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemList(element) -> containsUnresolvedLayout(element)(state)
-        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
-        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
-        | _ -> false
-and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> false
-        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
-
 // Whether the owned call-result slot was handed to a callee that holds it only as whole unshared
 // list elements (stage 0's `OwnedListHandedAsElementsOnly`).
 let recursive takenOverConsumerAccepts (origin: Maybe(IrFunctionOrigin)) (slot: Int) (consumers: List((Maybe(IrFunctionOrigin), Int, Bool))) =
@@ -10390,8 +10418,6 @@ let emitAdvancingCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(T
                     |> unlocatedInstruction(ReclaimArenaChunks(frame.arenaEndSlot)(preRestoreSlot)(false))
                     |> endLivePostsGuardBy(unlocatedInstruction)(postsSkipLabel)
 
-// Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
-// value's layout.
 let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
@@ -10629,22 +10655,6 @@ let recursive lookupTcoReset (resetId: Int) (resets: List(CoreTcoReset)) =
             if candidate == resetId
             then Some(reset)
             else lookupTcoReset(resetId)(rest)
-
-// Stage 0's `GetCallCopyOutKind`: the scope copy-outs plus the list results whose elements are
-// strings or scalar lists.
-let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
-    match scopeCopyOutOf(semanticType)(state) with
-        | Some(ShallowScopeCopyOut(staticSizeBytes)) -> Some(ShallowCallCopyOut(staticSizeBytes))
-        | Some(ListScopeCopyOut) -> Some(ListCallCopyOut(InlineListHead))
-        | None ->
-            match resolveType(state)(semanticType) with
-                | SemList(element) ->
-                    match element
-                    |> resolveType(state)
-                    |> listHeadCopyOf with
-                        | Some(headCopy) -> Some(ListCallCopyOut(headCopy))
-                        | None -> None
-                | _ -> None
 
 let recursive pendingCopyOutReloading (target: Int) (slot: Int) (copyOuts: List(CorePendingCallCopyOut)) =
     match copyOuts with
@@ -11080,16 +11090,6 @@ let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state:
                             emit(RcDrop(valueTemp)(semanticType
                             |> resolveType(state)
                             |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
-
-// Stage 0's `IsGeneralRcValueType`: a resolved type that reaches a named type only the
-// normalization helper expresses and has no fixed copy-out. A value of it follows the contract:
-// passed borrowed, returned owned. A reuse specialization keeps its values in the persistent
-// region and takes no part in it, nor does a program where a function may run under a
-// live handler post.
-let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState) =
-    match (stateSpecializationFreshInputs(state), callCopyOutOf(semanticType)(state)) with
-        | (None, None) -> programMayRunUnderLiveHandlerPost(state) == false && !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
-        | _ -> false
 
 let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
     match slots with

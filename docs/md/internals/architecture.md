@@ -2685,6 +2685,15 @@ where stage 0 keeps it in the arena, and the tuple released the binder with itse
 A reference-counted cell now retains, guarded the same way, every plain binding read it stores that no
 other rule retained (not a pattern owner, live owner, loop-parameter read, or fresh runtime value).
 
+A loop that returns a placed accumulator inside an arena tuple beside a value of unresolved type
+returns through the generic tuple-parts protocol, and the tuple's retain of the accumulator sits in an
+owned slot (stage 0's `HandArenaAggregateRetainToOwnedSlot`). A caller that asks for an arena
+result instead of the parts took the tuple through the not-requested path, which releases only the
+owned values out of the result's reach, so the accumulator was released by nobody. Under that request a part that is the very value an owned slot
+holds is now copied into the arena in the tuple's field and the slot is released
+(`GRC_NO_ARENAREQUESTEDPARTCOPY`; stage 1 had the rule already). Stage 1 places such an accumulator
+only once its element type is resolved, as stage 0's `IsGeneralRcValueType` requires.
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the
