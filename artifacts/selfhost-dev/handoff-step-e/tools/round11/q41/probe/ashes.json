@@ -1,0 +1,12 @@
+{
+  "name": "opt409",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "semantics": { "path": "/home/mattias/Documents/source/Ashes/.claude/worktrees/post-prefix-capture/selfhost/packages/semantics" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "/home/mattias/Documents/source/Ashes/.claude/worktrees/post-prefix-capture/selfhost/packages/frontend" }
+  }
+}
