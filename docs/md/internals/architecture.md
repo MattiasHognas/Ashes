@@ -2604,6 +2604,11 @@ on as its result, releases that child with itself: the release freed a value the
 held, and stage 1 compiled such loops into crashing code. Stage 1 now follows each such marker of an
 unplaced owner with a guarded retain (`IsReferenceCounted`, then `RcDup`), so the aggregate or join
 owns its child whatever the root's placement (stage 1; stage 0 placed these roots and never hit it).
+A binder that only borrows such a root (classified borrowed, so it takes no marker) can still be stored
+by a reference-counted cell: stage 1 places a scrutinee tuple holding it on the reference-counted heap
+where stage 0 keeps it in the arena, and the tuple released the binder with itself at the back edge.
+A reference-counted cell now retains, guarded the same way, every plain binding read it stores that no
+other rule retained (not a pattern owner, live owner, loop-parameter read, or fresh runtime value).
 
 ### One-shot resumptive arms: the pre/post split
 

@@ -23789,6 +23789,35 @@ let restDemoted (demoted: List(Bool)) =
         | _first :: rest -> rest
         | [] -> []
 
+// A reference-counted cell releases every child with itself, so a binding read it stores that no
+// rule above retained (a pattern binding that only borrows an arena-placed loop parameter's
+// child) takes a retain when it is reference-counted; an arena value is stored as it is.
+let retainUnownedRuntimeCellChild (arenaCell: Bool) (child: Expr) (original: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if arenaCell || temp != original || resultSurvivesReset(semanticType)(state) || isRuntimeTemp(temp)(state)
+            then lowered
+            else
+                match unspanArgument(child) with
+                    | ExprVar(name) ->
+                        if state
+                        |> patternOwnerBinding(name)
+                        |> patternOwnerFlag
+                        then lowered
+                        else
+                            match freshTempRun(2)(state) with
+                                | FreshTemp { state = allocated, temp = countedTemp } ->
+                                    match freshLabel("rc_cell_child_retain_skip")(allocated) with
+                                        | FreshLabel { state = labelled, label = skipLabel } ->
+                                            labelled
+                                            |> emit(IsReferenceCounted(countedTemp)(temp))
+                                            |> emit(JumpIfFalse(countedTemp)(skipLabel))
+                                            |> emit(RcDup(countedTemp + 1)(temp)(true)(false))
+                                            |> emit(Label(skipLabel))
+                                            |> success(temp)(semanticType)
+                    | _ -> lowered
+        | _ -> lowered
+
 // Stage 0's `RetainRuntimeManagedTupleChildren`: a tuple element read from a live owner or a
 // loop parameter is retained for the cell, except one the cell holds an arena copy of.
 let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (demoted: List(Bool)) (arenaCell: Bool) (state: CoreLoweringState) (reversed: List(Int)) =
@@ -23805,7 +23834,8 @@ let recursive retainAggregateChildTemps (elements: List(Expr)) (temps: List(Int)
                         |> success(retainedTemp)(semanticType)
                         |> retainLoopParameterChild(element)(temp)
                         |> recordArenaCellParameterRetain(arenaCell)(element)(temp)
-                        |> recordArenaParameterCopy(arenaCell)(element)(temp) with
+                        |> recordArenaParameterCopy(arenaCell)(element)(temp)
+                        |> retainUnownedRuntimeCellChild(arenaCell)(element)(temp) with
                             | LoweredCoreValue { state = marked, temp = markedTemp } ->
                                 retainAggregateChildTemps(restElements)(restTemps)(restTypes)(restDemoted(demoted))(arenaCell)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
