@@ -730,6 +730,13 @@ type CoreOwnerState =
     // The owned slots a handed-over argument was kept in for its parts (stage 0's
     // `GeneralRcOwnedSlot.HandedOverParts`): only these are released child-preserving at the return.
     | generalRcHandedOverPartsSlots: List((Maybe(IrFunctionOrigin), Int))
+    // The owned slots a pattern owner's duplicate of a part of a loop parameter went to, kept for an
+    // arena loop result cell (stage 0's `GeneralRcOwnedSlot.PartDuplicate`): withdrawn at the return
+    // when the result is copied anyway.
+    | generalRcPartDuplicateSlots: List((Maybe(IrFunctionOrigin), Int))
+    // The part duplicates the constructor whose arguments are being lowered took, kept once its cell is
+    // known to stay in the arena.
+    | loopResultPartDuplicates: List((Int, SemanticType))
     // The match arms and if branches being lowered, innermost first, each by its join label and a
     // label of its own; and, per owned slot, the ones it was stored inside.
     | generalRcBranches: List((Str, Str))
@@ -1752,6 +1759,22 @@ let withStateGeneralRcFreshSlots value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcFreshSlots = value))
 
+let stateGeneralRcPartDuplicateSlots (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.generalRcPartDuplicateSlots)
+
+let withStateGeneralRcPartDuplicateSlots value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with generalRcPartDuplicateSlots = value))
+
+let stateLoopResultPartDuplicates (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.loopResultPartDuplicates)
+
+let withStateLoopResultPartDuplicates value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with loopResultPartDuplicates = value))
+
 let stateGeneralRcHandedOverPartsSlots (state: CoreLoweringState) =
     (let group = state.ownerState
     in group.generalRcHandedOverPartsSlots)
@@ -2681,6 +2704,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             generalRcPredecessorOwners = [],
             generalRcFreshSlots = [],
             generalRcHandedOverPartsSlots = [],
+            generalRcPartDuplicateSlots = [],
+            loopResultPartDuplicates = [],
             generalRcBranches = [],
             generalRcSlotBranches = [],
             generalRcFinishedResult = None,
@@ -12425,41 +12450,77 @@ let releaseOwnedFieldsOfCopiedArenaRecord (bodyTemp: Int) (bodyType: SemanticTyp
                 | None -> state
         | _ -> state
 
+// Whether an owned slot of this function is a part duplicate's (stage 0's `PartDuplicate`).
+let isPartDuplicateSlot (origin: Maybe(IrFunctionOrigin)) (slot: Int) (state: CoreLoweringState) =
+    state
+    |> stateGeneralRcPartDuplicateSlots
+    |> containsHandedOverPartsSlot(origin)(slot)
+
+let recursive anyOtherOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> false
+        | (owner, slot, _semanticType) :: rest -> owner == origin && !isPartDuplicateSlot(origin)(slot)(state) || anyOtherOwnedSlotOf(origin)(rest)(state)
+
+let recursive withoutPartDuplicateSlots (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> []
+        | (owner, slot, semanticType) :: rest ->
+            if owner == origin && isPartDuplicateSlot(origin)(slot)(state)
+            then withoutPartDuplicateSlots(origin)(rest)(state)
+            else (owner, slot, semanticType) :: withoutPartDuplicateSlots(origin)(rest)(state)
+
+// Stage 0's `DropPartDuplicateSlotsWhenTheResultCopiesAnyway`: a result its own rules copy or
+// normalize anyway (a contract type, a reference-counted result, another owned value) settles a
+// part's duplicate by those rules, so the part's slot is withdrawn; only a result nothing else copies
+// keeps it, which makes the return copy the result and release the slot behind the copy.
+let dropPartDuplicateSlotsWhenTheResultCopiesAnyway (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    (let origin = stateActiveFunctionOrigin(state)
+    in
+        if isGeneralRcValueType(bodyType)(state) || isRuntimeTemp(bodyTemp)(state) || anyOtherOwnedSlotOf(origin)(stateGeneralRcOwnedSlots(state))(state)
+        then
+            withStateGeneralRcOwnedSlots(withoutPartDuplicateSlots(origin)(stateGeneralRcOwnedSlots(state))(state))(state)
+        else state)
+
+let finishGeneralRcFunctionResultWithoutPartSlots (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
+    if isGeneralRcValueType(bodyType)(state)
+    then
+        match generalCopyPlanOf(bodyType)(state) with
+            | None -> (state, bodyTemp)
+            | Some(plan) ->
+                match if producedOwned
+                then emitOwnedResultOrCopy(bodyTemp)(plan)(state)
+                else
+                    match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
+                        | (copied, copyTemp) ->
+                            (copied
+                            |> releaseFreshChildrenOfCopiedArenaTuple(bodyTemp)(bodyType)
+                            |> releaseOwnedFieldsOfCopiedArenaRecord(bodyTemp)(bodyType), copyTemp) with
+                    | (copied, resultTemp) ->
+                        (copied
+                        |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                        |> (given (marked: CoreLoweringState) -> withStateGeneralRcOwnedResultLabels(label :: stateGeneralRcOwnedResultLabels(marked))(marked))
+                        |> emitIndependentResultSignal
+                        |> emitGeneralRcOwnedSlotDrops, resultTemp)
+    else
+        if resultSurvivesReset(bodyType)(state) || isRuntimeTemp(bodyTemp)(state)
+        then (emitGeneralRcOwnedSlotDrops(state), bodyTemp)
+        else
+            match tupleResultParts(bodyType)(state) with
+                | [] ->
+                    match state
+                    |> forwardTupleResultPartsRequestThroughGenericResult(label)(bodyTemp)(bodyType)
+                    |> finishGeneralRcFunctionResultOutsideContract(label)(bodyTemp)(bodyType) with
+                        | (finished, resultTemp) -> (handOverListBuilderHeads(label)(resultTemp)(bodyType)(finished), resultTemp)
+                | parts ->
+                    (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(bodyType)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
+
 let finishGeneralRcFunctionResultWithLayout (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     if isGeneralRcFinishedResult(bodyTemp)(state)
     then (state, bodyTemp)
     else
-        if isGeneralRcValueType(bodyType)(state)
-        then
-            match generalCopyPlanOf(bodyType)(state) with
-                | None -> (state, bodyTemp)
-                | Some(plan) ->
-                    match if producedOwned
-                    then emitOwnedResultOrCopy(bodyTemp)(plan)(state)
-                    else
-                        match emitGuardedDeepCopy(bodyTemp)(plan)(state) with
-                            | (copied, copyTemp) ->
-                                (copied
-                                |> releaseFreshChildrenOfCopiedArenaTuple(bodyTemp)(bodyType)
-                                |> releaseOwnedFieldsOfCopiedArenaRecord(bodyTemp)(bodyType), copyTemp) with
-                        | (copied, resultTemp) ->
-                            (copied
-                            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
-                            |> (given (marked: CoreLoweringState) -> withStateGeneralRcOwnedResultLabels(label :: stateGeneralRcOwnedResultLabels(marked))(marked))
-                            |> emitIndependentResultSignal
-                            |> emitGeneralRcOwnedSlotDrops, resultTemp)
-        else
-            if resultSurvivesReset(bodyType)(state) || isRuntimeTemp(bodyTemp)(state)
-            then (emitGeneralRcOwnedSlotDrops(state), bodyTemp)
-            else
-                match tupleResultParts(bodyType)(state) with
-                    | [] ->
-                        match state
-                        |> forwardTupleResultPartsRequestThroughGenericResult(label)(bodyTemp)(bodyType)
-                        |> finishGeneralRcFunctionResultOutsideContract(label)(bodyTemp)(bodyType) with
-                            | (finished, resultTemp) -> (handOverListBuilderHeads(label)(resultTemp)(bodyType)(finished), resultTemp)
-                    | parts ->
-                        (releaseOwnedSlotsHandingOverTupleParts(label)(bodyTemp)(bodyType)(parts)(tupleScalarElements(bodyType)(state))(state), bodyTemp)
+        state
+        |> dropPartDuplicateSlotsWhenTheResultCopiesAnyway(bodyTemp)(bodyType)
+        |> finishGeneralRcFunctionResultWithoutPartSlots(producedOwned)(label)(bodyTemp)(bodyType)
 
 let finishGeneralRcFunctionResultAs (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(resolvePhantomNormalizedResultLayout(label)(resolvePhantomResultLayout(label)(bodyType)(state))(state))(state)
@@ -25711,8 +25772,43 @@ let keepLoopResultCellOwnerDuplicateOwned (arenaResultCell: Bool) (argument: Exp
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = ownedSlot } ->
                         after with state = allocated |> emit(StoreLocal(ownedSlot)(duplicateTemp)) |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(semanticType))
-            else after
+            else
+                if arenaResultCell && duplicateTemp != readTemp && generalRcEnabled(state) && !containsUnresolvedLayout(resolveType(state)(semanticType))(state) && (match stateTcoLoopFrame(state) with
+                    | Some(_frame) -> true
+                    | None -> false)
+                then after with state = withStateLoopResultPartDuplicates((duplicateTemp, resolveType(state)(semanticType)) :: stateLoopResultPartDuplicates(state))(state)
+                else after
         | _ -> after
+
+// Stage 0's `KeepLoopResultPartDuplicatesOfArenaCell`: the duplicate a pattern owner took for a part of
+// a loop parameter stored into a loop result cell (`Some(label)` of a record matched out of the list
+// parameter) goes to an owned slot when the cell stays in the arena, marked as a part's, which also
+// makes the return copy the result and release it behind the copy. A cell placed on the
+// reference-counted heap owns its field already. Scalar fields hold nothing.
+let recursive keepLoopResultPartDuplicates (duplicates: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match duplicates with
+        | [] -> state
+        | (duplicateTemp, semanticType) :: rest ->
+            if resultSurvivesReset(semanticType)(state)
+            then keepLoopResultPartDuplicates(rest)(state)
+            else
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownedSlot } ->
+                        allocated
+                        |> emit(StoreLocal(ownedSlot)(duplicateTemp))
+                        |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                        |> (given (registered: CoreLoweringState) -> withStateGeneralRcPartDuplicateSlots((stateActiveFunctionOrigin(registered), ownedSlot) :: stateGeneralRcPartDuplicateSlots(registered))(registered))
+                        |> keepLoopResultPartDuplicates(rest)
+
+// After a constructor's placement is known: its arguments' part duplicates are kept for an arena cell
+// and dropped for a reference-counted one, and the enclosing constructor's list is restored.
+let keepLoopResultPartDuplicatesOfArenaCell (saved: List((Int, SemanticType))) (placed: (LoweredCoreValues, Bool)) =
+    match placed with
+        | (LoweredCoreValues { state = state } as values, cellRuntimeManaged) ->
+            if cellRuntimeManaged
+            then ((values with state = withStateLoopResultPartDuplicates(saved)(state)), cellRuntimeManaged)
+            else
+                ((values with state = keepLoopResultPartDuplicates(stateLoopResultPartDuplicates(state))(withStateLoopResultPartDuplicates(saved)(state))), cellRuntimeManaged)
 
 // The temp a cell's construction stored at an offset, the most recent store first.
 let recursive cellWordSource (cell: Int) (offset: Int) (instructions: List(IrInstruction)) =
@@ -26229,13 +26325,13 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                     else
                         match requested || isRuntimeManagedConstructorCandidate(layout)(arguments)(request)(state) with
                             | runtimeManaged ->
-                                match lowerConstructorArgumentsInto(request)(runtimeManaged)(arguments)(parameterTypes)(lower)(state)([])([]) with
+                                match lowerConstructorArgumentsInto(request)(runtimeManaged)(arguments)(parameterTypes)(lower)(withStateLoopResultPartDuplicates([])(state))([])([]) with
                                     | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                     | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
                                         match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
                                             | (failedState, Some(error)) -> failure(failedState)(error)
                                             | (typedState, None) ->
-                                                match (lowered with state = typedState) |> placeConstructorOwningFreshChild(layout)(arguments)(request)(resultType)(runtimeManaged)(stackAllocate) with
+                                                match (lowered with state = typedState) |> placeConstructorOwningFreshChild(layout)(arguments)(request)(resultType)(runtimeManaged)(stackAllocate) |> keepLoopResultPartDuplicatesOfArenaCell(stateLoopResultPartDuplicates(state)) with
                                                     | (placed, placedRuntimeManaged) ->
                                                         placed
                                                         |> handConstructorFreshChildren(layout)(arguments)(resultType)(placedRuntimeManaged)(stackAllocate)

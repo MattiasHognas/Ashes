@@ -286,10 +286,26 @@ let expectGenericListResultDeepCopyMatchesStageZero unit =
     |> withoutLocations
     |> withFunctionLocalLabels)
 
+// A loop returning `Some` of a field of a record matched out of its list parameter keeps the
+// pattern owner's duplicate of that field in an owned slot, which makes the return copy the arena
+// `Some` and release the duplicate behind the copy, as stage 0 does. Locations and labels as above.
+let expectLoopResultPartDuplicateMatchesStageZero unit =
+    "loop_result_some_holding_a_field_of_a_list_head"
+    |> loweredFixtureLines
+    |> functionLines("[ClosureHelper from returnedClosureLabelOf]")
+    |> withoutLocations
+    |> withFunctionLocalLabels
+    |> expectSameLines("loop result part duplicate")("loop_result_some_holding_a_field_of_a_list_head"
+    |> stageZeroFixtureLines
+    |> functionLines("[ClosureHelper from returnedClosureLabelOf]")
+    |> withoutLocations
+    |> withFunctionLocalLabels)
+
 let runCallWindowLoweringTests unit =
     Unit
     |> expectUnknownResultPlacementReadsReturnsBit
     |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
+    |> (given (_) -> expectLoopResultPartDuplicateMatchesStageZero(Unit))
     |> expectCurriedSelfCallKeepsWindowOpen
     |> expectNormalizedResultResetsEnclosingBracket
     |> expectFreshArgumentHandedOverUnderAcceptsBit

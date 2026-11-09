@@ -1612,7 +1612,16 @@ the self-call callee's name, once per compiled function). Such a duplicate, of a
 whole loop parameter in a cell built at the loop's result, now goes to an owned slot released behind
 the function's result (`GRC_NO_LOOPRESULTCELLOWNERDUP`, both stages; stage 1 keys it on a pattern
 binding fact of extraction depth 0). A part matched out of the parameter is released after the copy
-by the copy's own rules, and a second release there would free it twice. The same function's other
+by the copy's own rules, and a second release there would free it twice. That holds only where the result
+is copied at all: a loop whose result is an arena `Some` around a field of a record matched out of
+its list parameter (stage 1's `returnedClosureLabelOf`, `Some(label)`) owns nothing else, so its
+return copies nothing and the field's duplicate was never released (the `40_9` exit class, one label
+per lowered lambda body). A part's duplicate is kept in an owned slot when the cell it is stored into
+stays in the arena, which makes the return copy the result and release the duplicate behind the copy;
+the slot is withdrawn again at the return when the result is copied or normalized anyway (a contract
+type, a reference-counted result, or any other owned value), where the copy's own rules settle the
+part (`GRC_NO_LOOPRESULTPARTOWNERDUP`, both stages). A cell placed on the reference-counted heap owns
+its field and takes no slot. The same function's other
 arm conses a part of the parameter onto the rebuilt record's list (`arguments = argument ::
 arguments`): the arena cons cell, itself a constructor argument of the result, takes a duplicate of
 its head that the return's copy retains again. That duplicate goes to an owned slot too

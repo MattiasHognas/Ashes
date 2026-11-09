@@ -1,0 +1,1528 @@
+IR (lowered)
+============
+
+function __deepcopy_2  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_2_default   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  __deepcopy_2_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  __deepcopy_2_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  __deepcopy_2_default:
+    Return                Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+
+function __rcdrop_3  [RuntimeManagedAdtDropper]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_24   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_24   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rcdrop_ctor_25:
+    Jump                  Target=rcdrop_shared_24   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rcdrop_ctor_26:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_24   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rcdrop_shared_24:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+
+function lambda_1  [ClosureHelper from returnedClosureLabelOf]
+  locals=57 temps=127
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreLocal            Slot=5 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:15:11)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (loop_result_some_holding_a_field_of_a_list_head.ash:16:17)
+    StoreLocal            Slot=9 Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    Jump                  Target=match_end_0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
+    Jump                  Target=match_next_2   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadConstInt          Target=10 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=11 Left=8 Right=10   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=12 Ptr=8 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadConstInt          Target=13 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=14 Left=12 Right=13   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtTag             Target=15 Ptr=12   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadConstInt          Target=17 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntEq              Target=16 Left=15 Right=17   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=18 Ptr=12 FieldIndex=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=16 Source=18   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=19 Ptr=12 FieldIndex=1   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=17 Source=19   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=20 Ptr=12 FieldIndex=2   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=18 Source=20   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=21 Ptr=12 FieldIndex=3   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=19 Source=21   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=22 Ptr=12 FieldIndex=4   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=20 Source=22   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=23 Ptr=12 FieldIndex=5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=21 Source=23   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=24 Ptr=12 FieldIndex=6   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=22 Source=24   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=25 Ptr=12 FieldIndex=7   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=23 Source=25   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=24 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadLocal             Target=94 Slot=17   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDup                 Target=95 SourceTemp=94 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=95   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadLocal             Target=26 Slot=16   (loop_result_some_holding_a_field_of_a_list_head.ash:18:16)
+    LoadLocal             Target=27 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:18:26)
+    CmpIntEq              Target=28 Left=26 Right=27   (loop_result_some_holding_a_field_of_a_list_head.ash:18:16)
+    JumpIfFalse           CondTemp=28 Target=else_6   (loop_result_some_holding_a_field_of_a_list_head.ash:18:13)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=24
+    LoadLocal             Target=29 Slot=17   (loop_result_some_holding_a_field_of_a_list_head.ash:19:23)
+    Borrow                Target=30 SourceTemp=29
+    RcDup                 Target=31 SourceTemp=30 RuntimeManaged=true
+    RcDrop                SourceTemp=19 TypeName=String OwnerSlot=17 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:19:18)
+    LoadConstInt          Target=32 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:19:18)
+    StoreLocal            Slot=27 Source=32   (loop_result_some_holding_a_field_of_a_list_head.ash:19:18)
+    AllocAdt              Target=33 Tag=1 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:19:18)
+    SetAdtField           Ptr=33 FieldIndex=0 Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:19:18)
+    StoreLocal            Slot=25 Source=33   (loop_result_some_holding_a_field_of_a_list_head.ash:18:13)
+    Jump                  Target=endif_7   (loop_result_some_holding_a_field_of_a_list_head.ash:18:13)
+  else_6:
+    RcDrop                SourceTemp=19 TypeName=String OwnerSlot=17 RuntimeManaged=true
+    LoadLocal             Target=34 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:20:41)
+    LoadLocal             Target=35 Slot=24   (loop_result_some_holding_a_field_of_a_list_head.ash:20:51)
+    Borrow                Target=36 SourceTemp=35
+    LoadLocal             Target=37 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    LoadLocal             Target=38 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    StoreLocal            Slot=2 Source=34   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    StoreLocal            Slot=1 Source=36   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=24
+    RestoreStackPointer   Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    Jump                  Target=lambda_1_body   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    LoadConstInt          Target=39 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:20:18)
+    StoreLocal            Slot=25 Source=39   (loop_result_some_holding_a_field_of_a_list_head.ash:18:13)
+  endif_7:
+    LoadLocal             Target=40 Slot=25   (loop_result_some_holding_a_field_of_a_list_head.ash:18:13)
+    StoreLocal            Slot=9 Source=40   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    Jump                  Target=match_end_0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_arm_cleanup_5:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=29
+    Jump                  Target=match_next_4   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_next_4:
+    SaveArenaState        CursorLocalSlot=30 EndLocalSlot=31
+    LoadConstInt          Target=43 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=44 Left=2 Right=43   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=44 Target=match_arm_cleanup_9   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadMemOffset         Target=45 BasePtr=2 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadMemOffset         Target=46 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadConstInt          Target=47 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=48 Left=45 Right=47   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=48 Target=match_arm_cleanup_9   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=49 Ptr=45 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadConstInt          Target=50 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=51 Left=49 Right=50   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=51 Target=match_arm_cleanup_9   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtTag             Target=52 Ptr=49   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadConstInt          Target=54 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntEq              Target=53 Left=52 Right=54   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=53 Target=match_arm_cleanup_9   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=55 Ptr=49 FieldIndex=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=32 Source=55   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=56 Ptr=49 FieldIndex=1   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=33 Source=56   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=57 Ptr=49 FieldIndex=2   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=34 Source=57   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=58 Ptr=49 FieldIndex=3   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=35 Source=58   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=59 Ptr=49 FieldIndex=4   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=36 Source=59   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=60 Ptr=49 FieldIndex=5   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=37 Source=60   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    GetAdtField           Target=61 Ptr=49 FieldIndex=6   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=38 Source=61   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=39 Source=46   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadLocal             Target=92 Slot=33   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDup                 Target=93 SourceTemp=92 RuntimeManaged=true
+    StoreLocal            Slot=33 Source=93   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadLocal             Target=62 Slot=32   (loop_result_some_holding_a_field_of_a_list_head.ash:22:16)
+    LoadLocal             Target=63 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:22:26)
+    CmpIntEq              Target=64 Left=62 Right=63   (loop_result_some_holding_a_field_of_a_list_head.ash:22:16)
+    JumpIfFalse           CondTemp=64 Target=else_10   (loop_result_some_holding_a_field_of_a_list_head.ash:22:13)
+    RcDrop                SourceTemp=46 TypeName=List OwnerSlot=39
+    LoadLocal             Target=65 Slot=33   (loop_result_some_holding_a_field_of_a_list_head.ash:23:23)
+    Borrow                Target=66 SourceTemp=65
+    RcDup                 Target=67 SourceTemp=66 RuntimeManaged=true
+    RcDrop                SourceTemp=56 TypeName=String OwnerSlot=33 RuntimeManaged=true
+    StoreLocal            Slot=41 Source=67   (loop_result_some_holding_a_field_of_a_list_head.ash:23:18)
+    LoadConstInt          Target=68 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:23:18)
+    StoreLocal            Slot=42 Source=68   (loop_result_some_holding_a_field_of_a_list_head.ash:23:18)
+    AllocAdt              Target=69 Tag=1 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:23:18)
+    SetAdtField           Ptr=69 FieldIndex=0 Source=67   (loop_result_some_holding_a_field_of_a_list_head.ash:23:18)
+    StoreLocal            Slot=40 Source=69   (loop_result_some_holding_a_field_of_a_list_head.ash:22:13)
+    Jump                  Target=endif_11   (loop_result_some_holding_a_field_of_a_list_head.ash:22:13)
+  else_10:
+    RcDrop                SourceTemp=56 TypeName=String OwnerSlot=33 RuntimeManaged=true
+    LoadLocal             Target=70 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:24:41)
+    LoadLocal             Target=71 Slot=39   (loop_result_some_holding_a_field_of_a_list_head.ash:24:51)
+    Borrow                Target=72 SourceTemp=71
+    LoadLocal             Target=73 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    LoadLocal             Target=74 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    StoreLocal            Slot=2 Source=70   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    StoreLocal            Slot=1 Source=72   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    RcDrop                SourceTemp=46 TypeName=List OwnerSlot=39
+    RestoreStackPointer   Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    Jump                  Target=lambda_1_body   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    LoadConstInt          Target=75 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:24:18)
+    StoreLocal            Slot=40 Source=75   (loop_result_some_holding_a_field_of_a_list_head.ash:22:13)
+  endif_11:
+    LoadLocal             Target=76 Slot=40   (loop_result_some_holding_a_field_of_a_list_head.ash:22:13)
+    StoreLocal            Slot=9 Source=76   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    Jump                  Target=match_end_0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=30 EndLocalSlot=31 PreRestoreEndSlot=44
+    ReclaimArenaChunks    SavedEndSlot=31 PreRestoreEndSlot=44
+    Jump                  Target=match_next_8   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_next_8:
+    SaveArenaState        CursorLocalSlot=45 EndLocalSlot=46
+    LoadConstInt          Target=79 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    CmpIntNe              Target=80 Left=2 Right=79   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    JumpIfFalse           CondTemp=80 Target=match_arm_cleanup_12   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadMemOffset         Target=81 BasePtr=2 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadMemOffset         Target=82 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=47 Source=82   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    LoadLocal             Target=83 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:25:47)
+    LoadLocal             Target=84 Slot=47   (loop_result_some_holding_a_field_of_a_list_head.ash:25:57)
+    Borrow                Target=85 SourceTemp=84
+    LoadLocal             Target=86 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    LoadLocal             Target=87 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    StoreLocal            Slot=2 Source=83   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    StoreLocal            Slot=1 Source=85   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    RcDrop                SourceTemp=82 TypeName=List OwnerSlot=47
+    RestoreStackPointer   Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    Jump                  Target=lambda_1_body   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    LoadConstInt          Target=88 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:25:24)
+    StoreLocal            Slot=9 Source=88   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    RestoreArenaState     CursorLocalSlot=45 EndLocalSlot=46 PreRestoreEndSlot=48
+    ReclaimArenaChunks    SavedEndSlot=46 PreRestoreEndSlot=48
+    Jump                  Target=match_end_0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=45 EndLocalSlot=46 PreRestoreEndSlot=49
+    ReclaimArenaChunks    SavedEndSlot=46 PreRestoreEndSlot=49
+    Jump                  Target=match_none_1   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_none_1:
+    LoadConstInt          Target=90 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    StoreLocal            Slot=9 Source=90   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+  match_end_0:
+    LoadLocal             Target=91 Slot=9   (loop_result_some_holding_a_field_of_a_list_head.ash:15:5)
+    IsReferenceCounted    Target=96 SourceTemp=91
+    JumpIfFalse           CondTemp=96 Target=rc_representation_copy_13   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDup                 Target=97 SourceTemp=91 RuntimeManaged=true
+    StoreLocal            Slot=50 Source=97   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Jump                  Target=rc_representation_done_14   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_representation_copy_13:
+    GetAdtTag             Target=99 Ptr=91   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    SwitchTag             TagTemp=99 Cases=[2] DefaultLabel=rc_normalize_adt_15   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_normalize_adt_15:
+    CopyOutArena          DestTemp=100 SrcTemp=91 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=51 Source=100   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Jump                  Target=rc_normalize_adt_end_17   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_normalize_adt_16:
+    CopyOutArena          DestTemp=101 SrcTemp=91 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=102 Ptr=91 FieldIndex=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    IsReferenceCounted    Target=103 SourceTemp=102
+    JumpIfFalse           CondTemp=103 Target=rc_representation_copy_18   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDup                 Target=104 SourceTemp=102 RuntimeManaged=true
+    StoreLocal            Slot=52 Source=104   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Jump                  Target=rc_representation_done_19   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_representation_copy_18:
+    CopyOutArena          DestTemp=105 SrcTemp=102 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=52 Source=105   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_representation_done_19:
+    LoadLocal             Target=106 Slot=52   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    SetAdtField           Ptr=101 FieldIndex=0 Source=106   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreLocal            Slot=51 Source=101   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Jump                  Target=rc_normalize_adt_end_17   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_normalize_adt_end_17:
+    LoadLocal             Target=107 Slot=51   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreLocal            Slot=50 Source=107   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_representation_done_14:
+    LoadLocal             Target=108 Slot=50   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadLocal             Target=109 Slot=26   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadConstInt          Target=110 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    CmpIntNe              Target=111 Left=109 Right=110   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    JumpIfFalse           CondTemp=111 Target=general_rc_owned_absent_20   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    IsReferenceCounted    Target=112 SourceTemp=109
+    JumpIfFalse           CondTemp=112 Target=general_rc_owned_absent_20   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDrop                SourceTemp=109 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=26 Source=110   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  general_rc_owned_absent_20:
+    LoadLocal             Target=113 Slot=41   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadConstInt          Target=114 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    CmpIntNe              Target=115 Left=113 Right=114   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    JumpIfFalse           CondTemp=115 Target=general_rc_owned_absent_21   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    IsReferenceCounted    Target=116 SourceTemp=113
+    JumpIfFalse           CondTemp=116 Target=general_rc_owned_absent_21   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    RcDrop                SourceTemp=113 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=41 Source=114   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  general_rc_owned_absent_21:
+    LoadArgumentOwnership Target=117   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadConstInt          Target=118 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    ShrInt                Target=119 Left=117 Right=118   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    AndInt                Target=120 Left=119 Right=118   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    JumpIfFalse           CondTemp=120 Target=rc_result_owned_22   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Alloc                 Target=121 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    MakeClosure           Target=122 FuncLabel=__deepcopy_2 EnvPtrTemp=121 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreMemOffset        BasePtr=121 OffsetBytes=0 Source=122   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    CallClosure           Target=123 ClosureTemp=122 ArgTemp=108   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadConstInt          Target=124 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    CallKnown             Target=125 FuncLabel=__rcdrop_3 EnvTemp=124 ArgTemp=108   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreLocal            Slot=53 Source=123   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Jump                  Target=rc_result_done_23   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_result_owned_22:
+    StoreLocal            Slot=53 Source=108   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+  rc_result_done_23:
+    LoadLocal             Target=126 Slot=53   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Return                Source=126   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from returnedClosureLabelOf]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+
+function lambda_0  [SourceFunction from returnedClosureLabelOf]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+
+function __rcnorm_8  [RuntimeManagedAdtNormalizer]
+  locals=11 temps=42
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_36   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_37   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_36:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_38   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_39   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_38:
+    IsReferenceCounted    Target=8 SourceTemp=4
+    JumpIfFalse           CondTemp=8 Target=rc_representation_copy_40   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=9 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_41   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_40:
+    LoadConstInt          Target=10 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=5 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=6 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=7 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_42:
+    LoadLocal             Target=11 Slot=5   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntNe              Target=12 Left=11 Right=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=12 Target=rc_normalize_list_end_43   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    IsReferenceCounted    Target=13 SourceTemp=11
+    JumpIfFalse           CondTemp=13 Target=rc_normalize_list_cell_44   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=14 SourceTemp=11 RuntimeManaged=true
+    LoadLocal             Target=15 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntNe              Target=16 Left=15 Right=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=16 Target=rc_normalize_list_first_45   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadLocal             Target=17 Slot=7   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_normalize_list_linked_46   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_first_45:
+    StoreLocal            Slot=6 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_linked_46:
+    StoreLocal            Slot=7 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_normalize_list_end_43   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_cell_44:
+    LoadMemOffset         Target=18 BasePtr=11 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadMemOffset         Target=19 BasePtr=11 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    IsReferenceCounted    Target=20 SourceTemp=18
+    JumpIfFalse           CondTemp=20 Target=rc_representation_copy_47   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=21 SourceTemp=18 RuntimeManaged=true
+    StoreLocal            Slot=8 Source=21   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_48   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_47:
+    Alloc                 Target=22 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadMemOffset         Target=23 BasePtr=18 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    IsReferenceCounted    Target=24 SourceTemp=23
+    JumpIfFalse           CondTemp=24 Target=rc_representation_copy_49   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=25 SourceTemp=23 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=25   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_50   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_49:
+    CopyOutArena          DestTemp=26 SrcTemp=23 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=9 Source=26   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_50:
+    LoadLocal             Target=27 Slot=9   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=27   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadMemOffset         Target=28 BasePtr=18 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    IsReferenceCounted    Target=29 SourceTemp=28
+    JumpIfFalse           CondTemp=29 Target=rc_representation_copy_51   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=30 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=10 Source=30   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_52   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_51:
+    CopyOutArena          DestTemp=31 SrcTemp=28 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=10 Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_52:
+    LoadLocal             Target=32 Slot=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=32   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=8 Source=22   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_48:
+    LoadLocal             Target=33 Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Alloc                 Target=34 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreMemOffset        BasePtr=34 OffsetBytes=0 Source=33   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreMemOffset        BasePtr=34 OffsetBytes=8 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadLocal             Target=35 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntNe              Target=36 Left=35 Right=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_first_53   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadLocal             Target=37 Slot=7   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreMemOffset        BasePtr=37 OffsetBytes=8 Source=34   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_normalize_list_linked_54   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_first_53:
+    StoreLocal            Slot=6 Source=34   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_linked_54:
+    StoreLocal            Slot=7 Source=34   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=5 Source=19   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_normalize_list_42   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_normalize_list_end_43:
+    LoadLocal             Target=38 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=4 Source=38   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_41:
+    LoadLocal             Target=39 Slot=4   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=3 Source=39   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_39:
+    LoadLocal             Target=40 Slot=3   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=40 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=2 Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_37:
+    LoadLocal             Target=41 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Return                Source=41   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+
+function __deepcopy_list_10  [ListDeepCopier]
+  locals=2 temps=14
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_10_copy   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  __deepcopy_list_10_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Alloc                 Target=7 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=8 BasePtr=5 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CopyOutArena          DestTemp=9 SrcTemp=8 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CopyOutArena          DestTemp=11 SrcTemp=10 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CallClosure           Target=12 ClosureTemp=1 ArgTemp=6   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Alloc                 Target=13 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=8 Source=12   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=13   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function __deepcopy_9  [AdtDeepCopier]
+  locals=2 temps=9
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_9_default   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  __deepcopy_9_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Alloc                 Target=5 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    MakeClosure           Target=6 FuncLabel=__deepcopy_list_10 EnvPtrTemp=5 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CallClosure           Target=7 ClosureTemp=6 ArgTemp=4   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  __deepcopy_9_default:
+    Return                Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function __rcdrop_record_11  [RuntimeManagedAdtDropper]
+  locals=3 temps=13
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_66   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreLocal            Slot=2 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rcdrop_list_67:
+    LoadLocal             Target=3 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CmpIntNe              Target=5 Left=3 Right=4   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_end_69   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcIsUnique            Target=6 SourceTemp=3
+    JumpIfFalse           CondTemp=6 Target=rcdrop_list_shared_68   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=7 BasePtr=3 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcIsUnique            Target=8 SourceTemp=7
+    JumpIfFalse           CondTemp=8 Target=rc_drop_tuple_shared_70   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=9 BasePtr=7 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=10 BasePtr=7 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcDrop                SourceTemp=10 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_70:
+    RcDrop                SourceTemp=7 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=11 BasePtr=3 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Jump                  Target=rcdrop_list_67   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rcdrop_list_shared_68:
+    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_69   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rcdrop_list_end_69:
+  rc_drop_shared_66:
+    RcDrop                SourceTemp=0 TypeName=State RuntimeManaged=true
+    LoadConstInt          Target=12 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=12   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function lambda_7  [ClosureHelper from recordReturnedClosureLabel]
+  locals=24 temps=88
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:11)
+    LoadEnv               Target=1 Index=1   (loop_result_some_holding_a_field_of_a_list_head.ash:28:34)
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (loop_result_some_holding_a_field_of_a_list_head.ash:28:11)
+    LoadEnv               Target=3 Index=2   (loop_result_some_holding_a_field_of_a_list_head.ash:28:44)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (loop_result_some_holding_a_field_of_a_list_head.ash:28:11)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=5 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntNe              Target=6 Left=4 Right=5   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_30   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    GetAdtTag             Target=7 Ptr=4   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadConstInt          Target=9 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntEq              Target=8 Left=7 Right=9   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_30   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    GetAdtField           Target=10 Ptr=4 FieldIndex=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=8 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=9 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadEnv               Target=11 Index=3   (loop_result_some_holding_a_field_of_a_list_head.ash:29:53)
+    LoadLocal             Target=12 Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:29:60)
+    Borrow                Target=13 SourceTemp=12
+    IsReferenceCounted    Target=15 SourceTemp=11
+    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_31   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    RcDup                 Target=16 SourceTemp=11 RuntimeManaged=true
+    StoreLocal            Slot=10 Source=16   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    Jump                  Target=rc_representation_done_32   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+  rc_representation_copy_31:
+    CopyOutArena          DestTemp=17 SrcTemp=11 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=10 Source=17   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+  rc_representation_done_32:
+    LoadLocal             Target=18 Slot=10   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    RcDup                 Target=19 SourceTemp=13 RuntimeManaged=true
+    RcDrop                SourceTemp=10 TypeName=String OwnerSlot=8 RuntimeManaged=true
+    Alloc                 Target=14 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=18   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=19   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    LoadLocal             Target=20 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:29:73)
+    GetAdtField           Target=21 Ptr=20 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:29:73)
+    StoreLocal            Slot=11 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    Alloc                 Target=22 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=21   (loop_result_some_holding_a_field_of_a_list_head.ash:29:52)
+    LoadLocal             Target=23 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:29:103)
+    GetAdtField           Target=24 Ptr=23 FieldIndex=1 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:29:103)
+    LoadConstInt          Target=25 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:29:117)
+    AddInt                Target=26 Left=24 Right=25   (loop_result_some_holding_a_field_of_a_list_head.ash:29:103)
+    AllocAdt              Target=27 Tag=0 FieldCount=2 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:29:29)
+    SetAdtField           Ptr=27 FieldIndex=0 Source=22 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:29:29)
+    SetAdtField           Ptr=27 FieldIndex=1 Source=26 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:29:29)
+    IsReferenceCounted    Target=48 SourceTemp=27
+    JumpIfFalse           CondTemp=48 Target=rc_representation_copy_55   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=49 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=20 Source=49   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_56   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_55:
+    LoadConstInt          Target=51 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CallKnown             Target=52 FuncLabel=__rcnorm_8 EnvTemp=51 ArgTemp=27   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=20 Source=52   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_56:
+    LoadLocal             Target=53 Slot=20   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=5 Source=53   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadLocal             Target=29 Slot=9   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDrop                SourceTemp=29 TypeName=Maybe RuntimeManaged=true
+    Jump                  Target=match_end_27   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  match_arm_cleanup_30:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=13
+    Jump                  Target=match_next_29   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  match_next_29:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=30 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntNe              Target=31 Left=4 Right=30   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=31 Target=match_arm_cleanup_33   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    GetAdtTag             Target=32 Ptr=4   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadConstInt          Target=34 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CmpIntEq              Target=33 Left=32 Right=34   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    JumpIfFalse           CondTemp=33 Target=match_arm_cleanup_33   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=16 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadLocal             Target=35 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:30:19)
+    IsReferenceCounted    Target=36 SourceTemp=35
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_34   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RcDup                 Target=37 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=37   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    Jump                  Target=rc_representation_done_35   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_copy_34:
+    LoadConstInt          Target=40 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CallKnown             Target=41 FuncLabel=__rcnorm_8 EnvTemp=40 ArgTemp=35   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=17 Source=41   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  rc_representation_done_35:
+    LoadLocal             Target=42 Slot=17   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=5 Source=42   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadLocal             Target=43 Slot=16   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    LoadConstInt          Target=44 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    CallKnown             Target=45 FuncLabel=__rcdrop_3 EnvTemp=44 ArgTemp=43   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=18
+    Jump                  Target=match_end_27   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  match_arm_cleanup_33:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
+    Jump                  Target=match_none_28   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  match_none_28:
+    LoadConstInt          Target=46 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=5 Source=46   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+  match_end_27:
+    LoadLocal             Target=47 Slot=5   (loop_result_some_holding_a_field_of_a_list_head.ash:28:5)
+    StoreLocal            Slot=21 Source=47   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    IsReferenceCounted    Target=54 SourceTemp=47
+    JumpIfFalse           CondTemp=54 Target=general_rc_result_arena_copy_57   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Jump                  Target=general_rc_result_already_owned_58   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  general_rc_result_arena_copy_57:
+    IsReferenceCounted    Target=55 SourceTemp=47
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_59   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcDup                 Target=56 SourceTemp=47 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=56   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Jump                  Target=rc_representation_done_60   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rc_representation_copy_59:
+    LoadConstInt          Target=58 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CallKnown             Target=59 FuncLabel=__rcnorm_8 EnvTemp=58 ArgTemp=47   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreLocal            Slot=22 Source=59   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rc_representation_done_60:
+    LoadLocal             Target=60 Slot=22   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreLocal            Slot=21 Source=60   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  general_rc_result_already_owned_58:
+    LoadLocal             Target=61 Slot=21   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadArgumentOwnership Target=62   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=63 Value=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    ShrInt                Target=64 Left=62 Right=63   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=65 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    AndInt                Target=66 Left=64 Right=65   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    JumpIfFalse           CondTemp=66 Target=independent_result_not_requested_61   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadArgumentOwnership Target=67   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=68 Value=-8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    AndInt                Target=69 Left=67 Right=68   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=70 Value=2305843009213693952   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=69 OffsetBytes=0 Source=70   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  independent_result_not_requested_61:
+    LoadLocal             Target=71 Slot=11   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=72 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CmpIntNe              Target=73 Left=71 Right=72   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    JumpIfFalse           CondTemp=73 Target=general_rc_owned_absent_62   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    IsReferenceCounted    Target=74 SourceTemp=71
+    JumpIfFalse           CondTemp=74 Target=general_rc_owned_absent_62   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcIsUnique            Target=75 SourceTemp=71
+    JumpIfFalse           CondTemp=75 Target=rc_drop_tuple_shared_63   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadMemOffset         Target=76 BasePtr=71 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcDrop                SourceTemp=76 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=77 BasePtr=71 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    RcDrop                SourceTemp=77 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_63:
+    RcDrop                SourceTemp=71 TypeName=Tuple RuntimeManaged=true
+    StoreLocal            Slot=11 Source=72   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  general_rc_owned_absent_62:
+    LoadArgumentOwnership Target=78   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=79 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    ShrInt                Target=80 Left=78 Right=79   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    AndInt                Target=81 Left=80 Right=79   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    JumpIfFalse           CondTemp=81 Target=rc_result_owned_64   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Alloc                 Target=82 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    MakeClosure           Target=83 FuncLabel=__deepcopy_9 EnvPtrTemp=82 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=82 OffsetBytes=0 Source=83   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CallClosure           Target=84 ClosureTemp=83 ArgTemp=61   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadConstInt          Target=85 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CallKnown             Target=86 FuncLabel=__rcdrop_record_11 EnvTemp=85 ArgTemp=61   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreLocal            Slot=23 Source=84   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Jump                  Target=rc_result_done_65   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rc_result_owned_64:
+    StoreLocal            Slot=23 Source=61   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+  rc_result_done_65:
+    LoadLocal             Target=87 Slot=23   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=87   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function lambda_6  [ClosureHelper from recordReturnedClosureLabel]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=32   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=2 Index=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadLocal             Target=3 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=4 Index=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    MakeClosure           Target=5 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=32 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function lambda_5  [ClosureHelper from recordReturnedClosureLabel]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=24   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=3 Index=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    MakeClosure           Target=4 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=24   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function lambda_4  [SourceFunction from recordReturnedClosureLabel]
+  locals=2 temps=4
+    Alloc                 Target=0 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    MakeClosure           Target=3 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+
+function __rcnorm_14  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=8
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_96   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_97   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_96:
+    GetAdtTag             Target=3 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_98   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcnorm_ctor_98:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rcnorm_end_100   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcnorm_ctor_99:
+    CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rcnorm_end_100   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcnorm_end_100:
+    LoadLocal             Target=6 Slot=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=2 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_97:
+    LoadLocal             Target=7 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __rcnorm_13  [RuntimeManagedAdtNormalizer]
+  locals=8 temps=32
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_82   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_83   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_82:
+    CopyOutArena          DestTemp=3 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=4 Ptr=0 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=5 SourceTemp=4
+    JumpIfFalse           CondTemp=5 Target=rc_representation_copy_84   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=6 SourceTemp=4 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_85   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_84:
+    GetAdtTag             Target=8 Ptr=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=8 Cases=[3] DefaultLabel=rc_normalize_adt_86   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_adt_86:
+    CopyOutArena          DestTemp=9 SrcTemp=4 StaticSizeBytes=72 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=10 Ptr=4 FieldIndex=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=11 SourceTemp=10
+    JumpIfFalse           CondTemp=11 Target=rc_representation_copy_90   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=12 SourceTemp=10 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=12   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_91   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_90:
+    CopyOutArena          DestTemp=13 SrcTemp=10 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=5 Source=13   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_91:
+    LoadLocal             Target=14 Slot=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SetAdtField           Ptr=9 FieldIndex=1 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=4 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_adt_end_89   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_adt_87:
+    CopyOutArena          DestTemp=15 SrcTemp=4 StaticSizeBytes=64 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=16 Ptr=4 FieldIndex=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=17 SourceTemp=16
+    JumpIfFalse           CondTemp=17 Target=rc_representation_copy_92   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=18 SourceTemp=16 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=18   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_93   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_92:
+    CopyOutArena          DestTemp=19 SrcTemp=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=6 Source=19   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_93:
+    LoadLocal             Target=20 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SetAdtField           Ptr=15 FieldIndex=1 Source=20   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=4 Source=15   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_adt_end_89   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_adt_88:
+    CopyOutArena          DestTemp=21 SrcTemp=4 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=4 Source=21   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_adt_end_89   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_adt_end_89:
+    LoadLocal             Target=22 Slot=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=3 Source=22   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_85:
+    LoadLocal             Target=23 Slot=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=23 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    GetAdtField           Target=24 Ptr=0 FieldIndex=1 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=25 SourceTemp=24
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_94   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=26 SourceTemp=24 RuntimeManaged=true
+    StoreLocal            Slot=7 Source=26   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_95   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_94:
+    LoadConstInt          Target=28 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallKnown             Target=29 FuncLabel=__rcnorm_14 EnvTemp=28 ArgTemp=24   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=7 Source=29   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_95:
+    LoadLocal             Target=30 Slot=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SetAdtField           Ptr=3 FieldIndex=1 Source=30 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=2 Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_83:
+    LoadLocal             Target=31 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __deepcopy_17  [AdtDeepCopier]
+  locals=2 temps=24
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=2 Cases=[3] DefaultLabel=__deepcopy_17_default   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_17_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=3 OffsetBytes=16 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=24   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=24 Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=32   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=32 Source=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=9 BasePtr=0 OffsetBytes=40   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=40 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=10 BasePtr=0 OffsetBytes=48   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=48 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=11 BasePtr=0 OffsetBytes=56   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=56 Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=12 BasePtr=0 OffsetBytes=64   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=64 Source=12   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_17_c1:
+    AllocAdt              Target=13 Tag=1 FieldCount=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=14 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=8 Source=14   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=15 BasePtr=0 OffsetBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CopyOutArena          DestTemp=16 SrcTemp=15 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=13 OffsetBytes=16 Source=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=17 BasePtr=0 OffsetBytes=24   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=24 Source=17   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=18 BasePtr=0 OffsetBytes=32   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=32 Source=18   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=19 BasePtr=0 OffsetBytes=40   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=40 Source=19   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=20 BasePtr=0 OffsetBytes=48   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=48 Source=20   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=21 BasePtr=0 OffsetBytes=56   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=56 Source=21   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=13   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_17_c2:
+    AllocAdt              Target=22 Tag=2 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=23 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=23   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=22   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_17_default:
+    Return                Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __deepcopy_18  [AdtDeepCopier]
+  locals=2 temps=6
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_18_default   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_18_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_18_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_18_default:
+    Return                Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __deepcopy_16  [AdtDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=__deepcopy_16_default   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_16_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=2 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=5 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    MakeClosure           Target=6 FuncLabel=__deepcopy_17 EnvPtrTemp=5 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallClosure           Target=7 ClosureTemp=6 ArgTemp=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=0 Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=8 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=9 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    MakeClosure           Target=10 FuncLabel=__deepcopy_18 EnvPtrTemp=9 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallClosure           Target=11 ClosureTemp=10 ArgTemp=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=3 OffsetBytes=8 Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_16_default:
+    Return                Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __deepcopy_list_15  [ListDeepCopier]
+  locals=2 temps=12
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CmpIntEq              Target=3 Left=0 Right=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=3 Target=__deepcopy_list_15_copy   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  __deepcopy_list_15_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=7 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    MakeClosure           Target=8 FuncLabel=__deepcopy_16 EnvPtrTemp=7 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallClosure           Target=9 ClosureTemp=8 ArgTemp=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallClosure           Target=10 ClosureTemp=1 ArgTemp=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=11 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __rcdrop_20  [RuntimeManagedAdtDropper]
+  locals=2 temps=6
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_111   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=2 Cases=[3] DefaultLabel=rcdrop_shared_111   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_ctor_112:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_111   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_ctor_113:
+    GetAdtField           Target=4 Ptr=0 FieldIndex=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDrop                SourceTemp=4 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_111   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_ctor_114:
+    Jump                  Target=rcdrop_shared_111   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_shared_111:
+    RcDrop                SourceTemp=0 TypeName=Kind RuntimeManaged=true
+    LoadConstInt          Target=5 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __rcdrop_general_21  [RuntimeManagedAdtDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_115   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_115   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_general_ctor_116:
+    Jump                  Target=rcdrop_general_shared_115   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_general_ctor_117:
+    Jump                  Target=rcdrop_general_shared_115   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_general_shared_115:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function __rcdrop_general_19  [RuntimeManagedAdtDropper]
+  locals=2 temps=10
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_109   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    SwitchTag             TagTemp=2 Cases=[1] DefaultLabel=rcdrop_general_shared_109   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_general_ctor_110:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallKnown             Target=5 FuncLabel=__rcdrop_20 EnvTemp=4 ArgTemp=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    GetAdtField           Target=6 Ptr=0 FieldIndex=1 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=7 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallKnown             Target=8 FuncLabel=__rcdrop_general_21 EnvTemp=7 ArgTemp=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rcdrop_general_shared_109   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_general_shared_109:
+    RcDrop                SourceTemp=0 TypeName=Instruction RuntimeManaged=true
+    LoadConstInt          Target=9 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function lambda_12  [SourceFunction from body]
+  locals=10 temps=75
+    LoadConstInt          Target=0 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    LoadConstInt          Target=1 Value=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:114)
+    LoadConstStr          Target=2 StrLabel=str_0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:117)
+    LoadLocal             Target=3 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:148)
+    TextFromInt           Target=4 ValueTemp=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:129)
+    ConcatStr             Target=5 Left=2 Right=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:117)
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:152)
+    LoadConstInt          Target=7 Value=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:155)
+    LoadConstBool         Target=8 Value=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:158)
+    LoadConstBool         Target=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:164)
+    LoadConstInt          Target=10 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:171)
+    LoadConstBool         Target=11   (loop_result_some_holding_a_field_of_a_list_head.ash:32:174)
+    AllocAdt              Target=12 Tag=0 FieldCount=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=1 Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=2 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=3 Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=4 Source=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=5 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=6 Source=10   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    SetAdtField           Ptr=12 FieldIndex=7 Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:32:102)
+    LoadLocal             Target=13 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:198)
+    AllocAdt              Target=14 Tag=1 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:193)
+    SetAdtField           Ptr=14 FieldIndex=0 Source=13   (loop_result_some_holding_a_field_of_a_list_head.ash:32:193)
+    AllocAdt              Target=15 Tag=0 FieldCount=2 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:76)
+    SetAdtField           Ptr=15 FieldIndex=0 Source=12 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:76)
+    SetAdtField           Ptr=15 FieldIndex=1 Source=14 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:76)
+    Alloc                 Target=16 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    StoreMemOffset        BasePtr=16 OffsetBytes=0 Source=15   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    StoreMemOffset        BasePtr=16 OffsetBytes=8 Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    LoadLocal             Target=17 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:54)
+    AllocAdt              Target=18 Tag=2 FieldCount=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:48)
+    SetAdtField           Ptr=18 FieldIndex=0 Source=17   (loop_result_some_holding_a_field_of_a_list_head.ash:32:48)
+    AllocAdt              Target=19 Tag=0 FieldCount=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:69)
+    AllocAdt              Target=20 Tag=0 FieldCount=2 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:22)
+    SetAdtField           Ptr=20 FieldIndex=0 Source=18 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:22)
+    SetAdtField           Ptr=20 FieldIndex=1 Source=19 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:22)
+    Alloc                 Target=21 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    StoreMemOffset        BasePtr=21 OffsetBytes=0 Source=20   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    StoreMemOffset        BasePtr=21 OffsetBytes=8 Source=16   (loop_result_some_holding_a_field_of_a_list_head.ash:32:21)
+    IsReferenceCounted    Target=22 SourceTemp=21
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_71   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=23 SourceTemp=21 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=23   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_72   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_71:
+    IsReferenceCounted    Target=25 SourceTemp=21
+    JumpIfFalse           CondTemp=25 Target=rc_representation_copy_73   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=26 SourceTemp=21 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=26   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_74   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_73:
+    LoadConstInt          Target=27 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=4 Source=21   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=5 Source=27   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=6 Source=27   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_75:
+    LoadLocal             Target=28 Slot=4   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CmpIntNe              Target=29 Left=28 Right=27   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=29 Target=rc_normalize_list_end_76   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=30 SourceTemp=28
+    JumpIfFalse           CondTemp=30 Target=rc_normalize_list_cell_77   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=31 SourceTemp=28 RuntimeManaged=true
+    LoadLocal             Target=32 Slot=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CmpIntNe              Target=33 Left=32 Right=27   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=33 Target=rc_normalize_list_first_78   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadLocal             Target=34 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=34 OffsetBytes=8 Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_list_linked_79   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_first_78:
+    StoreLocal            Slot=5 Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_linked_79:
+    StoreLocal            Slot=6 Source=31   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_list_end_76   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_cell_77:
+    LoadMemOffset         Target=35 BasePtr=28 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=36 BasePtr=28 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    IsReferenceCounted    Target=37 SourceTemp=35
+    JumpIfFalse           CondTemp=37 Target=rc_representation_copy_80   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDup                 Target=38 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=7 Source=38   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_representation_done_81   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_copy_80:
+    LoadConstInt          Target=40 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallKnown             Target=41 FuncLabel=__rcnorm_13 EnvTemp=40 ArgTemp=35   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=7 Source=41   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_81:
+    LoadLocal             Target=42 Slot=7   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=43 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=43 OffsetBytes=0 Source=42   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=43 OffsetBytes=8 Source=27   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadLocal             Target=44 Slot=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CmpIntNe              Target=45 Left=44 Right=27   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_first_101   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadLocal             Target=46 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=46 OffsetBytes=8 Source=43   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_list_linked_102   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_first_101:
+    StoreLocal            Slot=5 Source=43   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_linked_102:
+    StoreLocal            Slot=6 Source=43   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=4 Source=36   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_normalize_list_75   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_normalize_list_end_76:
+    LoadLocal             Target=47 Slot=5   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=3 Source=47   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_74:
+    LoadLocal             Target=48 Slot=3   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=2 Source=48   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_representation_done_72:
+    LoadLocal             Target=49 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadArgumentOwnership Target=50   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=51 Value=2   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    ShrInt                Target=52 Left=50 Right=51   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=53 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    AndInt                Target=54 Left=52 Right=53   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=54 Target=independent_result_not_requested_103   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadArgumentOwnership Target=55   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=56 Value=-8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    AndInt                Target=57 Left=55 Right=56   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=58 Value=2305843009213693952   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=57 OffsetBytes=0 Source=58   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  independent_result_not_requested_103:
+    LoadArgumentOwnership Target=59   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=60 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    ShrInt                Target=61 Left=59 Right=60   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    AndInt                Target=62 Left=61 Right=60   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=62 Target=rc_result_owned_104   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=63 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    MakeClosure           Target=64 FuncLabel=__deepcopy_list_15 EnvPtrTemp=63 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreMemOffset        BasePtr=63 OffsetBytes=0 Source=64   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallClosure           Target=65 ClosureTemp=64 ArgTemp=49   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=9 Source=49   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_list_106:
+    LoadLocal             Target=66 Slot=9   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=67 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CmpIntNe              Target=68 Left=66 Right=67   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    JumpIfFalse           CondTemp=68 Target=rcdrop_list_end_108   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcIsUnique            Target=69 SourceTemp=66
+    JumpIfFalse           CondTemp=69 Target=rcdrop_list_shared_107   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=70 BasePtr=66 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadConstInt          Target=71 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CallKnown             Target=72 FuncLabel=__rcdrop_general_19 EnvTemp=71 ArgTemp=70   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadMemOffset         Target=73 BasePtr=66 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=9 Source=73   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rcdrop_list_106   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_list_shared_107:
+    RcDrop                SourceTemp=66 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_108   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rcdrop_list_end_108:
+    StoreLocal            Slot=8 Source=65   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Jump                  Target=rc_result_done_105   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_result_owned_104:
+    StoreLocal            Slot=8 Source=49   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+  rc_result_done_105:
+    LoadLocal             Target=74 Slot=8   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Return                Source=74   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+
+function lambda_23  [ClosureHelper from loop]
+  locals=32 temps=148
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadLocal             Target=45 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadArgumentOwnership Target=46   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=47 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    AndInt                Target=48 Left=46 Right=47   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=48 Target=rc_arg_normalize_copy_122   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=23 Source=45   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Jump                  Target=rc_arg_normalize_done_123   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rc_arg_normalize_copy_122:
+    IsReferenceCounted    Target=49 SourceTemp=45
+    JumpIfFalse           CondTemp=49 Target=rc_representation_copy_124   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    RcDup                 Target=50 SourceTemp=45 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=50   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Jump                  Target=rc_representation_done_125   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rc_representation_copy_124:
+    LoadConstInt          Target=53 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CallKnown             Target=54 FuncLabel=__rcnorm_8 EnvTemp=53 ArgTemp=45   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=24 Source=54   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rc_representation_done_125:
+    LoadLocal             Target=55 Slot=24   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=23 Source=55   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rc_arg_normalize_done_123:
+    LoadLocal             Target=56 Slot=23   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=1 Source=56   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=57 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=6 Source=57   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=5 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  lambda_23_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadLocal             Target=2 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:35:8)
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:35:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (loop_result_some_holding_a_field_of_a_list_head.ash:35:8)
+    JumpIfFalse           CondTemp=4 Target=else_118   (loop_result_some_holding_a_field_of_a_list_head.ash:35:5)
+    LoadLocal             Target=5 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:36:10)
+    GetAdtField           Target=6 Ptr=5 FieldIndex=1 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:36:10)
+    StoreLocal            Slot=10 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:35:5)
+    Jump                  Target=endif_119   (loop_result_some_holding_a_field_of_a_list_head.ash:35:5)
+  else_118:
+    LoadLocal             Target=7 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:40:17)
+    LoadConstInt          Target=8 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:40:21)
+    SubInt                Target=9 Left=7 Right=8   (loop_result_some_holding_a_field_of_a_list_head.ash:40:17)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadEnv               Target=10 Index=1   (loop_result_some_holding_a_field_of_a_list_head.ash:39:12)
+    Borrow                Target=11 SourceTemp=10
+    LoadConstStr          Target=12 StrLabel=str_1   (loop_result_some_holding_a_field_of_a_list_head.ash:39:39)
+    LoadLocal             Target=13 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:39:64)
+    TextFromInt           Target=14 ValueTemp=13   (loop_result_some_holding_a_field_of_a_list_head.ash:39:45)
+    ConcatStr             Target=15 Left=12 Right=14   (loop_result_some_holding_a_field_of_a_list_head.ash:39:39)
+    CallClosure           Target=16 ClosureTemp=11 ArgTemp=15   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    LoadConstInt          Target=17 Value=7   (loop_result_some_holding_a_field_of_a_list_head.ash:39:68)
+    CallClosure           Target=18 ClosureTemp=16 ArgTemp=17   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadEnv               Target=19 Index=2   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    Borrow                Target=20 SourceTemp=19
+    LoadLocal             Target=21 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:39:76)
+    LoadMemOffset         Target=22 BasePtr=20 OffsetBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    LoadConstInt          Target=23 Value=62   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    ShrInt                Target=24 Left=22 Right=23   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    LoadConstInt          Target=25 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    LoadConstInt          Target=26 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    CallClosure           Target=27 ClosureTemp=20 ArgTemp=21 RuntimeManagedArgumentFlagTemp=26   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    LoadLocal             Target=28 Slot=16   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    StoreLocal            Slot=17 Source=28   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    StoreLocal            Slot=16 Source=27   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    LoadConstInt          Target=29 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    StoreLocal            Slot=18 Source=29   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    LoadLocal             Target=30 Slot=16   (loop_result_some_holding_a_field_of_a_list_head.ash:39:71)
+    CallClosure           Target=31 ClosureTemp=18 ArgTemp=30   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    LoadLocal             Target=32 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    RcDup                 Target=33 SourceTemp=32 RuntimeManaged=true
+    LoadConstInt          Target=34 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    CallClosure           Target=35 ClosureTemp=31 ArgTemp=33   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    LoadLocal             Target=36 Slot=20   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    StoreLocal            Slot=21 Source=36   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    StoreLocal            Slot=20 Source=35   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=19
+    LoadConstInt          Target=37 Value=1   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    StoreLocal            Slot=22 Source=37   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    LoadLocal             Target=38 Slot=20   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    JumpIfFalse           CondTemp=34 Target=rc_handed_over_not_adopted_120   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    Jump                  Target=rc_handed_over_done_121   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+  rc_handed_over_not_adopted_120:
+    LoadConstInt          Target=39 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    CallKnown             Target=40 FuncLabel=__rcdrop_record_11 EnvTemp=39 ArgTemp=33   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+  rc_handed_over_done_121:
+    LoadLocal             Target=41 Slot=2   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    LoadLocal             Target=42 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    StoreLocal            Slot=2 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    StoreLocal            Slot=1 Source=38   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    IsReferenceCounted    Target=98 SourceTemp=38
+    JumpIfFalse           CondTemp=98 Target=rc_representation_copy_137
+    RcDup                 Target=99 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=99
+    Jump                  Target=rc_representation_done_138
+  rc_representation_copy_137:
+    IsReferenceCounted    Target=101 SourceTemp=38
+    JumpIfFalse           CondTemp=101 Target=rc_representation_copy_139
+    RcDup                 Target=102 SourceTemp=38 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=102
+    Jump                  Target=rc_representation_done_140
+  rc_representation_copy_139:
+    LoadConstInt          Target=104 Value=0
+    CallKnown             Target=105 FuncLabel=__rcnorm_8 EnvTemp=104 ArgTemp=38
+    StoreLocal            Slot=29 Source=105
+  rc_representation_done_140:
+    LoadLocal             Target=106 Slot=29
+    StoreLocal            Slot=28 Source=106
+  rc_representation_done_138:
+    LoadLocal             Target=107 Slot=28
+    LoadLocal             Target=108 Slot=6
+    JumpIfFalse           CondTemp=108 Target=rc_tco_drop_inactive_141
+    LoadConstInt          Target=109 Value=0
+    CallKnown             Target=110 FuncLabel=__rcdrop_record_11 EnvTemp=109 ArgTemp=42
+  rc_tco_drop_inactive_141:
+    LoadLocal             Target=111 Slot=17
+    LoadConstInt          Target=112 Value=0
+    CmpIntNe              Target=113 Left=111 Right=112
+    JumpIfFalse           CondTemp=113 Target=general_rc_owned_absent_142
+    IsReferenceCounted    Target=114 SourceTemp=111
+    JumpIfFalse           CondTemp=114 Target=general_rc_owned_absent_142
+    StoreLocal            Slot=30 Source=111
+  rcdrop_list_143:
+    LoadLocal             Target=115 Slot=30
+    LoadConstInt          Target=116 Value=0
+    CmpIntNe              Target=117 Left=115 Right=116
+    JumpIfFalse           CondTemp=117 Target=rcdrop_list_end_145
+    RcIsUnique            Target=118 SourceTemp=115
+    JumpIfFalse           CondTemp=118 Target=rcdrop_list_shared_144
+    LoadMemOffset         Target=119 BasePtr=115 OffsetBytes=0
+    LoadConstInt          Target=120 Value=0
+    CallKnown             Target=121 FuncLabel=__rcdrop_general_19 EnvTemp=120 ArgTemp=119
+    LoadMemOffset         Target=122 BasePtr=115 OffsetBytes=8
+    RcDrop                SourceTemp=115 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=122
+    Jump                  Target=rcdrop_list_143
+  rcdrop_list_shared_144:
+    RcDrop                SourceTemp=115 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_145
+  rcdrop_list_end_145:
+    StoreLocal            Slot=17 Source=112
+  general_rc_owned_absent_142:
+    LoadLocal             Target=123 Slot=21
+    LoadConstInt          Target=124 Value=0
+    CmpIntNe              Target=125 Left=123 Right=124
+    JumpIfFalse           CondTemp=125 Target=general_rc_owned_absent_146
+    IsReferenceCounted    Target=126 SourceTemp=123
+    JumpIfFalse           CondTemp=126 Target=general_rc_owned_absent_146
+    LoadConstInt          Target=127 Value=0
+    CallKnown             Target=128 FuncLabel=__rcdrop_record_11 EnvTemp=127 ArgTemp=123
+    StoreLocal            Slot=21 Source=124
+  general_rc_owned_absent_146:
+    LoadLocal             Target=129 Slot=16
+    LoadConstInt          Target=130 Value=0
+    CmpIntNe              Target=131 Left=129 Right=130
+    JumpIfFalse           CondTemp=131 Target=general_rc_owned_absent_147
+    IsReferenceCounted    Target=132 SourceTemp=129
+    JumpIfFalse           CondTemp=132 Target=general_rc_owned_absent_147
+    StoreLocal            Slot=31 Source=129
+  rcdrop_list_148:
+    LoadLocal             Target=133 Slot=31
+    LoadConstInt          Target=134 Value=0
+    CmpIntNe              Target=135 Left=133 Right=134
+    JumpIfFalse           CondTemp=135 Target=rcdrop_list_end_150
+    RcIsUnique            Target=136 SourceTemp=133
+    JumpIfFalse           CondTemp=136 Target=rcdrop_list_shared_149
+    LoadMemOffset         Target=137 BasePtr=133 OffsetBytes=0
+    LoadConstInt          Target=138 Value=0
+    CallKnown             Target=139 FuncLabel=__rcdrop_general_19 EnvTemp=138 ArgTemp=137
+    LoadMemOffset         Target=140 BasePtr=133 OffsetBytes=8
+    RcDrop                SourceTemp=133 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=31 Source=140
+    Jump                  Target=rcdrop_list_148
+  rcdrop_list_shared_149:
+    RcDrop                SourceTemp=133 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_150
+  rcdrop_list_end_150:
+    StoreLocal            Slot=16 Source=130
+  general_rc_owned_absent_147:
+    LoadLocal             Target=141 Slot=20
+    LoadConstInt          Target=142 Value=0
+    CmpIntNe              Target=143 Left=141 Right=142
+    JumpIfFalse           CondTemp=143 Target=general_rc_owned_absent_151
+    IsReferenceCounted    Target=144 SourceTemp=141
+    JumpIfFalse           CondTemp=144 Target=general_rc_owned_absent_151
+    LoadConstInt          Target=145 Value=0
+    CallKnown             Target=146 FuncLabel=__rcdrop_record_11 EnvTemp=145 ArgTemp=141
+    StoreLocal            Slot=20 Source=142
+  general_rc_owned_absent_151:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=27
+    StoreLocal            Slot=1 Source=107
+    LoadConstInt          Target=147 Value=1
+    StoreLocal            Slot=6 Source=147
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=27
+    RestoreStackPointer   Slot=9   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    Jump                  Target=lambda_23_body   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    LoadConstInt          Target=43 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:38:9)
+    StoreLocal            Slot=10 Source=43   (loop_result_some_holding_a_field_of_a_list_head.ash:35:5)
+  endif_119:
+    LoadLocal             Target=44 Slot=10   (loop_result_some_holding_a_field_of_a_list_head.ash:35:5)
+    LoadLocal             Target=58 Slot=16   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=59 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CmpIntNe              Target=60 Left=58 Right=59   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=60 Target=general_rc_owned_absent_126   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    IsReferenceCounted    Target=61 SourceTemp=58
+    JumpIfFalse           CondTemp=61 Target=general_rc_owned_absent_126   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=25 Source=58   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rcdrop_list_127:
+    LoadLocal             Target=62 Slot=25   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=63 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CmpIntNe              Target=64 Left=62 Right=63   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=64 Target=rcdrop_list_end_129   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    RcIsUnique            Target=65 SourceTemp=62
+    JumpIfFalse           CondTemp=65 Target=rcdrop_list_shared_128   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadMemOffset         Target=66 BasePtr=62 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=67 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CallKnown             Target=68 FuncLabel=__rcdrop_general_19 EnvTemp=67 ArgTemp=66   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadMemOffset         Target=69 BasePtr=62 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    RcDrop                SourceTemp=62 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=69   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Jump                  Target=rcdrop_list_127   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rcdrop_list_shared_128:
+    RcDrop                SourceTemp=62 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_129   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rcdrop_list_end_129:
+    StoreLocal            Slot=16 Source=59   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  general_rc_owned_absent_126:
+    LoadLocal             Target=70 Slot=17   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=71 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CmpIntNe              Target=72 Left=70 Right=71   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=72 Target=general_rc_owned_absent_130   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    IsReferenceCounted    Target=73 SourceTemp=70
+    JumpIfFalse           CondTemp=73 Target=general_rc_owned_absent_130   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=26 Source=70   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rcdrop_list_131:
+    LoadLocal             Target=74 Slot=26   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=75 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CmpIntNe              Target=76 Left=74 Right=75   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=76 Target=rcdrop_list_end_133   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    RcIsUnique            Target=77 SourceTemp=74
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_shared_132   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadMemOffset         Target=78 BasePtr=74 OffsetBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=79 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CallKnown             Target=80 FuncLabel=__rcdrop_general_19 EnvTemp=79 ArgTemp=78   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadMemOffset         Target=81 BasePtr=74 OffsetBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=26 Source=81   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Jump                  Target=rcdrop_list_131   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rcdrop_list_shared_132:
+    RcDrop                SourceTemp=74 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_133   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rcdrop_list_end_133:
+    StoreLocal            Slot=17 Source=71   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  general_rc_owned_absent_130:
+    LoadLocal             Target=82 Slot=20   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=83 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CmpIntNe              Target=84 Left=82 Right=83   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=84 Target=general_rc_owned_absent_134   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    IsReferenceCounted    Target=85 SourceTemp=82
+    JumpIfFalse           CondTemp=85 Target=general_rc_owned_absent_134   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=86 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CallKnown             Target=87 FuncLabel=__rcdrop_record_11 EnvTemp=86 ArgTemp=82   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=20 Source=83   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  general_rc_owned_absent_134:
+    LoadLocal             Target=88 Slot=21   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=89 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CmpIntNe              Target=90 Left=88 Right=89   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=90 Target=general_rc_owned_absent_135   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    IsReferenceCounted    Target=91 SourceTemp=88
+    JumpIfFalse           CondTemp=91 Target=general_rc_owned_absent_135   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=92 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CallKnown             Target=93 FuncLabel=__rcdrop_record_11 EnvTemp=92 ArgTemp=88   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=21 Source=89   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  general_rc_owned_absent_135:
+    LoadLocal             Target=94 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadLocal             Target=95 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    JumpIfFalse           CondTemp=95 Target=rc_tco_exit_drop_inactive_136   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadConstInt          Target=96 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    CallKnown             Target=97 FuncLabel=__rcdrop_record_11 EnvTemp=96 ArgTemp=94   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+  rc_tco_exit_drop_inactive_136:
+    Return                Source=44   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+
+function lambda_22  [SourceFunction from loop]
+  locals=2 temps=9
+    Alloc                 Target=0 SizeBytes=24   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadEnv               Target=4 Index=0   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadEnv               Target=6 Index=1   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Borrow                Target=7 SourceTemp=6
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=7   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    MakeClosure           Target=8 FuncLabel=lambda_23 EnvPtrTemp=0 EnvSizeBytes=24 AcceptsRuntimeManagedArgument=true   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Return                Source=8   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+
+function _start_main  [ProgramEntry]
+  locals=15 temps=25
+    LoadConstInt          Target=0 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    StoreLocal            Slot=0 Source=1   (loop_result_some_holding_a_field_of_a_list_head.ash:14:1)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    AllocStack            Target=2 SizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadLocal             Target=3 Slot=0   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=3   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    MakeClosureStack      Target=4 FuncLabel=lambda_4 EnvPtrTemp=2 EnvSizeBytes=8   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    StoreLocal            Slot=3 Source=4   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=5 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    MakeClosureStack      Target=6 FuncLabel=lambda_12 EnvPtrTemp=5 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    StoreLocal            Slot=6 Source=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    Alloc                 Target=7 SizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadLocal             Target=8 Slot=3   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Borrow                Target=9 SourceTemp=8
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=9   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    LoadLocal             Target=10 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    Borrow                Target=11 SourceTemp=10
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=11   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    MakeClosure           Target=12 FuncLabel=lambda_22 EnvPtrTemp=7 EnvSizeBytes=16   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    StoreLocal            Slot=7 Source=12   (loop_result_some_holding_a_field_of_a_list_head.ash:34:1)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=13 Slot=7   (loop_result_some_holding_a_field_of_a_list_head.ash:43:4)
+    LoadConstInt          Target=14 Value=3   (loop_result_some_holding_a_field_of_a_list_head.ash:43:9)
+    CallClosure           Target=15 ClosureTemp=13 ArgTemp=14   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    LoadConstInt          Target=16 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:42:24)
+    LoadConstInt          Target=17 Value=0   (loop_result_some_holding_a_field_of_a_list_head.ash:42:36)
+    AllocAdt              Target=18 Tag=0 FieldCount=2 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    SetAdtField           Ptr=18 FieldIndex=0 Source=16 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    SetAdtField           Ptr=18 FieldIndex=1 Source=17 Tagless=true   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    CallClosure           Target=19 ClosureTemp=15 ArgTemp=18   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
+    PrintInt              Source=19   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    AllocAdt              Target=20 Tag=0 FieldCount=0   (loop_result_some_holding_a_field_of_a_list_head.ash:42:1)
+    StoreLocal            Slot=11 Source=20   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    LoadLocal             Target=21 Slot=6   (loop_result_some_holding_a_field_of_a_list_head.ash:32:1)
+    CleanupResource       SourceTemp=21 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=12
+    CopyOutArena          DestTemp=22 SrcTemp=20 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=12
+    StoreLocal            Slot=13 Source=22   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    LoadLocal             Target=23 Slot=3   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    CleanupResource       SourceTemp=23 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=14
+    LoadLocal             Target=24 Slot=13   (loop_result_some_holding_a_field_of_a_list_head.ash:27:1)
+    Return                Source=24
+

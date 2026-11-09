@@ -137,7 +137,7 @@ public sealed partial class Lowering
     // Binders are the source names bound to the value or to its parts (the let it is bound by, the
     // pattern bindings of a match on it), shared between the slot and its predecessor slot.
     // Origin, on a predecessor, is the owned slot whose earlier value it holds.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1, bool HandedOverParts = false);
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1, bool HandedOverParts = false, bool PartDuplicate = false);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -1199,7 +1199,7 @@ public sealed partial class Lowering
             return bodyTemp;
         }
 
-        bool contractResult = IsGeneralRcValueType(pruned);
+        bool contractResult = DropPartDuplicateSlotsWhenTheResultCopiesAnyway(bodyTemp, IsGeneralRcValueType(pruned));
         bool normalizesOwnedResult = !contractResult
             && _generalRcOwnedSlots.Count > 0
             && !CanArenaReset(pruned)
