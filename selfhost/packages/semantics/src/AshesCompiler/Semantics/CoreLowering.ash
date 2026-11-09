@@ -20180,8 +20180,10 @@ let recursive takeHeldTakenOverResult (temp: Int) (held: List((Int, Str, CoreSet
                     | None -> None
 
 // Stage 0's `SettleLetScopedTakenOver`: at the end of a let scope whose value is a held call result,
-// the let is the holder, settled when nothing the enclosing function returns can reach the value.
-let settleLetScopedTakenOver (valueTemp: Int) (state: CoreLoweringState) =
+// the let is the holder, settled when nothing the enclosing function returns can reach the value. The
+// walk reads the value through a load of the let's own slot (stage 0's `LetOwnerLoadForSettle`):
+// lifetime placement follows the owner's loads, so the owner's release lands after the walk.
+let settleLetScopedTakenOver (ownerSlot: Int) (valueTemp: Int) (state: CoreLoweringState) =
     match state
     |> stateTakenOverHeldResults
     |> takeHeldTakenOverResult(valueTemp) with
@@ -20191,8 +20193,12 @@ let settleLetScopedTakenOver (valueTemp: Int) (state: CoreLoweringState) =
             in
                 if settleKindProven(callee)(span)(kind)(taken) && letScopedSettleOutOfReach(span)(taken)
                 then
-                    match newTakenOverSettle(valueTemp)(callee)(kind)(taken) with
-                        | (noted, placeholder) -> noted with reversedInstructions = placeholder :: noted.reversedInstructions
+                    match freshTemp(taken) with
+                        | FreshTemp { state = loadState, temp = ownerLoad } ->
+                            match loadState
+                            |> emit(LoadLocal(ownerLoad)(ownerSlot))
+                            |> newTakenOverSettle(ownerLoad)(callee)(kind) with
+                                | (noted, placeholder) -> noted with reversedInstructions = placeholder :: noted.reversedInstructions
                 else taken
 
 let recursive fieldTypeHeldBy (resultType: SemanticType) (fields: List((Int, SemanticType))) (state: CoreLoweringState) =
@@ -22808,7 +22814,7 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match bodyState
-                                    |> settleLetScopedTakenOver(loweredValue.temp)
+                                    |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
                                     |> closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
