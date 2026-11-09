@@ -253,6 +253,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new GenericShapeScrutineeTemplate());
         registry.Register(new UnusedScrutineeBinderTemplate());
         registry.Register(new ConstrainedLoopAtCallerTypesTemplate());
+        registry.Register(new ArenaSuccessorJoinTemplate());
+        registry.Register(new CallPartAccumulatorTemplate());
     }
 }
 

@@ -860,6 +860,9 @@ type CoreTcoState =
     // The loop whose arena successor a `let` value being lowered becomes (stage 0's
     // `_arenaSuccessorLetLoop`): its back edge balances the retains the cells it builds hold.
     | arenaSuccessorLetLoop: Maybe(Str)
+    // The span of the `if` or `match` whose value becomes a loop parameter left in the arena (stage 0's
+    // `_arenaSuccessorJoin`): a mixed join there copies its reference-counted arms into the arena.
+    | arenaSuccessorJoin: Maybe(TextSpan)
     // The affine accumulator whose own tail self-call argument is being lowered, stage 0's
     // `_affineAppendCtx`: its name, its parameter slot, and the loop's reservation start and end
     // slots. A `+` chain rooted at that parameter grows the reservation in place.
@@ -2243,6 +2246,20 @@ let withStateArenaSuccessorLetLoop value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with arenaSuccessorLetLoop = value))
 
+let stateArenaSuccessorJoin (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.arenaSuccessorJoin)
+
+let withStateArenaSuccessorJoin value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with arenaSuccessorJoin = value))
+
+// Whether the `if` or `match` being lowered at the current span is the arena successor join.
+let isArenaSuccessorJoin (state: CoreLoweringState) =
+    match (stateArenaSuccessorJoin(state), state.currentSpan) with
+        | (Some(join), Some(span)) -> join == span
+        | _ -> false
+
 let stateAffineAppendContext (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.affineAppendContext)
@@ -2882,6 +2899,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             backEdgeArgumentSlot = None,
             lateCopiedCellHeads = [],
             arenaSuccessorLetLoop = None,
+            arenaSuccessorJoin = None,
             affineAppendContext = None,
             affineAppendReservation = None,
             recursiveProducerResultSlots = [],
@@ -21528,6 +21546,52 @@ let recursive anyArmJoinsSelfConsingArms (arms: List(MatchArmResult)) =
         | [] -> false
         | arm :: rest -> arm.armStoreTemp >= 0 && arm.armJoinsSelfConsingArms || anyArmJoinsSelfConsingArms(rest)
 
+// Stage 0's `DemoteArenaSuccessorJoinArms` for one arm: the arm's store becomes an arena copy of its
+// reference-counted value, the value released after the copy when the arm owned it.
+let demoteArenaSuccessorJoinArmStore (slot: Int) (resultType: SemanticType) (arm: MatchArmResult) (state: CoreLoweringState) =
+    (let emptied = state with reversedInstructions = []
+    in
+        match emitArenaCopyOfReferenceCounted(arm.armStoreTemp)(resultType)((arm.armOwned || arm.armRetainedOwner) && !arm.armBorrowsLoopParameter)(emptied) with
+            | (copied, copiedTemp) ->
+                let buffered =
+                    emit(StoreLocal(slot)(copiedTemp))(copied)
+                in
+                    let index = joinArmStoreIndex(slot)(arm.armStoreTemp)(state.reversedInstructions)
+                    in
+                        (buffered with reversedInstructions = replaceJoinArmStore(slot)(arm.armStoreTemp)(buffered.reversedInstructions)(state.reversedInstructions)) |> (given (spliced: CoreLoweringState) ->
+                            if index < 0
+                            then spliced
+                            else
+                                withStatePatternOwnerSites(spliced
+                                |> statePatternOwnerSites
+                                |> shiftPatternOwnerSites(index)(length(buffered.reversedInstructions) - 1))(spliced)))
+
+// The arm as an arena value: what it hands the join is a value the arena keeps.
+let arenaJoinArm (arm: MatchArmResult) = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false, armRetainedOwner = false, armOwned = false, armStoreTemp = arm.armStoreTemp, armBorrowsLoopParameter = false, armFreshCell = arm.armFreshCell, armConsesOntoSelfResult = false, armJoinsSelfConsingArms = false)
+
+let recursive demoteArenaSuccessorJoinArms (slot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> (state, [])
+        | arm :: rest ->
+            (if arm.armStoreTemp >= 0 && (arm.armOwned || arm.armRetainedOwner || arm.armBorrowsLoopParameter)
+            then demoteArenaSuccessorJoinArmStore(slot)(resultType)(arm)(state)
+            else state)
+            |> demoteArenaSuccessorJoinArms(slot)(resultType)(rest)
+            |> (given (demoted: (CoreLoweringState, List(MatchArmResult))) ->
+                match demoted with
+                    | (demotedState, restArms) -> (demotedState, arenaJoinArm(arm) :: restArms))
+
+// Stage 0's `DemoteArenaSuccessorJoinArms`: a join whose arms mix a reference-counted value with an
+// arena value, when the join becomes a loop parameter left in the arena. Normalizing the arena arm
+// onto the reference-counted heap would hand the parameter an owned reference that nothing
+// releases, so the reference-counted arms are copied into the arena instead.
+let demotesArenaSuccessorJoin (successorJoin: Bool) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match (successorJoin, stateTcoLoop(state)) with
+        | (true, Some(_loop)) ->
+            match joinArmTally(arms)(0)(0) with
+                | (reaching, owned) -> reaching >= 2 && owned > 0 && owned < reaching && !resultSurvivesReset(resultType)(state) && !containsUnresolvedLayout(resultType)(state) && isGeneralRcAdmissible(resultType)([])(state)
+        | _ -> false
+
 // Stage 0's `NormalizeMixedJoinArms`. A join whose arms mix an owned reference-counted value with
 // one it does not own is not owned as a whole, so the owned arm's reference is never released: the
 // consumer retains or copies the join's value again. Such arms are normalized in place instead,
@@ -21559,6 +21623,13 @@ let normalizeMixedJoinArms (resultSlot: Int) (resultType: SemanticType) (arms: L
                                 | Some(ScalarArgumentCopy) -> (state, arms)
                                 | Some(plan) ->
                                     normalizeUnownedJoinArms(resultSlot)(consedElementPlan)(entryCopyPlanOf(resultType)(plan)(state))(arms)(state))
+
+// A join that becomes a loop parameter left in the arena copies its reference-counted arms into the
+// arena; any other mixed join is normalized as `normalizeMixedJoinArms` does.
+let normalizeMixedJoinArmsAs (successorJoin: Bool) (resultSlot: Int) (resultType: SemanticType) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    if demotesArenaSuccessorJoin(successorJoin)(resultType)(arms)(state)
+    then demoteArenaSuccessorJoinArms(resultSlot)(resultType)(arms)(state)
+    else normalizeMixedJoinArms(resultSlot)(resultType)(arms)(state)
 
 // Stage 0's `IsOwnedScopeResultArm` over every arm that reaches the join: a fresh value, a retain the
 // arm took of a reference-counted value, or a join that holds its own reference, none borrowed
@@ -21670,7 +21741,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStri
                                         error = None
                                     )
 
-let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower loweredThen =
+let finishIfElseBranch (successorJoin: Bool) elseBranch (request: ConsumerRequest) (normalizeStaticStrings: Bool) lower loweredThen =
     match loweredThen with
         | CoreIfThen { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, thenArm = thenArm, error = None } ->
@@ -21690,7 +21761,7 @@ let finishIfElseBranch elseBranch (request: ConsumerRequest) (normalizeStaticStr
                                                     |> emit(StoreLocal(resultSlot)(branchTemp))
                                                     |> emit(Label(endLabel))
                                                     |> emit(LoadLocal(target)(resultSlot))
-                                                    |> normalizeMixedJoinArms(resultSlot)(thenType)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
+                                                    |> normalizeMixedJoinArmsAs(successorJoin)(resultSlot)(thenType)([thenArm, matchArmResultOf(elseBranch)(branchTemp)(elseType)(transferred)])
                                                     |> (given (joined: (CoreLoweringState, List(MatchArmResult))) ->
                                                         match joined with
                                                             | (normalized, joinedArms) ->
@@ -21724,7 +21795,7 @@ let lowerIf condition thenBranch elseBranch lower state =
             |> lower(condition)
             |> prepareIfPlan
             |> lowerIfThenBranch(thenBranch)(request)(normalizeStaticStrings)(lower)
-            |> finishIfElseBranch(elseBranch)(request)(normalizeStaticStrings)(lower))
+            |> finishIfElseBranch(isArenaSuccessorJoin(state))(elseBranch)(request)(normalizeStaticStrings)(lower))
 
 let patternName pattern =
     match pattern with
@@ -22961,6 +23032,101 @@ let representationLetValueRequest (name: Str) (value: Expr) (body: Expr) (state:
         then inheritedLetValueRequest(state) with runtimeString = true
         else aggregateLetValueRequest(name)(value)(body)(state))
 
+// The span of the `if` or `match` a value ends in, past the `let`s around it (stage 0's
+// `SuccessorJoinOf`).
+let recursive successorJoinSpanOf (value: Expr) (span: Maybe(TextSpan)) =
+    match value with
+        | ExprAt(at, inner) -> successorJoinSpanOf(inner)(Some(at))
+        | ExprLet(_name, _bound, body, _parameters, _annotation, _requirements) -> successorJoinSpanOf(body)(None)
+        | ExprIf(_condition, _thenBranch, _elseBranch) -> span
+        | ExprMatch(_scrutinee, _cases, _position) -> span
+        | _ -> None
+
+// The position at which the self-call of a saturated call chain passes the name as an argument.
+let recursive selfCallChainPassing (expression: Expr) (name: Str) (selfName: Str) (reversedArguments: List(Expr)) =
+    match expression with
+        | ExprAt(_span, inner) -> selfCallChainPassing(inner)(name)(selfName)(reversedArguments)
+        | ExprCall(function, argument, _isSugar, _layout) -> selfCallChainPassing(function)(name)(selfName)(argument :: reversedArguments)
+        | ExprVar(callee) ->
+            if callee == selfName
+            then argumentOrdinalNaming(reversedArguments)(name)(0)
+            else None
+        | _ -> None
+and argumentOrdinalNaming (arguments: List(Expr)) (name: Str) (ordinal: Int) =
+    match arguments with
+        | [] -> None
+        | argument :: rest ->
+            match unspanArgument(argument) with
+                | ExprVar(passed) ->
+                    if passed == name
+                    then Some(ordinal)
+                    else argumentOrdinalNaming(rest)(name)(ordinal + 1)
+                | _ -> argumentOrdinalNaming(rest)(name)(ordinal + 1)
+
+// Stage 0's `TailSelfCallOrdinalPassing`: the position at which a self-call in tail position of
+// the expression passes the name, through `let` bodies, both branches of an `if` and every arm of a
+// `match`.
+let recursive tailSelfCallOrdinalPassing (expression: Expr) (name: Str) (selfName: Str) =
+    match expression with
+        | ExprAt(_span, inner) -> tailSelfCallOrdinalPassing(inner)(name)(selfName)
+        | ExprLet(bound, _value, body, _parameters, _annotation, _requirements) ->
+            if bound == name
+            then None
+            else tailSelfCallOrdinalPassing(body)(name)(selfName)
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            match tailSelfCallOrdinalPassing(thenBranch)(name)(selfName) with
+                | Some(found) -> Some(found)
+                | None -> tailSelfCallOrdinalPassing(elseBranch)(name)(selfName)
+        | ExprMatch(_scrutinee, cases, _position) -> tailSelfCallOrdinalPassingCases(cases)(name)(selfName)
+        | ExprCall(_function, _argument, _isSugar, _layout) -> selfCallChainPassing(expression)(name)(selfName)([])
+        | _ -> None
+and tailSelfCallOrdinalPassingCases (cases: List((Pattern, Expr, Maybe(Expr)))) (name: Str) (selfName: Str) =
+    match cases with
+        | [] -> None
+        | (_pattern, body, _guard) :: rest ->
+            match tailSelfCallOrdinalPassing(body)(name)(selfName) with
+                | Some(found) -> Some(found)
+                | None -> tailSelfCallOrdinalPassingCases(rest)(name)(selfName)
+
+// Whether the loop parameter at the slot is left in the arena.
+let isArenaLoopSlot (slot: Int) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (Some(frame), Some(loop)) -> loopSlotIsRuntimeManaged(slot)(frame)(loop)(state) == false
+        | _ -> false
+
+// Stage 0's `EnterArenaSuccessorLetJoin`: marks the join a `let` value ends in when the self-call in
+// tail position of its body passes the binding to a parameter left in the arena.
+let enterArenaSuccessorLetJoin (name: Str) (value: Expr) (body: Expr) (state: CoreLoweringState) =
+    match (stateTcoLoopFrame(state), stateTcoLoop(state)) with
+        | (Some(frame), Some(loop)) ->
+            match tailSelfCallOrdinalPassing(body)(name)(loop.selfName) with
+                | None -> state
+                | Some(ordinal) ->
+                    match parameterSlotAtOrdinal(ordinal)(frame.parameterSlots) with
+                        | None -> state
+                        | Some(slot) ->
+                            if isArenaLoopSlot(slot)(state)
+                            then
+                                match successorJoinSpanOf(value)(None) with
+                                    | Some(span) -> withStateArenaSuccessorJoin(Some(span))(state)
+                                    | None -> state
+                            else state
+        | _ -> state
+
+// The join a tail self-call's argument written in place ends in, when its parameter is left in the
+// arena.
+let tailArgumentSuccessorJoin (slot: Maybe(Int)) (argument: Expr) (state: CoreLoweringState) =
+    match slot with
+        | Some(parameterSlot) ->
+            if isArenaLoopSlot(parameterSlot)(state)
+            then successorJoinSpanOf(argument)(None)
+            else None
+        | None -> None
+
+let leaveArenaSuccessorJoin (saved: Maybe(TextSpan)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = loweredState } -> lowered with state = withStateArenaSuccessorJoin(saved)(loweredState)
+
 // Stage 0's `LoopSuccessorLetRequest`: a binding the loop's self-call passes on becomes the next
 // iteration's parameter exactly like an argument written in place. It escapes every binding scope
 // of this iteration, so an aggregate it builds retains the owned children it stores, whose owners
@@ -23046,8 +23212,10 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                     |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
                     |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(body))
                     |> enterArenaSuccessorLet(name)(body)
+                    |> enterArenaSuccessorLetJoin(name)(value)(body)
                     |> lower(value)
-                    |> leaveArenaSuccessorLet(stateArenaSuccessorLetLoop(state)) with
+                    |> leaveArenaSuccessorLet(stateArenaSuccessorLetLoop(state))
+                    |> leaveArenaSuccessorJoin(stateArenaSuccessorJoin(state)) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match loweredValue
@@ -23706,7 +23874,7 @@ let takeOverNilBesideFreshCells (resultSlot: Int) (arms: List(MatchArmResult)) (
             | None -> state
     else state
 
-let finishMatchPlan plan =
+let finishMatchPlanAs (successorJoin: Bool) plan =
     match plan with
         | CoreMatchPlan { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | CoreMatchPlan { state = state, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armResults = armResults, error = None } ->
@@ -23720,12 +23888,14 @@ let finishMatchPlan plan =
                             |> emit(StoreLocal(resultSlot)(defaultTemp))
                             |> emit(Label(endLabel))
                             |> emit(LoadLocal(resultTemp)(resultSlot))
-                            |> normalizeMixedJoinArms(resultSlot)(resultType)(reverse(armResults)) with
+                            |> normalizeMixedJoinArmsAs(successorJoin)(resultSlot)(resultType)(reverse(armResults)) with
                                 | (normalized, joinedArms) ->
                                     normalized
                                     |> takeOverNilBesideFreshCells(resultSlot)(joinedArms)
                                     |> markControlFlowJoin(resultTemp)(joinedArms)
                                     |> success(resultTemp)(resolveType(resultState)(resultType))
+
+let finishMatchPlan plan = finishMatchPlanAs(false)(plan)
 
 // Tag-group match dispatch. Arms whose patterns are constructors of one ADT are grouped by their
 // outer constructor tag; one GetAdtTag/SwitchTag then dispatches to the group, a trivial single
@@ -24425,7 +24595,7 @@ let lowerMatch value cases lower state =
     |> withStaticStringNormalization(cases)
     |> checkCoreMatchCoverage(cases)
     |> lowerMatchArmsDispatch(cases)(lower)
-    |> finishMatchPlan
+    |> finishMatchPlanAs(isArenaSuccessorJoin(state))
 
 let recursive lambdaParts expression =
     match expression with
@@ -30878,7 +31048,7 @@ and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state 
                     |> lower(condition)
                     |> prepareIfPlan
                     |> lowerIfThenBranch(thenBranch)(emptyConsumerRequest)(false)(branchLower)
-                    |> finishIfElseBranch(elseBranch)(emptyConsumerRequest)(false)(branchLower)
+                    |> finishIfElseBranch(false)(elseBranch)(emptyConsumerRequest)(false)(branchLower)
         // A scrutinee that IS itself a resume call (`match resume(v) with | ...`) is the one-shot
         // scrutinee shape (stage-0's TryRewriteResumeOneShotMatch): `v` returns to the perform
         // site immediately, and the WHOLE match — re-run against the resumed value, via a fresh
@@ -31547,6 +31717,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
                 | FunctionTypeResolution { state = functionState, argumentType = parameterType, resultType = resultType, error = None } ->
                     match functionState
                     |> withStateBackEdgeArgumentSlot(headSlotOf(slots))
+                    |> withStateArenaSuccessorJoin(tailArgumentSuccessorJoin(headSlotOf(slots))(argument)(functionState))
                     |> withStateAffineAppendContext(affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations))
                     |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState) || backEdgeCopiesLiteralSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(parameterType)(argument)(loop)(functionState))(argument)
                     |> lower(argument)
@@ -31556,10 +31727,12 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
                         | LoweredCoreValue { state = failedState, error = Some(error) } ->
                             failedTailSelfCallArguments(failedState
                             |> withStateBackEdgeArgumentSlot(None)
+                            |> withStateArenaSuccessorJoin(stateArenaSuccessorJoin(functionState))
                             |> withStateAffineAppendContext(None))(error)
                         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
                             match argumentState
                             |> withStateBackEdgeArgumentSlot(None)
+                            |> withStateArenaSuccessorJoin(stateArenaSuccessorJoin(functionState))
                             |> withStateAffineAppendContext(None)
                             |> bindType(parameterType)(argumentType)
                             |> locateArgumentMismatch(argumentSite(Some(loop.selfName))(ordinal + 1)(argumentState)) with
