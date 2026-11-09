@@ -2186,6 +2186,10 @@ retained when it is reference-counted, or copied onto the reference-counted heap
 in the arena, and released after the call (`GRC_NO_GENERICADTARG`, both stages). A loop handing a
 fresh syntax tree to a generic walker (`walk(items)(trailing)(0)`, `trailing` never annotated)
 used to grow by one to-space copy of the tree per call.
+So does a list of strings, inline values or the contract's values, settled by a final result of the
+contract's types as well (`GRC_NO_GENERICLISTARG`, both stages): a loop calling
+`expand(pattern)(["env"])`, whose `environment` parameter is generic, grew its resident memory by one
+to-space copy of the list per call while its reference-counted heap stayed flat.
 
 ### Cycles
 

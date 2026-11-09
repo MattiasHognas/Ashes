@@ -14832,6 +14832,7 @@ public sealed partial class Lowering
             {
                 argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
                     || OwnsGenericAdtArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
+                    || OwnsGenericListArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
                     ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
                     : EmitDeepCopyToSpace(argTemp, prunedArgType);
             }
@@ -14897,6 +14898,46 @@ public sealed partial class Lowering
             && IsGeneralRcValueType(argumentType)
             && FinalResultSettlesHandedOverArgument(funType, remainingArguments);
 
+    private static bool GenericListArgumentEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_GENERICLISTARG") is null;
+
+    // A list of strings, inline values or the contract's values passed to a generic parameter goes the
+    // same way: copied onto the reference-counted heap (a list already there is retained) and handed
+    // over, instead of a deep copy into the persistent to-space region, which a loop calling a generic
+    // helper with a fresh list grew by one copy per call.
+    private bool OwnsGenericListArgument(TypeRef argumentType, TypeRef.TFun funType, int remainingArguments)
+        => GenericListArgumentEnabled
+            && GeneralRcEnabled
+            && CanTestRepresentation
+            && argumentType is TypeRef.TList { Element: var element }
+            && (Prune(element) is TypeRef.TStr || CanArenaReset(Prune(element)) || IsGeneralRcValueType(element))
+            && FinalResultSettlesHandedOverListArgument(funType, remainingArguments);
+
+    // A final result of the contract's types settles a handed-over list too: the caller normalizes it
+    // onto the reference-counted heap, retaining or copying whatever it keeps of the argument.
+    private bool FinalResultSettlesHandedOverListArgument(TypeRef.TFun funType, int remainingArguments)
+    {
+        if (FinalResultSettlesHandedOverArgument(funType, remainingArguments))
+        {
+            return true;
+        }
+
+        TypeRef resultType = Prune(funType.Ret);
+        for (int remaining = remainingArguments; remaining > 0; remaining--)
+        {
+            if (resultType is not TypeRef.TFun stage)
+            {
+                return false;
+            }
+
+            resultType = Prune(stage.Ret);
+        }
+
+        return resultType is not TypeRef.TFun
+            && !ContainsUnresolvedLayoutType(resultType, [])
+            && IsGeneralRcValueType(resultType);
+    }
+
     // Whether the call's final result is a value the caller copies out and settles a handed-over
     // argument's reference against: no closure, and a layout the copy-out knows.
     private bool FinalResultSettlesHandedOverArgument(TypeRef.TFun funType, int remainingArguments)
@@ -14924,7 +14965,7 @@ public sealed partial class Lowering
         TypeRef argumentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments)
     {
-        int ownedTemp = argumentType is TypeRef.TNamedType
+        int ownedTemp = argumentType is TypeRef.TNamedType or TypeRef.TList
             ? EmitRuntimeManagedTcoDeepCopy(argumentTemp, argumentType)
             : EmitReferenceOrCopy(argumentTemp, () =>
         {

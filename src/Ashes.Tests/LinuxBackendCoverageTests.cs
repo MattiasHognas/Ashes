@@ -25058,4 +25058,67 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("arena record update replacing field", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildGenericParameterListArgumentProgram(int rounds)
+        => $$"""
+            type Pat =
+                | PAt(Int, Pat)
+                | PEmpty
+                | PVar(Str)
+
+            let recursive expand pattern environment =
+                match pattern with
+                    | PAt(_span, inner) -> expand(inner)(environment)
+                    | other -> [other]
+
+            let recursive count xs =
+                match xs with
+                    | [] -> 0
+                    | _ :: rest -> 1 + count(rest)
+
+            let makeCases (n: Int) = [(PEmpty, 1, Some(n)), (PEmpty, 2, None), (PEmpty, 3, Some(0))]
+
+            let recursive expandCases cases environment acc =
+                match cases with
+                    | [] -> Ashes.Collection.List.reverse(acc)
+                    | (pattern, body, guard) :: rest ->
+                        acc
+                        |> expandedArms(expand(pattern)(environment))(body)(guard)
+                        |> expandCases(rest)(environment)
+            and expandedArms patterns body guard acc =
+                match patterns with
+                    | [] -> acc
+                    | pattern :: rest -> expandedArms(rest)(body)(guard)((pattern, body, guard) :: acc)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + count(expand(PAt(n, PEmpty))(["env"])))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_generic_parameter_list_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop calls a helper whose environment parameter is generic with a fresh list each round.
+        // The caller deep-copied the list into the persistent to-space region before every call, which
+        // nothing reclaims, so the program grew by one copy per call with no reference-counted leak.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildGenericParameterListArgumentProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("generic parameter list argument", samples, maxRssKb: 16_000);
+    }
 }

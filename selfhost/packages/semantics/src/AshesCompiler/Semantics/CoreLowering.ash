@@ -17670,6 +17670,8 @@ let recursive finalApplicationResult (resultType: SemanticType) (remaining: Int)
 // the persistent blob region, which nothing reclaims. Only the final result can keep it: no curry
 // stage's closure escapes the call, and the final result is a value the caller settles the
 // reference against.
+// Stage 0's `OwnsGenericListArgument` covers a list of strings, inline values or the contract's
+// values the same way, settled by a final result of the contract's types too.
 let ownsGenericStringArgument (argumentType: SemanticType) (resultType: SemanticType) (arity: Int) (state: CoreLoweringState) =
     match resolveType(state)(argumentType) with
         | SemString ->
@@ -17681,6 +17683,11 @@ let ownsGenericStringArgument (argumentType: SemanticType) (resultType: Semantic
             match finalApplicationResult(resultType)(arity - 1)(state) with
                 | Some(SemFunction(_argument, _result, _row)) -> false
                 | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && specializationFieldRelocatable(named)(state) && isGeneralRcValueType(named)(state) && containsUnresolvedLayout(finalType)(state) == false && specializationFieldRelocatable(finalType)(state)
+                | None -> false
+        | SemList(element) ->
+            match finalApplicationResult(resultType)(arity - 1)(state) with
+                | Some(SemFunction(_argument, _result, _row)) -> false
+                | Some(finalType) -> generalRcEnabled(state) && canTestRepresentation && (resolveType(state)(element) == SemString || resultSurvivesReset(element)(state) || isGeneralRcValueType(element)(state)) && containsUnresolvedLayout(finalType)(state) == false && (specializationFieldRelocatable(finalType)(state) || isGeneralRcValueType(finalType)(state))
                 | None -> false
         | _ -> false
 
