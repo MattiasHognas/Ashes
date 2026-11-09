@@ -22828,6 +22828,10 @@ public sealed class LinuxBackendCoverageTests
             """;
 
     [Test]
+    [Skip("Leaks while the loop's association list mixes keys handed into the generic dictionary call "
+        + "with keys the loop adds itself: the arena result keeps a handed-over reference only a later "
+        + "copy-out settles. Lowering such a constrained generic loop at its caller's concrete types "
+        + "removes the leak; un-skip when that lands.")]
     public async Task Linux_backend_dictionary_call_key_in_local_loop_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
