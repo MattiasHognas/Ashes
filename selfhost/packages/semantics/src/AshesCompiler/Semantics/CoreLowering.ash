@@ -16334,6 +16334,26 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
 let restartedAgainst (entered: CoreLoweringState) (lowered: CoreLoweringState) =
     withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))((entered with substitution = lowered.substitution, typeSupply = lowered.typeSupply))
 
+// A body lowered again because a call to a later group member resolved its result keeps its self
+// calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
+// open at every self call, so those calls ask for an arena result. Only the requirement-closed
+// lowering again mirrors stage 0's elaborated binding, which resolves them.
+let recursive withMissingNames (names: List(Str)) (present: List(Str)) =
+    match names with
+        | [] -> present
+        | name :: rest ->
+            if containsLabel(name)(present)
+            then withMissingNames(rest)(present)
+            else withMissingNames(rest)(name :: present)
+
+let keepFirstSelfResultDeferral (names: List(Str)) (prepare: CoreLoweringState -> CoreLoweringState) (state: CoreLoweringState) =
+    state
+    |> prepare
+    |> (given (prepared: CoreLoweringState) ->
+        withStateSelfResultDeferredNames(prepared
+        |> stateSelfResultDeferredNames
+        |> withMissingNames(names))(prepared))
+
 let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> CoreLoweringState) (close: LoweredCoreValue -> LoweredCoreValue) (lower: Expr -> CoreLoweringState -> LoweredCoreValue) (entered: CoreLoweringState) =
     match entered
     |> prepare
@@ -16355,7 +16375,7 @@ let lowerFunctionBodyResolvingCalls (body: Expr) (prepare: CoreLoweringState -> 
                             then
                                 firstState
                                 |> restartedAgainst(entered)
-                                |> lowerFunctionBodyAgain(body)(prepare)(lower)(false)
+                                |> lowerFunctionBodyAgain(body)(keepFirstSelfResultDeferral(stateSelfResultDeferredNames(firstState))(prepare))(lower)(false)
                             else first
 
 // A recursive member nested in a body that is being lowered again takes fresh type variables for
@@ -17576,8 +17596,16 @@ let emitResultOwnershipFlag (reads: Bool) (functionTemp: Int) (state: CoreLoweri
 // binding's own arrow is still open, and the call is lowered the way the compiler lowers it with a
 // complete inference behind it - adopting the result by the callee's returns bit rather than
 // asking for an arena one.
+// A body with an open sibling is lowered again once that sibling's result resolves, so its own
+// binding's result looks named there although stage 0 sees it open at the call: such a self call
+// keeps asking for the arena result.
 let deferredSelfResultNamedByConsumer (context: CoreCallContext) (state: CoreLoweringState) =
-    selfResultDeferred(context)(state) && (match context.expectedResult with
+    selfResultDeferred(context)(state) && !(match context.calleeName with
+        | Some(name) ->
+            state
+            |> stateSiblingResultOpenNames
+            |> containsLabel(name)
+        | None -> false) && (match context.expectedResult with
         | Some(expected) -> containsUnresolvedLayout(expected)(state) == false
         | None -> false)
 
