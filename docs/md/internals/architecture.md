@@ -1618,7 +1618,10 @@ arguments`): the arena cons cell, itself a constructor argument of the result, t
 its head that the return's copy retains again. That duplicate goes to an owned slot too
 (`GRC_NO_LOOPRESULTFIELDCELLHEADDUP`, both stages), but only for a cell built as a field of a
 constructor at the loop's result: applied to any result-position arena cell it released heads a
-caller still reads, and stage 0 miscompiled stage 1.
+caller still reads, and stage 0 miscompiled stage 1. A record update of the loop parameter at the
+loop's result (`fn with calls = target :: fn.calls`) builds the same kind of arena record with a
+retain of each unchanged field, which the return's copy retains again; those retains go to owned
+slots released behind the result too (`GRC_NO_LOOPRESULTUPDATEFIELDDUP`, both stages).
 
 A value of an `external type` with no destructor is a foreign handle the program only passes along:
 one word copied like an integer that needs no release (`IsOpaqueHandleWord`; stage 1's

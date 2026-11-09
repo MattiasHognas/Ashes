@@ -24846,4 +24846,75 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("owned result successor parts", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildLoopResultRecordUpdateFieldProgram(int rounds)
+        => $$"""
+            type Tree =
+                | Leaf(Str)
+                | Node(Tree, Tree)
+
+            type Fn =
+                | label: Str
+                | calls: List(Str)
+                | tree: Tree
+
+            let recursive retarget (known: List((Str, Str))) (fn: Fn) =
+                match known with
+                    | [] -> fn
+                    | (label, target) :: rest ->
+                        if label == fn.label
+                        then fn with calls = target :: fn.calls
+                        else retarget(rest)(fn)
+
+            let recursive collect (functions: List(Fn)) (known: List((Str, Str))) =
+                match functions with
+                    | [] -> known
+                    | fn :: rest -> collect(rest)((fn.label, fn.label + "_r") :: known)
+
+            let run (functions: List(Fn)) =
+                match collect(functions)([]) with
+                    | [] -> functions
+                    | known -> Ashes.Collection.List.map(retarget(known))(functions)
+
+            let recursive sumCalls (functions: List(Fn)) (acc: Int) =
+                match functions with
+                    | [] -> acc
+                    | fn :: rest -> sumCalls(rest)(acc + Ashes.Collection.List.length(fn.calls))
+
+            let recursive build (n: Int) (acc: List(Fn)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Fn(label = "lambda_" + Ashes.Text.fromInt(n), calls = ["f"], tree = Leaf("t")) :: acc)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + sumCalls(run(build(8)([])))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_result_record_update_field_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A loop rebuilds its record parameter with a record update as its result. The update built the
+        // record in the arena with retained copies of the unchanged fields, the return copied it onto
+        // the reference-counted heap, which retained them again, and the arena record's retains leaked.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildLoopResultRecordUpdateFieldProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop result record update field", samples, maxRssKb: 16_000);
+    }
 }

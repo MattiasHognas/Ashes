@@ -26762,6 +26762,23 @@ let recordCallArgumentRetain (duplicate: Int) (slot: Int) (fieldType: SemanticTy
     then withCallArgumentRetainFrame((duplicate, slot, fieldType) :: stateCallArgumentRecordRetains(state))(true)(state)
     else state
 
+// Stage 0's `KeepLoopResultUpdateFieldDuplicateOwned`: the retain of an unchanged field of a loop
+// parameter stored into the arena record a record update builds as a loop function's result goes
+// to an owned slot, released once the function's result holds references of its own, since the
+// return copies the record onto the reference-counted heap and the arena record releases nothing.
+let keepLoopResultUpdateFieldDuplicateOwned (duplicate: Int) (fieldType: SemanticType) (state: CoreLoweringState) =
+    if generalRcEnabled(state) && (match consumerRequestOf(state) with
+        | ConsumerRequest { tailPosition = tailPosition } -> tailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match stateTcoLoopFrame(state) with
+        | Some(_frame) -> true
+        | None -> false)
+    then
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = ownedSlot } ->
+                allocated
+                |> emit(StoreLocal(ownedSlot)(duplicate))
+                |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(fieldType))
+    else state
+
 // Stage 0's `RetainUnchangedRecordUpdateField`: an unchanged heap-typed field of a record update
 // whose target reads a loop parameter is a field read out of that parameter stored into the
 // rebuilt cell, and takes the same retain marker as one. The back edge copies the successor's
@@ -26779,7 +26796,8 @@ let retainUnchangedRecordField (targetSlot: Maybe(Int)) (fieldType: SemanticType
                         (allocated
                         |> emit(RcDup(duplicate)(temp)(false)(false))
                         |> (given (marked: CoreLoweringState) -> withStateTcoParameterRetainSites((duplicate, slot, fieldType) :: stateTcoParameterRetainSites(marked))(marked))
-                        |> recordCallArgumentRetain(duplicate)(slot)(fieldType), duplicate)
+                        |> recordCallArgumentRetain(duplicate)(slot)(fieldType)
+                        |> keepLoopResultUpdateFieldDuplicateOwned(duplicate)(fieldType), duplicate)
 
 let loadUnchangedRecordField targetTemp targetSlot index tagless fieldType state reversedTemps reversedTypes =
     match freshTemp(state) with

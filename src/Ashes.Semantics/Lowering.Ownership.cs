@@ -600,7 +600,29 @@ public sealed partial class Lowering
 
         int retainedTemp = DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
         _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType, targetParameter.Slot);
+        KeepLoopResultUpdateFieldDuplicateOwned(loadedTemp, retainedTemp, fieldType);
         return retainedTemp;
+    }
+
+    // An unchanged field of a loop parameter retained into the arena record a record update builds as
+    // a loop function's result (`fn with calls = target :: fn.calls` in a function whose other arm
+    // loops): the return copies the record onto the reference-counted heap, which retains the field
+    // itself, and the arena record releases nothing. The retain goes to an owned slot, released once
+    // the function's result holds references of its own.
+    private void KeepLoopResultUpdateFieldDuplicateOwned(int loadedTemp, int retainedTemp, TypeRef fieldType)
+    {
+        if (retainedTemp == loadedTemp
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTUPDATEFIELDDUP") is not null
+            || _tcoCtx?.InTailPosition != true
+            || ContainsUnresolvedLayoutType(Prune(fieldType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(fieldType));
     }
 
     /// <summary>
