@@ -444,6 +444,10 @@ type CoreTcoLoopFrame =
     // no `head :: self(...)` cons.
     | tmcDestSlot: Int
     | tmcResultSlot: Int
+    // Stage 0's `ExitParameterOwnFields`: every arena parameter whose constructor successor the
+    // exit releases, as (slot, flag slot, ordinal), and the successor cells its self-calls built.
+    | exitOwnFieldFlags: List((Int, Int, Int))
+    | exitOwnFieldCells: List((Int, Int))
 
 // A pattern owner joined to its emitted slot (stage 0's `PatternBindingPlacementSite`): the
 // binder's slot, the loop parameter slot it was extracted from, the instruction count right
@@ -15761,6 +15765,187 @@ let withdrawCopiedLoopResultRetains (parameters: List((Int, Int))) (bodyTemp: In
             state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(stateTransientFlagClears(state))(bodyTemp)(parameters)(state.reversedInstructions)
         | _ -> state
 
+let recursive heapFieldsOf (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
+    match types with
+        | [] -> []
+        | fieldType :: rest ->
+            if resultSurvivesReset(fieldType)(state)
+            then heapFieldsOf(rest)(index + 1)(state)
+            else (index, fieldType) :: heapFieldsOf(rest)(index + 1)(state)
+
+let recursive ownFieldConstructors (arguments: List(SemanticType)) (state: CoreLoweringState) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { tag = tag, tagless = tagless } as layout) :: rest ->
+            (tag, tagless, heapFieldsOf(layoutInstantiatedFieldTypes(layout)(arguments)(state))(0)(state)) :: ownFieldConstructors(arguments)(state)(rest)
+
+let recursive anyHeapField (constructors: List((Int, Bool, List((Int, SemanticType))))) =
+    match constructors with
+        | [] -> false
+        | (_tag, _tagless, []) :: rest -> anyHeapField(rest)
+        | (_tag, _tagless, _fields) :: _rest -> true
+
+// Stage 0's `OwnFieldResultType`: a resolved named result type with a constructor holding a heap field,
+// its constructors in tag order with their heap fields.
+let ownFieldKindOf (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemNamed(symbolId, name, arguments) ->
+            if containsUnresolvedLayout(SemNamed(symbolId)(name)(arguments))(state)
+            then None
+            else
+                let constructors =
+                    state
+                    |> stateConstructorLayouts
+                    |> constructorLayoutsOfType(name)
+                    |> sortBy(given (left: CoreConstructorLayout) ->
+                        given (right: CoreConstructorLayout) -> left.tag <= right.tag)
+                    |> ownFieldConstructors(arguments)(state)
+                in
+                    if anyHeapField(constructors)
+                    then
+                        constructors
+                        |> OwnFieldKind(match constructors with
+                            | (_tag, true, _fields) :: [] -> true
+                            | _ -> false)
+                        |> Some
+                    else None
+        | _ -> None
+
+let recursive seenRecordHolderType (target: SemanticType) (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | candidate :: rest -> candidate == target || seenRecordHolderType(target)(rest)
+
+// Stage 0's `ContainsResolvedType`: whether a value of this type can hold a value of the record's
+// type: the type itself, a type argument, a constructor field, or a function. A type variable cannot.
+let recursive containsResolvedType (semanticType: SemanticType) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | resolved ->
+            if resolved == target
+            then true
+            else
+                match resolved with
+                    | SemList(element) -> containsResolvedType(element)(target)(seen)(state)
+                    | SemTuple(elements) -> anyContainsResolvedType(elements)(target)(seen)(state)
+                    | SemFunction(_parameter, _result, _row) -> true
+                    | SemNamed(_id, name, arguments) ->
+                        if seenRecordHolderType(resolved)(seen)
+                        then false
+                        else
+                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state
+                            |> stateConstructorLayouts
+                            |> constructorLayoutsOfType(name))(target)(resolved :: seen)(state)
+                    | _ -> false
+and anyContainsResolvedType (types: List(SemanticType)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | candidate :: rest -> containsResolvedType(candidate)(target)(seen)(state) || anyContainsResolvedType(rest)(target)(seen)(state)
+and anyLayoutFieldContains (layouts: List(CoreConstructorLayout)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> false
+        | layout :: rest ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, _resultType) -> anyContainsResolvedType(fieldTypes)(target)(seen)(state) || anyLayoutFieldContains(rest)(target)(seen)(state)
+
+let recursive fieldTypeHeldBy (resultType: SemanticType) (fields: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> false
+        | (_index, fieldType) :: rest ->
+            containsResolvedType(resultType)(resolveType(state)(fieldType))([])(state) || fieldTypeHeldBy(resultType)(rest)(state)
+
+let recursive anyFieldTypeHeldBy (resultType: SemanticType) (constructors: List((Int, Bool, List((Int, SemanticType))))) (state: CoreLoweringState) =
+    match constructors with
+        | [] -> false
+        | (_tag, _tagless, fields) :: rest -> fieldTypeHeldBy(resultType)(fields)(state) || anyFieldTypeHeldBy(resultType)(rest)(state)
+
+// A stored word that holds a reference of its own: a realized retain, or a constant.
+let exitStoredFieldRetained (source: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(source)(state.reversedInstructions) with
+        | Some(RcDup(_target, _source, true, _mayBeEmpty)) -> true
+        | Some(LoadConstInt(_target, _value)) -> true
+        | Some(LoadConstBool(_target, _value)) -> true
+        | Some(LoadConstStr(_target, _label)) -> true
+        | _ -> false
+
+let recursive exitCellFieldsRetained (cell: Int) (index: Int) (state: CoreLoweringState) =
+    match constructionFieldSource(cell)(index)(state.reversedInstructions) with
+        | None -> true
+        | Some(source) -> exitStoredFieldRetained(source)(state) && exitCellFieldsRetained(cell)(index + 1)(state)
+
+// Stage 0's `ExitParameterConstructionRetains`: an arena cell whose every stored field is a realized
+// retain or a constant.
+let exitCellConstructionRetains (cell: Int) (state: CoreLoweringState) =
+    match definitionOfTemp(cell)(state.reversedInstructions) with
+        | Some(AllocAdt(_target, _tag, _fieldCount, false, _tagless)) -> exitCellFieldsRetained(cell)(0)(state)
+        | Some(Alloc(_target, _size, false)) -> exitCellFieldsRetained(cell)(0)(state)
+        | _ -> false
+
+let recursive exitCellsOfSlot (slot: Int) (cells: List((Int, Int))) =
+    match cells with
+        | [] -> []
+        | (candidate, cell) :: rest ->
+            if candidate == slot
+            then cell :: exitCellsOfSlot(slot)(rest)
+            else exitCellsOfSlot(slot)(rest)
+
+let recursive allExitCellsRetain (cells: List(Int)) (state: CoreLoweringState) =
+    match cells with
+        | [] -> true
+        | cell :: rest -> exitCellConstructionRetains(cell)(state) && allExitCellsRetain(rest)(state)
+
+let recursive exitParameterTypeAt (ordinal: Int) (types: List(SemanticType)) =
+    match types with
+        | [] -> None
+        | parameterType :: rest ->
+            if ordinal == 0
+            then Some(parameterType)
+            else exitParameterTypeAt(ordinal - 1)(rest)
+
+// The flagged walk: a set flag releases the arena cell's own fields.
+let emitFlaggedOwnFieldWalk (slot: Int) (flagSlot: Int) (tagless: Bool) (constructors: List((Int, Bool, List((Int, SemanticType))))) (state: CoreLoweringState) =
+    match freshLabel("exit_param_own_fields_skip")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            match freshTemp(labelled) with
+                | FreshTemp { state = flagState, temp = flagTemp } ->
+                    match flagState
+                    |> emit(LoadLocal(flagTemp)(flagSlot))
+                    |> emit(JumpIfFalse(flagTemp)(skipLabel))
+                    |> freshTemp with
+                        | FreshTemp { state = valueState, temp = valueTemp } ->
+                            valueState
+                            |> emit(LoadLocal(valueTemp)(slot))
+                            |> emitOwnFieldWalk(valueTemp)(tagless)(constructors)
+                            |> emit(Label(skipLabel))
+
+// Stage 0's `EmitExitParameterOwnFieldReleases`: at the return, a set flag releases an arena
+// parameter's successor cell's own fields, when every constructor successor stored retains and the
+// result holds references of its own or cannot hold the released fields.
+let recursive emitExitOwnFieldReleasesOf (entries: List((Int, Int, Int))) (resultTemp: Int) (resultType: SemanticType) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+    match entries with
+        | [] -> state
+        | (slot, flagSlot, ordinal) :: rest ->
+            let cells = exitCellsOfSlot(slot)(frame.exitOwnFieldCells)
+            in
+                let managed =
+                    match (lookupRuntimeManagedListSlot(slot)(managedLists), lookupRuntimeManagedAdtSlot(slot)(managedAdts), lookupManagedStrSlot(slot)(managedStrs)) with
+                        | (None, None, None) -> false
+                        | _ -> true
+                in
+                    let released =
+                        if managed || cells == []
+                        then state
+                        else
+                            match exitParameterTypeAt(ordinal)(loop.parameterTypes) with
+                                | Some(parameterType) ->
+                                    match ownFieldKindOf(parameterType)(state) with
+                                        | Some(OwnFieldKind(tagless, constructors)) ->
+                                            if (isRuntimeTemp(resultTemp)(state) || isGeneralRcFinishedResult(resultTemp)(state) || !anyFieldTypeHeldBy(resolveType(state)(resultType))(constructors)(state)) && allExitCellsRetain(cells)(state)
+                                            then emitFlaggedOwnFieldWalk(slot)(flagSlot)(tagless)(constructors)(state)
+                                            else state
+                                        | _ -> state
+                                | None -> state
+                    in emitExitOwnFieldReleasesOf(rest)(resultTemp)(resultType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)(released)
+
 // A loop whose result is of the contract's types makes it the function's own before its exit
 // releases the loop parameters, as stage 0 orders the two: the result then holds its own
 // reference, so every parameter goes and none is transferred as the result. An inline result
@@ -15781,7 +15966,10 @@ let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (parameters: 
 
 let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(managedStrs)(state) with
-        | [] -> success(bodyTemp)(semanticType)(state)
+        | [] ->
+            state
+            |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(bodyTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
+            |> success(bodyTemp)(semanticType)
         | entries ->
             state
             |> (given (current: CoreLoweringState) -> withStateTcoLoopFrame(Some((frame with runtimeManagedListSlots = managedLists, runtimeManagedAdtSlots = managedAdts, runtimeManagedStrSlots = managedStrs)))(current))
@@ -15796,6 +15984,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
                         finishedState
                         |> copyArenaTupleParameters(managedLists)(managedAdts)(candidates)
                         |> emitTcoExitDrops(resultTemp)(semanticType)(frame.parameterSlots)(managedLists)(managedAdts)(managedStrs)
+                        |> emitExitOwnFieldReleasesOf(frame.exitOwnFieldFlags)(resultTemp)(semanticType)(frame)(loop)(managedLists)(managedAdts)(managedStrs)
                         |> success(resultTemp)(semanticType))
 
 // A parameter whose self-call shape, copy-ADT layout, or affine analysis could place it on the
@@ -16231,7 +16420,7 @@ let recursive emitAffineReservations (ordinals: List(Int)) (slots: List(Int)) (o
                                     | (reserved, pairs) -> (reserved, (slot, reservationStart, reservationEnd) :: pairs)
             else emitAffineReservations(ordinals)(rest)(ordinal + 1)(zeroTemp)(state)
 
-let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (fixedEndSlot: Int) (compactionSizeSlot: Int) (entrySpliceCount: Int) (affineReservations: List((Int, Int, Int))) (listActiveSlots: List((Int, Int))) (tmcDestSlot: Int) (tmcResultSlot: Int) (bracket: ArenaBracket) =
+let finishTcoLoopEntry (label: Str) (slots: List(Int)) (exitOwnFieldFlags: List((Int, Int, Int))) (fixedCursorSlot: Int) (fixedEndSlot: Int) (compactionSizeSlot: Int) (entrySpliceCount: Int) (affineReservations: List((Int, Int, Int))) (listActiveSlots: List((Int, Int))) (tmcDestSlot: Int) (tmcResultSlot: Int) (bracket: ArenaBracket) =
     match bracket with
         | ArenaBracket { bracketState = iterationState, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             match freshLocal(iterationState) with
@@ -16256,7 +16445,9 @@ let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (f
                             runtimeManagedAdtSlots = [],
                             runtimeManagedStrSlots = [],
                             tmcDestSlot = tmcDestSlot,
-                            tmcResultSlot = tmcResultSlot
+                            tmcResultSlot = tmcResultSlot,
+                            exitOwnFieldFlags = exitOwnFieldFlags,
+                            exitOwnFieldCells = []
                         )))(entered))
 
 // The active-flag local of every parameter whose self-call shape may place a list on the
@@ -16291,11 +16482,147 @@ let allocateTmcChainSlots (tmcShapePresent: Bool) (zeroTemp: Int) (state: CoreLo
                         |> emit(StoreLocal(resultSlot)(zeroTemp)), destSlot, resultSlot)
     else (state, -1, -1)
 
+let recursive exitSuccessorSpine (expression: Expr) (arguments: List(Expr)) =
+    match expression with
+        | ExprAt(_span, inner) -> exitSuccessorSpine(inner)(arguments)
+        | ExprCall(function, argument, _sugar, _layout) -> exitSuccessorSpine(function)(argument :: arguments)
+        | other -> (other, arguments)
+
+let constructorNamedOfArity (name: Str) (arity: Int) (state: CoreLoweringState) =
+    match constructorLayout(name)(state) with
+        | Some(layout) -> constructorArity(layout) == arity
+        | None -> false
+
+// Stage 0's `ExitParameterSuccessorKind`: 0 the parameter handed on, 1 a nullary constructor, 2 a
+// constructor application, -1 anything else.
+let exitParameterSuccessorKind (argument: Expr) (name: Str) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(candidate) ->
+            if candidate == name
+            then 0
+            else
+                if constructorNamedOfArity(candidate)(0)(state)
+                then 1
+                else -1
+        | ExprCall(_function, _argument, _sugar, _layout) ->
+            match exitSuccessorSpine(argument)([]) with
+                | (root, arguments) ->
+                    match unspanArgument(root) with
+                        | ExprVar(candidate) ->
+                            if constructorNamedOfArity(candidate)(length(arguments))(state)
+                            then 2
+                            else -1
+                        | _ -> -1
+        | _ -> -1
+
+// Stage 0's `IsNullaryConstructorPattern`.
+let recursive exitNullaryConstructorPattern (pattern: Pattern) (state: CoreLoweringState) =
+    match pattern with
+        | PatternAt(_span, inner) -> exitNullaryConstructorPattern(inner)(state)
+        | PatternConstructor(name, []) -> constructorNamedOfArity(name)(0)(state)
+        | PatternVar(name) -> constructorNamedOfArity(name)(0)(state)
+        | _ -> false
+
+let recursive exitArgumentAt (index: Int) (arguments: List(Expr)) =
+    match arguments with
+        | [] -> None
+        | argument :: rest ->
+            if index == 0
+            then Some(argument)
+            else exitArgumentAt(index - 1)(rest)
+
+// Stage 0's `ExitParameterSuccessorsQualify`: every tail self-call hands the parameter on, passes a
+// nullary constructor, or builds a constructor in an arm where the parameter was matched nullary; the
+// second component says whether some self-call builds one.
+let recursive exitSuccessorsQualify (expression: Expr) (selfName: Str) (ordinal: Int) (name: Str) (arity: Int) (nullaryKnown: Bool) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> exitSuccessorsQualify(inner)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) ->
+            match exitSuccessorsQualify(thenBranch)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state) with
+                | (true, thenBuilds) ->
+                    match exitSuccessorsQualify(elseBranch)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state) with
+                        | (qualifies, elseBuilds) -> (qualifies, thenBuilds || elseBuilds)
+                | failed -> failed
+        | ExprMatch(scrutinee, arms, _position) ->
+            let onParameter =
+                match unspanArgument(scrutinee) with
+                    | ExprVar(candidate) -> candidate == name
+                    | _ -> false
+            in exitSuccessorArmsQualify(arms)(onParameter)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state)
+        | ExprLet(letName, _value, body, _parameters, _annotation, _requirements) ->
+            if letName == name
+            then (false, false)
+            else exitSuccessorsQualify(body)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state)
+        | ExprCall(_function, _argument, _sugar, _layout) ->
+            match exitSuccessorSpine(expression)([]) with
+                | (root, arguments) ->
+                    match unspanArgument(root) with
+                        | ExprVar(callee) ->
+                            if callee == selfName && length(arguments) == arity
+                            then
+                                match exitArgumentAt(ordinal)(arguments) with
+                                    | Some(argument) ->
+                                        match exitParameterSuccessorKind(argument)(name)(state) with
+                                            | 2 -> (nullaryKnown, true)
+                                            | kind -> (kind >= 0, false)
+                                    | None -> (false, false)
+                            else (true, false)
+                        | _ -> (true, false)
+        | _ -> (true, false)
+and exitSuccessorArmsQualify (arms: List((Pattern, Expr, Maybe(Expr)))) (onParameter: Bool) (selfName: Str) (ordinal: Int) (name: Str) (arity: Int) (nullaryKnown: Bool) (state: CoreLoweringState) =
+    match arms with
+        | [] -> (true, false)
+        | (pattern, body, _guard) :: rest ->
+            if []
+            |> shapePatternNames(pattern)
+            |> containsLabel(name)
+            then (false, false)
+            else
+                match exitSuccessorsQualify(body)(selfName)(ordinal)(name)(arity)(nullaryKnown || onParameter && exitNullaryConstructorPattern(pattern)(state))(state) with
+                    | (true, armBuilds) ->
+                        match exitSuccessorArmsQualify(rest)(onParameter)(selfName)(ordinal)(name)(arity)(nullaryKnown)(state) with
+                            | (qualifies, restBuilds) -> (qualifies, armBuilds || restBuilds)
+                    | failed -> failed
+
+// The zero the flags start from, loaded once.
+let exitFlagZero (zeroTemp: Int) (state: CoreLoweringState) =
+    if zeroTemp < 0
+    then
+        match freshTemp(state) with
+            | FreshTemp { state = zeroState, temp = zero } ->
+                (emit(LoadConstInt(zero)(0))(zeroState), zero)
+    else (state, zeroTemp)
+
+// Stage 0's `PrepareExitParameterOwnFields`: a flag, zeroed ahead of the loop's entry, for every
+// parameter whose self-calls have the checked shape and build a constructor successor
+// (`GRC_NO_EXITPARAMOWNFIELDS` in stage 0); the entries are (slot, flag slot, ordinal).
+let recursive allocateExitOwnFieldFlags (names: List(Str)) (slots: List(Int)) (ordinal: Int) (loop: CoreTcoLoop) (arity: Int) (zeroTemp: Int) (state: CoreLoweringState) =
+    match (names, slots) with
+        | (name :: restNames, slot :: restSlots) ->
+            match exitSuccessorsQualify(loop.body)(loop.selfName)(ordinal)(name)(arity)(false)(state) with
+                | (true, true) ->
+                    match exitFlagZero(zeroTemp)(state) with
+                        | (zeroed, zero) ->
+                            match freshLocal(zeroed) with
+                                | FreshLocal { state = flagState, local = flagSlot } ->
+                                    match flagState
+                                    |> emit(StoreLocal(flagSlot)(zero))
+                                    |> allocateExitOwnFieldFlags(restNames)(restSlots)(ordinal + 1)(loop)(arity)(zero) with
+                                        | (allocated, flags) -> (allocated, (slot, flagSlot, ordinal) :: flags)
+                | _ -> allocateExitOwnFieldFlags(restNames)(restSlots)(ordinal + 1)(loop)(arity)(zeroTemp)(state)
+        | _ -> (state, [])
+
+let prepareExitOwnFieldFlags (slots: List(Int)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    if generalRcEnabled(state) && loop.selfName != ""
+    then
+        allocateExitOwnFieldFlags(loop.parameterNames)(slots)(0)(loop)(length(slots))(-1)(state)
+    else (state, [])
+
 // Stage 0's `LowerLambdaCoreEmitTcoLoopEntry`: the fixed loop-entry watermark saved once, the
 // compaction-size slot and the affine reservation slots zeroed, the list parameters' active
 // flags allocated, then the body label followed by the per-iteration watermark and stack pointer
 // the back edge restores.
-let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entrySpliceCount: Int) (state: CoreLoweringState) =
+let emitTcoLoopEntryFlagged (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entrySpliceCount: Int) (exitOwnFieldFlags: List((Int, Int, Int))) (state: CoreLoweringState) =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = fixedState, bracketCursorSlot = fixedCursorSlot, bracketEndSlot = fixedEndSlot } ->
             match freshLocal(fixedState) with
@@ -16314,7 +16641,11 @@ let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entryS
                                                     tmcState
                                                     |> emit(Label(label + "_body"))
                                                     |> openArenaBracket
-                                                    |> finishTcoLoopEntry(label)(slots)(fixedCursorSlot)(fixedEndSlot)(compactionSizeSlot)(entrySpliceCount)(affineReservations)(listActiveSlots)(tmcDestSlot)(tmcResultSlot)
+                                                    |> finishTcoLoopEntry(label)(slots)(exitOwnFieldFlags)(fixedCursorSlot)(fixedEndSlot)(compactionSizeSlot)(entrySpliceCount)(affineReservations)(listActiveSlots)(tmcDestSlot)(tmcResultSlot)
+
+let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (entrySpliceCount: Int) (state: CoreLoweringState) =
+    match prepareExitOwnFieldFlags(slots)(loop)(state) with
+        | (flagged, exitOwnFieldFlags) -> emitTcoLoopEntryFlagged(label)(slots)(loop)(entrySpliceCount)(exitOwnFieldFlags)(flagged)
 
 // A loop parameter the provisional loop entry already places on the reference-counted heap: a
 // list-shaped or copy-ADT slot, or an affine `Str` accumulator.
@@ -19756,52 +20087,6 @@ let recursive spanListed (span: TextSpan) (spans: List(TextSpan)) =
         | [] -> false
         | candidate :: rest -> candidate == span || spanListed(span)(rest)
 
-let recursive heapFieldsOf (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
-    match types with
-        | [] -> []
-        | fieldType :: rest ->
-            if resultSurvivesReset(fieldType)(state)
-            then heapFieldsOf(rest)(index + 1)(state)
-            else (index, fieldType) :: heapFieldsOf(rest)(index + 1)(state)
-
-let recursive ownFieldConstructors (arguments: List(SemanticType)) (state: CoreLoweringState) (layouts: List(CoreConstructorLayout)) =
-    match layouts with
-        | [] -> []
-        | (CoreConstructorLayout { tag = tag, tagless = tagless } as layout) :: rest ->
-            (tag, tagless, heapFieldsOf(layoutInstantiatedFieldTypes(layout)(arguments)(state))(0)(state)) :: ownFieldConstructors(arguments)(state)(rest)
-
-let recursive anyHeapField (constructors: List((Int, Bool, List((Int, SemanticType))))) =
-    match constructors with
-        | [] -> false
-        | (_tag, _tagless, []) :: rest -> anyHeapField(rest)
-        | (_tag, _tagless, _fields) :: _rest -> true
-
-// Stage 0's `OwnFieldResultType`: a resolved named result type with a constructor holding a heap field,
-// its constructors in tag order with their heap fields.
-let ownFieldKindOf (resultType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemNamed(symbolId, name, arguments) ->
-            if containsUnresolvedLayout(SemNamed(symbolId)(name)(arguments))(state)
-            then None
-            else
-                let constructors =
-                    state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)
-                    |> sortBy(given (left: CoreConstructorLayout) ->
-                        given (right: CoreConstructorLayout) -> left.tag <= right.tag)
-                    |> ownFieldConstructors(arguments)(state)
-                in
-                    if anyHeapField(constructors)
-                    then
-                        constructors
-                        |> OwnFieldKind(match constructors with
-                            | (_tag, true, _fields) :: [] -> true
-                            | _ -> false)
-                        |> Some
-                    else None
-        | _ -> None
-
 // Stage 0's `TryNewTakenOverSettle`: what a call result's settlement releases, the list record's tuple
 // field when the result is a list of tuples whose first field has a resolved heap type, else the own
 // fields of a named result type.
@@ -19864,42 +20149,6 @@ let recursive typeAtReachPath (semanticType: SemanticType) (segments: List(Str))
                 | Some(element) -> typeAtReachPath(element)(rest)(state)
                 | None -> SemTuple(elements)
         | (_segments, resolved) -> resolved
-
-let recursive seenRecordHolderType (target: SemanticType) (types: List(SemanticType)) =
-    match types with
-        | [] -> false
-        | candidate :: rest -> candidate == target || seenRecordHolderType(target)(rest)
-
-// Stage 0's `ContainsResolvedType`: whether a value of this type can hold a value of the record's
-// type: the type itself, a type argument, a constructor field, or a function. A type variable cannot.
-let recursive containsResolvedType (semanticType: SemanticType) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | resolved ->
-            if resolved == target
-            then true
-            else
-                match resolved with
-                    | SemList(element) -> containsResolvedType(element)(target)(seen)(state)
-                    | SemTuple(elements) -> anyContainsResolvedType(elements)(target)(seen)(state)
-                    | SemFunction(_parameter, _result, _row) -> true
-                    | SemNamed(_id, name, arguments) ->
-                        if seenRecordHolderType(resolved)(seen)
-                        then false
-                        else
-                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name))(target)(resolved :: seen)(state)
-                    | _ -> false
-and anyContainsResolvedType (types: List(SemanticType)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> false
-        | candidate :: rest -> containsResolvedType(candidate)(target)(seen)(state) || anyContainsResolvedType(rest)(target)(seen)(state)
-and anyLayoutFieldContains (layouts: List(CoreConstructorLayout)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
-    match layouts with
-        | [] -> false
-        | layout :: rest ->
-            match layoutFieldTypes(layout)(state) with
-                | (fieldTypes, _resultType) -> anyContainsResolvedType(fieldTypes)(target)(seen)(state) || anyLayoutFieldContains(rest)(target)(seen)(state)
 
 let withoutExposedTag (root: Str) =
     if Ashes.Text.startsWith(root)("~")
@@ -20205,17 +20454,6 @@ let settleLetScopedTakenOver (ownerSlot: Int) (valueTemp: Int) (state: CoreLower
                             match newTakenOverSettle(ownerLoad)(callee)(kind)(taken) with
                                 | (noted, placeholder) -> noted with reversedInstructions = placeholder :: noted.reversedInstructions
                         else taken
-
-let recursive fieldTypeHeldBy (resultType: SemanticType) (fields: List((Int, SemanticType))) (state: CoreLoweringState) =
-    match fields with
-        | [] -> false
-        | (_index, fieldType) :: rest ->
-            containsResolvedType(resultType)(resolveType(state)(fieldType))([])(state) || fieldTypeHeldBy(resultType)(rest)(state)
-
-let recursive anyFieldTypeHeldBy (resultType: SemanticType) (constructors: List((Int, Bool, List((Int, SemanticType))))) (state: CoreLoweringState) =
-    match constructors with
-        | [] -> false
-        | (_tag, _tagless, fields) :: rest -> fieldTypeHeldBy(resultType)(fields)(state) || anyFieldTypeHeldBy(resultType)(rest)(state)
 
 let recursive heldResultAtSpan (span: TextSpan) (held: List((Int, Str, CoreSettleKind, Maybe(TextSpan)))) =
     match held with
@@ -31257,6 +31495,49 @@ let restSlotsOf (slots: List(Int)) =
         | _slot :: rest -> rest
         | [] -> []
 
+let recursive exitOwnFieldFlagAt (ordinal: Int) (flags: List((Int, Int, Int))) =
+    match flags with
+        | [] -> None
+        | (slot, flagSlot, candidate) :: rest ->
+            if candidate == ordinal
+            then Some((slot, flagSlot))
+            else exitOwnFieldFlagAt(ordinal)(rest)
+
+let recursive exitParameterNameAt (ordinal: Int) (names: List(Str)) =
+    match names with
+        | [] -> ""
+        | name :: rest ->
+            if ordinal == 0
+            then name
+            else exitParameterNameAt(ordinal - 1)(rest)
+
+let storeExitOwnFieldFlag (flagSlot: Int) (value: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tempState, temp = valueTemp } ->
+            tempState
+            |> emit(LoadConstInt(valueTemp)(value))
+            |> emit(StoreLocal(flagSlot)(valueTemp))
+
+// Stage 0's `NoteExitParameterSuccessor`: after a tail self-call argument is lowered into a tracked
+// parameter's position, the flag follows the successor, and a constructor successor's cell is kept
+// for the check at the exit.
+let noteExitOwnFieldSuccessor (argument: Expr) (ordinal: Int) (loop: CoreTcoLoop) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = cellTemp, error = None } ->
+            match stateTcoLoopFrame(state) with
+                | Some(frame) ->
+                    match exitOwnFieldFlagAt(ordinal)(frame.exitOwnFieldFlags) with
+                        | Some((slot, flagSlot)) ->
+                            match exitParameterSuccessorKind(argument)(exitParameterNameAt(ordinal)(loop.parameterNames))(state) with
+                                | 0 -> lowered
+                                | 2 ->
+                                    let stored = storeExitOwnFieldFlag(flagSlot)(1)(state)
+                                    in lowered with state = withStateTcoLoopFrame(Some((frame with exitOwnFieldCells = (slot, cellTemp) :: frame.exitOwnFieldCells)))(stored)
+                                | _ -> lowered with state = storeExitOwnFieldFlag(flagSlot)(0)(state)
+                        | None -> lowered
+                | None -> lowered
+        | _ -> lowered
+
 let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(Int)) (shapes: List(TcoArgumentShape)) (ordinal: Int) (loop: CoreTcoLoop) (reservations: List((Int, Int, Int))) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
     match arguments with
         | [] -> loweredTailSelfCallArguments(state)(reversedTemps)(reversedTypes)
@@ -31269,6 +31550,7 @@ let recursive lowerTailSelfCallArguments (arguments: List(Expr)) (slots: List(In
                     |> withStateAffineAppendContext(affineAppendContextFor(argument)(ordinal)(headSlotOf(slots))(loop)(reservations))
                     |> tailSelfCallArgumentRequest(parameterType)(argumentSite(Some(loop.selfName))(ordinal + 1)(functionState))(headArgumentShape(shapes))(tailSelfCallStringSuccessor(argument)(headSlotOf(slots))(ordinal)(headArgumentShape(shapes))(loop)(functionState))(headSlotOf(slots))(backEdgeCopiesListSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(loop)(functionState) || backEdgeCopiesLiteralSuccessor(headSlotOf(slots))(headArgumentShape(shapes))(parameterType)(argument)(loop)(functionState))(argument)
                     |> lower(argument)
+                    |> noteExitOwnFieldSuccessor(argument)(ordinal)(loop)
                     |> duplicatePatternOwnerChild(argument)
                     |> retainTransferredChild(argument)(true) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } ->
@@ -32303,6 +32585,12 @@ let recursive bindSelfCallParameterTypes functionType (parameterTypes: List(Sema
                         | (_failed, Some(_error)) -> state
                         | (bound, None) -> bindSelfCallParameterTypes(resultType)(rest)(bound)
 
+// The successor cells this self-call's arguments noted, carried into the frame the back edge writes.
+let frameWithExitCells (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match stateTcoLoopFrame(state) with
+        | Some(current) -> frame with exitOwnFieldCells = current.exitOwnFieldCells
+        | None -> frame
+
 let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) lower (state: CoreLoweringState) =
     match lookupBinding(loop.selfName)(state.bindings) with
         | None -> failure(state)(UnknownLoweringBinding(loop.selfName))
@@ -32318,7 +32606,7 @@ let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (loop: Co
                                 | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
                                     argumentState
                                     |> markCallArgumentsMoved(spine)
-                                    |> emitTailSelfCallBackEdge(frame)(loop)(arguments)(temps)(argumentTypes)
+                                    |> emitTailSelfCallBackEdge(frameWithExitCells(frame)(argumentState))(loop)(arguments)(temps)(argumentTypes)
 
 // Whether a reuse specialization's body is being lowered (stage 0's `_inSpecialization`): its
 // fresh inputs are recorded from the generating call until the body is lowered.

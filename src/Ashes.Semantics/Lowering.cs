@@ -7704,7 +7704,7 @@ public sealed partial class Lowering
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
         BackfillSelfClosureResultOwnership(label, bodyRuntimeManaged);
         RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
-        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(lam, savedTcoCtx, bodyTemp);
+        LowerLambdaCoreEmitTcoExitReleases(lam, savedTcoCtx, bodyTemp, bodyType, bodyRuntimeManaged);
         Emit(new IrInst.Return(LowerLambdaCoreNormalizeRequestedArenaResult(bodyTemp, bodyType, bodyRuntimeManaged)));
 
         IrFunction loweredFunction = LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
@@ -10058,6 +10058,7 @@ public sealed partial class Lowering
             reuseEntryCopies,
             specElidedAccs);
         RecomputeTcoParameterFlow(tco, routed: true);
+        PrepareExitParameterOwnFields(lam, tco);
         LowerLambdaCoreEmitTcoLoopEntry(label, tco);
 
         tco.InTailPosition = true;
@@ -13003,7 +13004,9 @@ public sealed partial class Lowering
         _tcoArgumentDestination = index < tco.ParamSlots.Count ? (tco, tco.ParamSlots[index]) : null;
         try
         {
-            return LowerExpr(argument, request).AsPair();
+            (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
+            NoteExitParameterSuccessor(tco, index, argument, lowered.Temp);
+            return lowered;
         }
         finally
         {
