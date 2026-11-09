@@ -2359,6 +2359,12 @@ reach is unproven. A complete reach account settles it without types: a callee t
 holds the argument whole takes the ordinary consumed-argument release instead, giving up the spine it
 handed over while preserving the elements the result may still hold.
 
+A `let recursive ... and ...` group whose members tail-call each other is lowered into one dispatch
+loop. That loop is synthesized while the group is lowered, after the move analysis has run, so it is
+summarized on its own: its parameters get the structural facts an ordinary recursive loop gets, and a
+fresh reference-counted value one member hands its sibling (`withdrawStoredRetains(storedValuesOf(cell)(instructions)([]))`)
+is placed and released like an ordinary loop's successor (`GRC_NO_DISPATCHFACTS` turns this off).
+
 ### Stacks
 
 Heap allocators serve values; call frames use the ordinary machine stack, and

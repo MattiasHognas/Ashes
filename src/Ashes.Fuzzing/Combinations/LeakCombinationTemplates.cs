@@ -234,6 +234,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new ArenaRecordUpdateReplacingFieldTemplate());
         registry.Register(new NestedListAccumulatorTemplate());
         registry.Register(new SiblingReceivesAccumulatorPartTemplate());
+        registry.Register(new DispatchLoopFreshArgumentTemplate());
+        registry.Register(new DispatchLoopBorrowedArgumentTemplate());
         registry.Register(new SpecializationOwnershipScopeTemplate());
         registry.Register(new ScalarFieldAccumulatorTemplate());
         registry.Register(new OwnedResultSuccessorPartsTemplate());
