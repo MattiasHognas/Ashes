@@ -1895,6 +1895,7 @@ public sealed partial class Lowering
 
         var argumentTemps = new List<int>(arguments.Count);
         var argumentTypes = new List<TypeRef>(arguments.Count);
+        _constructorArgumentDepth++;
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
@@ -1908,13 +1909,15 @@ public sealed partial class Lowering
                 argumentTemp,
                 argumentType,
                 runtimeManagedCandidate,
-                request);
+                request,
+                fieldIndex: i);
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
             Unify(parameterType, argumentType);
             argumentTypes.Add(Prune(argumentType));
             MarkResourceArgMoved(arguments[i]);
         }
+        _constructorArgumentDepth--;
 
         return (argumentTemps, argumentTypes);
     }
@@ -1936,7 +1939,8 @@ public sealed partial class Lowering
         int argumentTemp,
         TypeRef argumentType,
         bool runtimeManagedCandidate,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        int fieldIndex = -1)
     {
         bool owningConsumer = runtimeManagedCandidate
             || request.ConsumerCanOwn
@@ -1964,7 +1968,9 @@ public sealed partial class Lowering
 
         if (!runtimeManagedCandidate && request.TransfersRuntimeManagedChildren)
         {
+            int borrowedTemp = argumentTemp;
             argumentTemp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, argumentTemp, argumentType);
+            RecordTransferDuplicatedChild(fieldIndex, borrowedTemp, argumentTemp, argumentType);
         }
 
         return argumentTemp;

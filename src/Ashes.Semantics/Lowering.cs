@@ -1323,6 +1323,10 @@ public sealed partial class Lowering
         // parameter takes over.
         public bool[] TransferRetainedArgs { get; init; } = [];
 
+        // Children an arena constructor successor stored as references retained for the transfer out of
+        // an iteration-local owner, per argument: the field and the retained reference.
+        public IReadOnlyList<(int FieldIndex, int Temp, TypeRef Type)>[] TransferDuplicatedChildren { get; init; } = [];
+
         // Successors consed onto their own parameter, one cell (SingleFreshCons) or a chain of them:
         // a reference-counted one took the predecessor over as its last cell's tail.
         public bool[] ConsChainOverParameter { get; init; } = [];
@@ -1455,7 +1459,7 @@ public sealed partial class Lowering
         int resetCursorSlot = useFixedWatermark ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = useFixedWatermark ? info.FixedEndSlot : info.ArenaEndSlot;
 
-        if (!allCopyable) { CopyTransferRetainedSuccessorsIntoArena(info); return; } // no arena reset for complex heap types
+        if (!allCopyable) { CopyTransferRetainedSuccessorsIntoArena(info); CopyTransferDuplicatedChildrenIntoArena(info); return; } // no arena reset for complex heap types
 
         // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args across the back-edge cannot
         // be done with a single round of copy-outs to the watermark W: each copy-out compacts its
@@ -12539,7 +12543,7 @@ public sealed partial class Lowering
             {
                 request = request.WithCallerReportedExpectedType(expectedType);
             }
-            (int Temp, TypeRef Type) lowered = LowerTcoArgumentForSlot(tco, index, argument, request);
+            (int Temp, TypeRef Type) lowered = LowerTcoArgumentCollectingTransferChildren(tco, index, argument, request);
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
             int borrowedTemp = lowered.Temp;
             lowered.Temp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, lowered.Temp, lowered.Type);
@@ -13260,6 +13264,7 @@ public sealed partial class Lowering
                 k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rq) ? rq.End : -1).ToArray())
         {
             TransferRetainedArgs = newArgTemps.Select(IsTransferRetainedSuccessor).ToArray(),
+            TransferDuplicatedChildren = newArgTemps.Select(TransferDuplicatedChildrenOf).ToArray(),
             ConsChainOverParameter = collectedArgs
                 .Select((argument, index) => ConsChainsGrowAccumulators
                     && index < tco.ParamSlots.Count
