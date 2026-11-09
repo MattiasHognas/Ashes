@@ -541,13 +541,19 @@ type CorePendingCallCopyOut =
     | deferredSelfCall: Bool
     | deferredOwned: Bool
 
+// What a settlement releases: the list record's tuple field (its type), or the own fields of an arena
+// result cell (whether the type is tagless, and per constructor its tag, taglessness and heap fields).
+type CoreSettleKind =
+    | ListRecordKind(SemanticType)
+    | OwnFieldKind(Bool, List((Int, Bool, List((Int, SemanticType)))))
+
 // A settlement of a taken-over record (stage 0's `PendingTakenOverSettle`): the walk releasing what
 // a callee's arena cells took over, at a placeholder resolved once the body is lowered.
 type CoreTakenOverSettle =
     | settleId: Int
     | settleTemp: Int
     | settleCallee: Str
-    | settleElement: SemanticType
+    | settleKind: CoreSettleKind
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
@@ -763,6 +769,10 @@ type CoreOwnerState =
     // calls whose result slot a loop or a return freed the spine of (`_spineFreedSources`).
     | takenOverSlotSources: List((Maybe(IrFunctionOrigin), Int, TextSpan))
     | spineFreedSpans: List(TextSpan)
+    // The own-field record's notes (stage 0's `_ownFieldRetainedParameters` and `_ownFieldPendingParameters`):
+    // (loop, parameter) a cell built in the loop retained outright, or left to the placement.
+    | ownFieldRetainedParameters: List((Str, Str))
+    | ownFieldPendingParameters: List((Str, Str))
     // The match arms and if branches being lowered, innermost first, each by its join label and a
     // label of its own; and, per owned slot, the ones it was stored inside.
     | generalRcBranches: List((Str, Str))
@@ -893,7 +903,7 @@ type CoreTcoState =
     // later scalar consumer settles (result temp, callee, element), and the call sites a settlement
     // behind the copy already covers.
     | pendingTakenOverSettles: List(CoreTakenOverSettle)
-    | takenOverHeldResults: List((Int, Str, SemanticType, Maybe(TextSpan)))
+    | takenOverHeldResults: List((Int, Str, CoreSettleKind, Maybe(TextSpan)))
     // Each named call's arguments by the call's span: index, whether it is an empty list literal, type.
     | takenOverCallArguments: List((TextSpan, Int, Bool, SemanticType))
     | settledBehindCopySpans: List(TextSpan)
@@ -1848,6 +1858,22 @@ let stateSpineFreedSpans (state: CoreLoweringState) =
 let withStateSpineFreedSpans value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with spineFreedSpans = value))
+
+let stateOwnFieldRetainedParameters (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.ownFieldRetainedParameters)
+
+let withStateOwnFieldRetainedParameters value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with ownFieldRetainedParameters = value))
+
+let stateOwnFieldPendingParameters (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.ownFieldPendingParameters)
+
+let withStateOwnFieldPendingParameters value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with ownFieldPendingParameters = value))
 
 let stateLoopResultPartDuplicates (state: CoreLoweringState) =
     (let group = state.ownerState
@@ -2826,6 +2852,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             takenOverRecordNames = [],
             takenOverSlotSources = [],
             spineFreedSpans = [],
+            ownFieldRetainedParameters = [],
+            ownFieldPendingParameters = [],
             generalRcBranches = [],
             generalRcSlotBranches = [],
             generalRcFinishedResult = None,
@@ -6676,6 +6704,10 @@ let restoreOuterFrame outer bodyState =
                 withStateTakenOverRecordNames(stateTakenOverRecordNames(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStateSpineFreedSpans(stateSpineFreedSpans(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
+                current
+                |> withStateOwnFieldRetainedParameters(stateOwnFieldRetainedParameters(bodyState))
+                |> withStateOwnFieldPendingParameters(stateOwnFieldPendingParameters(bodyState)))
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -10938,6 +10970,80 @@ let emitTakenOverWalk (resultTemp: Int) (element: SemanticType) (state: CoreLowe
                                                                                                     |> emit(Jump(loopLabel))
                                                                                                     |> emit(Label(doneLabel))
 
+let recursive freshOwnFieldCaseLabels (constructors: List((Int, Bool, List((Int, SemanticType))))) (state: CoreLoweringState) (cases: List(IrSwitchCase)) =
+    match constructors with
+        | [] -> (state, reverse(cases))
+        | (tag, _tagless, _fields) :: rest ->
+            match freshLabel("own_field_ctor")(state) with
+                | FreshLabel { state = labelled, label = caseLabel } -> freshOwnFieldCaseLabels(rest)(labelled)(IrSwitchCase(tag = tag, label = caseLabel) :: cases)
+
+let recursive emitOwnFieldReleases (resultTemp: Int) (tagless: Bool) (fields: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> state
+        | (index, fieldType) :: rest ->
+            match freshLabel("own_field_next")(state) with
+                | FreshLabel { state = labelled, label = nextLabel } ->
+                    match freshTemp(labelled) with
+                        | FreshTemp { state = allocated, temp = childTemp } ->
+                            allocated
+                            |> emit(GetAdtField(childTemp)(resultTemp)(index)(tagless))
+                            |> emitSkipUnlessReferenceCounted(childTemp)(nextLabel)
+                            |> emitOwnedValueChildDrop(childTemp)(fieldType)
+                            |> emit(Label(nextLabel))
+                            |> emitOwnFieldReleases(resultTemp)(tagless)(rest)
+
+let recursive emitOwnFieldCases (resultTemp: Int) (doneLabel: Str) (constructors: List((Int, Bool, List((Int, SemanticType))))) (cases: List(IrSwitchCase)) (state: CoreLoweringState) =
+    match (constructors, cases) with
+        | ((_tag, tagless, fields) :: rest, IrSwitchCase { label = caseLabel } :: restCases) ->
+            state
+            |> emit(Label(caseLabel))
+            |> emitOwnFieldReleases(resultTemp)(tagless)(fields)
+            |> emit(Jump(doneLabel))
+            |> emitOwnFieldCases(resultTemp)(doneLabel)(rest)(restCases)
+        | _ -> state
+
+// Stage 0's `EmitOwnFieldWalk`: releases the reference each reference-counted direct field of an arena
+// result cell holds; a cell on the reference-counted heap owns its fields already.
+let emitOwnFieldWalk (resultTemp: Int) (taglessType: Bool) (constructors: List((Int, Bool, List((Int, SemanticType))))) (state: CoreLoweringState) =
+    match freshLabel("own_field_done")(state) with
+        | FreshLabel { state = doneState, label = doneLabel } ->
+            match doneState
+            |> emitSkipUnlessPresent(resultTemp)(doneLabel)
+            |> freshTemp with
+                | FreshTemp { state = countedState, temp = countedTemp } ->
+                    match countedState
+                    |> emit(IsReferenceCounted(countedTemp)(resultTemp))
+                    |> freshLabel("own_field_arena_cell") with
+                        | FreshLabel { state = arenaState, label = arenaLabel } ->
+                            match arenaState
+                            |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                            |> emit(Jump(doneLabel))
+                            |> emit(Label(arenaLabel))
+                            |> freshTemp with
+                                | FreshTemp { state = tagState, temp = tagTemp } ->
+                                    let tagged =
+                                        if taglessType
+                                        then
+                                            match constructors with
+                                                | (tag, _tagless, _fields) :: _rest ->
+                                                    emit(LoadConstInt(tagTemp)(tag))(tagState)
+                                                | [] ->
+                                                    emit(LoadConstInt(tagTemp)(0))(tagState)
+                                        else
+                                            emit(GetAdtTag(tagTemp)(resultTemp))(tagState)
+                                    in
+                                        match freshOwnFieldCaseLabels(constructors)(tagged)([]) with
+                                            | (labelled, cases) ->
+                                                labelled
+                                                |> emit(SwitchTag(tagTemp)(cases)(doneLabel))
+                                                |> emitOwnFieldCases(resultTemp)(doneLabel)(constructors)(cases)
+                                                |> emit(Label(doneLabel))
+
+let emitSettleWalk (temp: Int) (kind: CoreSettleKind) (state: CoreLoweringState) =
+    match kind with
+        | ListRecordKind(element) -> emitTakenOverWalk(temp)(element)(state)
+        | OwnFieldKind(taglessType, constructors) -> emitOwnFieldWalk(temp)(taglessType)(constructors)(state)
+
 // Stage 0's settlement round: each placeholder kept through the first round becomes the walk
 // over its call's result, or nothing.
 let recursive spliceTakenOverSettles (instructions: List(IrInstruction)) (state: CoreLoweringState) =
@@ -10951,7 +11057,7 @@ let recursive spliceTakenOverSettles (instructions: List(IrInstruction)) (state:
                 |> lookupTakenOverSettle(resetId - takenOverSettleBase) with
                     | Some(settle) ->
                         state
-                        |> emitTakenOverWalk(settle.settleTemp)(settle.settleElement)
+                        |> emitSettleWalk(settle.settleTemp)(settle.settleKind)
                         |> spliceTakenOverSettles(rest)
                     | None -> spliceTakenOverSettles(rest)(state)
             else spliceTakenOverSettles(rest)((state with reversedInstructions = instruction :: state.reversedInstructions))
@@ -19643,18 +19749,65 @@ let recursive spanListed (span: TextSpan) (spans: List(TextSpan)) =
         | [] -> false
         | candidate :: rest -> candidate == span || spanListed(span)(rest)
 
-// Stage 0's `TryNewTakenOverSettle`: the element of a call result that a taken-over record can be
-// settled behind, a tuple whose first field is of a resolved heap type.
-let takenOverSettleElement (resultType: SemanticType) (state: CoreLoweringState) =
+let recursive heapFieldsOf (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
+    match types with
+        | [] -> []
+        | fieldType :: rest ->
+            if resultSurvivesReset(fieldType)(state)
+            then heapFieldsOf(rest)(index + 1)(state)
+            else (index, fieldType) :: heapFieldsOf(rest)(index + 1)(state)
+
+let recursive ownFieldConstructors (arguments: List(SemanticType)) (state: CoreLoweringState) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { tag = tag, tagless = tagless } as layout) :: rest ->
+            (tag, tagless, heapFieldsOf(layoutInstantiatedFieldTypes(layout)(arguments)(state))(0)(state)) :: ownFieldConstructors(arguments)(state)(rest)
+
+let recursive anyHeapField (constructors: List((Int, Bool, List((Int, SemanticType))))) =
+    match constructors with
+        | [] -> false
+        | (_tag, _tagless, []) :: rest -> anyHeapField(rest)
+        | (_tag, _tagless, _fields) :: _rest -> true
+
+// Stage 0's `OwnFieldResultType`: a resolved named result type with a constructor holding a heap field,
+// its constructors in tag order with their heap fields.
+let ownFieldKindOf (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemNamed(symbolId, name, arguments) ->
+            if containsUnresolvedLayout(SemNamed(symbolId)(name)(arguments))(state)
+            then None
+            else
+                let constructors =
+                    state
+                    |> stateConstructorLayouts
+                    |> constructorLayoutsOfType(name)
+                    |> sortBy(given (left: CoreConstructorLayout) ->
+                        given (right: CoreConstructorLayout) -> left.tag <= right.tag)
+                    |> ownFieldConstructors(arguments)(state)
+                in
+                    if anyHeapField(constructors)
+                    then
+                        constructors
+                        |> OwnFieldKind(match constructors with
+                            | (_tag, true, _fields) :: [] -> true
+                            | _ -> false)
+                        |> Some
+                    else None
+        | _ -> None
+
+// Stage 0's `TryNewTakenOverSettle`: what a call result's settlement releases, the list record's tuple
+// field when the result is a list of tuples whose first field has a resolved heap type, else the own
+// fields of a named result type.
+let takenOverSettleKind (resultType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemList(element) ->
             match resolveType(state)(element) with
                 | SemTuple(first :: _rest) ->
                     if containsUnresolvedLayout(first)(state) || resultSurvivesReset(first)(state)
                     then None
-                    else Some(first)
+                    else Some(ListRecordKind(first))
                 | _ -> None
-        | _ -> None
+        | _ -> ownFieldKindOf(resultType)(state)
 
 // The callee a settlement names: a function the call resolved by name.
 let takenOverSettleCallee (context: CoreCallContext) =
@@ -19814,6 +19967,108 @@ let takenOverRecordProven (callee: Str) (span: Maybe(TextSpan)) (element: Semant
                 | None -> false
         | _ -> false
 
+let recursive ownFieldSpine (expression: Expr) (arguments: List(Expr)) =
+    match expression with
+        | ExprAt(_span, inner) -> ownFieldSpine(inner)(arguments)
+        | ExprCall(function, argument, _sugar, _layout) -> ownFieldSpine(function)(argument :: arguments)
+        | other -> (other, arguments)
+
+let recursive ownFieldWithoutNames (names: List(Str)) (parameters: List(Str)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest ->
+            if containsLabel(parameter)(names)
+            then ownFieldWithoutNames(names)(rest)
+            else parameter :: ownFieldWithoutNames(names)(rest)
+
+// Stage 0's `OwnFieldArgument`: a constructor argument the cell owns or that holds nothing
+// reference-counted, a retained parameter or a scalar or static literal.
+let ownFieldArgument (parameters: List(Str)) (argument: Expr) =
+    match unspanArgument(argument) with
+        | ExprVar(name) -> containsLabel(name)(parameters)
+        | ExprInt(_value) -> true
+        | ExprBool(_value) -> true
+        | ExprString(_value) -> true
+        | _ -> false
+
+let recursive allOwnFieldArguments (parameters: List(Str)) (arguments: List(Expr)) =
+    match arguments with
+        | [] -> true
+        | argument :: rest -> ownFieldArgument(parameters)(argument) && allOwnFieldArguments(parameters)(rest)
+
+let nullaryConstructorName (name: Str) (state: CoreLoweringState) =
+    match constructorLayout(name)(state) with
+        | Some(layout) -> constructorArity(layout) == 0
+        | None -> false
+
+let constructorOfArity (name: Str) (arity: Int) (state: CoreLoweringState) =
+    match constructorLayout(name)(state) with
+        | Some(layout) -> constructorArity(layout) == arity
+        | None -> false
+
+// Stage 0's `OwnFieldLeaves`: every value the callee can return is a nullary constructor, its own tail
+// self-call, or a constructor over retained parameters and literals, unshadowed where they are read.
+let recursive ownFieldLeaves (expression: Expr) (parameters: List(Str)) (selfName: Str) (arity: Int) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> ownFieldLeaves(inner)(parameters)(selfName)(arity)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) -> ownFieldLeaves(thenBranch)(parameters)(selfName)(arity)(state) && ownFieldLeaves(elseBranch)(parameters)(selfName)(arity)(state)
+        | ExprMatch(_scrutinee, arms, _position) -> ownFieldArms(arms)(parameters)(selfName)(arity)(state)
+        | ExprLet(name, _value, body, _parameters, _annotation, _requirements) ->
+            ownFieldLeaves(body)(ownFieldWithoutNames([name])(parameters))(selfName)(arity)(state)
+        | ExprVar(name) -> nullaryConstructorName(name)(state)
+        | ExprCall(_function, _argument, _sugar, _layout) ->
+            match ownFieldSpine(expression)([]) with
+                | (root, arguments) ->
+                    match unspanArgument(root) with
+                        | ExprVar(name) ->
+                            if name == selfName && length(arguments) == arity
+                            then true
+                            else
+                                constructorOfArity(name)(length(arguments))(state) && allOwnFieldArguments(parameters)(arguments)
+                        | _ -> false
+        | _ -> false
+and ownFieldArms (arms: List((Pattern, Expr, Maybe(Expr)))) (parameters: List(Str)) (selfName: Str) (arity: Int) (state: CoreLoweringState) =
+    match arms with
+        | [] -> true
+        | (pattern, body, _guard) :: rest ->
+            ownFieldLeaves(body)(ownFieldWithoutNames(shapePatternNames(pattern)([]))(parameters))(selfName)(arity)(state) && ownFieldArms(rest)(parameters)(selfName)(arity)(state)
+
+let recursive namesNotedFor (function: Str) (notes: List((Str, Str))) =
+    match notes with
+        | [] -> []
+        | (owner, name) :: rest ->
+            if owner == function
+            then name :: namesNotedFor(function)(rest)
+            else namesNotedFor(function)(rest)
+
+let recursive keptParameters (parameters: List(Str)) (retained: List(Str)) (pending: List(Str)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest ->
+            if containsLabel(parameter)(retained) && !containsLabel(parameter)(pending)
+            then parameter :: keptParameters(rest)(retained)(pending)
+            else keptParameters(rest)(retained)(pending)
+
+// Stage 0's `OwnFieldRecordProven`.
+let ownFieldRecordProven (callee: Str) (state: CoreLoweringState) =
+    match calleeSummaryOf(callee)(state) with
+        | Some(ReachSummary { function = ReachFunction { name = selfName, parameters = parameters, body = body } }) ->
+            match state
+            |> stateOwnFieldPendingParameters
+            |> namesNotedFor(callee)
+            |> keptParameters(parameters)(state
+            |> stateOwnFieldRetainedParameters
+            |> namesNotedFor(callee)) with
+                | [] -> false
+                | kept ->
+                    ownFieldLeaves(body)(kept)(selfName)(length(parameters))(state)
+        | None -> false
+
+let settleKindProven (callee: Str) (span: Maybe(TextSpan)) (kind: CoreSettleKind) (state: CoreLoweringState) =
+    match kind with
+        | ListRecordKind(element) -> takenOverRecordProven(callee)(span)(element)(state)
+        | OwnFieldKind(_tagless, _constructors) -> ownFieldRecordProven(callee)(state)
+
 let recursive holdsOwnValueOf (entries: List(ParameterReachEntry)) =
     match entries with
         | [] -> false
@@ -19831,25 +20086,25 @@ let letScopedSettleOutOfReach (span: Maybe(TextSpan)) (state: CoreLoweringState)
 
 // A new settlement and its placeholder, kept out of the stream's meaning (it reads and defines
 // nothing) until the settlement round.
-let newTakenOverSettle (temp: Int) (callee: Str) (element: SemanticType) (state: CoreLoweringState) =
+let newTakenOverSettle (temp: Int) (callee: Str) (kind: CoreSettleKind) (state: CoreLoweringState) =
     (let settles = statePendingTakenOverSettles(state)
     in
         let id = length(settles)
-        in (withStatePendingTakenOverSettles(CoreTakenOverSettle(settleId = id, settleTemp = temp, settleCallee = callee, settleElement = element) :: settles)(state), IrInstruction(instruction = TcoResetPending(takenOverSettleBase + id)([])([]), location = None)))
+        in (withStatePendingTakenOverSettles(CoreTakenOverSettle(settleId = id, settleTemp = temp, settleCallee = callee, settleKind = kind) :: settles)(state), IrInstruction(instruction = TcoResetPending(takenOverSettleBase + id)([])([]), location = None)))
 
 // Stage 0's `TrySettleTakenOverBehindCopy`: behind a caller's copy of a call's arena result, the
 // references the arena cells took over are released from the original.
 let settleTakenOverBehindCopy (context: CoreCallContext) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match (takenOverSettleCallee(context), takenOverSettleElement(semanticType)(state)) with
-        | (Some(callee), Some(element)) ->
+    match (takenOverSettleCallee(context), takenOverSettleKind(semanticType)(state)) with
+        | (Some(callee), Some(kind)) ->
             let noted =
                 match context.siteSpan with
                     | Some(span) -> withStateSettledBehindCopySpans(span :: stateSettledBehindCopySpans(state))(state)
                     | None -> state
             in
-                if takenOverRecordProven(callee)(context.siteSpan)(element)(noted)
+                if settleKindProven(callee)(context.siteSpan)(kind)(noted)
                 then
-                    match newTakenOverSettle(temp)(callee)(element)(noted) with
+                    match newTakenOverSettle(temp)(callee)(kind)(noted) with
                         | (settled, placeholder) -> settled with reversedInstructions = placeholder :: settled.reversedInstructions
                 else noted
         | _ -> state
@@ -19871,19 +20126,19 @@ let recursive newestCallArgumentOf (reversedInstructions: List(IrInstruction)) =
 
 // Stage 0's `SettleHeldTakenOverResultsConsumedBy`: a held call result whose last use is the argument
 // of a call with a scalar result is settled right after that call.
-let recursive settleHeldTakenOverResults (argument: Int) (held: List((Int, Str, SemanticType, Maybe(TextSpan)))) (kept: List((Int, Str, SemanticType, Maybe(TextSpan)))) (state: CoreLoweringState) =
+let recursive settleHeldTakenOverResults (argument: Int) (held: List((Int, Str, CoreSettleKind, Maybe(TextSpan)))) (kept: List((Int, Str, CoreSettleKind, Maybe(TextSpan)))) (state: CoreLoweringState) =
     match held with
         | [] ->
             withStateTakenOverHeldResults(reverse(kept))(state)
-        | (temp, callee, element, span) :: rest ->
+        | (temp, callee, kind, span) :: rest ->
             if temp == argument
             then
-                if takenOverRecordProven(callee)(span)(element)(state)
+                if settleKindProven(callee)(span)(kind)(state)
                 then
-                    match newTakenOverSettle(temp)(callee)(element)(state) with
+                    match newTakenOverSettle(temp)(callee)(kind)(state) with
                         | (noted, placeholder) -> settleHeldTakenOverResults(argument)(rest)(kept)((noted with reversedInstructions = insertBehindNewestCall(placeholder)(noted.reversedInstructions)))
                 else settleHeldTakenOverResults(argument)(rest)(kept)(state)
-            else settleHeldTakenOverResults(argument)(rest)((temp, callee, element, span) :: kept)(state)
+            else settleHeldTakenOverResults(argument)(rest)((temp, callee, kind, span) :: kept)(state)
 
 // Stage 0's `NoteTakenOverCallResult`: a call settles the held results it consumes, and its own
 // result, when not settled behind a copy, is held.
@@ -19904,20 +20159,20 @@ let noteTakenOverCallResult (context: CoreCallContext) (lowered: LoweredCoreValu
                             |> spanListed(span)
                         | None -> false
                 in
-                    match (behindCopy, takenOverSettleCallee(context), takenOverSettleElement(semanticType)(settled)) with
-                        | (false, Some(callee), Some(element)) -> lowered with state = withStateTakenOverHeldResults((temp, callee, element, context.siteSpan) :: stateTakenOverHeldResults(settled))(settled)
+                    match (behindCopy, takenOverSettleCallee(context), takenOverSettleKind(semanticType)(settled)) with
+                        | (false, Some(callee), Some(kind)) -> lowered with state = withStateTakenOverHeldResults((temp, callee, kind, context.siteSpan) :: stateTakenOverHeldResults(settled))(settled)
                         | _ -> lowered with state = settled
         | _ -> lowered
 
-let recursive takeHeldTakenOverResult (temp: Int) (held: List((Int, Str, SemanticType, Maybe(TextSpan)))) =
+let recursive takeHeldTakenOverResult (temp: Int) (held: List((Int, Str, CoreSettleKind, Maybe(TextSpan)))) =
     match held with
         | [] -> None
-        | (candidate, callee, element, span) :: rest ->
+        | (candidate, callee, kind, span) :: rest ->
             if candidate == temp
-            then Some(((callee, element, span), rest))
+            then Some(((callee, kind, span), rest))
             else
                 match takeHeldTakenOverResult(temp)(rest) with
-                    | Some((found, remaining)) -> Some((found, (candidate, callee, element, span) :: remaining))
+                    | Some((found, remaining)) -> Some((found, (candidate, callee, kind, span) :: remaining))
                     | None -> None
 
 // Stage 0's `SettleLetScopedTakenOver`: at the end of a let scope whose value is a held call result,
@@ -19927,14 +20182,61 @@ let settleLetScopedTakenOver (valueTemp: Int) (state: CoreLoweringState) =
     |> stateTakenOverHeldResults
     |> takeHeldTakenOverResult(valueTemp) with
         | None -> state
-        | Some(((callee, element, span), remaining)) ->
+        | Some(((callee, kind, span), remaining)) ->
             let taken = withStateTakenOverHeldResults(remaining)(state)
             in
-                if takenOverRecordProven(callee)(span)(element)(taken) && letScopedSettleOutOfReach(span)(taken)
+                if settleKindProven(callee)(span)(kind)(taken) && letScopedSettleOutOfReach(span)(taken)
                 then
-                    match newTakenOverSettle(valueTemp)(callee)(element)(taken) with
+                    match newTakenOverSettle(valueTemp)(callee)(kind)(taken) with
                         | (noted, placeholder) -> noted with reversedInstructions = placeholder :: noted.reversedInstructions
                 else taken
+
+let recursive fieldTypeHeldBy (resultType: SemanticType) (fields: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match fields with
+        | [] -> false
+        | (_index, fieldType) :: rest ->
+            containsResolvedType(resultType)(resolveType(state)(fieldType))([])(state) || fieldTypeHeldBy(resultType)(rest)(state)
+
+let recursive anyFieldTypeHeldBy (resultType: SemanticType) (constructors: List((Int, Bool, List((Int, SemanticType))))) (state: CoreLoweringState) =
+    match constructors with
+        | [] -> false
+        | (_tag, _tagless, fields) :: rest -> fieldTypeHeldBy(resultType)(fields)(state) || anyFieldTypeHeldBy(resultType)(rest)(state)
+
+let recursive heldResultAtSpan (span: TextSpan) (held: List((Int, Str, CoreSettleKind, Maybe(TextSpan)))) =
+    match held with
+        | [] -> None
+        | (temp, callee, kind, Some(candidate)) :: rest ->
+            if candidate == span
+            then Some((temp, callee, kind))
+            else heldResultAtSpan(span)(rest)
+        | _entry :: rest -> heldResultAtSpan(span)(rest)
+
+// Stage 0's `SettleMatchScopedTakenOver`: the end of a match whose scrutinee is a held call result is
+// a settle site when the match's result cannot hold a value of any of the result's heap field types.
+let settleMatchScopedTakenOver (value: Expr) (lowered: LoweredCoreValue) =
+    match (value, lowered) with
+        | (ExprAt(span, _inner), LoweredCoreValue { state = state, semanticType = matchType, error = None }) ->
+            match state
+            |> stateTakenOverHeldResults
+            |> heldResultAtSpan(span) with
+                | Some((temp, callee, OwnFieldKind(tagless, constructors))) ->
+                    if anyFieldTypeHeldBy(resolveType(state)(matchType))(constructors)(state)
+                    then lowered
+                    else
+                        match state
+                        |> stateTakenOverHeldResults
+                        |> takeHeldTakenOverResult(temp) with
+                            | Some(((_callee, _kind, heldSpan), remaining)) ->
+                                let taken = withStateTakenOverHeldResults(remaining)(state)
+                                in
+                                    if settleKindProven(callee)(heldSpan)(OwnFieldKind(tagless)(constructors))(taken)
+                                    then
+                                        match newTakenOverSettle(temp)(callee)(OwnFieldKind(tagless)(constructors))(taken) with
+                                            | (noted, placeholder) -> lowered with state = (noted with reversedInstructions = placeholder :: noted.reversedInstructions)
+                                    else lowered with state = taken
+                            | None -> lowered
+                | _ -> lowered
+        | _ -> lowered
 
 // The normalizing copy of a call's contract result, with the mask and the parts the callee handed
 // over read before it and the parts the mask names released after it.
@@ -26998,6 +27300,16 @@ let emitRetainOrArenaCopyForDestination (temp: Int) (semanticType: SemanticType)
                                                         | FreshTemp { state = loaded, temp = resultTemp } ->
                                                             (emit(LoadLocal(resultTemp)(resultSlot))(loaded), resultTemp)
 
+// Stage 0's `NoteOwnFieldParameterRetain`: a whole loop parameter a cell built in the loop retained
+// outright, or left to the loop's placement, noted under the loop's name.
+let noteOwnFieldParameterRetain (argument: Expr) (retained: Bool) (state: CoreLoweringState) =
+    match (unspanArgument(argument), stateTcoLoop(state)) with
+        | (ExprVar(name), Some(CoreTcoLoop { selfName = selfName })) ->
+            if retained
+            then withStateOwnFieldRetainedParameters((selfName, name) :: stateOwnFieldRetainedParameters(state))(state)
+            else withStateOwnFieldPendingParameters((selfName, name) :: stateOwnFieldPendingParameters(state))(state)
+        | _ -> state
+
 // An arena cell built as a call's argument is no successor cell, the call's result is: its retain
 // of a parameter read is collected with the call argument's retains and released after the call
 // (stage 0's `RecordCallArgumentArenaRetain` in `RetainRuntimeManagedTcoConstructorArguments`).
@@ -27014,8 +27326,19 @@ let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Exp
                     | Some(destinationSlot) -> emitRetainOrArenaCopyForDestination(temp)(semanticType)(destinationSlot)(state)
                     | None ->
                         match emitLoopParameterFieldRetain(temp)(semanticType)(state) with
-                            | (retained, duplicate) -> (recordArenaCellTransferRetain(!runtimeManaged)(temp)(duplicate)(semanticType)(retained), duplicate)
-            else emitPendingConstructorFieldRetain(temp)(slot)(state)
+                            | (retained, duplicate) ->
+                                let releasedAfterCall = !runtimeManaged && duplicate != temp && stateCollectingCallArgumentRetains(retained) && retained.nextLabelId == stateCallArgumentLabelStart(retained)
+                                in
+                                    retained
+                                    |> recordArenaCellTransferRetain(!runtimeManaged)(temp)(duplicate)(semanticType)
+                                    |> (given (recorded: CoreLoweringState) ->
+                                        if releasedAfterCall
+                                        then recorded
+                                        else noteOwnFieldParameterRetain(argument)(true)(recorded))
+                                    |> (given (noted: CoreLoweringState) -> (noted, duplicate))
+            else
+                match emitPendingConstructorFieldRetain(temp)(slot)(state) with
+                    | (pending, pendingTemp) -> (noteOwnFieldParameterRetain(argument)(false)(pending), pendingTemp)
 
 let recursive retainLoopParameterArguments (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (arguments, temps, semanticTypes) with
@@ -32801,7 +33124,10 @@ let lowerCoreDispatch expression lowerCore state =
             else lowerCons(head)(tail)(lowerCore)(state)
         | ExprRecord(name, fields, _isMultiline) -> lowerRecord(name)(fields)(lowerCore)(state)
         | ExprRecordUpdate(target, fields) -> lowerRecordUpdate(target)(fields)(lowerCore)(state)
-        | ExprMatch(value, cases, _position) -> lowerMatch(value)(cases)(lowerCore)(state)
+        | ExprMatch(value, cases, _position) ->
+            state
+            |> lowerMatch(value)(cases)(lowerCore)
+            |> settleMatchScopedTakenOver(value)
         | ExprPerform(operation) -> lowerPerform(operation)(lowerCore)(state)
         | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
         | ExprResultPipe(left, right) -> lowerResultPipe(left)(right)(lowerCore)(state)

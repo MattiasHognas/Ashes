@@ -1641,6 +1641,7 @@ public sealed partial class Lowering
             if (!IsRuntimeManagedTcoParamSlot(local))
             {
                 argumentTemps[index] = EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+                NoteOwnFieldParameterRetain(arguments[index], retained: false);
             }
             else if (!runtimeManagedCandidate && TryGetArenaSuccessorDestination(out int destinationSlot))
             {
@@ -1655,9 +1656,12 @@ public sealed partial class Lowering
 
                 // An arena cell built as a call's argument is no successor cell: the call's result
                 // is. The retain is released after the call, as an arena tuple argument's is.
-                if (!runtimeManagedCandidate && Environment.GetEnvironmentVariable("GRC_NO_CTORARGRETAIN") is null)
+                bool releasedAfterCall = !runtimeManagedCandidate
+                    && Environment.GetEnvironmentVariable("GRC_NO_CTORARGRETAIN") is null
+                    && RecordCallArgumentArenaRetain(readTemp, argumentTemps[index], argumentTypes[index]);
+                if (!releasedAfterCall)
                 {
-                    _ = RecordCallArgumentArenaRetain(readTemp, argumentTemps[index], argumentTypes[index]);
+                    NoteOwnFieldParameterRetain(arguments[index], retained: true);
                 }
             }
         }

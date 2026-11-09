@@ -1932,6 +1932,21 @@ separate reach of the record holder's result in which each list whose cells were
 the holder's own. A construction, an unrecognised token, or a borrowed value that can hold the
 record's type at a recorded position declines, so the references stay where they were.
 
+The own-field record is the same mechanism for a second shape: a loop whose result is an arena cell
+of a named type built around its own reference-counted parameter at its exit (`if hops <= 0 then
+Some(label)`). The cell takes its own reference to the parameter, and nothing releases an arena
+cell. A caller holding such a result releases that reference once it is done with the result:
+after the scalar call that consumes it, at the end of a `let` holding it, or at the end of a `match`
+on it whose result cannot hold a value of any of the cell's heap field types. The walk releases a
+reference-counted direct field of the result only when the result itself is an arena cell; a cell
+on the reference-counted heap owns its fields already. The release is sound only because every
+arena cell at that position owns its child, so the proof is about the producer: every value the
+loop can return must be a nullary constructor, its own tail self-call, or a constructor whose heap
+arguments are parameters the loop retained outright into the cell (never left to the loop's
+placement, which may leave a borrowed reference) and read unshadowed. Any other producer, such as
+a `Some` of a list element bound out of a parameter, declines the record, and so does a `match`
+whose result could hold the field (`GRC_NO_OWNFIELDRECORD`, both stages).
+
 A result that is a list of variants with only inline fields (`List(Maybe(Int))`) has no fixed
 copy-out and is not one of the contract's types, yet it can point into an owned value that holds
 such a variant (a syntax tree with an optional offset). When an owned value is in its reach, the

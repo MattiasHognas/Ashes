@@ -122,7 +122,10 @@ let recursive renameLabelToken (renames: List((Str, Str))) (token: Str) =
             else
                 if token == "Target=" + old
                 then "Target=" + new
-                else renameLabelToken(rest)(token)
+                else
+                    if token == "DefaultLabel=" + old
+                    then "DefaultLabel=" + new
+                    else renameLabelToken(rest)(token)
 
 let renameLabels (renames: List((Str, Str))) (line: Str) =
     " "

@@ -145,15 +145,19 @@ public sealed partial class Lowering
     private bool _takenOverSettleRound;
     private int _nextTakenOverSettleId;
     private readonly HashSet<Expr> _settledBehindCopy = new(ReferenceEqualityComparer.Instance);
-    private readonly List<(Expr.Call Call, int Temp, TypeRef.TTuple Tuple)> _takenOverHeldResults = [];
+    private readonly List<(Expr.Call Call, int Temp, TypeRef Type)> _takenOverHeldResults = [];
 
-    private sealed record PendingTakenOverSettle(Expr.Call Call, string Label, TypeRef.TTuple Tuple, FuncKey? Callee)
+    private sealed record PendingTakenOverSettle(Expr.Call Call, string Label, TypeRef.TTuple? Tuple, FuncKey? Callee)
     {
         // The function whose let scope ends here, when the site is a let's end: the record is settled
         // only where that function's result is out of the let-bound value's reach.
         public IReadOnlyList<string> EnclosingLabels { get; init; } = [];
 
         public bool LetScoped { get; init; }
+
+        // The own-field record's result type, when the settlement releases an arena result cell's own fields
+        // rather than the list record's tuple fields.
+        public TypeRef.TNamedType? OwnField { get; init; }
     }
 
     private static List<Expr> CallArguments(Expr.Call call, out Expr root)
@@ -172,10 +176,20 @@ public sealed partial class Lowering
     private bool TryNewTakenOverSettle(Expr.Call call, TypeRef resultType, out PendingTakenOverSettle? settle)
     {
         settle = null;
-        if (Prune(resultType) is not TypeRef.TList { Element: var element }
-            || Prune(element) is not TypeRef.TTuple tuple
-            || ContainsUnresolvedLayoutType(Prune(tuple.Elements[0]), [])
-            || CanArenaReset(Prune(tuple.Elements[0])))
+        TypeRef.TTuple? tuple = null;
+        TypeRef.TNamedType? ownField = null;
+        if (Prune(resultType) is TypeRef.TList { Element: var element }
+            && Prune(element) is TypeRef.TTuple elementTuple
+            && !ContainsUnresolvedLayoutType(Prune(elementTuple.Elements[0]), [])
+            && !CanArenaReset(Prune(elementTuple.Elements[0])))
+        {
+            tuple = elementTuple;
+        }
+        else if (OwnFieldRecordRuleEnabled && OwnFieldResultType(resultType, out TypeRef.TNamedType named))
+        {
+            ownField = named;
+        }
+        else
         {
             return false;
         }
@@ -187,7 +201,7 @@ public sealed partial class Lowering
         }
 
         FuncKey? key = _functionKeyByLabel.TryGetValue(label, out FuncKey found) ? found : null;
-        settle = new PendingTakenOverSettle(call, label, tuple, key);
+        settle = new PendingTakenOverSettle(call, label, tuple, key) { OwnField = ownField };
         return true;
     }
 
@@ -218,10 +232,10 @@ public sealed partial class Lowering
 
         SettleHeldTakenOverResultsConsumedBy(call, lowered.Type);
         if (!_settledBehindCopy.Contains(call)
-            && Prune(lowered.Type) is TypeRef.TList { Element: var element }
-            && Prune(element) is TypeRef.TTuple tuple)
+            && ((Prune(lowered.Type) is TypeRef.TList { Element: var element } && Prune(element) is TypeRef.TTuple)
+                || (OwnFieldRecordRuleEnabled && OwnFieldResultType(lowered.Type, out _))))
         {
-            _takenOverHeldResults.Add((call, lowered.Temp, tuple));
+            _takenOverHeldResults.Add((call, lowered.Temp, lowered.Type));
         }
 
         return lowered;
@@ -236,14 +250,14 @@ public sealed partial class Lowering
 
         for (int index = _takenOverHeldResults.Count - 1; index >= 0; index--)
         {
-            (Expr.Call call, int temp, TypeRef.TTuple tuple) = _takenOverHeldResults[index];
+            (Expr.Call call, int temp, TypeRef heldType) = _takenOverHeldResults[index];
             if (!ReferenceEquals(StripOrSelf(outer.Arg), call))
             {
                 continue;
             }
 
             _takenOverHeldResults.RemoveAt(index);
-            if (TryNewTakenOverSettle(call, new TypeRef.TList(tuple), out PendingTakenOverSettle? settle))
+            if (TryNewTakenOverSettle(call, heldType, out PendingTakenOverSettle? settle))
             {
                 int id = _nextTakenOverSettleId++;
                 _pendingTakenOverSettles[id] = settle!;
@@ -268,9 +282,9 @@ public sealed partial class Lowering
             return;
         }
 
-        (Expr.Call call, int temp, TypeRef.TTuple tuple) = _takenOverHeldResults[index];
+        (Expr.Call call, int temp, TypeRef heldType) = _takenOverHeldResults[index];
         _takenOverHeldResults.RemoveAt(index);
-        if (TryNewTakenOverSettle(call, new TypeRef.TList(tuple), out PendingTakenOverSettle? settle))
+        if (TryNewTakenOverSettle(call, heldType, out PendingTakenOverSettle? settle))
         {
             int id = _nextTakenOverSettleId++;
             _pendingTakenOverSettles[id] = settle! with
@@ -384,18 +398,30 @@ public sealed partial class Lowering
 
     private void ResolveTakenOverSettle(int pendingId, int arenaTemp)
     {
-        if (!_pendingTakenOverSettles.TryGetValue(pendingId, out PendingTakenOverSettle? settle)
-            || !ReachesTakenOverRecordLabel(settle.Label))
+        if (!_pendingTakenOverSettles.TryGetValue(pendingId, out PendingTakenOverSettle? settle))
         {
             return;
         }
 
-        if (!TakenOverRecordProven(settle) || !LetScopedSettleOutOfReach(settle))
+        if (settle.OwnField is { } named)
+        {
+            if (OwnFieldRecordProven(settle) && LetScopedSettleOutOfReach(settle))
+            {
+                EmitOwnFieldWalk(arenaTemp, named);
+            }
+
+            return;
+        }
+
+        if (settle.Tuple is not { } tuple
+            || !ReachesTakenOverRecordLabel(settle.Label)
+            || !TakenOverRecordProven(settle)
+            || !LetScopedSettleOutOfReach(settle))
         {
             return;
         }
 
-        EmitTakenOverWalk(arenaTemp, settle.Tuple);
+        EmitTakenOverWalk(arenaTemp, tuple);
     }
 
     // Obligations 2 and 3 at the settling call: in the record reach of the callee's result (a spine
@@ -419,7 +445,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        TypeRef recordType = Prune(settle.Tuple.Elements[0]);
+        TypeRef recordType = Prune(settle.Tuple!.Elements[0]);
         List<Expr> arguments = CallArguments(settle.Call, out _);
         return reach.Counts.All(entry => RecordTokenProven(entry.Key, entry.Value, parameters, arguments, recordType, where));
     }

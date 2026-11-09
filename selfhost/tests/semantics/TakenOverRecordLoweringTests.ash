@@ -93,9 +93,16 @@ let expectBorrowedArmDeclines unit =
 // A let holder whose result returns a pattern out of the value settles nothing.
 let expectEscapingLetHolderDeclines unit = expectFunctionMatchesStageZero("taken_over_record_escaping_let_holder_declines")("[ClosureHelper from firstPattern]")
 
+// The own-field record: the caller of a loop returning `Some` of its own retained parameter
+// releases the arena `Some`'s field at the end of the match on it.
+let expectOwnFieldSettledAtMatchEnd unit =
+    Unit
+    |> (given (_) -> expectFunctionMatchesStageZero("loop_result_some_holding_the_loop_parameter")("[ClosureHelper from stageLength]"))
+
 let runTakenOverRecordLoweringTests unit =
     Unit
     |> expectLoopSettledByCaller
+    |> expectOwnFieldSettledAtMatchEnd
     |> expectGroupSettledByCaller
     |> expectGenericLetHolder
     |> expectBorrowedArmDeclines

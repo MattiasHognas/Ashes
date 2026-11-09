@@ -1610,7 +1610,9 @@ public sealed partial class Lowering
             || !AllowsAsyncIndependentRcPlacement
             || AllowsOrdinaryRcPlacement)
         {
-            return LowerMatch(match, request);
+            (int Temp, TypeRef Type) lowered = LowerMatch(match, request);
+            SettleMatchScopedTakenOver(match, lowered.Type);
+            return lowered;
         }
 
         string name = $"$perform_scrutinee_{_nextCapabilitySiteId}";
