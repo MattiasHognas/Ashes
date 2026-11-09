@@ -136,6 +136,11 @@ public sealed partial class Lowering
         {
             _provenSpecializationTypes[key] = types;
         }
+
+        foreach ((string key, List<TypeRef> types) in discovery.ResolveProvenConstrainedCallTypes())
+        {
+            _provenConstrainedCallTypes[key] = types;
+        }
     }
 
     private Dictionary<string, List<TypeRef>> ResolveProvenSpecializationTypes()

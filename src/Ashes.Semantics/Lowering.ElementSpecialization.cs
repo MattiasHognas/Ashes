@@ -99,6 +99,17 @@ public sealed partial class Lowering
         TypeScheme scheme,
         int declinesBeforeValue)
     {
+        if (binder is Expr.Let let)
+        {
+            RegisterConstrainedSpecializationCandidate(
+                name,
+                binder,
+                value,
+                scheme,
+                _traitDictionaryFunctionsByBinding.ContainsKey(TraitBindingKey(let)),
+                declinesBeforeValue);
+        }
+
         if (!_configuration.EnableElementSpecialization
             || _lambdaDepth != 0
             || _abstractElementTmcDeclines == declinesBeforeValue
@@ -125,6 +136,20 @@ public sealed partial class Lowering
         bool usesTraitDictionary,
         int declinesBeforeValue)
     {
+        RegisterConstrainedSpecializationCandidate(
+            binder.Name,
+            binder,
+            binder.Value,
+            _topLevelFunctionRefs.TryGetValue(binder.Name, out var recursiveReference)
+                ? recursiveReference.Scheme
+                : Lookup(binder.Name) switch
+                {
+                    Binding.Scheme bound => bound.S,
+                    Binding.EnvScheme captured => captured.S,
+                    _ => null,
+                },
+            usesTraitDictionary || !_topLevelFunctionRefs.ContainsKey(binder.Name),
+            declinesBeforeValue);
         if (!usesTraitDictionary && _topLevelFunctionRefs.TryGetValue(binder.Name, out var reference))
         {
             RegisterElementSpecializationCandidate(
@@ -272,7 +297,8 @@ public sealed partial class Lowering
 
     private string? GetOrCreateElementSpecialization(
         ElementSpecializationCandidate candidate,
-        IReadOnlyList<TypeRef> parameterTypes)
+        IReadOnlyList<TypeRef> parameterTypes,
+        bool constrained = false)
     {
         string cacheKey = candidate.Name + "|" + string.Join(",", parameterTypes.Select(ElementSpecializationTypeKey));
         if (_elementSpecializations.TryGetValue(cacheKey, out string? cached))
@@ -285,6 +311,11 @@ public sealed partial class Lowering
             : $"{candidate.GenericLabel}__element${_elementSpecializations.Count}";
         _elementSpecializations[cacheKey] = label;
         _functionNameByLabel[label] = candidate.Name;
+        if (constrained)
+        {
+            _constrainedSpecializationLabels.Add(label);
+        }
+
         RegisterOwnershipFunctionLabel(label, candidate.Binder);
 
         if (!LowerElementSpecializationBody(candidate, FreshenTypeVariables(parameterTypes), label, cacheKey))
@@ -333,6 +364,7 @@ public sealed partial class Lowering
         string label,
         string cacheKey)
     {
+        int diagnosticsBefore = _diag.StructuredErrors.Count;
         ElementSpecializationSavedContext saved = EnterElementSpecializationContext(parameterTypes);
         try
         {
@@ -366,6 +398,14 @@ public sealed partial class Lowering
 
             // Evidence that the copy actually bought something: a cons the cell gate still declined, or a
             // recursion the loop did not absorb, means the generic call was the better shape after all.
+            // A copy that reported anything (a function its isolated scope cannot resolve) is abandoned with its
+            // reports: the generic call it would have replaced compiles.
+            if (_diag.StructuredErrors.Count > diagnosticsBefore)
+            {
+                _diag.TruncateTo(diagnosticsBefore);
+                return false;
+            }
+
             return _elementSpecializationTmcDeclines == 0 && _elementSpecializationSelfReferences == 0;
         }
         finally
