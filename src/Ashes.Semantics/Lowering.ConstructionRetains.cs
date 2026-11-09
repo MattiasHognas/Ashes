@@ -215,19 +215,43 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool SuccessorResetFlagClearEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_BACKEDGEFLAGRESET") is null;
+
+    // The active-flag clears a self call emits for a root it releases while its pattern-bound
+    // successor takes the parameter's place, by function body: the back edge stores the retained
+    // successor and sets the flag again, so the parameter is held to the loop's end all the same.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _successorResetActiveFlagClearsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void NoteSuccessorResetActiveFlagClear(int zeroTemp)
+    {
+        if (!_successorResetActiveFlagClearsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _successorResetActiveFlagClearsByBody[_inst] = temps;
+        }
+
+        temps.Add(zeroTemp);
+    }
+
     /// <summary>
     /// The parameter slots no path releases ahead of the loop's end: a parameter a self call hands
-    /// on as the root of a pattern-bound successor is released there and its active flag cleared.
+    /// on as the root of a pattern-bound successor is released there and its active flag cleared,
+    /// unless the back edge sets it again for the retained successor.
     /// </summary>
     private HashSet<int> ParametersHeldToTheEnd(IReadOnlyCollection<(int Slot, int ActiveSlot)> parameters)
     {
         var zeroTemps = new HashSet<int>();
         var clearedSlots = new HashSet<int>();
+        HashSet<int> transientClears = SuccessorResetFlagClearEnabled
+            ? _successorResetActiveFlagClearsByBody.GetValueOrDefault(_inst) ?? []
+            : [];
         foreach (IrInst instruction in _inst)
         {
             switch (instruction)
             {
-                case IrInst.LoadConstInt { Value: 0 } zero:
+                case IrInst.LoadConstInt { Value: 0 } zero when !transientClears.Contains(zero.Target):
                     zeroTemps.Add(zero.Target);
                     break;
                 case IrInst.StoreLocal store when zeroTemps.Contains(store.Source):
@@ -345,6 +369,14 @@ public sealed partial class Lowering
         return count;
     }
 
+    // A pattern owner's duplicate an arena cell stores (`(irInst, 0)` matched only by its shape) is
+    // promoted to a retain like a loop-parameter read's, and the arena cell releases it just as
+    // little; it is withdrawn the same way unless a promoted release was paired with it.
+    private bool IsWithdrawablePatternOwnerDuplicate(int storedTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_SCRUTINEEOWNERDUPWITHDRAW") is null
+            && PatternOwnerAggregateDuplicates.Contains(storedTemp)
+            && !ReleasedPatternOwnerDuplicates.Contains(storedTemp);
+
     /// <summary>
     /// Withdraws the retain <paramref name="storedTemp"/> names when it reads a parameter of
     /// <paramref name="heldSlots"/> and the cell storing it is its only reader: a real retain becomes
@@ -366,7 +398,7 @@ public sealed partial class Lowering
 
         if (_inst[index] is IrInst.RcDup duplicate)
         {
-            if (duplicate.RuntimeManaged && !(keepPendingRetains && duplicate.MayBeEmpty) && ReadsLoopParameter(duplicate.SourceTemp, heldSlots) && TempUseCount(storedTemp, index) == 1)
+            if (duplicate.RuntimeManaged && !(keepPendingRetains && duplicate.MayBeEmpty) && (ReadsLoopParameter(duplicate.SourceTemp, heldSlots) || IsWithdrawablePatternOwnerDuplicate(storedTemp)) && TempUseCount(storedTemp, index) == 1)
             {
                 _inst[index] = duplicate with { RuntimeManaged = false, MayBeEmpty = false };
             }
@@ -455,6 +487,26 @@ public sealed partial class Lowering
             _borrowedScrutinees.Add(new BorrowedScrutinee(tco, valueTemp));
         }
     }
+
+    // A fresh arena cell a loop body hands to a join whose normalization copies it: the copy takes
+    // its own reference to every reference-counted child, and the arena cell never releases the
+    // retains its construction took of loop-parameter reads, so they are withdrawn like a
+    // borrowed scrutinee's. An arm whose value is itself a join (an `if` whose one arm builds the
+    // cell) hands over the cells that join carries the same way.
+    private void RecordJoinCopiedArenaCell(int cellTemp)
+    {
+        if (_tcoCtx is TcoContext tco
+            && (IsArenaCell(cellTemp) || CarriesJoinedArenaCell(cellTemp, tco))
+            && Environment.GetEnvironmentVariable("GRC_NO_JOINCOPYWITHDRAW") is null)
+        {
+            _borrowedScrutinees.Add(new BorrowedScrutinee(tco, cellTemp));
+        }
+    }
+
+    private bool CarriesJoinedArenaCell(int temp, TcoContext tco)
+        => Environment.GetEnvironmentVariable("GRC_NO_NESTEDJOINCOPYWITHDRAW") is null
+            && FindLastInstruction(instruction => instruction is IrInst.LoadLocal load && load.Target == temp) >= 0
+            && ArenaCellsCarrying(temp, [.. LoopParametersOf(tco).Select(parameter => parameter.Slot)]).Count > 0;
 
     private void WithdrawBorrowedScrutineeRetains(TcoContext? tco)
     {

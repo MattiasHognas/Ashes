@@ -1440,17 +1440,14 @@ public sealed partial class Lowering
                 runtimeReuseRequest,
                 request);
 
-        (List<int> argTemps, List<TypeRef> argTypes) = LowerConstructorArguments(
-            ctor,
-            args,
-            resultType,
-            runtimeManagedCandidate,
-            request);
+        (List<int> argTemps, List<TypeRef> argTypes, List<(int Temp, TypeRef Type)> partDuplicates) =
+            LowerConstructorArgumentsKeepingPartDuplicates(ctor, args, resultType, runtimeManagedCandidate, request);
         if (ctor.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
         {
             return (argTemps[0], resultType);
         }
         runtimeManagedCandidate = runtimeManagedCandidate || (!stackAllocate && resultType is TypeRef.TNamedType placedType && PlaceConstructorOwningFreshChild(args, argTemps, argTypes, placedType));
+        KeepLoopResultPartDuplicatesOfArenaCell(partDuplicates, runtimeManagedCandidate);
         PrepareConstructorArgumentOwnership(
             args,
             argTypes,
@@ -1644,6 +1641,7 @@ public sealed partial class Lowering
             if (!IsRuntimeManagedTcoParamSlot(local))
             {
                 argumentTemps[index] = EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+                NoteOwnFieldParameterRetain(arguments[index], retained: false);
             }
             else if (!runtimeManagedCandidate && TryGetArenaSuccessorDestination(out int destinationSlot))
             {
@@ -1658,9 +1656,12 @@ public sealed partial class Lowering
 
                 // An arena cell built as a call's argument is no successor cell: the call's result
                 // is. The retain is released after the call, as an arena tuple argument's is.
-                if (!runtimeManagedCandidate && Environment.GetEnvironmentVariable("GRC_NO_CTORARGRETAIN") is null)
+                bool releasedAfterCall = !runtimeManagedCandidate
+                    && Environment.GetEnvironmentVariable("GRC_NO_CTORARGRETAIN") is null
+                    && RecordCallArgumentArenaRetain(readTemp, argumentTemps[index], argumentTypes[index]);
+                if (!releasedAfterCall)
                 {
-                    _ = RecordCallArgumentArenaRetain(readTemp, argumentTemps[index], argumentTypes[index]);
+                    NoteOwnFieldParameterRetain(arguments[index], retained: true);
                 }
             }
         }
@@ -1898,6 +1899,7 @@ public sealed partial class Lowering
 
         var argumentTemps = new List<int>(arguments.Count);
         var argumentTypes = new List<TypeRef>(arguments.Count);
+        _constructorArgumentDepth++;
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
@@ -1911,13 +1913,15 @@ public sealed partial class Lowering
                 argumentTemp,
                 argumentType,
                 runtimeManagedCandidate,
-                request);
+                request,
+                fieldIndex: i);
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
             Unify(parameterType, argumentType);
             argumentTypes.Add(Prune(argumentType));
             MarkResourceArgMoved(arguments[i]);
         }
+        _constructorArgumentDepth--;
 
         return (argumentTemps, argumentTypes);
     }
@@ -1939,22 +1943,168 @@ public sealed partial class Lowering
         int argumentTemp,
         TypeRef argumentType,
         bool runtimeManagedCandidate,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        int fieldIndex = -1)
     {
         bool owningConsumer = runtimeManagedCandidate
             || request.ConsumerCanOwn
             || _tcoCtx?.InTailPosition == true;
         if (owningConsumer)
         {
-            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+            int duplicatedTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+            if (duplicatedTemp != argumentTemp
+                && !runtimeManagedCandidate
+                && _tcoCtx?.InTailPosition == true
+                && BindsWholeLoopParameter(argument))
+            {
+                KeepLoopResultCellOwnerDuplicateOwned(duplicatedTemp, argumentType);
+            }
+            else if (duplicatedTemp != argumentTemp
+                && !runtimeManagedCandidate
+                && _tcoCtx?.InTailPosition == true
+                && LoopResultPartOwnerRuleEnabled)
+            {
+                _loopResultPartDuplicates?.Add((duplicatedTemp, argumentType));
+            }
+
+            argumentTemp = duplicatedTemp;
         }
 
         if (!runtimeManagedCandidate && request.TransfersRuntimeManagedChildren)
         {
+            int borrowedTemp = argumentTemp;
             argumentTemp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, argumentTemp, argumentType);
+            RecordTransferDuplicatedChild(fieldIndex, borrowedTemp, argumentTemp, argumentType);
         }
 
         return argumentTemp;
+    }
+
+    // The duplicate a pattern owner took for an arena cell built as a loop function's result
+    // (`| root -> Spine(root = root, arguments = [])` in a function whose other arm loops): the
+    // return normalizes the cell into a reference-counted copy that retains the field itself, and
+    // the arena cell releases nothing. The duplicate goes to an owned slot, released once the
+    // function's result holds references of its own.
+    // A pattern binding of the whole loop parameter (a catch-all arm's `root` over the matched
+    // parameter): its slot was stored from a read of one of the loop's parameter slots. A part matched
+    // out of the parameter is released after the result's copy by the copy's own rules.
+    private bool BindsWholeLoopParameter(Expr argument)
+    {
+        if (argument is not Expr.Var variable
+            || _tcoCtx is not { } tco
+            || Lookup(variable.Name) is not Binding.Local local)
+        {
+            return false;
+        }
+
+        int storeIndex = _inst.FindLastIndex(instruction => instruction is IrInst.StoreLocal store && store.Slot == local.Slot);
+        return storeIndex >= 0
+            && _inst[storeIndex] is IrInst.StoreLocal { Source: var source }
+            && _inst.FindLast(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(source))
+                is IrInst.LoadLocal { Slot: var readSlot }
+            && tco.ParamSlots.Contains(readSlot);
+    }
+
+    // A pattern owner's duplicate taken for a part of a loop parameter stored into a loop result cell
+    // (`Some(label)` of a record matched out of the list parameter): when the cell stays in the arena
+    // nothing releases the duplicate, so it goes to an owned slot, which also makes the return copy the
+    // result and release the slot behind the copy. A cell placed on the reference-counted heap owns its
+    // field already, and keeping the duplicate owned there as well released it twice.
+    private List<(int Temp, TypeRef Type)>? _loopResultPartDuplicates;
+
+    private (List<int> Temps, List<TypeRef> Types, List<(int Temp, TypeRef Type)> PartDuplicates) LowerConstructorArgumentsKeepingPartDuplicates(
+        ConstructorSymbol ctor,
+        List<Expr> args,
+        TypeRef.TNamedType resultType,
+        bool runtimeManagedCandidate,
+        LoweredValueRequest request)
+    {
+        List<(int Temp, TypeRef Type)>? saved = _loopResultPartDuplicates;
+        _loopResultPartDuplicates = [];
+        try
+        {
+            (List<int> temps, List<TypeRef> types) = LowerConstructorArguments(ctor, args, resultType, runtimeManagedCandidate, request);
+            return (temps, types, _loopResultPartDuplicates);
+        }
+        finally
+        {
+            _loopResultPartDuplicates = saved;
+        }
+    }
+
+    // At the return: a result its own rules copy or normalize anyway (another owned value, or a contract
+    // type) settles the part's duplicate by those rules, so the slot is withdrawn there; only a result
+    // nothing else copies keeps it, which makes the return copy the result and release it behind.
+    // Returns whether the result is of the contract's types, as passed in.
+    private bool DropPartDuplicateSlotsWhenTheResultCopiesAnyway(int bodyTemp, bool contractResult)
+    {
+        if (!_generalRcOwnedSlots.Any(owned => owned.PartDuplicate))
+        {
+            return contractResult;
+        }
+
+        bool copiesAnyway = contractResult
+            || IsRuntimeManagedResultTemp(bodyTemp)
+            || _generalRcOwnedSlots.Any(owned => !owned.PartDuplicate);
+        if (copiesAnyway)
+        {
+            _generalRcOwnedSlots.RemoveAll(owned => owned.PartDuplicate);
+        }
+
+        return contractResult;
+    }
+
+    private void KeepLoopResultPartDuplicatesOfArenaCell(List<(int Temp, TypeRef Type)> duplicates, bool cellReferenceCounted)
+    {
+        if (cellReferenceCounted)
+        {
+            return;
+        }
+
+        foreach ((int temp, TypeRef type) in duplicates)
+        {
+            if (!CanArenaReset(Prune(type)))
+            {
+                KeepLoopResultCellOwnerDuplicateOwned(temp, type, partDuplicate: true);
+            }
+        }
+    }
+
+    private static bool LoopResultPartOwnerRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTPARTOWNERDUP") is null;
+
+    private void KeepLoopResultCellOwnerDuplicateOwned(int duplicatedTemp, TypeRef argumentType, bool partDuplicate = false)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTCELLOWNERDUP") is not null
+            || ContainsUnresolvedLayoutType(Prune(argumentType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, duplicatedTemp));
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(argumentType));
+        if (partDuplicate)
+        {
+            _generalRcOwnedSlots[_generalRcOwnedSlots.IndexOf(owned)] = owned with { PartDuplicate = true };
+        }
+    }
+
+    // A constructor argument lowered as the field it becomes: a cell built as the argument itself
+    // knows it is a field of the value (KeepLoopResultFieldCellHeadDuplicateOwned).
+    private LoweredValue LowerConstructorFieldElement(Expr argument, LoweredValueRequest request, bool escapesArenaParent)
+    {
+        Expr? savedConstructorFieldArgument = _constructorFieldArgument;
+        _constructorFieldArgument = argument;
+        try
+        {
+            return LowerArenaAggregateElement(argument, request, escapesArenaParent);
+        }
+        finally
+        {
+            _constructorFieldArgument = savedConstructorFieldArgument;
+        }
     }
 
     private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
@@ -1968,7 +2118,7 @@ public sealed partial class Lowering
             fieldType,
             runtimeManagedParent,
             parentRequest);
-        LoweredValue loweredValue = LowerArenaAggregateElement(
+        LoweredValue loweredValue = LowerConstructorFieldElement(
             argument,
             request,
             !runtimeManagedParent && EscapesArenaParent(parentRequest));

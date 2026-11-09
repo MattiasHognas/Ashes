@@ -20,7 +20,32 @@ public sealed partial class Lowering
         }
 
         HashSet<int> reached = LocalSlotsReachingTemps([resultTemp], IndependentOwnedSlots(ownedSlots), independentTemps);
+        AddPredecessorsOfReachedSlots(reached, ownedSlots);
         return [.. ownedSlots.Where(owned => !reached.Contains(owned.Slot) || !ResultTypeMayHoldPartOf(resultType, owned.Type))];
+    }
+
+    private static bool ReachedPredecessorRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_REACHEDPREDECESSOR") is null;
+
+    // A predecessor slot holds what its owned slot held in an earlier iteration, and that value flowed
+    // on the way this iteration's does, through a loop parameter the reach walk does not follow back
+    // (`acc |> expandedArms(expand(pattern)(environment)) |> loop(rest)`: each iteration's expanded
+    // patterns end up in the accumulator). A result reaching the owned slot reaches its predecessor
+    // too, so the earlier value is not released while the result still holds its parts.
+    private static void AddPredecessorsOfReachedSlots(HashSet<int> reached, List<GeneralRcOwnedSlot> ownedSlots)
+    {
+        if (!ReachedPredecessorRuleEnabled)
+        {
+            return;
+        }
+
+        foreach (GeneralRcOwnedSlot owned in ownedSlots)
+        {
+            if (owned.Predecessor && owned.Origin >= 0 && reached.Contains(owned.Origin))
+            {
+                reached.Add(owned.Slot);
+            }
+        }
     }
 
     private static bool IndependentOwnedSlotsEnabled =>
@@ -99,12 +124,317 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool ArenaRecordChildMoveEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDCHILDMOVE") is null;
+
+    /// <summary>
+    /// The same move for a result built as an arena record of one constructor: a field joining
+    /// retains the function took, which no owned slot releases, with fresh arena values that own
+    /// nothing is released from the arena record once the record is copied onto the
+    /// reference-counted heap, so the copy holds the only reference. A field joined with a value the
+    /// function only borrows keeps its reference where it is.
+    /// </summary>
+    private void ReleaseOwnedFieldsOfCopiedArenaRecord(int bodyTemp, TypeRef type)
+    {
+        if (!ArenaRecordChildMoveEnabled
+            || Prune(type) is not TypeRef.TNamedType { Symbol.Constructors: [var constructor] } named)
+        {
+            return;
+        }
+
+        List<int> updates = [];
+        int cell = SoleArenaCellOf(bodyTemp, allowRecord: true);
+        if (cell < 0 && (!ArenaRecordJoinMoveEnabled || !TryArenaRecordWithRawUpdates(bodyTemp, out cell, updates)))
+        {
+            return;
+        }
+
+        foreach (IrInst instruction in _inst.ToList())
+        {
+            if (instruction is not IrInst.SetAdtField { Ptr: var ptr, FieldIndex: var index, Source: var source, Tagless: var tagless }
+                || ptr != cell
+                || index >= constructor.Arity)
+            {
+                continue;
+            }
+
+            TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, index, named));
+            bool fromRecord = updates.Count > 0 && ArenaRecordReplacedFieldEnabled;
+            if (CanArenaReset(fieldType)
+                || !HoldsOwnReference(source)
+                || !fromRecord && !updates.All(update => CopiesFieldRaw(update, index, cell)))
+            {
+                continue;
+            }
+
+            // With updates in the join, the reference the record took is released through the value
+            // stored into it, since the record itself may already be released as the scope's owner.
+            int childTemp = source;
+            if (!fromRecord)
+            {
+                childTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(childTemp, bodyTemp, index, tagless));
+            }
+
+            EmitRuntimeManagedChildDrop(childTemp, fieldType);
+        }
+    }
+
+    private static bool ArenaRecordJoinMoveEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDJOINMOVE") is null;
+
+    // With updates in the join, the record's own reference is released from the record itself, on
+    // every arm: an update that copies the field leaves the copy's retain, one that replaces it leaves
+    // the field with no holder but the dead arena record.
+    private static bool ArenaRecordReplacedFieldEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDREPLACEDFIELD") is null;
+
+    // A result joining one arena record with arena record updates of it (`if c then built with
+    // { f = v } else built`): the record, and each update, whose fields are read from the record
+    // without a retain. A field every update copies that way is the same reference on every arm.
+    private bool TryArenaRecordWithRawUpdates(int bodyTemp, out int cell, List<int> updates)
+    {
+        cell = -1;
+        HashSet<int> cells = [];
+        if (!CollectArenaRecordsOfJoin(bodyTemp, cells, 8))
+        {
+            return false;
+        }
+
+        if (TryLetBoundRecordBehindJoin(cells, out cell, updates))
+        {
+            return true;
+        }
+
+        List<int> fresh = cells.Where(candidate => !ReadsFieldsOfRecord(candidate)).ToList();
+        if (fresh.Count != 1)
+        {
+            return false;
+        }
+
+        cell = fresh[0];
+
+        int record = cell;
+        updates.AddRange(cells.Where(candidate => candidate != record));
+        return updates.Count > 0;
+    }
+
+    private bool ReadsFieldsOfRecord(int candidate)
+        => _inst.Any(instruction => instruction is IrInst.SetAdtField { Ptr: var ptr, Source: var source }
+            && ptr == candidate
+            && DefinitionOf(source) is IrInst.GetAdtField);
+
+    private static bool ArenaRecordDerivedJoinEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDDERIVEDJOIN") is null;
+
+    // A join whose arms are all records built from one let-bound arena record (updates of it, or a
+    // record of the type assembled from its fields with one replaced) or fresh records that read
+    // nothing of it (`match built.slot with | Some(s) -> built with f = v | None -> Record(...)`):
+    // the let-bound record is the one whose retained fields no arm's copy takes over. Its binding
+    // encloses the join, so it is defined on every arm.
+    private bool TryLetBoundRecordBehindJoin(HashSet<int> cells, out int record, List<int> updates)
+    {
+        record = -1;
+        if (!ArenaRecordDerivedJoinEnabled)
+        {
+            return false;
+        }
+
+        HashSet<int> origins = [];
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.SetAdtField { Ptr: var ptr, Source: var source }
+                || !cells.Contains(ptr)
+                || DefinitionOf(source) is not IrInst.GetAdtField { Ptr: var from })
+            {
+                continue;
+            }
+
+            if (DefinitionOf(from) is IrInst.Borrow { SourceTemp: var borrowed })
+            {
+                from = borrowed;
+            }
+
+            if (DefinitionOf(from) is not IrInst.LoadLocal { Slot: var slot }
+                || StoredRecordOf(slot) is not { } stored)
+            {
+                return false;
+            }
+
+            origins.Add(stored);
+        }
+
+        if (origins.Count != 1 || cells.Contains(origins.First()) || !DefinedOnEveryPathTo(origins.First(), cells))
+        {
+            return false;
+        }
+
+        record = origins.First();
+        updates.AddRange(cells);
+        return true;
+    }
+
+    // Whether the record is defined before every arm of the join: no branch taken before its
+    // definition lands between the definition and the last arm, so a path reaching an arm that does
+    // not read the record (a fresh record) has still defined it.
+    private bool DefinedOnEveryPathTo(int record, HashSet<int> cells)
+    {
+        int definition = _inst.FindIndex(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(record));
+        int last = cells.Max(cell => _inst.FindIndex(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(cell)));
+        if (definition < 0 || last < definition)
+        {
+            return false;
+        }
+
+        HashSet<string> enteredLabels = [];
+        for (int index = definition + 1; index <= last; index++)
+        {
+            if (_inst[index] is IrInst.Label label)
+            {
+                enteredLabels.Add(label.Name);
+            }
+        }
+
+        for (int index = 0; index < definition; index++)
+        {
+            string? target = _inst[index] switch
+            {
+                IrInst.Jump jump => jump.Target,
+                IrInst.JumpIfFalse branch => branch.Target,
+                _ => null,
+            };
+            if (target is not null && enteredLabels.Contains(target))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // The arena record a let slot was stored from once, or nothing.
+    private int? StoredRecordOf(int slot)
+    {
+        List<IrInst.StoreLocal> stores = _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == slot).ToList();
+        return stores is [{ Source: var source }] && DefinitionOf(source) is IrInst.AllocAdt { RuntimeManaged: false, FieldCount: > 0 }
+            ? source
+            : null;
+    }
+
+    // The arena records a value is, through locals and borrows; false when a store is anything else
+    // than an arena record, the value a match without an arm stores, or a back edge's placeholder.
+    private bool CollectArenaRecordsOfJoin(int temp, HashSet<int> cells, int budget)
+    {
+        if (budget == 0)
+        {
+            return false;
+        }
+
+        switch (DefinitionOf(temp))
+        {
+            case IrInst.AllocAdt { RuntimeManaged: false, FieldCount: > 0 }:
+                cells.Add(temp);
+                return true;
+            case IrInst.Borrow borrow:
+                return CollectArenaRecordsOfJoin(borrow.SourceTemp, cells, budget - 1);
+            case IrInst.LoadLocal load:
+                bool any = false;
+                foreach (IrInst instruction in _inst)
+                {
+                    if (instruction is not IrInst.StoreLocal store || store.Slot != load.Slot)
+                    {
+                        continue;
+                    }
+
+                    if (DefinitionOf(store.Source) is IrInst.LoadConstInt { Value: 0 })
+                    {
+                        continue;
+                    }
+
+                    if (!CollectArenaRecordsOfJoin(store.Source, cells, budget - 1))
+                    {
+                        return false;
+                    }
+
+                    any = true;
+                }
+
+                return any;
+            default:
+                return false;
+        }
+    }
+
+    // Whether an arena record update stores the record's own field `index`, read without a retain.
+    private bool CopiesFieldRaw(int update, int index, int cell)
+    {
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.SetAdtField { Ptr: var ptr, FieldIndex: var field, Source: var source }
+                || ptr != update
+                || field != index)
+            {
+                continue;
+            }
+
+            if (DefinitionOf(source) is not IrInst.GetAdtField { FieldIndex: var read, Ptr: var from } || read != index)
+            {
+                return false;
+            }
+
+            HashSet<int> origins = [];
+            return CollectArenaRecordsOfJoin(from, origins, 8) && origins.Count == 1 && origins.Contains(cell);
+        }
+
+        return false;
+    }
+
+    // A join holding a reference this function took on every arm: a retain no owned slot releases,
+    // or a fresh arena value that owns nothing. Values produced or retained outside a join are left
+    // to the owned slots that hold them.
+    private bool HoldsOwnReference(int temp)
+    {
+        if (DefinitionOf(temp) is not IrInst.LoadLocal load)
+        {
+            return false;
+        }
+
+        bool anyOwned = false;
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.StoreLocal store || store.Slot != load.Slot)
+            {
+                continue;
+            }
+
+            IrInst? stored = DefinitionOf(store.Source);
+            if (stored is IrInst.AllocAdt { RuntimeManaged: false, FieldCount: 0 } or IrInst.LoadConstInt { Value: 0 })
+            {
+                continue;
+            }
+
+            if (stored is not IrInst.RcDup || StoredIntoOwnedSlot(store.Source))
+            {
+                return false;
+            }
+
+            anyOwned = true;
+        }
+
+        return anyOwned;
+    }
+
+    private bool StoredIntoOwnedSlot(int temp)
+        => _inst.Any(instruction => instruction is IrInst.StoreLocal store
+            && store.Source == temp
+            && _generalRcOwnedSlots.Any(owned => owned.Slot == store.Slot));
+
     // The arena cell a value is, directly or through the one store into a local that is not the
     // placeholder a back edge writes; -1 otherwise.
-    private int SoleArenaCellOf(int temp)
+    private int SoleArenaCellOf(int temp, bool allowRecord = false)
     {
         IrInst? definition = DefinitionOf(temp);
-        if (definition is IrInst.Alloc { RuntimeManaged: false })
+        if (definition is IrInst.Alloc { RuntimeManaged: false } || (allowRecord && definition is IrInst.AllocAdt { RuntimeManaged: false }))
         {
             return temp;
         }
@@ -128,7 +458,9 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (stored is not IrInst.Alloc { RuntimeManaged: false } || cell >= 0)
+            bool arenaCell = stored is IrInst.Alloc { RuntimeManaged: false }
+                || (allowRecord && stored is IrInst.AllocAdt { RuntimeManaged: false });
+            if (!arenaCell || cell >= 0)
             {
                 return -1;
             }

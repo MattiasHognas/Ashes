@@ -1,0 +1,60 @@
+type Pat =
+    | PAt(Int, Pat)
+    | PEmpty
+    | PVar(Str)
+    | PWild
+    | PCons(Pat, Pat)
+    | POr(List(Pat))
+
+let recursive reverseOnto items acc =
+    match items with
+        | [] -> acc
+        | item :: rest -> reverseOnto(rest)(item :: acc)
+
+let recursive appendTo tail items =
+    match items with
+        | [] -> tail
+        | item :: rest -> item :: appendTo(tail)(rest)
+
+let recursive consCombinations (combinations: List(List(Pat))) acc =
+    match combinations with
+        | [] -> reverseOnto(acc)([])
+        | (head :: tail :: []) :: rest -> consCombinations(rest)(PCons(head, tail) :: acc)
+        | _ :: rest -> consCombinations(rest)(acc)
+
+let recursive prefixAll head (tails: List(List(Pat))) acc =
+    match tails with
+        | [] -> acc
+        | t :: rest -> prefixAll(head)(rest)((head :: t) :: acc)
+
+let recursive expand pattern environment =
+    match pattern with
+        | PAt(_span, inner) -> expand(inner)(environment)
+        | other -> [other]
+
+let recursive expandedArms patterns body guard acc =
+    match patterns with
+        | [] -> acc
+        | pattern :: rest -> expandedArms(rest)(body)(guard)((pattern, body, guard) :: acc)
+
+let recursive expandCases cases environment acc =
+    match cases with
+        | [] -> reverseOnto(acc)([])
+        | (pattern, body, guard) :: rest ->
+            acc
+            |> expandedArms(expand(pattern)(environment))(body)(guard)
+            |> expandCases(rest)(environment)
+
+let recursive count xs =
+    match xs with
+        | [] -> 0
+        | _ :: rest -> 1 + count(rest)
+
+let probe (n: Int) = count(expandCases([(PEmpty, 1, None)])(["env"])([]))
+
+let recursive loop (n: Int) (acc: Int) =
+    if n == 0
+    then acc
+    else loop(n - 1)(acc + probe(n))
+
+Ashes.IO.print(loop(3)(0))

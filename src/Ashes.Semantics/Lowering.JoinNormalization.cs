@@ -34,7 +34,7 @@ public sealed partial class Lowering
             || reaching.Any(arm => arm.Store is null)
             || CanArenaReset(pruned)
             || ContainsUnresolvedLayoutType(pruned, [])
-            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned) || IsNormalizableJoinTuple(pruned)))
+            || !(CanNormalizeIntoOwnedRuntimeValue(pruned) || IsGeneralRcValueType(pruned) || IsNormalizableJoinTuple(pruned) || IsPassthroughScalarJoinTuple(pruned)))
         {
             return false;
         }
@@ -56,11 +56,27 @@ public sealed partial class Lowering
             else if (!IsOwnedJoinArm(arm) && !(consingOnly && arm.Body is { } nil && IsEmptyListLiteral(nil)))
             {
                 NormalizeJoinArmStore(arm.Store!, pruned, Environment.GetEnvironmentVariable("GRC_NO_FRESHARM") is null && arm.Body is { } body && ConstructsFreshCell(body));
+                RecordJoinCopiedArenaCell(arm.Store!.Source);
             }
         }
 
         return true;
     }
+
+    // A tuple of scalars only is placed in the arena like any scalar value, so its joins are left
+    // alone, except in a function returning its passthrough parameter: that arm is copied into an
+    // owned reference-counted tuple (NormalizeParameterPassthroughBranch), and the promised
+    // reference-counted result would otherwise retain it a second time at the return. The arena
+    // arms are copied too, so the join is owned on every arm and returned as it is.
+    private bool IsPassthroughScalarJoinTuple(TypeRef type)
+        => PassthroughScalarJoinTupleEnabled
+            && type is TypeRef.TTuple tuple
+            && _passthroughParameter is { } parameter
+            && Prune(parameter.Type) is TypeRef.TTuple
+            && IsPassthroughNormalizableParameterType(tuple);
+
+    private static bool PassthroughScalarJoinTupleEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_PASSTHROUGHSCALARJOIN") is null;
 
     // A tuple join every element of which is a scalar or normalizes into an owned value: an arena
     // arm is copied into an owned tuple that retains each reference-counted element it keeps.
@@ -167,6 +183,86 @@ public sealed partial class Lowering
             && reaching.All(arm => !BorrowsLoopParameter(arm) && arm.Store is { } store && (IsNewlyProducedRcTemp(store.Source) || IsRetainedPatternOwnerArm(arm)));
     }
 
+    private static bool NilBesideFreshJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_NILBESIDEFRESHJOIN") is null;
+
+    // A reference-counted join whose every reaching arm is nil or a cell the arm just built on the
+    // reference-counted heap onto the function's own recursive result is fresh: the cell is the
+    // join's own, so the function's result takes it over instead of retaining it again. The result
+    // the cell links to is then owned once, by the cell, which takes it over from the owned slot
+    // keeping it instead of the slot releasing it at the return.
+    private bool TryTakeOverNilBesideFreshCells(IReadOnlyList<JoinArm> arms)
+    {
+        if (!NilBesideFreshJoinRuleEnabled || !GeneralRcEnabled)
+        {
+            return false;
+        }
+
+        List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
+        List<(IrInst.StoreLocal Store, int OwnedSlot)> takeOvers = [];
+        foreach (JoinArm arm in reaching)
+        {
+            if (arm.Body is { } nil && IsEmptyListLiteral(nil))
+            {
+                continue;
+            }
+
+            if (!arm.Owned
+                || BorrowsLoopParameter(arm)
+                || arm.Store is not { } store
+                || !IsNewlyProducedRcTemp(store.Source)
+                || FreshCellRecursiveTailOwnedSlot(arm.Body, store) is not int ownedSlot)
+            {
+                return false;
+            }
+
+            takeOvers.Add((store, ownedSlot));
+        }
+
+        if (takeOvers.Count == 0)
+        {
+            return false;
+        }
+
+        foreach ((IrInst.StoreLocal store, int ownedSlot) in takeOvers)
+        {
+            int index = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, store));
+            int zeroTemp = NewTemp();
+            _inst.InsertRange(index + 1, [new IrInst.LoadConstInt(zeroTemp, 0), new IrInst.StoreLocal(ownedSlot, zeroTemp)]);
+            ShiftRecordedInstructionIndices(index, 2);
+        }
+
+        return true;
+    }
+
+    // The owned slot holding the recursive call result an arm's cell links to as its tail: the arm is
+    // a cons onto the function's own recursive call, and the cell stores the slot's value as it is.
+    private int? FreshCellRecursiveTailOwnedSlot(Ashes.Frontend.Expr? body, IrInst.StoreLocal store)
+    {
+        while (body is Ashes.Frontend.Expr.Let let)
+        {
+            body = let.Body;
+        }
+
+        if (body is not Ashes.Frontend.Expr.Cons cons || !IsRecursiveProducerTail(cons.Tail))
+        {
+            return null;
+        }
+
+        int index = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, store));
+        for (int i = index - 1; i >= 0; i--)
+        {
+            if (_inst[i] is IrInst.StoreMemOffset { OffsetBytes: 8 } tail && tail.BasePtr == store.Source)
+            {
+                return DefinitionOf(tail.Source) is IrInst.LoadLocal load && _generalRcOwnedSlots.Any(owned => owned.Slot == load.Slot)
+                    ? load.Slot
+                    : null;
+            }
+        }
+
+        return null;
+    }
+
     // An owned arm beside one borrowing a loop parameter: the join is reference-counted on every path
     // but owned on only some, so the borrowing arm takes a reference of its own. A loop parameter the
     // join hands to the next iteration is released as the predecessor at the back edge.
@@ -204,7 +300,43 @@ public sealed partial class Lowering
         {
             RecordOwnedScopeJoinTemp(resultTemp);
         }
+
+        RecordRetainedArmJoin(resultTemp, arms);
     }
+
+    // The joins every reaching arm of which stores a retain it just took, even of a value a loop
+    // parameter owns: the join holds a reference of its own, so a loop exit returning one releases
+    // every parameter rather than transferring the one it equals.
+    private readonly Dictionary<List<IrInst>, HashSet<int>> _retainedArmJoinTempsByBody =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void RecordRetainedArmJoin(int resultTemp, IReadOnlyList<JoinArm> arms)
+    {
+        List<JoinArm> reaching = arms.Where(arm => !IsOwnershipNeutralArm(arm)).ToList();
+        if (RetainedArmJoinRuleEnabled
+            && reaching.Count > 0
+            && reaching.All(arm => arm.Store is { } retained && IsRuntimeRetainTemp(retained.Source)))
+        {
+            RecordRetainedArmJoinTemp(resultTemp);
+        }
+    }
+
+    private void RecordRetainedArmJoinTemp(int temp)
+    {
+        if (!_retainedArmJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps))
+        {
+            temps = [];
+            _retainedArmJoinTempsByBody[_inst] = temps;
+        }
+
+        temps.Add(temp);
+    }
+
+    private bool IsRetainedArmJoinTemp(int temp)
+        => _retainedArmJoinTempsByBody.TryGetValue(_inst, out HashSet<int>? temps) && temps.Contains(temp);
+
+    private static bool RetainedArmJoinRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_RETAINEDARMJOIN") is null;
 
     private static bool NormalizedFreshJoinRuleEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_NORMALIZEDFRESHJOIN") is null;
@@ -532,9 +664,25 @@ public sealed partial class Lowering
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(argumentTypes[i]);
-            if (CanArenaReset(fieldType)
-                || ContainsUnresolvedLayoutType(fieldType, [])
-                || !(IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]) || IsArenaCellRetainHandedToSlot(argumentTemps[i])))
+            if (CanArenaReset(fieldType) || ContainsUnresolvedLayoutType(fieldType, []))
+            {
+                continue;
+            }
+
+            if (IsArenaCellPatternOwnerMarker(argumentTemps[i]) && IsBorrowedRetainableParameterType(fieldType))
+            {
+                HandArenaCellMarkerToOwnedSlot(argumentTemps[i], fieldType);
+                if (Environment.GetEnvironmentVariable("GRC_NO_CTORMARKERSKIP") is null)
+                {
+                    // The slot releases the promoted retain, so a release of the cell's children
+                    // (a successor's copy dropping the source it copied) skips this field too.
+                    _ownedSlotConstructorArguments.Add(arguments[i]);
+                }
+
+                continue;
+            }
+
+            if (!(IsFreshOwnedConstructorArgument(arguments[i], argumentTemps[i]) || IsArenaCellRetainHandedToSlot(argumentTemps[i])))
             {
                 continue;
             }
@@ -544,6 +692,30 @@ public sealed partial class Lowering
             RegisterGeneralRcOwnedSlot(ownedSlot, fieldType);
             _ownedSlotConstructorArguments.Add(arguments[i]);
         }
+    }
+
+    // A pattern owner's duplicate taken for an arena cell is still a marker while the cell is built
+    // (the `Some(head)` of a loop that walked a list normalized at its entry); once the owner is
+    // placed it becomes a real retain the arena cell holds with nothing to release it. The marker
+    // goes to an owned slot that holds zero until SettleHandedOverMarkerSlots sees it promoted.
+    private bool IsArenaCellPatternOwnerMarker(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_CTORMARKERSLOT") is null
+            && FindLastInstruction(instruction => instruction switch
+            {
+                IrInst.RcDup duplicate => duplicate.Target == temp,
+                IrInst.LoadLocal load => load.Target == temp,
+                _ => false,
+            }) is int index and >= 0
+            && _inst[index] is IrInst.RcDup { RuntimeManaged: false };
+
+    private void HandArenaCellMarkerToOwnedSlot(int markerTemp, TypeRef fieldType)
+    {
+        int ownedSlot = NewLocal();
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+        _handedOverMarkerSlots.Add(new HandedOverMarkerSlot(_inst, markerTemp, ownedSlot, zeroTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, fieldType);
     }
 
     // A real retain taken for the arena cell (a let-bound owned value the cell keeps) is the arena's
@@ -765,7 +937,17 @@ public sealed partial class Lowering
         => Environment.GetEnvironmentVariable("GRC_NO_RCTUPLE") is null
             && elements.Exists(element =>
                 element.Ownership.Representation == LoweredTempRepresentation.RuntimeRc
-                && !CanArenaReset(Prune(element.Type)));
+                && !CanArenaReset(Prune(element.Type))
+                && !IsFreshNullaryConstructor(element.Temp));
+
+    // A nullary constructor built on the reference-counted heap is an immortal cell: an arena tuple
+    // holding it strands nothing, so it does not make the tuple a reference-counted one. Counted as
+    // one, `(LineLeaf, starts)` in a function whose other arm builds an arena tuple left that arm's
+    // tuple, and the list it copied in, with a caller that releases neither.
+    private bool IsFreshNullaryConstructor(int temp)
+        => Environment.GetEnvironmentVariable("GRC_NO_NULLARYTUPLEELEMENT") is null
+            && _inst.FindLast(instruction => instruction is IrInst.AllocAdt allocation && allocation.Target == temp)
+                is IrInst.AllocAdt { FieldCount: 0, RuntimeManaged: true };
 
     // A reference-counted tuple owns its children: an element of the contract's types (borrowed, or
     // held by an owned slot the function releases) is retained or copied into it.
@@ -814,6 +996,7 @@ public sealed partial class Lowering
             new JoinArm(then.Store, then.Type, IsRuntimeManagedResultTemp(then.Temp), BranchJoinsRuntimeManagedResult(iff.Then, resultType), iff.Then),
             new JoinArm(otherwise.Store, otherwise.Type, IsRuntimeManagedResultTemp(otherwise.Temp), BranchJoinsRuntimeManagedResult(iff.Else, resultType), iff.Else),
         ];
+        RecordRetainedArmJoin(resultTemp, arms);
         RecordNeutralJoin(resultTemp, arms);
         if (ReachingArmsAllReferenceCounted(arms))
         {

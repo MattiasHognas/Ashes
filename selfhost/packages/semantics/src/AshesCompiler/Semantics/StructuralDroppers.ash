@@ -42,6 +42,7 @@ export (
     value isScalarResultType,
     value synthesizeStructuralOwnerDropper,
     value synthesizeRuntimeManagedAdtDropper,
+    value synthesizeGeneralAdtDropper,
     value synthesizeRecordDropper,
     type OwnedReleasePlan(..),
     type InlineReleaseSynthesis(..),
@@ -834,6 +835,17 @@ let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (dropperType
             match renumberType(ids)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named ->
                     match synthesizeAdtDropperIn(named)(body) with
+                        | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
+                | _ -> synthesisResult(None)(body)
+
+// Names the dropper of a named type only its normalization helper expresses (stage 0's
+// `EmitGeneralRuntimeManagedAdtDrop`), synthesizing it once; a type that is not named has none.
+let synthesizeGeneralAdtDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
+    match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
+        | (ids, body) ->
+            match renumberType(ids)(semanticType) with
+                | SemNamed(_symbolId, _name, _arguments) as named ->
+                    match synthesizeGeneralDropperIn(named)(body) with
                         | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
                 | _ -> synthesisResult(None)(body)
 

@@ -442,13 +442,25 @@ let heapMonomorphicUserAdt (named: SemanticType) =
         | SemNamed(_symbolId, name, arguments) -> !heapBuiltinTypeName(name) && length(arguments) == 0
         | _ -> false
 
+// Stage 0's `IsOpaqueHandleWord` beside the scalar layouts: a value of an external type with no
+// destructor is a foreign handle the program only passes along, one word copied like an integer
+// that needs no release; a declared resource owns what its handle names.
+let canArenaResetLayoutIn (semanticType: SemanticType) (environment: TypeEnvironment) =
+    match semanticType with
+        | SemOpaque(name) ->
+            environment
+            |> inferenceTypeResolutionContext
+            |> heapExternalTypeHasDestructor(name)
+            |> (given (hasDestructor: Bool) -> hasDestructor == false)
+        | other -> canArenaResetLayout(other)
+
 // Whether the arena copier can walk the whole graph: scalars and strings are leaves, lists and
 // tuples recurse, and a named type recurses through every constructor field unless it owns a
 // resource or the walk has already entered it.
 let recursive heapArenaDeepCopyLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then true
         else
             match resolved with
@@ -492,7 +504,7 @@ let heapAdtStructuralCopyKind (named: SemanticType) (environment: TypeEnvironmen
 let heapStructuralCopyKind (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then InlineCopy
         else
             match resolved with
@@ -519,7 +531,7 @@ let heapStructuralCopyKind (semanticType: SemanticType) (environment: TypeEnviro
 let recursive heapDroppableLeafField (semanticType: SemanticType) (environment: TypeEnvironment) namedRule =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then true
         else
             match resolved with
@@ -567,7 +579,7 @@ let heapRuntimeCopyAdtLayout (named: SemanticType) (environment: TypeEnvironment
 let heapTcoOwnedChildField (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then true
         else
             match resolved with
@@ -596,7 +608,7 @@ let recursive heapRuntimeRecordAdtLayout (named: SemanticType) (environment: Typ
 and heapRuntimeOwnedFieldLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then true
         else
             match resolved with
@@ -659,7 +671,7 @@ and heapRuntimeTcoOwnedChildAdtLayout (named: SemanticType) (environment: TypeEn
 let heapRecursiveCopyField (symbolId: Int) (name: Str) (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then true
         else
             match resolved with
@@ -686,7 +698,7 @@ let heapRuntimeRecursiveCopyAdtLayout (named: SemanticType) (environment: TypeEn
 let recursive heapRuntimeTcoListElementLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then true
         else
             match resolved with
@@ -702,7 +714,7 @@ let recursive heapRuntimeTcoListElementLayout (semanticType: SemanticType) (envi
 let heapDropKind (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        if canArenaResetLayout(resolved)
+        if canArenaResetLayoutIn(resolved)(environment)
         then NoChildDrop
         else
             match resolved with

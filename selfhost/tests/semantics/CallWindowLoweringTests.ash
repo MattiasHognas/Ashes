@@ -286,10 +286,42 @@ let expectGenericListResultDeepCopyMatchesStageZero unit =
     |> withoutLocations
     |> withFunctionLocalLabels)
 
+// A loop returning `Some` of a field of a record matched out of its list parameter keeps the
+// pattern owner's duplicate of that field in an owned slot, which makes the return copy the arena
+// `Some` and release the duplicate behind the copy, as stage 0 does. Locations and labels as above.
+let expectLoopResultPartDuplicateMatchesStageZero unit =
+    "loop_result_some_holding_a_field_of_a_list_head"
+    |> loweredFixtureLines
+    |> functionLines("[ClosureHelper from returnedClosureLabelOf]")
+    |> withoutLocations
+    |> withFunctionLocalLabels
+    |> expectSameLines("loop result part duplicate")("loop_result_some_holding_a_field_of_a_list_head"
+    |> stageZeroFixtureLines
+    |> functionLines("[ClosureHelper from returnedClosureLabelOf]")
+    |> withoutLocations
+    |> withFunctionLocalLabels)
+
+// A loop body whose deferred call-result copy-out renames a reload: the borrowed `expand(pattern)`
+// call after it is rebuilt by the splice and still borrows, so placement takes no duplicate of the
+// pattern owner for it, as stage 1 records the call by its target.
+let expectBorrowedCallAfterRenamedReloadMatchesStageZero unit =
+    "borrowed_call_after_renamed_reload"
+    |> loweredFixtureLines
+    |> functionLines("[ClosureHelper from expandCases]")
+    |> withoutLocations
+    |> withFunctionLocalLabels
+    |> expectSameLines("borrowed call after a renamed reload")("borrowed_call_after_renamed_reload"
+    |> stageZeroFixtureLines
+    |> functionLines("[ClosureHelper from expandCases]")
+    |> withoutLocations
+    |> withFunctionLocalLabels)
+
 let runCallWindowLoweringTests unit =
     Unit
+    |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
     |> expectUnknownResultPlacementReadsReturnsBit
     |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
+    |> (given (_) -> expectLoopResultPartDuplicateMatchesStageZero(Unit))
     |> expectCurriedSelfCallKeepsWindowOpen
     |> expectNormalizedResultResetsEnclosingBracket
     |> expectFreshArgumentHandedOverUnderAcceptsBit

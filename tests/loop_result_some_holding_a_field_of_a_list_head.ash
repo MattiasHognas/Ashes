@@ -1,0 +1,45 @@
+// expect: 3
+type Kind =
+    | MakeClosure(Int, Str, Int, Int, Bool, Bool, Int, Bool)
+    | MakeClosureStack(Int, Str, Int, Int, Bool, Bool, Bool)
+    | Other(Int)
+
+type Instruction =
+    | instruction: Kind
+    | location: Maybe(Int)
+
+type State =
+    | returnedLabels: List((Str, Str))
+    | count: Int
+
+let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List(Instruction)) =
+    match reversedInstructions with
+        | [] -> None
+        | Instruction { instruction = MakeClosure(target, label, _environment, _size, _returns, _accepts, _flag, _returnsOwned) } :: rest ->
+            if target == bodyTemp
+            then Some(label)
+            else returnedClosureLabelOf(bodyTemp)(rest)
+        | Instruction { instruction = MakeClosureStack(target, label, _environment, _size, _returns, _accepts, _returnsOwned) } :: rest ->
+            if target == bodyTemp
+            then Some(label)
+            else returnedClosureLabelOf(bodyTemp)(rest)
+        | _ :: rest -> returnedClosureLabelOf(bodyTemp)(rest)
+
+let recordReturnedClosureLabel (label: Str) (bodyTemp: Int) (reversedInstructions: List(Instruction)) (state: State) =
+    match returnedClosureLabelOf(bodyTemp)(reversedInstructions) with
+        | Some(returned) -> State(returnedLabels = (label, returned) :: state.returnedLabels, count = state.count + 1)
+        | None -> state
+
+let body (n: Int) = [Instruction(instruction = Other(n), location = None), Instruction(instruction = MakeClosure(7)("lambda_" + Ashes.Text.fromInt(n))(0)(8)(true)(false)(0)(false), location = Some(n))]
+
+let recursive loop (n: Int) (state: State) =
+    if n == 0
+    then state.count
+    else
+        state
+        |> recordReturnedClosureLabel("f" + Ashes.Text.fromInt(n))(7)(body(n))
+        |> loop(n - 1)
+
+State(returnedLabels = [], count = 0)
+|> loop(3)
+|> Ashes.IO.print

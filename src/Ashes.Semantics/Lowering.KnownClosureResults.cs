@@ -30,12 +30,33 @@ public sealed partial class Lowering
     /// callee's returns bit: a reference-counted result is taken over as it is, an arena one is
     /// copied, and the caller owns the result on both paths.
     /// </summary>
+    /// <summary>
+    /// A loop's own non-tail self call reaches a body still being lowered, whose exit may yet place
+    /// its result on the reference-counted heap. For an ADT the runtime can copy into an owned value
+    /// but no fixed copy-out covers (a `Maybe(Str)`), the call reads the returns bit: a
+    /// reference-counted result is taken over, an arena one is copied, and the caller owns it on both
+    /// paths. Unread, the reference-counted result was left in the call's open window and never
+    /// released.
+    /// </summary>
+    private bool LoopSelfCallAdtResultOwnedAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
+        => GeneralRcEnabled
+            && Environment.GetEnvironmentVariable("GRC_NO_LOOPSELFADTRESULT") is null
+            && _tcoCtx is { } tco
+            && IsTcoSelfCallRoot(rootExpr, tco)
+            && Prune(resultType) is TypeRef.TNamedType named
+            && !CanArenaReset(named)
+            && !ContainsUnresolvedLayoutType(named, [])
+            && !IsGeneralRcValueType(named)
+            && CanNormalizeIntoOwnedRuntimeValue(named)
+            && !CompiledResultRuntimeManaged(rootExpr, argumentCount);
+
     private bool CapturedSelfListResultOwnedAtRunTime(Expr rootExpr, int argumentCount, TypeRef resultType)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_CAPTUREDSELFRESULT") is not null
             || rootExpr is not Expr.Var callee
-            || Lookup(callee.Name) is not (Binding.Env or Binding.EnvScheme)
+            || Lookup(callee.Name) is not (Binding.Env or Binding.EnvScheme or Binding.Self)
+            || Lookup(callee.Name) is Binding.Self && !DirectSelfListResultOwnedAtRunTime(rootExpr)
             || Prune(resultType) is not TypeRef.TList list
             || CanArenaReset(Prune(list.Element))
             || ContainsUnresolvedLayoutType(resultType, [])
@@ -57,6 +78,14 @@ public sealed partial class Lowering
 
         return _loweringFunctionLabels.Contains(label, StringComparer.Ordinal) || IsUncompiledGroupSibling(label);
     }
+
+    // A function's non-tail call to itself by its own name (`append(fresh)(collect(rest))`) reaches
+    // the same body still being lowered, so it reads the returns bit like a call through a captured
+    // self. Taken unread, a reference-counted result handed to a further call was never released.
+    // A loop's tail self-call keeps the loop's own protocol.
+    private bool DirectSelfListResultOwnedAtRunTime(Expr rootExpr)
+        => Environment.GetEnvironmentVariable("GRC_NO_DIRECTSELFRESULT") is null
+            && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco));
 
     // A sibling of a recursive group whose body is lowered after this call's (`applied` called from
     // `derive` in `let recursive derive ... and applied ...`) has no compiled placement or curried

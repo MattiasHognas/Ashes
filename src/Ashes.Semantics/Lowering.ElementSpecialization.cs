@@ -318,7 +318,8 @@ public sealed partial class Lowering
         int SelfReferences,
         int InstructionCount,
         int NextTempSlot,
-        Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts);
+        Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
+        SpecializationOwnershipSnapshot? Ownership);
 
     /// <summary>
     /// Lowers the candidate's own source again with its curried parameters pinned to the call's concrete
@@ -373,6 +374,62 @@ public sealed partial class Lowering
         }
     }
 
+    private sealed record SpecializationOwnershipSnapshot(
+        Dictionary<string, OwnershipInfo>[] Scopes,
+        Dictionary<string, List<OwnershipInfo>> OwnedValuesByName,
+        Dictionary<string, string> Aliases);
+
+    private static bool SpecializationOwnershipScopeEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_SPECIALIZATIONOWNERSHIPSCOPE") is null;
+
+    // The specialization is lowered from its own source in the middle of the caller's body, so the
+    // caller's owned values and ownership aliases are out of its scope just as the caller's bindings
+    // are. A pattern binding of the specialization would otherwise resolve its owner through a caller
+    // alias of the same name, and the copy would retain a value for an owner of the caller's frame
+    // that its own body never releases.
+    private SpecializationOwnershipSnapshot? EnterSpecializationOwnershipScope()
+    {
+        if (!SpecializationOwnershipScopeEnabled)
+        {
+            return null;
+        }
+
+        var snapshot = new SpecializationOwnershipSnapshot(
+            _ownershipScopes.ToArray(),
+            _ownedValuesByName.ToDictionary(entry => entry.Key, entry => new List<OwnershipInfo>(entry.Value), StringComparer.Ordinal),
+            new Dictionary<string, string>(_ownershipAliases, StringComparer.Ordinal));
+        _ownershipScopes.Clear();
+        _ownedValuesByName.Clear();
+        _ownershipAliases.Clear();
+        return snapshot;
+    }
+
+    private void LeaveSpecializationOwnershipScope(SpecializationOwnershipSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return;
+        }
+
+        _ownershipScopes.Clear();
+        for (int index = snapshot.Scopes.Length - 1; index >= 0; index--)
+        {
+            _ownershipScopes.Push(snapshot.Scopes[index]);
+        }
+
+        _ownedValuesByName.Clear();
+        foreach ((string name, List<OwnershipInfo> values) in snapshot.OwnedValuesByName)
+        {
+            _ownedValuesByName[name] = values;
+        }
+
+        _ownershipAliases.Clear();
+        foreach ((string name, string target) in snapshot.Aliases)
+        {
+            _ownershipAliases[name] = target;
+        }
+    }
+
     private ElementSpecializationSavedContext EnterElementSpecializationContext(IReadOnlyList<TypeRef> parameterTypes)
     {
         var saved = new ElementSpecializationSavedContext(
@@ -397,7 +454,8 @@ public sealed partial class Lowering
             _elementSpecializationSelfReferences,
             _inst.Count,
             _nextTempSlot,
-            SnapshotTempOwnershipFacts());
+            SnapshotTempOwnershipFacts(),
+            EnterSpecializationOwnershipScope());
 
         _scopes.Clear();
         _scopes.Push(ImmutableSortedDictionary.Create<string, Binding>(StringComparer.Ordinal));
@@ -434,6 +492,7 @@ public sealed partial class Lowering
             _nextTempSlot = saved.NextTempSlot;
         }
         RestoreTempOwnershipFacts(saved.TempOwnershipFacts);
+        LeaveSpecializationOwnershipScope(saved.Ownership);
         PopTraitConstraintScope();
         _elementSpecializationDepth--;
         _scopes.Clear();

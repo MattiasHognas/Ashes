@@ -297,7 +297,7 @@ public sealed partial class Lowering
             || LookupOwnedValue(ownerName) is not
             { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
         {
-            RetainBorrowedRuntimeOwnersOfAlias(argument, argumentTemp);
+            RetainBorrowedRuntimeOwnersOfAlias(argument, argumentTemp, keepOwned: true);
             return argumentTemp;
         }
 
@@ -406,7 +406,7 @@ public sealed partial class Lowering
     // nothing is retained for it: an owner reference taken there has no release anywhere. The
     // owner's graph is shared with the copy either way, so its release no longer assumes it
     // is unique.
-    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument, int storedTemp)
+    private void RetainBorrowedRuntimeOwnersOfAlias(Expr argument, int storedTemp, bool keepOwned = false)
     {
         if (argument is not Expr.Var variable
             || LookupOwnedValue(variable.Name) is not
@@ -431,17 +431,47 @@ public sealed partial class Lowering
 
             int ownerTemp = NewTemp();
             Emit(new IrInst.LoadLocal(ownerTemp, owner.Slot));
+            int duplicatedTemp;
             if (owner.Type is not null && MayUseEmptyListRepresentation(Prune(owner.Type)))
             {
-                EmitRuntimeManagedNullableDup(ownerTemp);
+                duplicatedTemp = EmitRuntimeManagedNullableDup(ownerTemp);
             }
             else
             {
-                int duplicatedTemp = NewTemp();
+                duplicatedTemp = NewTemp();
                 Emit(new IrInst.RcDup(duplicatedTemp, ownerTemp, RuntimeManaged: true));
                 MarkRuntimeManagedTemp(duplicatedTemp);
             }
+
+            if (keepOwned)
+            {
+                KeepAliasOwnerRetainOwned(ownerTemp, duplicatedTemp, owner.Type);
+            }
         }
+    }
+
+    // The reference an escaping arena alias took of an owner it borrows: the arena aggregate never
+    // releases it, and a result normalized onto the reference-counted heap retains the owner's value
+    // again. It is recorded for the call it is an argument of, or goes to an owned slot released
+    // once the function's result holds references of its own.
+    private void KeepAliasOwnerRetainOwned(int ownerTemp, int retainedTemp, TypeRef? ownerType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERSLOT") is not null
+            || ownerType is null
+            || CanArenaReset(Prune(ownerType))
+            || ContainsUnresolvedLayoutType(Prune(ownerType), [])
+            || _inst.Count == 0
+            || _inst[^1] is not IrInst.RcDup { RuntimeManaged: true } retain
+            || retain.Target != retainedTemp
+            || RecordCallArgumentArenaRetain(ownerTemp, retainedTemp, ownerType))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
     }
 
     // A reference-counted value the lowering produced or took a reference to, rather than a
@@ -570,7 +600,29 @@ public sealed partial class Lowering
 
         int retainedTemp = DuplicateTcoParameterReadForAggregate(targetParameter, loadedTemp, fieldType);
         _ = RecordCallArgumentArenaRetain(loadedTemp, retainedTemp, fieldType, targetParameter.Slot);
+        KeepLoopResultUpdateFieldDuplicateOwned(loadedTemp, retainedTemp, fieldType);
         return retainedTemp;
+    }
+
+    // An unchanged field of a loop parameter retained into the arena record a record update builds as
+    // a loop function's result (`fn with calls = target :: fn.calls` in a function whose other arm
+    // loops): the return copies the record onto the reference-counted heap, which retains the field
+    // itself, and the arena record releases nothing. The retain goes to an owned slot, released once
+    // the function's result holds references of its own.
+    private void KeepLoopResultUpdateFieldDuplicateOwned(int loadedTemp, int retainedTemp, TypeRef fieldType)
+    {
+        if (retainedTemp == loadedTemp
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTUPDATEFIELDDUP") is not null
+            || _tcoCtx?.InTailPosition != true
+            || ContainsUnresolvedLayoutType(Prune(fieldType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(fieldType));
     }
 
     /// <summary>
@@ -2604,8 +2656,18 @@ public sealed partial class Lowering
     private bool CanArenaReset(TypeRef type)
     {
         TypeRef pruned = EraseZeroCostTypeRepresentation(type);
-        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool or TypeRef.TNever;
+        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool or TypeRef.TNever
+            || IsOpaqueHandleWord(pruned);
     }
+
+    // A value of an external type with no destructor is a foreign handle the program only passes
+    // along: one word that is copied like an integer and needs no release, so an aggregate holding
+    // one is placed and copied like one of integers. A resource type (an external type with a
+    // destructor) owns what its handle names and stays a heap value with a cleanup.
+    private bool IsOpaqueHandleWord(TypeRef pruned)
+        => pruned is TypeRef.TOpaque opaque
+            && !_externalResourceTypes.ContainsKey(opaque.Name)
+            && Environment.GetEnvironmentVariable("GRC_NO_OPAQUEHANDLEWORD") is null;
 
     /// <summary>
     /// Whether a call's concrete (post-unification) result type is one the runtime-managed drop/copy
@@ -4690,6 +4752,11 @@ public sealed partial class Lowering
 
         if (_inCoroutineBody || !CanNormalizeRuntimeManagedResultIntoArena(resultType))
         {
+            if (!_inCoroutineBody && ViewedBackingNormalizeEnabled && IsGeneralRcValueType(resultType))
+            {
+                return NormalizeViewingResultBeforeBackings(resultTemp, resultType);
+            }
+
             KeepViewedBackingsAlive();
             return resultTemp;
         }
@@ -4710,6 +4777,22 @@ public sealed partial class Lowering
         => Environment.GetEnvironmentVariable("GRC_NO_VIEWCOPYRELEASE") is null
             && IsRuntimeManagedResultTemp(resultTemp)
             && (IsNormalizedJoinTemp(resultTemp) || IsOwnedScopeJoinTemp(resultTemp) || IsNewlyProducedRcTemp(resultTemp));
+
+    private static bool ViewedBackingNormalizeEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_VIEWBACKINGNORMALIZE") is null;
+
+    // A result of the contract's types with no arena copy is normalized onto the reference-counted
+    // heap instead: retained when it is already reference-counted, which holds no view, and copied
+    // otherwise, the copy materializing every view. The scope then owns a reference of its own
+    // either way, so the backings it might have viewed are released behind it, and the result is
+    // handed on as a value just produced, owned by whoever takes the scope's result.
+    private int NormalizeViewingResultBeforeBackings(int resultTemp, TypeRef resultType)
+    {
+        int normalizedTemp = EmitRuntimeManagedTcoDeepCopy(resultTemp, resultType);
+        MarkRuntimeManagedTemp(normalizedTemp, type: Prune(resultType));
+        RecordNormalizedJoinTemp(normalizedTemp);
+        return normalizedTemp;
+    }
 
     private void KeepViewedBackingsAlive()
     {

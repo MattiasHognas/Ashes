@@ -960,6 +960,15 @@ a caller prove that a list handed to a map is never kept: the per-element call
 only ever sees a head. Only a construct whose inputs cannot be enumerated — a
 lambda's captured environment, an unmodelled node — sets `UnenumeratedInputs`,
 and there absence from the account means unknown rather than proven-absent.
+A selector import (`import Ashes.Collection.List.reverse`) arrives as a let binding whose value is
+exactly the qualified name of a registered function; the function scope maps the name to that
+function, so a call through it is that function's call rather than an unknown callee
+(`GRC_NO_IMPORTALIASSCOPE`). A partial application is a call, not a name, and never maps. Before
+this, a generic loop calling a selector-imported helper had an unmodelled reach, and its taken-over
+record was never proven. The rule fixes single-file programs; the self-hosted compiler's own
+modules resolve their selector imports differently and do not take this path. Stage 1's
+`recordReachOf` still treats both forms as unknown callees, a precision gap with no measured leak
+(stage 1 compiles the reproducer flat).
 
 Resolved ordinary heap types are described once by a cycle-guarded
 `OrdinaryHeapLayoutCapability`. It records whether the graph can be copied,
@@ -1167,6 +1176,24 @@ blocking sibling, arena or runtime-RC representation, and the transition from
 earlier evidence. Final per-function traces keep those decisions in parameter
 order for compiler observability without affecting generated code.
 
+A parameter that can never be placed blocks every sibling that may hold it, but not one that holds
+nothing it could share. A list accumulator and a value of the general contract's own types are such
+siblings, and so is a value whose fields are all scalars (a record of flags folded over a program's
+instructions): its producers hand it back on the reference-counted heap, and kept in the arena
+beside the unplaceable instruction list, every iteration's value leaked
+(`GRC_NO_SCALARFIELDACCUMULATOR`).
+
+A list accumulator a self-call replaces with a call's result is placed on the reference-counted
+heap whatever its element holds, a list inside it included (`List(Maybe(List(Str)))`,
+`List((Str, List((Int, Int))))`; `GRC_NO_UNBOUNDEDACCUMULATOR`): left in the arena, the call's
+results were built over values the iteration owned, which then had no owner to release them. A
+sibling may still receive a part of such an element rather than the whole accumulator: a loop
+handing `si` out of `Some(si) = lookupAssociation(name)(savedInts)` on as its `knownInts`. Kept in
+the arena, that sibling would hold the inner list without a reference of its own while the back
+edge releases the accumulator it came from, so a sibling whose type an accumulator element may
+contain blocks the accumulator like one that may receive it whole
+(`GRC_NO_ACCUMULATORPARTSIBLING`, both stages).
+
 A list parameter's placement decides who owns what a successor's cells store. A parameter on the
 reference-counted heap has its successor copied at the back edge, with references of its own,
 before the iteration's owners are released; a cell built for it therefore borrows its children,
@@ -1277,7 +1304,12 @@ lifetime operations from lexical anchors to control-flow-precise positions:
   own reference (a list moved out of a call's result tuple). Such a result may still be the very list
   a parameter holds, which the exit then releases like every other parameter. A fixpoint loop
   returning the list its helper handed back in a tuple otherwise kept one reference to it per call
-  (`GRC_NO_FRESHEXITRESULT`).
+  (`GRC_NO_FRESHEXITRESULT`). A join every reaching arm of which stores a retain it just took
+  (`let next = settle(xs) in if done then next else loop(next)`, where the helper may hand its
+  argument straight back) holds a reference of its own the same way, and so does a result the loop's
+  scope copies out to the reference-counted heap, since that copy retains a list already there: a
+  fixpoint over a table that stops changing kept the whole table once per call
+  (`GRC_NO_RETAINEDARMJOIN`).
 
 A task frame carries its own ownership description. The transform publishes
 where it saves each value; lowering turns those offsets and the capture words
@@ -1470,7 +1502,13 @@ A scope that releases a value its result may view (a split of a let-bound string
 into the arena first. When the result is a join that owns its reference (normalized, or every arm
 handing over one of its own: nil, a value it just produced, a retain it took, or another such join),
 the join is released behind the copy (`GRC_NO_VIEWCOPYRELEASE`); before, a path function returning
-its parts this way leaked the tuple, its strings and the parts list on every call. An explicit
+its parts this way leaked the tuple, its strings and the parts list on every call. A result of the
+contract's types that has no arena copy (a record with a recursive child) is normalized onto the
+reference-counted heap instead, retained when it already is and copied otherwise, and the values
+it may view are released behind it; it is handed on as a value just produced
+(`GRC_NO_VIEWBACKINGNORMALIZE`, stage 0 only, since stage 1 keeps no such backing). Before, the
+backing was kept for the program's life: stage 1's optimizer kept one label table per program
+this way. An explicit
 `deepCopy` of a value just produced on the reference-counted heap (a call's owned result) releases
 that value once the clone stands in for it, in both stages (`GRC_NO_DEEPCOPYRELEASE`).
 
@@ -1562,6 +1600,94 @@ copy-out does: the copy shares nothing with the argument, so a perform's list pa
 callee that returns one of its heads (`first(perform Fetch.get(Unit))`) no longer keeps that head
 (`GRC_NO_SHALLOWCOPYPARTS`). The owned branch keeps the spine-only release.
 
+A reference handed over to a closure the caller cannot name, where the result's type has no place
+for the argument itself but may hold its parts (a fresh `List(Str)` passed to a `List((Str, Int))`
+producer: `instructions |> collectLabelNames |> consume`), used to take the spine-only release at
+the call when the callee did not adopt it, leaving one reference on every head for an arena result
+that holds the heads as raw references. The record the result is then stored in copies the heads,
+and nothing released the originals (stage 1's own `createLabelBlocks` leaked every label name of
+every function this way). Such an argument now goes to an owned slot instead, released with its
+parts at the function's exit or the loop's back edge, once the function's result or the loop's
+successors hold references of their own (`GRC_NO_HANDEDPARTSSLOT`, both stages); a callee whose
+result is verified reference-counted, deep-copied or copied with its elements keeps the release at
+the call. Where the function's own result stays an arena value that reaches such a slot, the slot
+is not released behind it; a slot whose value the result's type has no place for is then released
+child-preserving at the return (its cells, not its parts), which is the release the call would have
+made, so the shape leaks no more than before the rule.
+
+An arena cell built inside a loop around a newly produced reference-counted list of scalars (a
+call's owned `List(Int)` result pushed onto an arena worklist of lists, as a control-flow graph's
+postorder walk does with each block's successors) stores an arena copy of the list's spine, and the
+original is released right away (`GRC_NO_ARENACELLFRESHLISTHEAD`, both stages). The escaping cell's
+owned slot that held such a head before kept only the last iteration's value: each earlier list was
+left to a successor that never released it (the `32_16..100` exit class, the successor lists of
+every CFG block). Outside a loop the owned slot stays, released at the function's exit.
+
+A function that loops through wrappers of its variant parameter and, in its catch-all arm, builds a
+record around the whole parameter (stage 1's `collectCallSpine`: `| root -> CoreCallSpine(root =
+root, arguments = [])`) builds that record in the arena with a duplicate of the parameter for the
+owning consumer, the return. The return normalizes the record into a reference-counted copy that
+retains the field itself, so the arena cell's duplicate was never released (the `32_8` exit class:
+the self-call callee's name, once per compiled function). Such a duplicate, of a binding of the
+whole loop parameter in a cell built at the loop's result, now goes to an owned slot released behind
+the function's result (`GRC_NO_LOOPRESULTCELLOWNERDUP`, both stages; stage 1 keys it on a pattern
+binding fact of extraction depth 0). A part matched out of the parameter is released after the copy
+by the copy's own rules, and a second release there would free it twice. That holds only where the result
+is copied at all: a loop whose result is an arena `Some` around a field of a record matched out of
+its list parameter (stage 1's `returnedClosureLabelOf`, `Some(label)`) owns nothing else, so its
+return copies nothing and the field's duplicate was never released (the `40_9` exit class, one label
+per lowered lambda body). A part's duplicate is kept in an owned slot when the cell it is stored into
+stays in the arena, which makes the return copy the result and release the duplicate behind the copy;
+the slot is withdrawn again at the return when the result is copied or normalized anyway (a contract
+type, a reference-counted result, or any other owned value), where the copy's own rules settle the
+part (`GRC_NO_LOOPRESULTPARTOWNERDUP`, both stages). A cell placed on the reference-counted heap owns
+its field and takes no slot. The same function's other
+arm conses a part of the parameter onto the rebuilt record's list (`arguments = argument ::
+arguments`): the arena cons cell, itself a constructor argument of the result, takes a duplicate of
+its head that the return's copy retains again. That duplicate goes to an owned slot too
+(`GRC_NO_LOOPRESULTFIELDCELLHEADDUP`, both stages), but only for a cell built as a field of a
+constructor at the loop's result: applied to any result-position arena cell it released heads a
+caller still reads, and stage 0 miscompiled stage 1. A record update of the loop parameter at the
+loop's result (`fn with calls = target :: fn.calls`) builds the same kind of arena record with a
+retain of each unchanged field, which the return's copy retains again; those retains go to owned
+slots released behind the result too (`GRC_NO_LOOPRESULTUPDATEFIELDDUP`, both stages).
+
+A value of an `external type` with no destructor is a foreign handle the program only passes along:
+one word copied like an integer that needs no release (`IsOpaqueHandleWord`; stage 1's
+`resultSurvivesReset` and the layout classification's `canArenaResetLayoutIn`). It used to keep every aggregate holding one outside the contract, so stage
+1's own `CodegenContext`, a record of LLVM handles beside the label blocks, was returned as an arena
+tuple that kept the label-name list's owned slot to the end (the `56_26` exit class, ten strings per
+compiled function). Such a record is now a contract value, normalized at the return like one of
+integers, and the slot is released behind it (`GRC_NO_OPAQUEHANDLEWORD`, both stages). A resource
+type (`external type Name resource destructor close`) stays a heap value with its cleanup.
+
+A loop's own non-tail self call reaches a body that is still being lowered, and the loop's exit
+may yet place its result on the reference-counted heap. A loop matching such a result (`match
+tailForwarded(nestedBody) with | Some(name) -> ...` inside a function whose other arm calls itself
+in tail position) left a variant with no fixed copy-out, a `Maybe(Str)`, in the call's open
+window, where nothing released the reference-counted value the callee turned out to return. Such
+a call now reads the returns bit for any ADT the runtime can copy into an owned value: it takes a
+reference-counted result over and copies an arena one, so it owns the result on both paths
+(`GRC_NO_LOOPSELFADTRESULT`).
+
+A curried call applies every argument but the last to the closure the previous one returned. When
+the callee is a local `let recursive` whose environment holds a reference-counted capture (`find`
+reading a list in `find(xs)(0)([])`), each stage closure is built on the reference-counted heap and
+only the call holds it. The lowering knows which lambdas' closure objects take over reference-counted
+captures, and follows a known callee's chain of returned closures (through an applied-closure let's
+binding) to see whether one of the call's intermediate stages is such a closure. If so, once its
+result is settled the call hands every intermediate stage to one synthesized helper per program,
+which tests the address alone (an arena stage goes with the call's window) and releases a
+reference-counted one. A later stage copies the captures from the one before it without references
+of its own, so the helper clears its dropper word first and only its own cells are freed
+(`GRC_NO_STAGECLOSURERELEASE`). The helper keeps a call site at one instruction: inline, the test
+and release on stage 1's curried calls grew stage 0's build past its memory cap. A constrained
+callee (`idx + step` on unannotated parameters) is called through its trait dictionary: its entry
+takes the dictionary and returns the first real stage from a match over it, so no returned closure
+is recorded and the entry's own body building such a closure answers instead. That first stage is
+the closure the entry built over its own environment, so its dropper releases the captures, and only
+the later stages go through the helper that clears it.
+
 A caller hands a fresh argument to a function whose entry normalizes its parameter, and passes it
 as owned when the closure's adoption bit (bit 62 of its packed environment word) says the entry
 adopts it; for a callee it knows to normalize, the caller then gives the reference up. A body
@@ -1597,6 +1723,10 @@ The retain such a cell takes of its tail goes to an owned slot too when no call 
 function returning `label :: applied` over a list a match bound from a call keeps that list in the
 arena cell after the match releases it, and the slot is released once the result is copied out
 (`GRC_NO_ESCAPINGCELLTAILSLOT`, both stages).
+An arena aggregate stored in another (a record literal holding a `let`-bound list, returned inside a
+tuple) retains the owners it borrows, since the `let`'s release would otherwise free them under it;
+that retain goes to the call's collected retains or to an owned slot released once the function's
+result is normalized, which retains the owners' values again (`GRC_NO_ALIASOWNERSLOT`, both stages).
 A fresh argument handed to a closure parameter whose result has no layout in a generic body
 (`block |> positionBuilderAtEnd(builder) |> body |> ...`, a foreign call's Unit or a helper's record
 passed to `body`) goes to an owned slot when the closure does not adopt it: the slot is released at
@@ -1625,14 +1755,25 @@ A program that handles a capability is lowered without the general contract, so 
 slots to wait for the function's result: when an applied lambda discards a call's result
 (`body(x) |> (given (_) -> ...)`), a reference handed over for that result to keep is released right
 after the call unless the callee adopted it, whatever the result's layout
-(`GRC_NO_DISCARDEDRESULTRELEASE`, stage 0 only so far).
+(`GRC_NO_DISCARDEDRESULTRELEASE`, both stages: stage 1 notes the argument call's span when it lowers the lambda's call).
 A list literal's arena cell holding a value produced right there (a constructor placed on the
 reference-counted heap because it owns a fresh string) is that value's only holder: a callee that
 walks the list copies it with references of its own, so the cell's reference goes to an owned slot
-(`GRC_NO_ARENALISTFRESHHEAD`, both stages). A constrained call of unresolved result (a generic
+(`GRC_NO_ARENALISTFRESHHEAD`, both stages). A fresh string a call returned (`[label(n)]`) is
+such a value too: wherever a callee keeps it, a tuple or cell storing it takes a reference of its
+own (`GRC_NO_LITERALFRESHSTRHEAD`, both stages). Inside a loop, a non-tail producer's head is
+lowered for a reference-counted list whether or not its cell reuses a token, and a bare string
+variable its tuple head stores (`(name, base) :: blocks(base + 1)(rest)`) is copied into an owned string; stage 1
+had built that tuple in the arena with a retain of the string, which the cell's copy of the tuple
+retained again (stage 1's `materializeEscapingStringTupleElement`, stage 0's
+`MaterializeEscapingStringTupleElement`). A constrained call of unresolved result (a generic
 lookup applied in a generic loop) hands the reference it took for that result to an owned slot
 too, released where the function's own result is out of the call's reach
-(`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0).
+(`GRC_NO_DICTUNRESOLVEDSLOT`, stage 0). Inside a loop, such a slot first moves what an earlier
+iteration left in it to a predecessor slot of its own, released at the next back edge once no
+successor can name it, as a call result's owned slot does; otherwise each iteration's store
+overwrote the last one's reference (`GRC_NO_DICTSLOTPREDECESSOR`, stage 0; stage 1 hands no
+dictionary call argument to an owned slot).
 A string compared with `==` or `!=` takes the primitive comparison rather than the trait method, and
 is released after it on the same terms when no binding owns it (`GRC_NO_STRCOMPAREOPERAND`). An operand
 read out of a local an owner releases (a `let` binding, or a call result's owned slot) is left to that
@@ -1657,6 +1798,14 @@ alone is copied into the arena and released when it was fresh, so the borrowed s
 (`GRC_NO_DEMOTEBESIDEARENA` switches this off). Likewise, a loop parameter kept in the arena on a
 back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
 the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
+The same holds for a field of the constructor that is the successor itself: `Some(label)` for an
+`agreed` parameter kept in the arena by a sibling list whose elements reach a recursive type, with
+`label` bound out of a call result the iteration releases. The field's retain is never released by
+the arena cell or the parameter, so the back edge copies the field's value into the arena, stores
+the copy back into the cell, and releases the retain. Only the constructor the argument is counts,
+not one nested inside it, and only a field of bounded, resolved type
+(`GRC_NO_ARENASUCCESSORCHILDCOPY`; stage 1's optimizer leaked one label per resolved capture group
+this way).
 A loop parameter of still unresolved layout that such a tuple stores (an unannotated accumulator in
 `| [] -> (known, conflicting, extra)`, kept in the arena by the unannotated `extra` passed through
 unchanged) is retained when it is stored, since its placement is decided only once the loop body is
@@ -1698,6 +1847,24 @@ the copy, and the copy is handed over the same way. The caller then takes the re
 value of its own type, without copying it. A function returning another call's result of unresolved
 type as it is forwards the request to that call, as for a tuple.
 
+A result built as an arena record of a type with one constructor and copied onto the
+reference-counted heap is garbage once the copy holds references of its own. A field joining
+retains the function took, which no owned slot releases, with arena nullary values moves into the
+copy: the record's reference is released after the copy retains it. A field one arm of which
+stores a borrowed value keeps the copy's retain alone, and so does a value an owned slot
+holds. Without it, a record whose `Maybe` field joined a fresh `None` with a retain of a slot read
+through borrowed state kept the retained value once per call (`GRC_NO_ARENARECORDCHILDMOVE`).
+A result joining that record with arena record updates of it (`if c then built with f = v else
+built`) is the same move: a field every update copies from the record without a retain is the same
+reference whichever arm returned, and moves into the copy (`GRC_NO_ARENARECORDJOINMOVE`). The
+record's own reference is then released from the record itself once after the copy, so an update
+that replaces the field (`built with f = None`) is covered too: on its arm nothing else holds the
+field (`GRC_NO_ARENARECORDREPLACEDFIELD`). A join none of whose arms returns the let-bound record
+itself, every arm an update of it, a record of the type assembled from its fields, or a fresh record,
+releases the same way from the let-bound record that every reading arm reads from, provided no branch
+taken before its binding lands inside the join, so it is defined on every arm
+(`GRC_NO_ARENARECORDDERIVEDJOIN`).
+
 A generic list builder stores results it cannot release. A function whose result is a list of
 unresolved element type built from arena cells, each consing a closure call's result onto the empty
 list or onto the function's own recursive call (`f(head) :: mapGo(tail)`), leaves the reference a
@@ -1708,6 +1875,83 @@ reference-counted head hold a reference of its own (an owned result's reference 
 any other head is retained), and writes bit 60 into the mask; the caller copies the list out and then
 releases the reference each arena cell's reference-counted head holds, up to the first
 reference-counted cell. A builder with any other cell in its result hands nothing over.
+
+An arena value can also take over references that a function further down kept for it. A generic
+body stores what it reads into arena cells as raw pointers, whatever its type: `expandedArms`
+conses `(pattern, body, guard)` tuples whose `pattern` is the head of a list its caller owns, and
+`setAssociation`, called with a dictionary through a curried chain, conses a key the caller handed
+over. The reference that keeps such a field alive belongs to an owned value of the function that
+called the generic code (the list `expand` returned, the handed-over key). That function cannot
+release it while the arena value lives, and the value is copied out (normalized, or copied across
+a scope or loop boundary) only in some function above it. An arena value therefore carries a
+*taken-over record*: the field positions of its type, as result-reach paths (`/e/0`, the first
+element of every list element), at which each reference-counted value holds a reference the arena
+value owns. The record is a compile-time fact, never part of the runtime value:
+- **Where it lives.** It is kept on the owned slot, loop parameter or call result that holds the arena
+  value, and in a function's result summary beside its result reach. A callee summary says, for
+  each position of its result, whether the value there is moved from a position of a consumed
+  argument, is a fresh owned value, or is borrowed. The caller combines that with what it knows
+  of its arguments: an argument passed at its last use gives its record to the result, and one
+  still live afterwards gives none. A loop parameter's record is the one every entry and back
+  edge agrees on (`[]` agrees with anything).
+- **What happens at the call.** Once a call result's record covers the positions where it holds an
+  owned value's parts, that value is released child-preserving: its cells are freed and its parts
+  keep the one reference the arena value now owns. So `expand`'s singleton list is freed after
+  `expandedArms`, and the key's owned slot is emptied instead of being kept to the loop's exit.
+- **Who reads it.** The function that copies the value out. Its copy moves the reference at each
+  recorded position into the copy instead of retaining it. A function that returns the value
+  hands its record up through its result summary to a caller that names it. A caller that cannot
+  name it (a closure, a forwarder) asks with the hidden ownership word's bit 2, and an asked
+  function that hands a record over writes bit 59 into the mask; it hands nothing over when it
+  is not asked.
+- **What releases it.** The value's last holder, and that is always a function that knows the
+  concrete type at the recorded positions, since only such a function can settle the record. It
+  moves the references into a copy it makes, or, when the value is never copied out (read and
+  dropped, or reclaimed with its region), releases each recorded reference type-directed before
+  the region reclaims the cells. Settling reads only the recorded positions, so a holder that is
+  itself a generic body settles the record when the type at each recorded position is resolved
+  there. `matchCoverageError` is generic, but the first field of `coverageExpandCases`' tuples is
+  a `Pattern` in it too, so it releases those references at the end of the `let` that binds the
+  result, once a reach of its own result, with that value as a value of its own, shows nothing of
+  it escaping: not in the returned value, and not in a closure that captures it. A holder for which
+  a recorded position is still a type variable settles nothing. The record then travels up through
+  its result summary (or bit 59, when it was asked) to the first caller that knows the type there. An arena compaction at a loop's back edge moves the recorded
+  references into the compacted copy as well.
+- **Mixed joins.** A join whose arms put an owned value and a borrowed one at the same position has
+  no record at that position. Its owned value is kept in its owned slot as before, which is a
+  named leak and not a release. Covering that join would take a per-cell record in the runtime
+  value.
+The local case needs no record: when the copy-out runs in the same function that kept the
+reference, the copy moves the fields in place of retaining them, which is the move-over-dup of
+fresh arena constructor fields.
+
+Stage 0 implements the record for a list of tuples whose first field has a resolved type
+(`GRC_NO_TAKENOVERRECORD`). The proof rests on element-level result reach, which says that a callee
+holds a parameter only as whole, unshared list elements (`GRC_NO_GENERICSPINERELEASE`), and on a
+separate reach of the record holder's result in which each list whose cells were freed is a value of
+the holder's own. A construction, an unrecognised token, or a borrowed value that can hold the
+record's type at a recorded position declines, so the references stay where they were.
+
+The own-field record is the same mechanism for a second shape: a loop whose result is an arena cell
+of a named type built around its own reference-counted parameter at its exit (`if hops <= 0 then
+Some(label)`). The cell takes its own reference to the parameter, and nothing releases an arena
+cell. A caller holding such a result releases that reference once it is done with the result:
+after the scalar call that consumes it, at the end of a `let` holding it, or at the end of a `match`
+on it whose result cannot hold a value of any of the cell's heap field types. The walk releases a
+reference-counted direct field of the result only when the result itself is an arena cell; a cell
+on the reference-counted heap owns its fields already. The release is sound only because every
+arena cell at that position owns its child, so the proof is about the producer: every value the
+loop can return must be a nullary constructor, its own tail self-call, or a constructor whose heap
+arguments are parameters the loop retained outright into the cell (never left to the loop's
+placement, which may leave a borrowed reference) and read unshadowed. Any other producer, such as
+a `Some` of a list element bound out of a parameter, declines the record, and so does a `match`
+whose result could hold the field (`GRC_NO_OWNFIELDRECORD`, both stages).
+
+A result that is a list of variants with only inline fields (`List(Maybe(Int))`) has no fixed
+copy-out and is not one of the contract's types, yet it can point into an owned value that holds
+such a variant (a syntax tree with an optional offset). When an owned value is in its reach, the
+list is deep-copied in the arena, element by element, and the owned values are released behind
+the copy (`GRC_NO_SCALARVARIANTLISTRESULT` switches this off).
 
 Which owned values a result can point into is found by following its value back through the
 instructions that built it. A call result of the contract's types kept in an owned slot holds
@@ -1721,6 +1965,12 @@ references of its own, writes bit 61 into the mask when it is asked (a function 
 over whole, bit 62, says as much). Once the call returns, the forwarding function reads the mask and,
 on either bit, releases the owned values its result reached only through the call. A function that
 was not asked keeps them, as before.
+
+A match whose every arm that reaches the join is the empty list or one reference-counted cell consed
+onto the function's own recursive call (`[] -> []`, `x :: rest -> x :: walk(rest)`) joins a fresh
+list: the cell is the join's own, so the function's result does not retain it again. The recursive
+result the cell links to as its tail is owned once, by the cell: the arm clears the owned slot that
+kept the call's result right after its store, so the slot releases nothing at the return.
 
 The caller that asked reads bit 61 too. A forwarding function asks its own callee for an arena
 result, and a function whose record result cannot be copied into the arena (one holding a recursive
@@ -1743,7 +1993,22 @@ withdrawn: for a record update or a `let`-bound record successor, for a loop's r
 normalization helper, and for a record built only to be matched when no arm binds a heap-typed part
 of it. A retain is withdrawn only when the cell holds its sole reference and the parameter it reads
 is not released earlier in the loop (a self call that hands on a pattern-bound child releases the
-child's root there).
+child's root there). That self call clears the root parameter's active flag, but its back edge
+stores the retained child as the next value and sets the flag again, so on the loop's exit the
+parameter is still held to the end: such a clear does not count as an early release
+(`GRC_NO_BACKEDGEFLAGRESET`). `match body with | ExprAt(_, inner) -> walk(inner) | _ -> Some(body)`
+withdraws its option cell's retain of `body` that way.
+
+The same holds for a join that copies an arm's arena cell. A loop handing its record on through
+`if name == self then count with references = count.references + 1 else count` builds the update
+in the arena, retaining the list field it reads out of the parameter, and the join, owned on the
+parameter's arm, normalizes the update's arm by copying the cell; the copy takes its own reference
+to the list, so the cell's retain is withdrawn once the loop's placements are final, as a borrowed
+scrutinee's is. Left alone, the list stayed one count too high and its cells outlived the loop
+(`GRC_NO_JOINCOPYWITHDRAW`). An arm whose value is itself a join carrying such a cell hands over
+the cells it carries the same way, in both stages: `if label == fn.label then Fn(label =
+fn.label, ...) else retarget(rest)(fn)` builds the constructor on one arm of the `if` that is the
+outer match arm's value (`GRC_NO_NESTEDJOINCOPYWITHDRAW`).
 
 A record update written as a child of such a literal (`Step(state = (state with items = n ::
 state.items), error = None)`) is an arena cell like the literal, and the copy of the literal copies
@@ -1806,6 +2071,17 @@ loop's exit. A join takes its ownership from the arms that reach it: when every 
 over a value it just produced (a loop exit building its result while the other arms jump back), the
 join's value is fresh and the function's return takes it over rather than retaining it again, and a
 `let` passing a join's value on keeps that fact.
+A value the iteration itself stored is released at a back edge whose successors may hold a part of
+it by type when none of them names anything bound from it. A loop matching `Some((definition,
+through))` that conses a value built from `definition` onto one accumulator and, behind `if
+through`, an integer onto a second one, left the matched result to leak, since a list of integers
+could hold a part of it. The second successor only tests the flag, and a condition hands nothing on,
+so the result is released behind its fresh flag (`GRC_NO_ITERATIONSLOTNAMES`, `GRC_NO_IFCONDFLOW`).
+The type test behind the fresh flag leaves the value's strings out, as the predecessor's test does:
+a string a successor keeps holds a reference of its own. A loop over declarations that pushed a
+restore record onto a normalized list of pending closes, beside a set of the names seen so far,
+otherwise kept every record it built, since the set could hold the records' strings
+(`GRC_NO_ITERATIONSTRINGPARTS`).
 A value an earlier iteration left in an owned slot (the slot's predecessor) is released at the back
 edge once no successor can still reach it. A pipeline step (`[] |> prepare(x)(state) |> relabel(id)
 |> open(outer)`) is never bound to a name and is only ever the argument of the next call, whose result
@@ -1819,6 +2095,12 @@ parameter, so the parameters the body's flow can carry it into stand in for its 
 released once no successor names one of them. Without this, a loop kept in the arena by a list arm
 (`| Wrapped(inner) :: rest -> loop(inner :: rest)(seen)`) released only its last two trees, at its
 exit, and each call kept every earlier tree (`GRC_NO_UNNAMEDPREDECESSORFLOW`).
+Such a value may also be one argument of a curried call
+(`open(name)(value)(remaining)(escapeBody(next))(forwarded)(state)`). The result of the call it is
+handed to is then a partial application, which holds it only until the chain's last call returns,
+so the result counted as kept in an owned slot is the chain's last one. Without this, the
+whole-program lowering kept every top-level `let`'s escape body, and with it the program's trailing
+expression, until the end (`GRC_NO_CURRIEDCHAINRESULT`).
 A join whose arms mix an owned value with one it does not own normalizes the unowned arms, so the
 join owns its value as a whole. A tuple joins the same way when each element is a scalar or a value
 that normalizes (`("", "")` beside a tuple of fresh strings): the arena arm is copied into a counted
@@ -2009,6 +2291,16 @@ used to grow by one blob copy of the key per call. A partial application still
 copies, since its closure may outlive the call, and so does a call inside a
 generic body whose result type is still unresolved there (`Map`'s own worker,
 for one), which has no point at which the result is copied out.
+
+A value of the contract's types passed to a quantified parameter goes the same way: it is
+retained when it is reference-counted, or copied onto the reference-counted heap when it is still
+in the arena, and released after the call (`GRC_NO_GENERICADTARG`, both stages). A loop handing a
+fresh syntax tree to a generic walker (`walk(items)(trailing)(0)`, `trailing` never annotated)
+used to grow by one to-space copy of the tree per call.
+So does a list of strings, inline values or the contract's values, settled by a final result of the
+contract's types as well (`GRC_NO_GENERICLISTARG`, both stages): a loop calling
+`expand(pattern)(["env"])`, whose `environment` parameter is generic, grew its resident memory by one
+to-space copy of the list per call while its reference-counted heap stayed flat.
 
 ### Cycles
 
@@ -2263,7 +2555,14 @@ parts as views copied out of their scopes (`GRC_NO_PERFORMSCRUTINEE`).
 
 An adopted perform result appended to a loop's string accumulator in place (`ConcatStrTip`) is
 released once its bytes are copied, as a plain concatenation releases its operands
-(`GRC_NO_TIPRIGHTRELEASE`, both compilers).
+(`GRC_NO_TIPRIGHTRELEASE`, both compilers). One stored as the head of an arena cons cell is copied
+into the arena and released at the cons, since an arena cell never releases its head and a
+caller's copy-out copies the heads without dropping them; a cell's retain of a `let` binding's
+string is replaced the same way, except where the back edge copies the cell or a late release
+still names the duplicate (`GRC_NO_ARENACELLFRESHHEAD`, both compilers). When the cell is part of a
+call's argument, its retain was also collected for release after the call; the cell's immediate
+release takes it out of that collection, so the call does not release it a second time
+(`GRC_NO_FORGETARGRET`, both compilers).
 
 A tail-recursive loop that may run while a handler's one-shot post is pending gets no
 reference-counted placement for its list accumulator, so the successor cells it conses onto that
@@ -2288,6 +2587,146 @@ arena value and released neither (`GRC_NO_ARENATUPLEFRESHELEMENT`, both stages).
 A tuple the cell asked for on the reference-counted heap that still ends up in the arena, because it
 cannot own one of its elements, copies its fresh elements the same way: a recursive producer's
 `(Ashes.Text.fromInt(n + k), build(3)(n)) :: rest` asks for a reference-counted name and keeps it.
+A call through another module's export (`Names.collect(...)`, or the `let collected = Names.collect`
+alias a selector import stitches in) resolves to the stitched binding's function label the way a
+call by the binding's own name does. Unresolved, the caller could not see that the callee's compiled
+result is reference-counted, so a fresh list it returned and the caller handed to a further call
+(`pick(flag)(Names.collect(items)([]))`, whose result is the list or a new one over its elements)
+was released by nobody: stage 1's `classifyParameterOwnership` list behind every callee's facts
+(`GRC_NO_QUALIFIEDCALLEELABEL`, stage 0).
+A function's non-tail call to itself by its own name (`appendExports(exportsFor(item))(collectExports(rest))`)
+reaches the body still being lowered, so like a call through a captured self it reads the callee's
+returns bit for a list result: a reference-counted result is owned by the caller and released once the
+further call that took it returns. Taken unread, that list stayed with nobody: the export lists
+stage 1's `collectCompatibilityExports` builds for a module interface (`GRC_NO_DIRECTSELFRESULT`, stage 0).
+A nullary constructor built on the reference-counted heap is an immortal cell, so a tuple holding one
+is not made a reference-counted tuple on its account: in stage 1's `buildLineTree` the base arm
+`(LineLeaf, starts)` otherwise went to the heap with a copy of `starts` beside an arm through the
+function's own call that builds an arena pair, and the caller, reading an arena result, released
+neither (`GRC_NO_NULLARYTUPLEELEMENT`, both stages).
+A pattern owner's duplicate an arena constructor cell takes is still a marker while the cell is
+built, so the rule that hands a retain taken for an arena cell to an owned slot did not see it: stage
+1's `listAt` returns `Some(head)` in the arena from a loop over the block list it normalized at its
+entry, and once the marker became a retain, every call left the record copy with its successor list
+behind. The marker now goes to an owned slot holding zero, and the marker is stored into it once the
+pattern owners are placed and the marker turned out to be a retain (`GRC_NO_CTORMARKERSLOT`, both
+stages). The constructor argument whose marker went to such a slot is recorded with the fresh ones
+handed to slots, so a back edge that copies the arena cell as a successor and releases the
+source's children skips that field: releasing it there as well released the promoted retain twice
+(`GRC_NO_CTORMARKERSKIP`, stage 0).
+A pattern owner's reference handed to a constrained (trait-dictionary) call for its result is released
+right after the call when the callee's summary proves the result never holds that argument, as
+itself or as a part: `lookupAssociation(site)(known)` returns a value of `known`, never `site`. Parked
+in an owned slot instead, it waited for the loop's successors to hold references of their own, and
+the arm whose accumulator keeps the call's arena result (`(site, label) :: acc` in a generic loop)
+never released it: the label pairs stage 1's optimizer builds in `computeKnownCapturedClosureLabels`
+(`GRC_NO_DICTUNREACHEDRELEASE`, stage 0; stage 1 calls such a callee through its ordinary call
+path and keeps no such slot).
+A curry stage's argument the caller retained for the final result (`devirt(firstKnownLabels)` handed
+to a map, whose final result may keep parts of the list) is settled even though the stage's own
+result is a closure: a stage that does not adopt the reference stores the pointer in an arena
+environment, so the reference goes to an owned slot the function releases. Before, the settling
+stopped at a function-typed result, and every such call left the whole list behind: stage 1's
+optimizer kept every `firstKnownLabels` list to the end (`GRC_NO_CURRYSTAGESLOT`, stage 0; stage 1
+already releases it).
+A tuple literal placed in the arena as the head of a reference-counted cell (`(fn.label, n) :: acc`
+over a reference-counted accumulator) holds the duplicates its pattern owners took for its elements,
+and the cell does not store it: it normalizes the tuple into a reference-counted copy that retains the
+elements itself. The arena tuple is garbage from then on, so its duplicates are released once the copy
+is made, as a reference-counted tuple releases the duplicate of an element it normalizes, and the
+late release the back edge would have made after copying the successor is withdrawn (the cell is
+reference-counted already, so that copy never happens). Released by nobody, every pair left one string
+behind: the `(label, index)` groups and `(label, next label)` entries stage 1's optimizer collects
+(`GRC_NO_NORMALIZEDHEADTUPLEDUP`, stage 0; stage 1 keeps such a tuple's duplicate balanced already).
+A trait method applied to a concrete operand (`Ashes.Trait.Show.show(counter)`) is its
+implementation's closure applied in place, outside the call path that settles a reference-counted
+result. Without a request in its ownership word the closure hands its result over owned, and the
+caller, reading the call as an arena value, released it nowhere: the one-character strings stage 1's
+optimizer concatenates into each scalar-environment variant's label. The last application now asks
+for the result in the arena (bit 1 of the ownership word, as a post call does) whenever the result
+has a complete copy-out and is not one of the contract's types, so the method copies a
+reference-counted result out and releases its original (`GRC_NO_TRAITMETHODARENARESULT`, both stages).
+A call whose label resolves to a function whose body is not lowered yet (a function's non-tail call
+to itself, or to one later in its group) has no compiled result fact to read, so its variant result
+with no fixed copy-out is asked for in the arena as an unknown callee's is. Read as an arena value
+without the request, the result a callee normalized onto the reference-counted heap was released by
+nobody: `scalarCaptureLayout`'s `Some([])` base case and every cell built on it, from
+`match (value |> f |> g, layout(rest)(index + 1)) with` (`GRC_NO_UNSETTLEDCALLEEARENA`, both stages).
+A back edge keeps a value this iteration produced while any successor could hold a part of it
+without a reference of its own, and judges that by type where the successor names nothing bound
+from the value. A successor of inline heads consed onto a loop parameter (`loadPosition :: removed`
+over a `List(Int)`) counts as a part of that parameter: its new cells hold only scalars and its tail
+is the parameter's value from before this iteration, so it holds nothing of a value this iteration
+produced, whatever its type allows. Kept by type, the record `retargetKnownCallEnvironment` builds
+in stage 1's currying-stage inlining, which holds a `List(Int)` by its type, stayed in its slot until
+the next iteration overwrote it. A head that is not a scalar (`record.positions :: removed`, a field
+of the released value) is a part the successor really holds, and the rule does not apply to it
+(`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 keeps such a slot for a different reason, still open).
+A function returning its parameter on some arms and a fresh value on the others copies the
+parameter's arm into an owned reference-counted value and promises its result reference-counted. A
+tuple of scalars only is otherwise placed in the arena like any scalar, so a join of such tuples was
+left alone: the fresh arena arm and the retained parameter met unnormalized, and the promise, kept at
+the return, retained the joined value a second time. One reference leaked per call: the `(Bool, Int)`
+release guard stage 1's call lowering passes through `deepCopiedResultSevers` and
+`normalizedOwnedResultSevers`. Inside such a function a scalar tuple join is now normalized like a
+mixed join of any other type, its arena arms copied, so it is owned on every arm and returned as it is
+(`GRC_NO_PASSTHROUGHSCALARJOIN`, both stages).
+An element specialization (a generic list function lowered again at a call's concrete element types)
+is lowered on demand, in the middle of the caller's body. Its bindings were always kept apart from the
+caller's, but its ownership scopes, owned-value index and ownership aliases were not. A pattern
+binding of the specialization resolved its owner through a caller alias of the same name: stage 1's
+`parserParameterNames parameters` resolved its `tail` owner through the caller's `parameters` alias to
+the reference-counted `header` tuple. So the specialization retained every tail at its back edge for an
+owner whose release its own body never emitted, and each sugar parameter after the first leaked its
+cell, tuple, annotation and name. The specialization now saves, clears and restores the caller's
+ownership state around its body, as it does the bindings (`GRC_NO_SPECIALIZATIONOWNERSHIPSCOPE`, stage 0;
+stage 1 has no element specialization).
+A loop's owned call results shift into predecessor slots at every back edge, and a predecessor is
+released only once no successor can still hold a part of it. An earlier iteration's value reaches
+this iteration's successors only through the loop's parameters, since they are what the earlier
+successors were, and through this iteration's owned call results, which hold references of their own
+to everything they keep. So when no successor names a parameter part bare, the predecessor is
+released. "Bare" means as itself, or inside a cons, tuple, list or constructor the successor builds.
+Two things don't count. A part handed to a call whose compiled result is owned on the
+reference-counted heap is held by that result. A name bound out of this iteration's owned call
+results is that result's part. Example: a worklist step
+`match spine(call)([]) with | (root, arguments) -> walk(root :: append(arguments)(rest))` releases
+the tuple and the appended list from two iterations back, where they were overwritten unreleased
+before. A successor that conses the head it matched onto an arena accumulator (`call :: nodes`) still
+keeps them, since that head may be a part the earlier tuple borrowed
+(`GRC_NO_OWNEDRESULTSUCCESSORPARTS`, both stages).
+A pattern owner's duplicate is an identity marker until the loop's placement is settled, and only the
+owners of a root parameter placed on the reference-counted heap have their markers promoted to
+retains. A root left in the arena keeps them as identities, yet a reference-counted aggregate that
+stores one (a fresh match scrutinee `(irInst, 0)`), or a join whose owner releases a branch handing one
+on as its result, releases that child with itself: the release freed a value the loop's input still
+held, and stage 1 compiled such loops into crashing code. Stage 1 now follows each such marker of an
+unplaced owner with a guarded retain (`IsReferenceCounted`, then `RcDup`), so the aggregate or join
+owns its child whatever the root's placement (stage 1; stage 0 placed these roots and never hit it).
+A binder that only borrows such a root (classified borrowed, so it takes no marker) can still be stored
+by a reference-counted cell: stage 1 places a scrutinee tuple holding it on the reference-counted heap
+where stage 0 keeps it in the arena, and the tuple released the binder with itself at the back edge.
+A reference-counted cell now retains, guarded the same way, every plain binding read it stores that no
+other rule retained (not a pattern owner, live owner, loop-parameter read, or fresh runtime value).
+
+A loop that returns a placed accumulator inside an arena tuple beside a value of unresolved type
+returns through the generic tuple-parts protocol, and the tuple's retain of the accumulator sits in an
+owned slot (stage 0's `HandArenaAggregateRetainToOwnedSlot`). A caller that asks for an arena
+result instead of the parts took the tuple through the not-requested path, which releases only the
+owned values out of the result's reach, so the accumulator was released by nobody. Under that request a part that is the very value an owned slot
+holds is now copied into the arena in the tuple's field and the slot is released
+(`GRC_NO_ARENAREQUESTEDPARTCOPY`; stage 1 had the rule already). Stage 1 places such an accumulator
+only once its element type is resolved, as stage 0's `IsGeneralRcValueType` requires.
+
+A fresh tuple a loop builds only to match it by its shape (`match (irInst, 0) with (Shape { .. }, _)`,
+no arm binding a heap-typed part) stays in the arena, and its construction's retains are withdrawn once
+the loop's placements are final. Only the retains of loop-parameter reads were, yet the tuple also holds
+the pattern-owner duplicate of a binder that escapes elsewhere (into an accumulator), which the root's
+placement promotes to a real retain the arena tuple never releases: every round leaked each binder's
+graph. Such a duplicate is now withdrawn the same way when the tuple is its only reader and no promoted
+release was paired with it (`GRC_NO_SCRUTINEEOWNERDUPWITHDRAW`, stage 0). Stage 1 builds that tuple on
+the reference-counted heap and owns the binder there, so it has no arena tuple to withdraw from; a
+stage-1 port is owed only if stage 1 ever keeps such a scrutinee in the arena.
 
 ### One-shot resumptive arms: the pre/post split
 

@@ -65,6 +65,35 @@ public sealed partial class Lowering
         return LowerRemainingQualifiedVar(qv, resolvedModule, sanitizedModuleName);
     }
 
+    // The stitched binding a qualified reference to a project module's export lowers to (see
+    // LowerQualifiedVar), so a call through `M.f`, or through the `let f = M.f` alias a selector
+    // import stitches in, is resolved to f's function label like a call to f in its own module.
+    private bool TryGetExportedQualifiedBindingName(Expr.QualifiedVar reference, out string exportedBindingName)
+    {
+        exportedBindingName = "";
+        if (Environment.GetEnvironmentVariable("GRC_NO_QUALIFIEDCALLEELABEL") is not null
+            || TryGetTraitMethod(reference, out _, out _)
+            || _capabilitySymbols.ContainsKey(reference.Module))
+        {
+            return false;
+        }
+
+        string resolvedModule = ResolveModuleAlias(reference.Module);
+        if (BuiltinRegistry.TryGetModule(resolvedModule, out _))
+        {
+            return false;
+        }
+
+        string candidate = $"{ProjectSupport.SanitizeModuleBindingName(resolvedModule)}_{reference.Name}";
+        if (Lookup(candidate) is null && !_topLevelFunctionRefs.ContainsKey(candidate))
+        {
+            return false;
+        }
+
+        exportedBindingName = candidate;
+        return true;
+    }
+
     private (int, TypeRef) LowerRemainingQualifiedVar(
         Expr.QualifiedVar reference,
         string resolvedModule,

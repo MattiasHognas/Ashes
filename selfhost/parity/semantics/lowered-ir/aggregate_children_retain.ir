@@ -163,7 +163,7 @@ function lambda_2  [SourceFunction from listed]
     Return                Source=32   (aggregate_children_retain.ash:9:1)
 
 function lambda_3  [SourceFunction from prefixed]
-  locals=21 temps=36
+  locals=21 temps=37
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (aggregate_children_retain.ash:16:17)
@@ -190,60 +190,62 @@ function lambda_3  [SourceFunction from prefixed]
     Borrow                Target=12 SourceTemp=11
     RcDup                 Target=13 SourceTemp=12 RuntimeManaged=true MayBeEmpty=true
     StoreLocal            Slot=14 Source=13   (aggregate_children_retain.ash:19:12)
-    Alloc                 Target=14 SizeBytes=16   (aggregate_children_retain.ash:19:12)
-    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=10   (aggregate_children_retain.ash:19:12)
-    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=13   (aggregate_children_retain.ash:19:12)
-    StoreLocal            Slot=15 Source=14   (aggregate_children_retain.ash:18:9)
-    LoadLocal             Target=15 Slot=13   (aggregate_children_retain.ash:18:9)
-    StoreLocal            Slot=16 Source=15   (aggregate_children_retain.ash:18:9)
+    CopyOutArena          DestTemp=14 SrcTemp=10 Purpose=IndependentClone
+    RcDrop                SourceTemp=10 TypeName=String RuntimeManaged=true
+    Alloc                 Target=15 SizeBytes=16   (aggregate_children_retain.ash:19:12)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=14   (aggregate_children_retain.ash:19:12)
+    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=13   (aggregate_children_retain.ash:19:12)
+    StoreLocal            Slot=15 Source=15   (aggregate_children_retain.ash:18:9)
+    LoadLocal             Target=16 Slot=13   (aggregate_children_retain.ash:18:9)
+    StoreLocal            Slot=16 Source=16   (aggregate_children_retain.ash:18:9)
   rcdrop_list_10:
-    LoadLocal             Target=16 Slot=16   (aggregate_children_retain.ash:18:9)
-    LoadConstInt          Target=17 Value=0   (aggregate_children_retain.ash:18:9)
-    CmpIntNe              Target=18 Left=16 Right=17   (aggregate_children_retain.ash:18:9)
-    JumpIfFalse           CondTemp=18 Target=rcdrop_list_end_12   (aggregate_children_retain.ash:18:9)
-    RcIsUnique            Target=19 SourceTemp=16
-    JumpIfFalse           CondTemp=19 Target=rcdrop_list_shared_11   (aggregate_children_retain.ash:18:9)
-    LoadMemOffset         Target=20 BasePtr=16 OffsetBytes=0   (aggregate_children_retain.ash:18:9)
-    RcDrop                SourceTemp=20 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=21 BasePtr=16 OffsetBytes=8   (aggregate_children_retain.ash:18:9)
-    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=16 Source=21   (aggregate_children_retain.ash:18:9)
+    LoadLocal             Target=17 Slot=16   (aggregate_children_retain.ash:18:9)
+    LoadConstInt          Target=18 Value=0   (aggregate_children_retain.ash:18:9)
+    CmpIntNe              Target=19 Left=17 Right=18   (aggregate_children_retain.ash:18:9)
+    JumpIfFalse           CondTemp=19 Target=rcdrop_list_end_12   (aggregate_children_retain.ash:18:9)
+    RcIsUnique            Target=20 SourceTemp=17
+    JumpIfFalse           CondTemp=20 Target=rcdrop_list_shared_11   (aggregate_children_retain.ash:18:9)
+    LoadMemOffset         Target=21 BasePtr=17 OffsetBytes=0   (aggregate_children_retain.ash:18:9)
+    RcDrop                SourceTemp=21 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=22 BasePtr=17 OffsetBytes=8   (aggregate_children_retain.ash:18:9)
+    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=16 Source=22   (aggregate_children_retain.ash:18:9)
     Jump                  Target=rcdrop_list_10   (aggregate_children_retain.ash:18:9)
   rcdrop_list_shared_11:
-    RcDrop                SourceTemp=16 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=17 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_12   (aggregate_children_retain.ash:18:9)
   rcdrop_list_end_12:
-    LoadLocal             Target=22 Slot=15   (aggregate_children_retain.ash:18:9)
-    StoreLocal            Slot=18 Source=22   (aggregate_children_retain.ash:16:5)
-    LoadLocal             Target=24 Slot=18   (aggregate_children_retain.ash:16:5)
-    CopyOutList           DestTemp=25 SrcTemp=24 HeadCopy=String Purpose=IndependentClone   (aggregate_children_retain.ash:15:1)
-    LoadLocal             Target=26 Slot=14   (aggregate_children_retain.ash:15:1)
-    LoadConstInt          Target=27 Value=0   (aggregate_children_retain.ash:15:1)
-    CmpIntNe              Target=28 Left=26 Right=27   (aggregate_children_retain.ash:15:1)
-    JumpIfFalse           CondTemp=28 Target=general_rc_owned_absent_13   (aggregate_children_retain.ash:15:1)
-    IsReferenceCounted    Target=29 SourceTemp=26
+    LoadLocal             Target=23 Slot=15   (aggregate_children_retain.ash:18:9)
+    StoreLocal            Slot=18 Source=23   (aggregate_children_retain.ash:16:5)
+    LoadLocal             Target=25 Slot=18   (aggregate_children_retain.ash:16:5)
+    CopyOutList           DestTemp=26 SrcTemp=25 HeadCopy=String Purpose=IndependentClone   (aggregate_children_retain.ash:15:1)
+    LoadLocal             Target=27 Slot=14   (aggregate_children_retain.ash:15:1)
+    LoadConstInt          Target=28 Value=0   (aggregate_children_retain.ash:15:1)
+    CmpIntNe              Target=29 Left=27 Right=28   (aggregate_children_retain.ash:15:1)
     JumpIfFalse           CondTemp=29 Target=general_rc_owned_absent_13   (aggregate_children_retain.ash:15:1)
-    StoreLocal            Slot=20 Source=26   (aggregate_children_retain.ash:15:1)
+    IsReferenceCounted    Target=30 SourceTemp=27
+    JumpIfFalse           CondTemp=30 Target=general_rc_owned_absent_13   (aggregate_children_retain.ash:15:1)
+    StoreLocal            Slot=20 Source=27   (aggregate_children_retain.ash:15:1)
   rcdrop_list_14:
-    LoadLocal             Target=30 Slot=20   (aggregate_children_retain.ash:15:1)
-    LoadConstInt          Target=31 Value=0   (aggregate_children_retain.ash:15:1)
-    CmpIntNe              Target=32 Left=30 Right=31   (aggregate_children_retain.ash:15:1)
-    JumpIfFalse           CondTemp=32 Target=rcdrop_list_end_16   (aggregate_children_retain.ash:15:1)
-    RcIsUnique            Target=33 SourceTemp=30
-    JumpIfFalse           CondTemp=33 Target=rcdrop_list_shared_15   (aggregate_children_retain.ash:15:1)
-    LoadMemOffset         Target=34 BasePtr=30 OffsetBytes=0   (aggregate_children_retain.ash:15:1)
-    RcDrop                SourceTemp=34 TypeName=String RuntimeManaged=true
-    LoadMemOffset         Target=35 BasePtr=30 OffsetBytes=8   (aggregate_children_retain.ash:15:1)
-    RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=20 Source=35   (aggregate_children_retain.ash:15:1)
+    LoadLocal             Target=31 Slot=20   (aggregate_children_retain.ash:15:1)
+    LoadConstInt          Target=32 Value=0   (aggregate_children_retain.ash:15:1)
+    CmpIntNe              Target=33 Left=31 Right=32   (aggregate_children_retain.ash:15:1)
+    JumpIfFalse           CondTemp=33 Target=rcdrop_list_end_16   (aggregate_children_retain.ash:15:1)
+    RcIsUnique            Target=34 SourceTemp=31
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_shared_15   (aggregate_children_retain.ash:15:1)
+    LoadMemOffset         Target=35 BasePtr=31 OffsetBytes=0   (aggregate_children_retain.ash:15:1)
+    RcDrop                SourceTemp=35 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=36 BasePtr=31 OffsetBytes=8   (aggregate_children_retain.ash:15:1)
+    RcDrop                SourceTemp=31 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=20 Source=36   (aggregate_children_retain.ash:15:1)
     Jump                  Target=rcdrop_list_14   (aggregate_children_retain.ash:15:1)
   rcdrop_list_shared_15:
-    RcDrop                SourceTemp=30 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=31 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_16   (aggregate_children_retain.ash:15:1)
   rcdrop_list_end_16:
-    StoreLocal            Slot=14 Source=27   (aggregate_children_retain.ash:15:1)
+    StoreLocal            Slot=14 Source=28   (aggregate_children_retain.ash:15:1)
   general_rc_owned_absent_13:
-    Return                Source=25   (aggregate_children_retain.ash:15:1)
+    Return                Source=26   (aggregate_children_retain.ash:15:1)
 
 function _start_main  [ProgramEntry]
   locals=52 temps=101

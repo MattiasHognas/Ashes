@@ -1,0 +1,902 @@
+IR (lowered)
+============
+
+function __deepcopy_2  [AdtDeepCopier]
+  locals=2 temps=7
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=__deepcopy_2_default   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  __deepcopy_2_c0:
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=3   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  __deepcopy_2_c1:
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    CopyOutArena          DestTemp=6 SrcTemp=5 Purpose=IndependentClone
+    StoreMemOffset        BasePtr=4 OffsetBytes=8 Source=6   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=4   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  __deepcopy_2_default:
+    Return                Source=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+
+function __rcdrop_3  [RuntimeManagedAdtDropper]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_shared_42   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    GetAdtTag             Target=2 Ptr=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_shared_42   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rcdrop_ctor_43:
+    Jump                  Target=rcdrop_shared_42   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rcdrop_ctor_44:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDrop                SourceTemp=3 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_shared_42   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rcdrop_shared_42:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=4   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+
+function lambda_1  [ClosureHelper from lookupReturned]
+  locals=43 temps=139
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=56 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    IsReferenceCounted    Target=57 SourceTemp=56
+    JumpIfFalse           CondTemp=57 Target=rc_representation_copy_18   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=58 SourceTemp=56 RuntimeManaged=true
+    StoreLocal            Slot=29 Source=58   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_19   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_copy_18:
+    CopyOutArena          DestTemp=59 SrcTemp=56 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=29 Source=59   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_done_19:
+    LoadLocal             Target=60 Slot=29   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=2 Source=60   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadConstInt          Target=61 Value=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=6 Source=61   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=62 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadArgumentOwnership Target=63   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadConstInt          Target=64 Value=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    AndInt                Target=65 Left=63 Right=64   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=65 Target=rc_arg_normalize_copy_20   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=30 Source=62   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_arg_normalize_done_21   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_arg_normalize_copy_20:
+    IsReferenceCounted    Target=66 SourceTemp=62
+    JumpIfFalse           CondTemp=66 Target=rc_representation_copy_22   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=67 SourceTemp=62 RuntimeManaged=true
+    StoreLocal            Slot=31 Source=67   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_23   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_copy_22:
+    LoadConstInt          Target=69 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=32 Source=62   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=33 Source=69   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=34 Source=69   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_normalize_list_24:
+    LoadLocal             Target=70 Slot=32   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    CmpIntNe              Target=71 Left=70 Right=69   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=71 Target=rc_normalize_list_end_25   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=72 BasePtr=70 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=73 BasePtr=70 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    IsReferenceCounted    Target=74 SourceTemp=72
+    JumpIfFalse           CondTemp=74 Target=rc_representation_copy_26   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=75 SourceTemp=72 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=75   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_27   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_copy_26:
+    Alloc                 Target=76 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=77 BasePtr=72 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    IsReferenceCounted    Target=78 SourceTemp=77
+    JumpIfFalse           CondTemp=78 Target=rc_representation_copy_28   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=79 SourceTemp=77 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=79   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_29   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_copy_28:
+    CopyOutArena          DestTemp=80 SrcTemp=77 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=36 Source=80   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_done_29:
+    LoadLocal             Target=81 Slot=36   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=76 OffsetBytes=0 Source=81   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=82 BasePtr=72 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    IsReferenceCounted    Target=83 SourceTemp=82
+    JumpIfFalse           CondTemp=83 Target=rc_representation_copy_30   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=84 SourceTemp=82 RuntimeManaged=true
+    StoreLocal            Slot=37 Source=84   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_31   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_copy_30:
+    CopyOutArena          DestTemp=85 SrcTemp=82 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=37 Source=85   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_done_31:
+    LoadLocal             Target=86 Slot=37   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=76 OffsetBytes=8 Source=86   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=35 Source=76   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_done_27:
+    LoadLocal             Target=87 Slot=35   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Alloc                 Target=88 SizeBytes=16 RuntimeManaged=true   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=88 OffsetBytes=0 Source=87   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=88 OffsetBytes=8 Source=69   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=89 Slot=33   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    CmpIntNe              Target=90 Left=89 Right=69   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=90 Target=rc_normalize_list_first_32   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=91 Slot=34   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=91 OffsetBytes=8 Source=88   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_normalize_list_linked_33   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_normalize_list_first_32:
+    StoreLocal            Slot=33 Source=88   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_normalize_list_linked_33:
+    StoreLocal            Slot=34 Source=88   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=32 Source=73   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_normalize_list_24   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_normalize_list_end_25:
+    LoadLocal             Target=92 Slot=33   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=31 Source=92   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_done_23:
+    LoadLocal             Target=93 Slot=31   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=30 Source=93   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_arg_normalize_done_21:
+    LoadLocal             Target=94 Slot=30   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=1 Source=94   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadConstInt          Target=95 Value=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=7 Source=95   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=5 Source=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:2:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (loop_result_some_holding_the_loop_parameter.ash:3:17)
+    StoreLocal            Slot=25 Source=5   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    IsReferenceCounted    Target=39 SourceTemp=5
+    JumpIfFalse           CondTemp=39 Target=general_rc_result_arena_copy_9   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    Jump                  Target=general_rc_result_already_owned_10   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  general_rc_result_arena_copy_9:
+    IsReferenceCounted    Target=40 SourceTemp=5
+    JumpIfFalse           CondTemp=40 Target=rc_representation_copy_11   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    RcDup                 Target=41 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=41   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    Jump                  Target=rc_representation_done_12   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_representation_copy_11:
+    GetAdtTag             Target=43 Ptr=5   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    SwitchTag             TagTemp=43 Cases=[2] DefaultLabel=rc_normalize_adt_13   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_normalize_adt_13:
+    CopyOutArena          DestTemp=44 SrcTemp=5 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=27 Source=44   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    Jump                  Target=rc_normalize_adt_end_15   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_normalize_adt_14:
+    CopyOutArena          DestTemp=45 SrcTemp=5 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=46 Ptr=5 FieldIndex=0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    IsReferenceCounted    Target=47 SourceTemp=46
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_16   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    RcDup                 Target=48 SourceTemp=46 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=48   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    Jump                  Target=rc_representation_done_17   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_representation_copy_16:
+    CopyOutArena          DestTemp=49 SrcTemp=46 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=28 Source=49   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_representation_done_17:
+    LoadLocal             Target=50 Slot=28   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    SetAdtField           Ptr=45 FieldIndex=0 Source=50   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=27 Source=45   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    Jump                  Target=rc_normalize_adt_end_15   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_normalize_adt_end_15:
+    LoadLocal             Target=51 Slot=27   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=26 Source=51   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  rc_representation_done_12:
+    LoadLocal             Target=52 Slot=26   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=25 Source=52   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  general_rc_result_already_owned_10:
+    LoadLocal             Target=53 Slot=25   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=11 Source=53   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    Jump                  Target=match_end_0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_2   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    LoadMemOffset         Target=10 BasePtr=8 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=18 Source=10   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    LoadMemOffset         Target=11 BasePtr=8 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=19 Source=11   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=20 Source=9   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    LoadLocal             Target=54 Slot=19   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=55 SourceTemp=54 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=55   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=12 Slot=18   (loop_result_some_holding_the_loop_parameter.ash:5:16)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:5:29)
+    CmpStrEq              Target=15 Left=13 Right=14   (loop_result_some_holding_the_loop_parameter.ash:5:16)
+    RcDrop                SourceTemp=10 TypeName=String OwnerSlot=18
+    JumpIfFalse           CondTemp=15 Target=else_5   (loop_result_some_holding_the_loop_parameter.ash:5:13)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=16 Slot=19   (loop_result_some_holding_the_loop_parameter.ash:6:23)
+    Borrow                Target=17 SourceTemp=16
+    Borrow                Target=18 SourceTemp=17
+    IsReferenceCounted    Target=19 SourceTemp=17
+    JumpIfFalse           CondTemp=19 Target=rc_representation_copy_7   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+    RcDup                 Target=20 SourceTemp=17 RuntimeManaged=true
+    RcDrop                SourceTemp=11 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=20   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+    Jump                  Target=rc_representation_done_8   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+  rc_representation_copy_7:
+    CopyOutArena          DestTemp=21 SrcTemp=17 RuntimeManaged=true Purpose=RcNormalization
+    RcDrop                SourceTemp=11 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=21   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+  rc_representation_done_8:
+    LoadLocal             Target=22 Slot=22   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+    AllocAdt              Target=23 Tag=1 FieldCount=1 RuntimeManaged=true   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+    SetAdtField           Ptr=23 FieldIndex=0 Source=22   (loop_result_some_holding_the_loop_parameter.ash:6:18)
+    StoreLocal            Slot=21 Source=23   (loop_result_some_holding_the_loop_parameter.ash:5:13)
+    Jump                  Target=endif_6   (loop_result_some_holding_the_loop_parameter.ash:5:13)
+  else_5:
+    RcDrop                SourceTemp=11 TypeName=String OwnerSlot=19 RuntimeManaged=true
+    LoadLocal             Target=24 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:7:33)
+    LoadLocal             Target=25 Slot=20   (loop_result_some_holding_the_loop_parameter.ash:7:40)
+    Borrow                Target=26 SourceTemp=25
+    RcDup                 Target=27 SourceTemp=26 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=20
+    LoadLocal             Target=28 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    LoadConstInt          Target=29 Value=0   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    StoreLocal            Slot=7 Source=29   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    LoadLocal             Target=30 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    LoadLocal             Target=31 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    StoreLocal            Slot=2 Source=24   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    StoreLocal            Slot=1 Source=27   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    LoadLocal             Target=119 Slot=7
+    JumpIfFalse           CondTemp=119 Target=rc_tco_drop_inactive_77
+    StoreLocal            Slot=41 Source=31
+  rcdrop_list_78:
+    LoadLocal             Target=120 Slot=41
+    LoadConstInt          Target=121 Value=0
+    CmpIntNe              Target=122 Left=120 Right=121
+    JumpIfFalse           CondTemp=122 Target=rcdrop_list_end_80
+    RcIsUnique            Target=123 SourceTemp=120
+    JumpIfFalse           CondTemp=123 Target=rcdrop_list_shared_79
+    LoadMemOffset         Target=124 BasePtr=120 OffsetBytes=0
+    RcIsUnique            Target=125 SourceTemp=124
+    JumpIfFalse           CondTemp=125 Target=rc_drop_tuple_shared_81
+    LoadMemOffset         Target=126 BasePtr=124 OffsetBytes=0
+    RcDrop                SourceTemp=126 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=127 BasePtr=124 OffsetBytes=8
+    RcDrop                SourceTemp=127 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_81:
+    RcDrop                SourceTemp=124 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=128 BasePtr=120 OffsetBytes=8
+    RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=41 Source=128
+    Jump                  Target=rcdrop_list_78
+  rcdrop_list_shared_79:
+    RcDrop                SourceTemp=120 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_80
+  rcdrop_list_end_80:
+  rc_tco_drop_inactive_77:
+    StoreLocal            Slot=42 Source=28
+  rcdrop_list_82:
+    LoadLocal             Target=129 Slot=42
+    LoadConstInt          Target=130 Value=0
+    CmpIntNe              Target=131 Left=129 Right=130
+    JumpIfFalse           CondTemp=131 Target=rcdrop_list_end_84
+    RcIsUnique            Target=132 SourceTemp=129
+    JumpIfFalse           CondTemp=132 Target=rcdrop_list_shared_83
+    LoadMemOffset         Target=133 BasePtr=129 OffsetBytes=0
+    RcIsUnique            Target=134 SourceTemp=133
+    JumpIfFalse           CondTemp=134 Target=rc_drop_tuple_shared_85
+    LoadMemOffset         Target=135 BasePtr=133 OffsetBytes=0
+    RcDrop                SourceTemp=135 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=136 BasePtr=133 OffsetBytes=8
+    RcDrop                SourceTemp=136 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_85:
+    RcDrop                SourceTemp=133 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=137 BasePtr=129 OffsetBytes=8
+    RcDrop                SourceTemp=129 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=42 Source=137
+    Jump                  Target=rcdrop_list_82
+  rcdrop_list_shared_83:
+    RcDrop                SourceTemp=129 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_84
+  rcdrop_list_end_84:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=40
+    StoreLocal            Slot=1 Source=27
+    LoadConstInt          Target=138 Value=1
+    StoreLocal            Slot=7 Source=138
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=40
+    RestoreStackPointer   Slot=10   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    Jump                  Target=lambda_1_body   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    LoadConstInt          Target=32 Value=0   (loop_result_some_holding_the_loop_parameter.ash:7:18)
+    StoreLocal            Slot=21 Source=32   (loop_result_some_holding_the_loop_parameter.ash:5:13)
+  endif_6:
+    LoadLocal             Target=33 Slot=21   (loop_result_some_holding_the_loop_parameter.ash:5:13)
+    StoreLocal            Slot=11 Source=33   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=23
+    Jump                  Target=match_end_0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=24
+    Jump                  Target=match_none_1   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  match_none_1:
+    LoadConstInt          Target=37 Value=0   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    StoreLocal            Slot=11 Source=37   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+  match_end_0:
+    LoadLocal             Target=38 Slot=11   (loop_result_some_holding_the_loop_parameter.ash:2:5)
+    LoadLocal             Target=96 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=97 Slot=6   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=97 Target=rc_tco_exit_drop_inactive_34   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDrop                SourceTemp=96 TypeName=String RuntimeManaged=true
+  rc_tco_exit_drop_inactive_34:
+    LoadLocal             Target=98 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=99 Slot=7   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=99 Target=rc_tco_exit_drop_inactive_35   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=38 Source=98   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rcdrop_list_36:
+    LoadLocal             Target=100 Slot=38   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadConstInt          Target=101 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    CmpIntNe              Target=102 Left=100 Right=101   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_end_38   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcIsUnique            Target=103 SourceTemp=100
+    JumpIfFalse           CondTemp=103 Target=rcdrop_list_shared_37   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=104 BasePtr=100 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcIsUnique            Target=105 SourceTemp=104
+    JumpIfFalse           CondTemp=105 Target=rc_drop_tuple_shared_39   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=106 BasePtr=104 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDrop                SourceTemp=106 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=107 BasePtr=104 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDrop                SourceTemp=107 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_39:
+    RcDrop                SourceTemp=104 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=108 BasePtr=100 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDrop                SourceTemp=100 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=38 Source=108   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rcdrop_list_36   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rcdrop_list_shared_37:
+    RcDrop                SourceTemp=100 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_38   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rcdrop_list_end_38:
+  rc_tco_exit_drop_inactive_35:
+    LoadArgumentOwnership Target=109   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadConstInt          Target=110 Value=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    ShrInt                Target=111 Left=109 Right=110   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    AndInt                Target=112 Left=111 Right=110   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    JumpIfFalse           CondTemp=112 Target=rc_result_owned_40   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Alloc                 Target=113 SizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    MakeClosure           Target=114 FuncLabel=__deepcopy_2 EnvPtrTemp=113 EnvSizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=113 OffsetBytes=0 Source=114   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    CallClosure           Target=115 ClosureTemp=114 ArgTemp=38   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadConstInt          Target=116 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    CallKnown             Target=117 FuncLabel=__rcdrop_3 EnvTemp=116 ArgTemp=38   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=39 Source=115   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_result_done_41   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_result_owned_40:
+    StoreLocal            Slot=39 Source=38   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_result_done_41:
+    LoadLocal             Target=118 Slot=39   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=118   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+
+function __rc_cdrop_4  [RuntimeManagedClosureDropper]
+  locals=2 temps=3
+    LoadLocal             Target=0 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDrop                SourceTemp=1 TypeName=String RuntimeManaged=true
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=2   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from lookupReturned]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    IsReferenceCounted    Target=3 SourceTemp=2
+    JumpIfFalse           CondTemp=3 Target=rc_representation_copy_45   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    RcDup                 Target=4 SourceTemp=2 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=4   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Jump                  Target=rc_representation_done_46   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_copy_45:
+    CopyOutArena          DestTemp=5 SrcTemp=2 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=2 Source=5   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+  rc_representation_done_46:
+    LoadLocal             Target=6 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=6   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadFuncAddr          Target=7 FuncLabel=__rc_cdrop_4   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=7   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+
+function lambda_0  [SourceFunction from lookupReturned]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Return                Source=4   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+
+function lambda_7  [ClosureHelper from innermostStage]
+  locals=33 temps=92
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadEnv               Target=1 Index=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=3 Source=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=72 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    IsReferenceCounted    Target=73 SourceTemp=72
+    JumpIfFalse           CondTemp=73 Target=rc_representation_copy_62   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    RcDup                 Target=74 SourceTemp=72 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=74   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    Jump                  Target=rc_representation_done_63   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+  rc_representation_copy_62:
+    CopyOutArena          DestTemp=75 SrcTemp=72 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=30 Source=75   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+  rc_representation_done_63:
+    LoadLocal             Target=76 Slot=30   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=3 Source=76   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadConstInt          Target=77 Value=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=7 Source=77   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=6 Source=2   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+  lambda_7_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=3 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:10:8)
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_the_loop_parameter.ash:10:16)
+    CmpIntLe              Target=5 Left=3 Right=4   (loop_result_some_holding_the_loop_parameter.ash:10:8)
+    JumpIfFalse           CondTemp=5 Target=else_47   (loop_result_some_holding_the_loop_parameter.ash:10:5)
+    LoadLocal             Target=6 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:11:15)
+    RcDup                 Target=7 SourceTemp=6 RuntimeManaged=true
+    AllocAdt              Target=8 Tag=1 FieldCount=1   (loop_result_some_holding_the_loop_parameter.ash:11:10)
+    SetAdtField           Ptr=8 FieldIndex=0 Source=7   (loop_result_some_holding_the_loop_parameter.ash:11:10)
+    StoreLocal            Slot=11 Source=8   (loop_result_some_holding_the_loop_parameter.ash:10:5)
+    Jump                  Target=endif_48   (loop_result_some_holding_the_loop_parameter.ash:10:5)
+  else_47:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=9 Index=2   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadLocal             Target=10 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:13:30)
+    LoadMemOffset         Target=11 BasePtr=9 OffsetBytes=16   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=12 Value=62   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    ShrInt                Target=13 Left=11 Right=12   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=14 Value=1   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    AndInt                Target=15 Left=13 Right=14   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    StoreLocal            Slot=14 Source=10   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    JumpIfFalse           CondTemp=15 Target=rc_call_argument_not_retained_49   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcDup                 Target=16 SourceTemp=10 RuntimeManaged=true
+    StoreLocal            Slot=14 Source=16   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+  rc_call_argument_not_retained_49:
+    LoadLocal             Target=17 Slot=14   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    CallClosure           Target=18 ClosureTemp=9 ArgTemp=17 RuntimeManagedArgumentFlagTemp=15   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadLocal             Target=19 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:13:37)
+    LoadMemOffset         Target=20 BasePtr=18 OffsetBytes=16   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=21 Value=62   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    ShrInt                Target=22 Left=20 Right=21   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=23 Value=1   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    AndInt                Target=24 Left=22 Right=23   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=25 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=26 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    CmpIntEq              Target=27 Left=25 Right=26   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    OrInt                 Target=28 Left=24 Right=27   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    StoreLocal            Slot=15 Source=19   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    JumpIfFalse           CondTemp=25 Target=rc_call_argument_not_retained_50   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcDup                 Target=29 SourceTemp=19 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=15 Source=29   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+  rc_call_argument_not_retained_50:
+    LoadLocal             Target=30 Slot=15   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    CallClosure           Target=31 ClosureTemp=18 ArgTemp=30 RuntimeManagedArgumentFlagTemp=25   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=16
+    JumpIfFalse           CondTemp=28 Target=rc_handed_over_not_adopted_51   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    Jump                  Target=rc_handed_over_done_52   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+  rc_handed_over_not_adopted_51:
+    StoreLocal            Slot=17 Source=30   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+  rcdrop_list_53:
+    LoadLocal             Target=32 Slot=17   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadConstInt          Target=33 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    CmpIntNe              Target=34 Left=32 Right=33   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    JumpIfFalse           CondTemp=34 Target=rcdrop_list_end_55   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcIsUnique            Target=35 SourceTemp=32
+    JumpIfFalse           CondTemp=35 Target=rcdrop_list_shared_54   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadMemOffset         Target=36 BasePtr=32 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcIsUnique            Target=37 SourceTemp=36
+    JumpIfFalse           CondTemp=37 Target=rc_drop_tuple_shared_56   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    LoadMemOffset         Target=38 BasePtr=36 OffsetBytes=0   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcDrop                SourceTemp=38 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=39 BasePtr=36 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcDrop                SourceTemp=39 TypeName=String RuntimeManaged=true
+  rc_drop_tuple_shared_56:
+    RcDrop                SourceTemp=36 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=40 BasePtr=32 OffsetBytes=8   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=17 Source=40   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+    Jump                  Target=rcdrop_list_53   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+  rcdrop_list_shared_54:
+    RcDrop                SourceTemp=32 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_55   (loop_result_some_holding_the_loop_parameter.ash:13:15)
+  rcdrop_list_end_55:
+  rc_handed_over_done_52:
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadConstInt          Target=41 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    CmpIntNe              Target=42 Left=31 Right=41   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    JumpIfFalse           CondTemp=42 Target=match_arm_cleanup_60   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    GetAdtTag             Target=43 Ptr=31   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    LoadConstInt          Target=45 Value=1   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    CmpIntEq              Target=44 Left=43 Right=45   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    JumpIfFalse           CondTemp=44 Target=match_arm_cleanup_60   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    GetAdtField           Target=46 Ptr=31 FieldIndex=0   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    StoreLocal            Slot=21 Source=46   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    StoreLocal            Slot=22 Source=31   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    LoadLocal             Target=47 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:14:44)
+    LoadConstInt          Target=48 Value=1   (loop_result_some_holding_the_loop_parameter.ash:14:51)
+    SubInt                Target=49 Left=47 Right=48   (loop_result_some_holding_the_loop_parameter.ash:14:44)
+    LoadLocal             Target=50 Slot=21   (loop_result_some_holding_the_loop_parameter.ash:14:54)
+    Borrow                Target=51 SourceTemp=50
+    RcDup                 Target=52 SourceTemp=51 RuntimeManaged=true
+    LoadLocal             Target=53 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:14:60)
+    LoadLocal             Target=54 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    LoadLocal             Target=55 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    LoadLocal             Target=56 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    StoreLocal            Slot=2 Source=49   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    StoreLocal            Slot=3 Source=52   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    StoreLocal            Slot=1 Source=53   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    LoadLocal             Target=88 Slot=7
+    JumpIfFalse           CondTemp=88 Target=rc_tco_drop_inactive_86
+    RcDrop                SourceTemp=55 TypeName=String RuntimeManaged=true
+  rc_tco_drop_inactive_86:
+    LoadLocal             Target=89 Slot=21
+    RcDrop                SourceTemp=89 TypeName=String OwnerSlot=21 RuntimeManaged=true
+    LoadLocal             Target=90 Slot=22
+    RcDrop                SourceTemp=90 TypeName=Maybe RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=32
+    StoreLocal            Slot=3 Source=52
+    LoadConstInt          Target=91 Value=1
+    StoreLocal            Slot=7 Source=91
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=32
+    RestoreStackPointer   Slot=10   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    Jump                  Target=lambda_7_body   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    LoadConstInt          Target=57 Value=0   (loop_result_some_holding_the_loop_parameter.ash:14:29)
+    StoreLocal            Slot=18 Source=57   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    LoadLocal             Target=58 Slot=21   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    RcDrop                SourceTemp=58 TypeName=String OwnerSlot=21 RuntimeManaged=true
+    LoadLocal             Target=59 Slot=22   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    RcDrop                SourceTemp=59 TypeName=Maybe RuntimeManaged=true
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
+    Jump                  Target=match_end_57   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+  match_arm_cleanup_60:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=24
+    Jump                  Target=match_next_59   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+  match_next_59:
+    SaveArenaState        CursorLocalSlot=25 EndLocalSlot=26
+    LoadConstInt          Target=60 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    CmpIntNe              Target=61 Left=31 Right=60   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    JumpIfFalse           CondTemp=61 Target=match_arm_cleanup_61   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    GetAdtTag             Target=62 Ptr=31   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    LoadConstInt          Target=64 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    CmpIntEq              Target=63 Left=62 Right=64   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    JumpIfFalse           CondTemp=63 Target=match_arm_cleanup_61   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    StoreLocal            Slot=27 Source=31   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    AllocAdt              Target=65 Tag=0 FieldCount=0   (loop_result_some_holding_the_loop_parameter.ash:15:23)
+    StoreLocal            Slot=18 Source=65   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    LoadLocal             Target=66 Slot=27   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    LoadConstInt          Target=67 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    CallKnown             Target=68 FuncLabel=__rcdrop_3 EnvTemp=67 ArgTemp=66   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    Jump                  Target=match_end_57   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+  match_arm_cleanup_61:
+    RestoreArenaState     CursorLocalSlot=25 EndLocalSlot=26 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=26 PreRestoreEndSlot=29
+    Jump                  Target=match_none_58   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+  match_none_58:
+    LoadConstInt          Target=69 Value=0   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    StoreLocal            Slot=18 Source=69   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+  match_end_57:
+    LoadLocal             Target=70 Slot=18   (loop_result_some_holding_the_loop_parameter.ash:13:9)
+    StoreLocal            Slot=11 Source=70   (loop_result_some_holding_the_loop_parameter.ash:10:5)
+  endif_48:
+    LoadLocal             Target=71 Slot=11   (loop_result_some_holding_the_loop_parameter.ash:10:5)
+    LoadConstInt          Target=78 Value=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=31 Source=78   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=79 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=80 Slot=7   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    CmpIntEq              Target=81 Left=79 Right=71   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=82 Slot=31   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    CmpIntEq              Target=83 Left=82 Right=78   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    AndInt                Target=84 Left=80 Right=81   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    AndInt                Target=85 Left=84 Right=83   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    JumpIfFalse           CondTemp=85 Target=rc_tco_exit_transfer_not_selected_64   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadConstInt          Target=86 Value=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=31 Source=86   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    Jump                  Target=rc_tco_exit_transfer_done_65   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+  rc_tco_exit_transfer_not_selected_64:
+    LoadLocal             Target=87 Slot=7   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    JumpIfFalse           CondTemp=87 Target=rc_tco_exit_drop_inactive_66   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    RcDrop                SourceTemp=79 TypeName=String RuntimeManaged=true
+  rc_tco_exit_drop_inactive_66:
+  rc_tco_exit_transfer_done_65:
+    Return                Source=71   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+
+function lambda_6  [ClosureHelper from innermostStage]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=24   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadEnv               Target=3 Index=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    MakeClosure           Target=5 FuncLabel=lambda_7 EnvPtrTemp=0 EnvSizeBytes=24   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    Return                Source=5   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+
+function lambda_5  [SourceFunction from innermostStage]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadEnv               Target=2 Index=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    MakeClosure           Target=5 FuncLabel=lambda_6 EnvPtrTemp=0 EnvSizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    Return                Source=5   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+
+function lambda_10  [ClosureHelper from stageLength]
+  locals=16 temps=37
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_the_loop_parameter.ash:18:11)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:18:26)
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1   (loop_result_some_holding_the_loop_parameter.ash:18:11)
+    LoadEnv               Target=3 Index=1   (loop_result_some_holding_the_loop_parameter.ash:18:32)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (loop_result_some_holding_the_loop_parameter.ash:18:11)
+    LoadEnv               Target=5 Index=2   (loop_result_some_holding_the_loop_parameter.ash:18:39)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (loop_result_some_holding_the_loop_parameter.ash:18:11)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=7 Value=0   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    CmpIntNe              Target=8 Left=6 Right=7   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_70   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    GetAdtTag             Target=9 Ptr=6   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    LoadConstInt          Target=11 Value=1   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    CmpIntEq              Target=10 Left=9 Right=11   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_70   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    GetAdtField           Target=12 Ptr=6 FieldIndex=0   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    StoreLocal            Slot=8 Source=12   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    LoadLocal             Target=13 Slot=8   (loop_result_some_holding_the_loop_parameter.ash:20:16)
+    Borrow                Target=14 SourceTemp=13
+    LoadConstStr          Target=15 StrLabel=str_0   (loop_result_some_holding_the_loop_parameter.ash:20:25)
+    CmpStrEq              Target=16 Left=14 Right=15   (loop_result_some_holding_the_loop_parameter.ash:20:16)
+    RcDrop                SourceTemp=12 TypeName=String OwnerSlot=8
+    JumpIfFalse           CondTemp=16 Target=else_71   (loop_result_some_holding_the_loop_parameter.ash:20:13)
+    LoadConstInt          Target=17 Value=3   (loop_result_some_holding_the_loop_parameter.ash:21:18)
+    StoreLocal            Slot=9 Source=17   (loop_result_some_holding_the_loop_parameter.ash:20:13)
+    Jump                  Target=endif_72   (loop_result_some_holding_the_loop_parameter.ash:20:13)
+  else_71:
+    LoadConstInt          Target=18 Value=1   (loop_result_some_holding_the_loop_parameter.ash:22:18)
+    StoreLocal            Slot=9 Source=18   (loop_result_some_holding_the_loop_parameter.ash:20:13)
+  endif_72:
+    LoadLocal             Target=19 Slot=9   (loop_result_some_holding_the_loop_parameter.ash:20:13)
+    StoreLocal            Slot=5 Source=19   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=10
+    Jump                  Target=match_end_67   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+  match_arm_cleanup_70:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=11
+    Jump                  Target=match_next_69   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+  match_next_69:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=21 Value=0   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    CmpIntNe              Target=22 Left=6 Right=21   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    JumpIfFalse           CondTemp=22 Target=match_arm_cleanup_73   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    GetAdtTag             Target=23 Ptr=6   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    LoadConstInt          Target=25 Value=0   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    CmpIntEq              Target=24 Left=23 Right=25   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    JumpIfFalse           CondTemp=24 Target=match_arm_cleanup_73   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    LoadConstInt          Target=26 Value=0   (loop_result_some_holding_the_loop_parameter.ash:23:19)
+    StoreLocal            Slot=5 Source=26   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_67   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+  match_arm_cleanup_73:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_none_68   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+  match_none_68:
+    LoadConstInt          Target=27 Value=0   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    StoreLocal            Slot=5 Source=27   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+  match_end_67:
+    LoadLocal             Target=28 Slot=5   (loop_result_some_holding_the_loop_parameter.ash:18:5)
+    LoadConstInt          Target=29 Value=0
+    CmpIntNe              Target=30 Left=6 Right=29
+    JumpIfFalse           CondTemp=30 Target=own_field_done_87
+    IsReferenceCounted    Target=31 SourceTemp=6
+    JumpIfFalse           CondTemp=31 Target=own_field_arena_cell_88
+    Jump                  Target=own_field_done_87
+  own_field_arena_cell_88:
+    GetAdtTag             Target=32 Ptr=6
+    SwitchTag             TagTemp=32 Cases=[2] DefaultLabel=own_field_done_87
+  own_field_ctor_89:
+    Jump                  Target=own_field_done_87
+  own_field_ctor_90:
+    GetAdtField           Target=33 Ptr=6 FieldIndex=0
+    LoadConstInt          Target=34 Value=0
+    CmpIntNe              Target=35 Left=33 Right=34
+    JumpIfFalse           CondTemp=35 Target=own_field_next_91
+    IsReferenceCounted    Target=36 SourceTemp=33
+    JumpIfFalse           CondTemp=36 Target=own_field_next_91
+    RcDrop                SourceTemp=33 TypeName=String RuntimeManaged=true
+  own_field_next_91:
+    Jump                  Target=own_field_done_87
+  own_field_done_87:
+    Return                Source=28   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+
+function lambda_9  [ClosureHelper from stageLength]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=24   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadEnv               Target=3 Index=1   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=3   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    MakeClosure           Target=4 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=24   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    Return                Source=4   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+
+function lambda_8  [SourceFunction from stageLength]
+  locals=2 temps=4
+    Alloc                 Target=0 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadLocal             Target=2 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    MakeClosure           Target=3 FuncLabel=lambda_9 EnvPtrTemp=0 EnvSizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    Return                Source=3   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+
+function lambda_13  [ClosureHelper from loop]
+  locals=18 temps=33
+    LoadEnv               Target=0 Index=0   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreLocal            Slot=2 Source=0   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadEnv               Target=1 Index=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreLocal            Slot=3 Source=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreLocal            Slot=6 Source=2   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreLocal            Slot=7 Source=2   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreLocal            Slot=8 Source=2   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+  lambda_13_body:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    SaveStackPointer      Slot=11   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadLocal             Target=3 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:26:8)
+    LoadConstInt          Target=4 Value=0   (loop_result_some_holding_the_loop_parameter.ash:26:13)
+    CmpIntEq              Target=5 Left=3 Right=4   (loop_result_some_holding_the_loop_parameter.ash:26:8)
+    JumpIfFalse           CondTemp=5 Target=else_74   (loop_result_some_holding_the_loop_parameter.ash:26:5)
+    LoadLocal             Target=6 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:27:10)
+    StoreLocal            Slot=12 Source=6   (loop_result_some_holding_the_loop_parameter.ash:26:5)
+    Jump                  Target=endif_75   (loop_result_some_holding_the_loop_parameter.ash:26:5)
+  else_74:
+    LoadLocal             Target=7 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:28:15)
+    LoadConstInt          Target=8 Value=1   (loop_result_some_holding_the_loop_parameter.ash:28:19)
+    SubInt                Target=9 Left=7 Right=8   (loop_result_some_holding_the_loop_parameter.ash:28:15)
+    LoadLocal             Target=10 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:28:22)
+    LoadLocal             Target=11 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:28:30)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadEnv               Target=12 Index=2   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:28:48)
+    LoadMemOffset         Target=15 BasePtr=13 OffsetBytes=16   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    LoadConstInt          Target=16 Value=62   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    ShrInt                Target=17 Left=15 Right=16   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    LoadConstInt          Target=18 Value=1   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    LoadConstInt          Target=19 Value=0   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    StoreLocal            Slot=15 Source=14   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    JumpIfFalse           CondTemp=19 Target=rc_call_argument_not_retained_76   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    RcDup                 Target=20 SourceTemp=14 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=15 Source=20   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+  rc_call_argument_not_retained_76:
+    LoadLocal             Target=21 Slot=15   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    CallClosure           Target=22 ClosureTemp=13 ArgTemp=21 RuntimeManagedArgumentFlagTemp=19   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    LoadConstStr          Target=23 StrLabel=str_1   (loop_result_some_holding_the_loop_parameter.ash:28:56)
+    CallClosure           Target=24 ClosureTemp=22 ArgTemp=23   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    LoadConstInt          Target=25 Value=2   (loop_result_some_holding_the_loop_parameter.ash:28:68)
+    CallClosure           Target=26 ClosureTemp=24 ArgTemp=25   (loop_result_some_holding_the_loop_parameter.ash:28:36)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=16
+    AddInt                Target=27 Left=11 Right=26   (loop_result_some_holding_the_loop_parameter.ash:28:30)
+    LoadLocal             Target=28 Slot=2   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    LoadLocal             Target=29 Slot=3   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    LoadLocal             Target=30 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    StoreLocal            Slot=2 Source=9   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    StoreLocal            Slot=3 Source=10   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    StoreLocal            Slot=1 Source=27   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=17
+    RestoreStackPointer   Slot=11   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    Jump                  Target=lambda_13_body   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    LoadConstInt          Target=31 Value=0   (loop_result_some_holding_the_loop_parameter.ash:28:10)
+    StoreLocal            Slot=12 Source=31   (loop_result_some_holding_the_loop_parameter.ash:26:5)
+  endif_75:
+    LoadLocal             Target=32 Slot=12   (loop_result_some_holding_the_loop_parameter.ash:26:5)
+    Return                Source=32   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+
+function lambda_12  [ClosureHelper from loop]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=24   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadEnv               Target=1 Index=0   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadLocal             Target=3 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadEnv               Target=4 Index=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    MakeClosure           Target=6 FuncLabel=lambda_13 EnvPtrTemp=0 EnvSizeBytes=24   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    Return                Source=6   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+
+function lambda_11  [SourceFunction from loop]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadLocal             Target=1 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadEnv               Target=4 Index=0   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    MakeClosure           Target=6 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    Return                Source=6   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+
+function _start_main  [ProgramEntry]
+  locals=11 temps=30
+    LoadConstInt          Target=0 Value=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    StoreLocal            Slot=0 Source=1   (loop_result_some_holding_the_loop_parameter.ash:1:1)
+    Alloc                 Target=2 SizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    LoadLocal             Target=3 Slot=0   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreMemOffset        BasePtr=2 OffsetBytes=0 Source=3   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=2 EnvSizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    StoreLocal            Slot=1 Source=4   (loop_result_some_holding_the_loop_parameter.ash:9:1)
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    AllocStack            Target=5 SizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadLocal             Target=6 Slot=1   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    MakeClosureStack      Target=7 FuncLabel=lambda_8 EnvPtrTemp=5 EnvSizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    StoreLocal            Slot=4 Source=7   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    Alloc                 Target=8 SizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    LoadLocal             Target=9 Slot=4   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    Borrow                Target=10 SourceTemp=9
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=10   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    MakeClosure           Target=11 FuncLabel=lambda_11 EnvPtrTemp=8 EnvSizeBytes=8   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    StoreLocal            Slot=5 Source=11   (loop_result_some_holding_the_loop_parameter.ash:25:1)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadLocal             Target=12 Slot=5   (loop_result_some_holding_the_loop_parameter.ash:30:16)
+    LoadConstInt          Target=13 Value=10   (loop_result_some_holding_the_loop_parameter.ash:30:21)
+    CallClosure           Target=14 ClosureTemp=12 ArgTemp=13   (loop_result_some_holding_the_loop_parameter.ash:30:16)
+    LoadConstInt          Target=15 Value=0   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    LoadConstStr          Target=16 StrLabel=str_2   (loop_result_some_holding_the_loop_parameter.ash:30:53)
+    LoadConstStr          Target=17 StrLabel=str_0   (loop_result_some_holding_the_loop_parameter.ash:30:65)
+    Alloc                 Target=18 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:30:52)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=16   (loop_result_some_holding_the_loop_parameter.ash:30:52)
+    StoreMemOffset        BasePtr=18 OffsetBytes=8 Source=17   (loop_result_some_holding_the_loop_parameter.ash:30:52)
+    Alloc                 Target=19 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    StoreMemOffset        BasePtr=19 OffsetBytes=0 Source=18   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    StoreMemOffset        BasePtr=19 OffsetBytes=8 Source=15   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    LoadConstStr          Target=20 StrLabel=str_1   (loop_result_some_holding_the_loop_parameter.ash:30:27)
+    LoadConstStr          Target=21 StrLabel=str_2   (loop_result_some_holding_the_loop_parameter.ash:30:39)
+    Alloc                 Target=22 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:30:26)
+    StoreMemOffset        BasePtr=22 OffsetBytes=0 Source=20   (loop_result_some_holding_the_loop_parameter.ash:30:26)
+    StoreMemOffset        BasePtr=22 OffsetBytes=8 Source=21   (loop_result_some_holding_the_loop_parameter.ash:30:26)
+    Alloc                 Target=23 SizeBytes=16   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=22   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=19   (loop_result_some_holding_the_loop_parameter.ash:30:25)
+    CallClosure           Target=24 ClosureTemp=14 ArgTemp=23   (loop_result_some_holding_the_loop_parameter.ash:30:16)
+    LoadConstInt          Target=25 Value=0   (loop_result_some_holding_the_loop_parameter.ash:30:79)
+    CallClosure           Target=26 ClosureTemp=24 ArgTemp=25   (loop_result_some_holding_the_loop_parameter.ash:30:16)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8
+    PrintInt              Source=26   (loop_result_some_holding_the_loop_parameter.ash:30:1)
+    AllocAdt              Target=27 Tag=0 FieldCount=0   (loop_result_some_holding_the_loop_parameter.ash:30:1)
+    StoreLocal            Slot=9 Source=27   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    LoadLocal             Target=28 Slot=4   (loop_result_some_holding_the_loop_parameter.ash:17:1)
+    CleanupResource       SourceTemp=28 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=10
+    CopyOutArena          DestTemp=29 SrcTemp=27 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=10
+    Return                Source=29
+

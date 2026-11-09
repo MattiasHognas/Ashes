@@ -684,7 +684,7 @@ public sealed partial class Lowering
                 Unify(activeMethod.Constraint.TypeArgs[index], prunedConstraint.TypeArgs[index]);
             }
             (int activeMethodTemp, _) = LowerExpr(new Expr.Var(activeMethod.BindingName)).AsPair();
-            return (ApplyTraitMethodArguments(activeMethodTemp, argumentTemps), Prune(current));
+            return (ApplyTraitMethodArguments(activeMethodTemp, argumentTemps, Prune(current)), Prune(current));
         }
         TraitEvidencePlan? plan = ResolveTraitEvidence(prunedConstraint, span, [], 0);
         if (plan is null)
@@ -715,14 +715,14 @@ public sealed partial class Lowering
             }
             else
             {
-                return (ApplyTraitMethodArguments(active.Value.Temp, argumentTemps), Prune(current));
+                return (ApplyTraitMethodArguments(active.Value.Temp, argumentTemps, Prune(current)), Prune(current));
             }
         }
         (int methodTemp, _) = SelectTraitDictionaryMethod(
             BuildTraitDictionary(plan, span),
             trait,
             method);
-        return (ApplyTraitMethodArguments(methodTemp, argumentTemps), Prune(current));
+        return (ApplyTraitMethodArguments(methodTemp, argumentTemps, Prune(current)), Prune(current));
     }
 
     private ActiveTraitImplementationMethod? FindActiveTraitImplementationMethod(
@@ -746,17 +746,35 @@ public sealed partial class Lowering
         }
     }
 
-    private int ApplyTraitMethodArguments(int methodTemp, IEnumerable<int> argumentTemps)
+    // A trait method is an implementation's closure applied in place, outside the ordinary call
+    // path that settles a reference-counted result. Without a request in its ownership word the
+    // closure hands its result over owned (`Show.show` returns the string `fromInt` made), and the
+    // caller, reading the call as an arena value, released it nowhere: one string per call. The
+    // last application asks for the result in the arena (bit 1), as a post call does, so a
+    // reference-counted result is copied out and its original released by the method itself.
+    private int ApplyTraitMethodArguments(int methodTemp, IEnumerable<int> argumentTemps, TypeRef resultType)
     {
+        List<int> arguments = [.. argumentTemps];
         int applied = methodTemp;
-        foreach (int argumentTemp in argumentTemps)
+        for (int i = 0; i < arguments.Count; i++)
         {
             int next = NewTemp();
-            Emit(new IrInst.CallClosure(next, applied, argumentTemp));
+            int ownershipWordTemp = i == arguments.Count - 1 && RequestsArenaTraitMethodResult(resultType)
+                ? EmitArenaResultRequestWord(-1)
+                : -1;
+            Emit(new IrInst.CallClosure(next, applied, arguments[i], ownershipWordTemp));
             applied = next;
         }
         return applied;
     }
+
+    private bool RequestsArenaTraitMethodResult(TypeRef resultType)
+        => Environment.GetEnvironmentVariable("GRC_NO_TRAITMETHODARENARESULT") is null
+            && Prune(resultType) is not TypeRef.TFun
+            && !CanArenaReset(Prune(resultType))
+            && !ContainsUnresolvedLayoutType(Prune(resultType), [])
+            && !IsGeneralRcValueType(resultType)
+            && HasCompleteCopyOut(resultType);
 
     private bool TraitDispatchTypeListsCompatible(
         IReadOnlyList<TypeRef> left,

@@ -1323,6 +1323,10 @@ public sealed partial class Lowering
         // parameter takes over.
         public bool[] TransferRetainedArgs { get; init; } = [];
 
+        // Children an arena constructor successor stored as references retained for the transfer out of
+        // an iteration-local owner, per argument: the field and the retained reference.
+        public IReadOnlyList<(int FieldIndex, int Temp, TypeRef Type)>[] TransferDuplicatedChildren { get; init; } = [];
+
         // Successors consed onto their own parameter, one cell (SingleFreshCons) or a chain of them:
         // a reference-counted one took the predecessor over as its last cell's tail.
         public bool[] ConsChainOverParameter { get; init; } = [];
@@ -1455,7 +1459,7 @@ public sealed partial class Lowering
         int resetCursorSlot = useFixedWatermark ? info.FixedCursorSlot : info.ArenaCursorSlot;
         int resetEndSlot = useFixedWatermark ? info.FixedEndSlot : info.ArenaEndSlot;
 
-        if (!allCopyable) { CopyTransferRetainedSuccessorsIntoArena(info); return; } // no arena reset for complex heap types
+        if (!allCopyable) { CopyTransferRetainedSuccessorsIntoArena(info); CopyTransferDuplicatedChildrenIntoArena(info); return; } // no arena reset for complex heap types
 
         // Two-pass copy-out. Carrying TWO+ freshly heap-allocated args across the back-edge cannot
         // be done with a single round of copy-outs to the watermark W: each copy-out compacts its
@@ -3232,13 +3236,26 @@ public sealed partial class Lowering
     /// </summary>
     private void ResolveDeferredTcoResets()
     {
-        if (_pendingTcoResets.Count == 0 && _pendingCallResultCopyOuts.Count == 0)
+        if (_pendingTcoResets.Count == 0 && _pendingCallResultCopyOuts.Count == 0 && _pendingTakenOverSettles.Count == 0)
         {
             return;
         }
 
+        SpliceAllDeferredPlaceholders();
+        _takenOverSettleRound = true;
+        SpliceAllDeferredPlaceholders();
+        _takenOverSettleRound = false;
+        ReportTakenOverDeclines();
+        _pendingTcoResets.Clear();
+        _pendingCallResultCopyOuts.Clear();
+        _pendingTakenOverSettles.Clear();
+        _takenOverAnchors.Clear();
+    }
+
+    private void SpliceAllDeferredPlaceholders()
+    {
         // The entry instruction list (_inst) is spliced in place with the live counters.
-        if (_inst.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending))
+        if (_inst.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending) || (_takenOverSettleRound && HasTakenOverAnchor(_inst)))
         {
             var entryOriginal = new List<IrInst>(_inst);
             _inst.Clear();
@@ -3251,7 +3268,8 @@ public sealed partial class Lowering
         for (int fi = 0; fi < originalCount; fi++)
         {
             var f = _funcs[fi];
-            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending))
+            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending)
+                && !(_takenOverSettleRound && HasTakenOverAnchor(f.Instructions)))
             {
                 continue;
             }
@@ -3440,7 +3458,7 @@ public sealed partial class Lowering
             RecursiveGroupExpr group => LowerRecursiveGroup(group, request),
             Expr.If iff => LowerIf(iff, request),
             Expr.Lambda lam => LowerLambda(lam, request: request),
-            Expr.Call call => LowerCall(call, request),
+            Expr.Call call => NoteTakenOverCallResult(call, LowerCall(call, request)),
             Expr.TupleLit tuple => LowerTupleLit(tuple, request),
             Expr.ListLit list => LowerListLit(list, request),
             Expr.Cons cons => LowerCons(cons, request),
@@ -3987,6 +4005,11 @@ public sealed partial class Lowering
             {
                 _coroutineHelperArity.Remove(frame.Name);
             }
+            if (frame.Kind == SequentialBindingKind.Ordinary && frame.Binding is Expr.Let settledLet)
+            {
+                SettleLetScopedTakenOver(settledLet);
+            }
+
             _currentSourceExpr = frame.Binding ?? enclosingSourceExpr;
             result = frame.Kind == SequentialBindingKind.Ordinary
                 ? PopLetScope(result.Temp, result.Type, frame.SuppressArenaReclaim)
@@ -10845,6 +10868,7 @@ public sealed partial class Lowering
     private bool TcoExitResultMayBeParameter(Expr.Lambda lam, TcoContext tco, int bodyTemp)
         => bodyTemp != _generalRcIndependentResultTemp
             && !IsNormalizedJoinTemp(bodyTemp)
+            && !IsRetainedArmJoinTemp(bodyTemp)
             && !(ExitResultOwnsItsReference && (IsNewlyProducedRcTemp(bodyTemp) || IsOwnedScopeJoinTemp(bodyTemp)))
             && (IsRuntimeManagedResultTemp(bodyTemp)
                 || ResultReachesRuntimeManagedLoopParameter(lam, tco)
@@ -11159,6 +11183,7 @@ public sealed partial class Lowering
         }
         if (runtimeManagedCaptures.Count > 0)
         {
+            _runtimeManagedCaptureLambdaLabels.Add(label);
             string dropperLabel = SynthesizeRuntimeManagedClosureDropper(runtimeManagedCaptures);
             int dropperTemp = NewTemp();
             Emit(new IrInst.LoadFuncAddr(dropperTemp, dropperLabel));
@@ -11438,7 +11463,9 @@ public sealed partial class Lowering
                 && ResolveUncopyableResultRuntimeManaged(
                     rootExpr, applied, new TypeRef.TFun(NewTypeVar(), NewTypeVar()), CopyOutKind.None, runtimeManagedResult: false))
             {
-                return LowerExpr(AppliedClosureLet(call, rootExpr, collectedArgs, applied), request).AsPair();
+                Expr.Let appliedLet = AppliedClosureLet(call, rootExpr, collectedArgs, applied);
+                _appliedClosureOrigins[appliedLet.Name] = (rootExpr, applied);
+                return LowerExpr(appliedLet, request).AsPair();
             }
         }
 
@@ -12078,6 +12105,7 @@ public sealed partial class Lowering
                 int inactiveTemp = NewTemp();
                 Emit(new IrInst.LoadConstInt(inactiveTemp, 0));
                 Emit(new IrInst.StoreLocal(activeSlot, inactiveTemp));
+                NoteSuccessorResetActiveFlagClear(inactiveTemp);
             }
         }
     }
@@ -12515,7 +12543,7 @@ public sealed partial class Lowering
             {
                 request = request.WithCallerReportedExpectedType(expectedType);
             }
-            (int Temp, TypeRef Type) lowered = LowerTcoArgumentForSlot(tco, index, argument, request);
+            (int Temp, TypeRef Type) lowered = LowerTcoArgumentCollectingTransferChildren(tco, index, argument, request);
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
             int borrowedTemp = lowered.Temp;
             lowered.Temp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, lowered.Temp, lowered.Type);
@@ -12738,6 +12766,38 @@ public sealed partial class Lowering
         {
             RecordLateCopiedCellHeadDuplicate(cons, cellTemp, tail.Temp, tail.Type);
         }
+    }
+
+    // The constructor argument being lowered, for the cells built as a field of the value.
+    private Expr? _constructorFieldArgument;
+
+    // The pattern-owner duplicate an arena cons cell took of its head, where the cell is a field of a
+    // constructor built at a loop function's result (`Spine(root = root, arguments = argument ::
+    // arguments)` over a part of the loop parameter): the return normalizes the result into a
+    // reference-counted copy that retains the head itself, and the arena cell releases nothing, so
+    // the duplicate goes to an owned slot released behind the result. A reference-counted cell owns
+    // its duplicate, and a back edge's successor cell has its duplicates released after the back
+    // edge's copy.
+    private void KeepLoopResultFieldCellHeadDuplicateOwned(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
+    {
+        if (duplicateTemp < 0
+            || !GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTFIELDCELLHEADDUP") is not null
+            || _tcoCtx?.InTailPosition != true
+            || _backEdgeArgumentPosition is not null
+            || _tcoArgumentDestination is not null
+            || _constructorFieldArgument is null
+            || !ReferenceEquals(StripOrSelf(_constructorFieldArgument), cons)
+            || IsRuntimeManagedResultTemp(cellTemp)
+            || _inst.FindLast(instruction => instruction is IrInst.Alloc allocation && allocation.Target == cellTemp) is not IrInst.Alloc { RuntimeManaged: false }
+            || ContainsUnresolvedLayoutType(Prune(headType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, duplicateTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(headType));
     }
 
     private void RecordLateCopiedCellHeadDuplicate(Expr.Cons cons, int cellTemp, int duplicateTemp, TypeRef headType)
@@ -13204,6 +13264,7 @@ public sealed partial class Lowering
                 k < tco.ParamSlots.Count && tco.AffineResvSlots.TryGetValue(tco.ParamSlots[k], out var rq) ? rq.End : -1).ToArray())
         {
             TransferRetainedArgs = newArgTemps.Select(IsTransferRetainedSuccessor).ToArray(),
+            TransferDuplicatedChildren = newArgTemps.Select(TransferDuplicatedChildrenOf).ToArray(),
             ConsChainOverParameter = collectedArgs
                 .Select((argument, index) => ConsChainsGrowAccumulators
                     && index < tco.ParamSlots.Count
@@ -13808,13 +13869,14 @@ public sealed partial class Lowering
 
         List<ConsumedRuntimeArgument> consumedRuntimeArguments = [];
         int elementSpecializationScopeDepth = -1;
+        List<int> stageClosures = [];
         CallArgumentRetainFrame? outerRetainFrame = EnterCallArgumentRetainFrame();
         (int, TypeRef)? result = null;
         try
         {
             if (LowerCallApplyArgs(call, ref rootExpr, collectedArgs, ref currentTemp, ref currentType,
                     consumedRuntimeArguments, out int runtimeManagedResultFlagTemp,
-                    ref elementSpecializationScopeDepth) is { } earlyResult)
+                    ref elementSpecializationScopeDepth, stageClosures) is { } earlyResult)
             {
                 return earlyResult;
             }
@@ -13831,6 +13893,7 @@ public sealed partial class Lowering
                 consumedRuntimeArguments,
                 runtimeManagedResultFlagTemp,
                 _discardedResultCalls.Contains(call));
+            ReleaseIntermediateStageClosures(rootExpr, stageClosures, result.Value.Item2);
             return result.Value;
         }
         finally
@@ -13838,6 +13901,171 @@ public sealed partial class Lowering
             LeaveCallArgumentRetainFrame(outerRetainFrame, result);
             LeaveElementSpecializationRoot(elementSpecializationScopeDepth);
         }
+    }
+
+    // A curried call applies each argument but the last to the closure the previous one returned.
+    // A stage whose environment holds a reference-counted capture (a local `let recursive` reading
+    // a list) is built on the reference-counted heap and owned by the call alone, so it is released
+    // once the final result is settled. An arena stage goes with the call's window; the test is on
+    // the address alone, so it needs no bookkeeping while the window is open. Only a callee whose
+    // closure object took over reference-counted captures builds such stages, so the release is
+    // emitted for those callees alone.
+    private void ReleaseIntermediateStageClosures(Expr rootExpr, List<int> stageTemps, TypeRef resultType, bool dictionaryEntry = false)
+    {
+        if (stageTemps.Count == 0
+            || !GeneralRcEnabled
+            || Prune(resultType) is TypeRef.TFun
+            || Environment.GetEnvironmentVariable("GRC_NO_STAGECLOSURERELEASE") is not null
+            || !CalleeBuildsRuntimeManagedStages(rootExpr, stageTemps.Count, dictionaryEntry))
+        {
+            return;
+        }
+
+        // The first stage a dictionary entry returns is the closure the entry built over its own
+        // environment, so its dropper releases the captures; the later stages copied them.
+        string releaser = SynthesizeStageClosureReleaser(keepsDropper: false);
+        for (int i = 0; i < stageTemps.Count; i++)
+        {
+            string stageReleaser = i == 0 && dictionaryEntry ? SynthesizeStageClosureReleaser(keepsDropper: true) : releaser;
+            Emit(new IrInst.RcDrop(stageTemps[i], "Function", RuntimeManaged: true, StructuralDropperLabel: stageReleaser));
+        }
+    }
+
+    // The test and the release live in one helper per program, so a call site adds a single
+    // instruction: stage 1 has tens of thousands of curried calls, and the inline form grew stage 0
+    // past its build cap. The captures belong to the first stage, whose release runs the dropper; a
+    // later stage copied them without references, so only its own cells are freed.
+    private string SynthesizeStageClosureReleaser(bool keepsDropper)
+    {
+        string? cached = keepsDropper ? _owningStageClosureReleaserLabel : _stageClosureReleaserLabel;
+        if (cached is { } existing)
+        {
+            return existing;
+        }
+
+        string label = $"__rc_stage_release_{_nextLambdaId++}";
+        if (keepsDropper)
+        {
+            _owningStageClosureReleaserLabel = label;
+        }
+        else
+        {
+            _stageClosureReleaserLabel = label;
+        }
+
+        SynthesizedBodyState saved = BeginSynthesizedBody();
+        NewLocal(); // slot 0: env (implicit)
+        int stageSlot = NewLocal(); // slot 1: the stage closure (implicit)
+        int stageTemp = NewTemp();
+        int countedTemp = NewTemp();
+        string arenaLabel = NewLabel("rc_stage_closure_arena");
+        Emit(new IrInst.LoadLocal(stageTemp, stageSlot));
+        Emit(new IrInst.IsReferenceCounted(countedTemp, stageTemp));
+        Emit(new IrInst.JumpIfFalse(countedTemp, arenaLabel));
+        if (!keepsDropper)
+        {
+            int noDropperTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(noDropperTemp, 0));
+            Emit(new IrInst.StoreMemOffset(stageTemp, 24, noDropperTemp));
+        }
+
+        Emit(new IrInst.RcDrop(stageTemp, "Function", RuntimeManaged: true));
+        Emit(new IrInst.Label(arenaLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(resultTemp, 0));
+        Emit(new IrInst.Return(resultTemp));
+        AddFunction(
+            new IrFunction(label, new List<IrInst>(_inst), _nextLocalSlot, _nextTempSlot, true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.StructuralOwnerDropper,
+                CompilerOwner: new CompilerFunctionOwner(CompilerFunctionOwnerKind.RuntimeLayout, keepsDropper ? "stage-closure-owning" : "stage-closure"),
+                StableDiscriminator: keepsDropper ? "stage-closure-owning" : "stage-closure"));
+        RestoreEnclosingBodyState(saved);
+        return label;
+    }
+
+    private string? _stageClosureReleaserLabel;
+
+    private string? _owningStageClosureReleaserLabel;
+
+    // The callee and applied-argument count behind each `__applied_closure` let (see AppliedClosureLet).
+    private readonly Dictionary<string, (Expr Root, int Applied)> _appliedClosureOrigins = new(StringComparer.Ordinal);
+
+    // The label of the stage a call applies its first argument to: a known function's own label, or
+    // for an applied-closure let, the known callee's label advanced by the stages already applied.
+    private bool TryResolveStageEntryLabel(Expr rootExpr, out string label)
+    {
+        if (rootExpr is not Expr.Var variable
+            || !_appliedClosureOrigins.TryGetValue(variable.Name, out (Expr Root, int Applied) origin))
+        {
+            return TryResolveKnownFunctionLabel(rootExpr, out label);
+        }
+
+        if (!TryResolveStageEntryLabel(origin.Root, out label))
+        {
+            return false;
+        }
+
+        for (int applied = 0; applied < origin.Applied; applied++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? returned))
+            {
+                return false;
+            }
+
+            label = returned;
+        }
+
+        return true;
+    }
+
+    // Labels of the lambdas whose closure object holds reference-counted captures.
+    private readonly HashSet<string> _runtimeManagedCaptureLambdaLabels = new(StringComparer.Ordinal);
+
+    // A trait-constrained callee's entry takes its dictionary and returns the first real stage from
+    // a match over the dictionary, so no returned closure is recorded for it: the entry's own body
+    // building a closure whose object holds reference-counted captures answers instead.
+    private bool DictionaryEntryBuildsRuntimeManagedStage(string entryLabel)
+    {
+        foreach (IrFunction function in _funcs)
+        {
+            if (string.Equals(function.Label, entryLabel, StringComparison.Ordinal))
+            {
+                return function.Instructions.Exists(instruction =>
+                    instruction is IrInst.MakeClosure { RuntimeManaged: true } closure
+                    && _runtimeManagedCaptureLambdaLabels.Contains(closure.FuncLabel));
+            }
+        }
+
+        return false;
+    }
+
+    // Whether a known callee returns, within the first stageCount stages, a closure whose object holds
+    // reference-counted captures: the chain of returned closure labels is followed from its entry.
+    private bool CalleeBuildsRuntimeManagedStages(Expr rootExpr, int stageCount, bool dictionaryEntry = false)
+    {
+        if (!TryResolveStageEntryLabel(rootExpr, out string label))
+        {
+            return false;
+        }
+
+        for (int stage = 0; stage < stageCount; stage++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? returned))
+            {
+                return stage == 0 && dictionaryEntry && DictionaryEntryBuildsRuntimeManagedStage(label);
+            }
+
+            if (_runtimeManagedCaptureLambdaLabels.Contains(returned))
+            {
+                return true;
+            }
+
+            label = returned;
+        }
+
+        return false;
     }
 
     // The tail of LowerCallGeneral once every argument is applied: unify the result type, normalize
@@ -14418,6 +14646,12 @@ public sealed partial class Lowering
 
     private bool TryResolveKnownFunctionLabel(Expr expression, out string label)
     {
+        if (expression is Expr.QualifiedVar qualified
+            && TryGetExportedQualifiedBindingName(qualified, out string exportedBindingName))
+        {
+            return TryResolveKnownFunctionLabel(exportedBindingName, out label);
+        }
+
         if (expression is not Expr.Var variable)
         {
             label = "";
@@ -14486,7 +14720,8 @@ public sealed partial class Lowering
         ref int currentTemp, ref TypeRef currentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments,
         out int runtimeManagedResultFlagTemp,
-        ref int elementSpecializationScopeDepth)
+        ref int elementSpecializationScopeDepth,
+        List<int> stageClosures)
     {
         runtimeManagedResultFlagTemp = -1;
         PreconstrainKnownCallArgumentTypes(collectedArgs, currentType);
@@ -14531,6 +14766,10 @@ public sealed partial class Lowering
                 call, rootExpr, collectedArgs, i, funType, argTemp, argType,
                 ref currentTemp, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
+            if (i < collectedArgs.Count - 1)
+            {
+                stageClosures.Add(currentTemp);
+            }
         }
 
         return null;
@@ -14616,6 +14855,8 @@ public sealed partial class Lowering
             if (IsToSpaceCopySafeType(prunedArgType))
             {
                 argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
+                    || OwnsGenericAdtArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
+                    || OwnsGenericListArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
                     ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
                     : EmitDeepCopyToSpace(argTemp, prunedArgType);
             }
@@ -14644,7 +14885,7 @@ public sealed partial class Lowering
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
             RequestsArenaResult(funType.Ret)
-                || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, resultType, needsResultOwnership)),
+                || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, collectedArgs.Count, resultType, needsResultOwnership)),
             i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
             needsResultOwnership && IsNormalizableUncoveredRecord(resultType),
             currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
@@ -14664,6 +14905,67 @@ public sealed partial class Lowering
             return false;
         }
 
+        return FinalResultSettlesHandedOverArgument(funType, remainingArguments);
+    }
+
+    private static bool GenericAdtArgumentEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_GENERICADTARG") is null;
+
+    // A value of the contract's types passed to a generic parameter goes the same way: an owned
+    // reference-counted reference, or a reference-counted copy of an arena value, instead of a deep
+    // copy into the persistent to-space region, which nothing reclaims.
+    private bool OwnsGenericAdtArgument(TypeRef argumentType, TypeRef.TFun funType, int remainingArguments)
+        => GenericAdtArgumentEnabled
+            && GeneralRcEnabled
+            && CanTestRepresentation
+            && argumentType is TypeRef.TNamedType
+            && IsGeneralRcValueType(argumentType)
+            && FinalResultSettlesHandedOverArgument(funType, remainingArguments);
+
+    private static bool GenericListArgumentEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_GENERICLISTARG") is null;
+
+    // A list of strings, inline values or the contract's values passed to a generic parameter goes the
+    // same way: copied onto the reference-counted heap (a list already there is retained) and handed
+    // over, instead of a deep copy into the persistent to-space region, which a loop calling a generic
+    // helper with a fresh list grew by one copy per call.
+    private bool OwnsGenericListArgument(TypeRef argumentType, TypeRef.TFun funType, int remainingArguments)
+        => GenericListArgumentEnabled
+            && GeneralRcEnabled
+            && CanTestRepresentation
+            && argumentType is TypeRef.TList { Element: var element }
+            && (Prune(element) is TypeRef.TStr || CanArenaReset(Prune(element)) || IsGeneralRcValueType(element))
+            && FinalResultSettlesHandedOverListArgument(funType, remainingArguments);
+
+    // A final result of the contract's types settles a handed-over list too: the caller normalizes it
+    // onto the reference-counted heap, retaining or copying whatever it keeps of the argument.
+    private bool FinalResultSettlesHandedOverListArgument(TypeRef.TFun funType, int remainingArguments)
+    {
+        if (FinalResultSettlesHandedOverArgument(funType, remainingArguments))
+        {
+            return true;
+        }
+
+        TypeRef resultType = Prune(funType.Ret);
+        for (int remaining = remainingArguments; remaining > 0; remaining--)
+        {
+            if (resultType is not TypeRef.TFun stage)
+            {
+                return false;
+            }
+
+            resultType = Prune(stage.Ret);
+        }
+
+        return resultType is not TypeRef.TFun
+            && !ContainsUnresolvedLayoutType(resultType, [])
+            && IsGeneralRcValueType(resultType);
+    }
+
+    // Whether the call's final result is a value the caller copies out and settles a handed-over
+    // argument's reference against: no closure, and a layout the copy-out knows.
+    private bool FinalResultSettlesHandedOverArgument(TypeRef.TFun funType, int remainingArguments)
+    {
         TypeRef resultType = Prune(funType.Ret);
         for (int remaining = remainingArguments; remaining > 0; remaining--)
         {
@@ -14687,7 +14989,9 @@ public sealed partial class Lowering
         TypeRef argumentType,
         List<ConsumedRuntimeArgument> consumedRuntimeArguments)
     {
-        int ownedTemp = EmitReferenceOrCopy(argumentTemp, () =>
+        int ownedTemp = argumentType is TypeRef.TNamedType or TypeRef.TList
+            ? EmitRuntimeManagedTcoDeepCopy(argumentTemp, argumentType)
+            : EmitReferenceOrCopy(argumentTemp, () =>
         {
             int copiedTemp = NewTemp();
             Emit(new IrInst.CopyOutArena(
@@ -14722,7 +15026,8 @@ public sealed partial class Lowering
                     && !(_tcoCtx is { } tco && IsTcoSelfCallRoot(rootExpr, tco))
                     && !CompiledResultRuntimeManaged(rootExpr, argumentCount))
                 || IsSpecializedListResultOwnedAtRunTime(rootExpr, argumentCount, resultType)
-                || CapturedSelfListResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
+                || CapturedSelfListResultOwnedAtRunTime(rootExpr, argumentCount, resultType)
+                || LoopSelfCallAdtResultOwnedAtRunTime(rootExpr, argumentCount, resultType),
             _ => false,
         };
 
@@ -14762,7 +15067,7 @@ public sealed partial class Lowering
     // reference-counted heap (a join of a fresh `None` beside a field it read) would hand over a
     // reference nothing releases, so the call asks for an arena result, which such a callee
     // deep-copies into the arena before releasing its own.
-    private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, TypeRef resultType, bool needsResultOwnership)
+    private bool RequestsArenaResultFromUnknownCallee(Expr rootExpr, int argumentCount, TypeRef resultType, bool needsResultOwnership)
         => Environment.GetEnvironmentVariable("GRC_NO_UNKNOWNCALLEEARENA") is null
             && !needsResultOwnership
             && rootExpr is not Expr.Lambda
@@ -14772,7 +15077,15 @@ public sealed partial class Lowering
             && GetCallCopyOutKind(resultType, out _, out _) == CopyOutKind.None
             && !IsGeneralRcValueType(resultType)
             && CanNormalizeRuntimeManagedResultIntoArena(resultType)
-            && !TryResolveKnownFunctionLabel(rootExpr, out _);
+            && (!TryResolveKnownFunctionLabel(rootExpr, out string label) || CalleeResultUnsettled(label, argumentCount));
+
+    // A callee whose label resolves but whose body has not been lowered yet (a function's non-tail call
+    // to itself, or to one later in its group) has no compiled result fact to read, so the caller takes
+    // its result as an arena value: without the request, a callee that turns out to normalize its
+    // result onto the reference-counted heap hands over a reference nothing releases.
+    private bool CalleeResultUnsettled(string label, int argumentCount)
+        => Environment.GetEnvironmentVariable("GRC_NO_UNSETTLEDCALLEEARENA") is null
+            && !TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out _);
 
     // The hidden ownership word carrying the arena-result request (bit 1) beside the argument
     // ownership flag (bit 0), when the call passes one.
@@ -15041,6 +15354,7 @@ public sealed partial class Lowering
         ref int runtimeManagedResultFlagTemp)
     {
         CheckClosureCapturesLiveAtApplication(rootExpr, closureTemp);
+        NoteTakenOverArgument(rootExpr, argument, argumentIndex, argumentType);
 
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
         int originalArgumentTemp = argumentTemp;
@@ -15688,6 +16002,7 @@ public sealed partial class Lowering
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
+            ParkArgumentsHandedToCurryStage(consumedRuntimeArguments);
             return;
         }
 
@@ -15746,6 +16061,43 @@ public sealed partial class Lowering
         }
     }
 
+    // A curry stage's result is a closure whose environment keeps the argument (`devirt(known)` handed
+    // to a map): a stage that does not adopt a reference stores the pointer in an arena environment,
+    // so the reference handed over for the final result waits in an owned slot, released once the
+    // function's result or the loop's successors hold references of their own, as one kept by an
+    // arena result does. Released by nobody, every such call left the whole argument behind.
+    private void ParkArgumentsHandedToCurryStage(IReadOnlyList<ConsumedRuntimeArgument> consumedRuntimeArguments)
+    {
+        if (!GeneralRcEnabled || Environment.GetEnvironmentVariable("GRC_NO_CURRYSTAGESLOT") is not null)
+        {
+            return;
+        }
+
+        HashSet<int> parked = [];
+        foreach (ConsumedRuntimeArgument argument in consumedRuntimeArguments)
+        {
+            TypeRef valueType = Prune(argument.Type);
+            if (argument.AdoptionFlagTemp < 0
+                || CanArenaReset(valueType)
+                || valueType is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(valueType, [])
+                || !parked.Add(argument.Temp))
+            {
+                continue;
+            }
+
+            int ownedSlot = NewLocal();
+            Emit(new IrInst.StoreLocal(ownedSlot, argument.Temp));
+            string keptLabel = NewLabel("rc_curry_stage_kept");
+            Emit(new IrInst.JumpIfFalse(argument.AdoptionFlagTemp, keptLabel));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
+            Emit(new IrInst.Label(keptLabel));
+            RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+        }
+    }
+
     // A reference handed over for the callee's result to keep, where the result is an arena value
     // that may hold the argument and that the caller does not copy at the call: the arena result
     // never releases what it holds, so the reference goes to an owned slot instead, released once
@@ -15768,6 +16120,14 @@ public sealed partial class Lowering
             return;
         }
 
+        KeepHandedOverArgumentInOwnedSlot(temp, valueType, adoptionFlagTemp);
+    }
+
+    // The owned slot a handed-over reference waits in until the function's result or the loop's
+    // successors hold references of their own; a callee that adopted the reference consumed it, so
+    // the slot is left empty.
+    private void KeepHandedOverArgumentInOwnedSlot(int temp, TypeRef valueType, int adoptionFlagTemp, bool handedOverParts = false)
+    {
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, temp));
         string keptLabel = NewLabel("rc_handed_over_kept");
@@ -15776,8 +16136,21 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         Emit(new IrInst.StoreLocal(ownedSlot, zeroTemp));
         Emit(new IrInst.Label(keptLabel));
-        RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, valueType);
+        if (handedOverParts)
+        {
+            _generalRcOwnedSlots[_generalRcOwnedSlots.IndexOf(owned)] = owned with { HandedOverParts = true };
+        }
     }
+
+    // A reference handed over for the callee's result to keep, where the result's type has no place
+    // for the argument itself but may hold its parts and the result is an arena value the caller does
+    // not copy at the call: the arena result holds the parts as raw references, so the argument goes
+    // to an owned slot and is released with its parts once the function's result or the loop's
+    // successors hold references of their own, where releasing only its spine at the call would leave
+    // one reference on every part the result did not keep.
+    private static bool HandedOverPartsSlotRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_HANDEDPARTSSLOT") is null;
 
     // A call whose result an applied lambda discards (`body(x) |> (given (_) -> ...)`): nothing reads
     // the result, so a reference handed over for it to keep is released right after the call when
@@ -15826,6 +16199,17 @@ public sealed partial class Lowering
 
         bool resultMayHoldParts = HeapPartTypes(valueType).Exists(part =>
             CallResultMayContainArgumentType(resultType, part, new HashSet<string>(StringComparer.Ordinal)));
+        if (resultMayHoldParts
+            && GeneralRcEnabled
+            && HandedOverPartsSlotRuleEnabled
+            && !calleeCompiledResultVerifiedRuntimeManaged
+            && !resultDeepCopied
+            && !resultCopiedWithElements)
+        {
+            KeepHandedOverArgumentInOwnedSlot(temp, valueType, adoptionFlagTemp, handedOverParts: true);
+            return;
+        }
+
         string adoptedLabel = NewLabel("rc_handed_over_adopted");
         string releaseLabel = NewLabel("rc_handed_over_release");
         Emit(new IrInst.JumpIfFalse(adoptionFlagTemp, releaseLabel));
@@ -16502,6 +16886,30 @@ public sealed partial class Lowering
     // back to the call result itself, so later passes (lifetime placement keeping a borrowed argument
     // alive while the result that shares it is used, say) see the call exactly as they would have
     // without the deferral.
+    // The calls lowering recorded as borrowing their argument or asking for an arena result are found
+    // by reference; a call the splice rebuilds with renamed temps keeps its place in both sets
+    // (`GRC_NO_SPLICEKEEPSCALLSETS`). Losing it made placement duplicate a borrowed argument.
+    private void CarryCallSetMembership(IrInst raw, IrInst rebuilt)
+    {
+        if (ReferenceEquals(raw, rebuilt)
+            || raw is not IrInst.CallClosure original
+            || rebuilt is not IrInst.CallClosure renamed
+            || Environment.GetEnvironmentVariable("GRC_NO_SPLICEKEEPSCALLSETS") is not null)
+        {
+            return;
+        }
+
+        if (_borrowedArgumentCalls.Remove(original))
+        {
+            _borrowedArgumentCalls.Add(renamed);
+        }
+
+        if (_arenaResultRequestingCalls.Remove(original))
+        {
+            _arenaResultRequestingCalls.Add(renamed);
+        }
+    }
+
     private void SpliceDeferredPlaceholders(IReadOnlyList<IrInst> original, Action<IrInst> emit)
     {
         var renames = new Dictionary<int, int>();
@@ -16510,6 +16918,7 @@ public sealed partial class Lowering
         foreach (IrInst raw in original)
         {
             IrInst inst = renames.Count > 0 ? IrOptimizer.RemapSourceTemps(raw, renames) : raw;
+            CarryCallSetMembership(raw, inst);
             if (pendingReloadSlot >= 0)
             {
                 bool isReload = inst is IrInst.LoadLocal reload && reload.Slot == pendingReloadSlot;
@@ -16518,6 +16927,7 @@ public sealed partial class Lowering
                 if (isReload)
                 {
                     renames[((IrInst.LoadLocal)inst).Target] = pendingReloadSource;
+                    CarryTakenOverAnchors(raw, renames);
                     continue;
                 }
 
@@ -16547,6 +16957,8 @@ public sealed partial class Lowering
             {
                 emit(inst);
             }
+
+            CarryTakenOverAnchors(raw, renames);
         }
     }
 
@@ -17208,7 +17620,7 @@ public sealed partial class Lowering
             || Environment.GetEnvironmentVariable("GRC_NO_ARENALISTFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
-            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
+            || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type)) || IsLiteralFreshStringHead(head.Type)))
         {
             return;
         }
@@ -17217,6 +17629,13 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
+
+    // A fresh string a literal's arena cell holds is retained wherever a callee keeps it (a tuple or
+    // cell storing it takes a reference of its own), so the cell's reference is released like any other
+    // fresh head.
+    private bool IsLiteralFreshStringHead(TypeRef type)
+        => Environment.GetEnvironmentVariable("GRC_NO_LITERALFRESHSTRHEAD") is null
+            && Prune(type) is TypeRef.TStr;
 
     // A literal's cell over a reference-counted cell is reference-counted too. An arena cell would
     // be the only holder of the cell after it, and the arena is reclaimed without releasing what
@@ -17428,6 +17847,10 @@ public sealed partial class Lowering
         else if (CanRuntimeManageTcoListElement(elementType))
         {
             normalizedTemp = EmitRuntimeManagedTcoDeepCopy(lowered.Temp, elementType);
+            if (elementType is TypeRef.TTuple && normalizedTemp != lowered.Temp)
+            {
+                ReleaseNormalizedHeadTupleDuplicates(lowered.Temp);
+            }
         }
         else
         {
@@ -17503,6 +17926,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, elements[i].Temp));
         }
         RecordAggregateBytesProvenance(tupleTemp, elements);
+        RecordArenaTupleOwnerDuplicates(tupleTemp, duplicates, runtimeManaged);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
@@ -18063,6 +18487,7 @@ public sealed partial class Lowering
             };
         }
 
+        head = CopyFreshStringHeadIntoArenaCell(cons, head, request, lateHeadDuplicate >= 0);
         (int cellTemp, TypeRef cellType) = LowerConsCell(
             head.Temp,
             tailTemp,
@@ -18071,6 +18496,7 @@ public sealed partial class Lowering
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
+        KeepLoopResultFieldCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
     }
@@ -18164,6 +18590,7 @@ public sealed partial class Lowering
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ESCAPINGCELLFRESHHEAD") is not null
             || !IsNewlyProducedRcTemp(head.Temp)
+            || CopiesFreshScalarListHeadIntoLoopCell(head)
             || ContainsUnresolvedLayoutType(Prune(head.Type), [])
             || !(IsGeneralRcValueType(head.Type) || IsCopiedOutFreshHeadType(Prune(head.Type))))
         {
@@ -18174,6 +18601,86 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(ownedSlot, head.Temp));
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(head.Type));
     }
+
+    // An arena cell never releases its head, so a newly produced reference-counted string (a
+    // perform's adopted result) stored there would outlive every reader: the caller's copy-out copies
+    // the heads and nothing drops the original. The same holds for a reference the cell took on a
+    // binding's string (a `let` owner read in head position). The cell stores an arena copy, and the
+    // original or the reference is released right away. A duplicate kept for a late release stays.
+    private LoweredValue CopyFreshStringHeadIntoArenaCell(Expr.Cons cons, LoweredValue head, LoweredValueRequest request, bool lateDuplicate)
+    {
+        if (TryCopyFreshScalarListHeadIntoArenaCell(cons, head, request, lateDuplicate) is { } copiedList)
+        {
+            return copiedList;
+        }
+
+        bool retained = DefinitionOf(head.Temp) is IrInst.RcDup { RuntimeManaged: true };
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARENACELLFRESHHEAD") is not null
+            || Prune(head.Type) is not TypeRef.TStr
+            || lateDuplicate
+            || !(IsNewlyProducedRcTemp(head.Temp) || retained)
+            || IsBackEdgeCopiedCell(cons)
+            || (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+                && IsRuntimeManageableListElement(head.Type, head.Temp)))
+        {
+            return head;
+        }
+
+        int copiedTemp = NewTemp();
+        Emit(new IrInst.CopyOutArena(copiedTemp, head.Temp, -1, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+        if (IsNewlyProducedRcTemp(head.Temp))
+        {
+            ReleaseConsumedOwnedOperand(head.Temp);
+        }
+        else
+        {
+            Emit(new IrInst.RcDrop(head.Temp, "String", RuntimeManaged: true));
+            ForgetCallArgumentArenaRetain(head.Temp);
+        }
+
+        return CreateLoweredValue(copiedTemp, head.Type);
+    }
+
+    // The same holds for a newly produced reference-counted list of scalars (a call's owned `List(Int)`
+    // result pushed onto an arena worklist of lists): the arena cell stores an arena copy of its spine
+    // and the original is released right away, where the cell would otherwise be its only holder and
+    // never release it.
+    // Only inside a loop: an owned slot there holds one iteration's value and loses the others to the
+    // successors, while outside a loop the escaping cell's owned slot releases the head at the exit.
+    private LoweredValue? TryCopyFreshScalarListHeadIntoArenaCell(Expr.Cons cons, LoweredValue head, LoweredValueRequest request, bool lateDuplicate)
+    {
+        if (!CopiesFreshScalarListHeadIntoLoopCell(head)
+            || lateDuplicate
+            || IsBackEdgeCopiedCell(cons)
+            || (request.EmitsRuntime(LoweredValueRuntimeRepresentation.List)
+                && IsRuntimeManageableListElement(head.Type, head.Temp)))
+        {
+            return null;
+        }
+
+        int copiedTemp = NewTemp();
+        Emit(new IrInst.CopyOutList(copiedTemp, head.Temp, IrInst.ListHeadCopyKind.Inline, RuntimeManaged: false, IrInst.CopyOutPurpose.IndependentClone));
+        string skipLabel = NewLabel("arena_cell_list_head_released");
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int presentTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(presentTemp, head.Temp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(presentTemp, skipLabel));
+        int referenceCountedTemp = NewTemp();
+        Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, head.Temp));
+        Emit(new IrInst.JumpIfFalse(referenceCountedTemp, skipLabel));
+        EmitRuntimeManagedChildDrop(head.Temp, head.Type);
+        Emit(new IrInst.Label(skipLabel));
+        _tempOwnershipFacts[head.Temp] = _tempOwnershipFacts[head.Temp] with { Ownership = LoweredTempOwnershipKind.Transferred };
+        return CreateLoweredValue(copiedTemp, head.Type);
+    }
+
+    private bool CopiesFreshScalarListHeadIntoLoopCell(LoweredValue head)
+        => Environment.GetEnvironmentVariable("GRC_NO_ARENACELLFRESHLISTHEAD") is null
+            && _tcoCtx is not null
+            && Prune(head.Type) is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && IsNewlyProducedRcTemp(head.Temp);
 
     private bool IsInnermostLoopChainCell(Expr.Cons cons)
         => _loopChainTailCells.Contains(cons)

@@ -21,3 +21,14 @@ for src in t0 t4; do
     code=$?
     echo "$tag $src: exit=$code output=$([ -x "$J/tiny.out" ] && "$J/tiny.out" 2>&1 | head -1)"
 done
+# Stage-1 miscompile guards: programs stage 1 once compiled into crashing or leaking code, each run at two
+# rounds with the leak counter, which must print the expected result and one live cell.
+for guard in "$HERE"/smoke/*.ash; do
+    name=$(basename "$guard" .ash)
+    rm -f "$J/tiny.out"
+    bash -c "ulimit -s 1048576; ASHES_RC_LEAKCHECK=1 '$J/s1-$tag' compile '$guard' -o '$J/tiny.out'" > "$T/q-$tag.$name.log" 2>&1
+    output=$([ -x "$J/tiny.out" ] && timeout 60 "$J/tiny.out" 2>&1 | tr '\n' ' ')
+    expected=$(head -1 "$guard" | sed -n 's/^\/\/ expect: //p')
+    [ "$output" = "$expected ashes-rc-live 1 " ] && verdict=ok || verdict=FAIL
+    echo "$tag guard $name: $verdict output=$output"
+done

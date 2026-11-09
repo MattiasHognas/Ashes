@@ -137,7 +137,7 @@ public sealed partial class Lowering
     // Binders are the source names bound to the value or to its parts (the let it is bound by, the
     // pattern bindings of a match on it), shared between the slot and its predecessor slot.
     // Origin, on a predecessor, is the owned slot whose earlier value it holds.
-    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1);
+    private sealed record GeneralRcOwnedSlot(int Slot, TypeRef Type, TcoContext? Loop, int FreshSlot = -1, bool Predecessor = false, GeneralRcBranch[]? Branches = null, HashSet<string>? Binders = null, int Origin = -1, bool HandedOverParts = false, bool PartDuplicate = false);
 
     // One arm of a match or branch of an if, by the join it belongs to.
     private readonly record struct GeneralRcBranch(string Join, int Arm);
@@ -514,7 +514,7 @@ public sealed partial class Lowering
     private bool AllStoredIntoOwnedResults(HashSet<int> callTargets, List<GeneralRcOwnedSlot> loopSlots)
     {
         HashSet<int> ownedResultSlots = loopSlots.Where(owned => !owned.Predecessor).Select(owned => owned.Slot).ToHashSet();
-        HashSet<int> pending = [.. callTargets];
+        HashSet<int> pending = CurriedChainEnabled ? [.. callTargets.Select(CurriedChainResult)] : [.. callTargets];
         foreach (IrInst inst in _inst)
         {
             if (inst is IrInst.StoreLocal store && pending.Contains(store.Source) && ownedResultSlots.Contains(store.Slot))
@@ -524,6 +524,53 @@ public sealed partial class Lowering
         }
 
         return pending.Count == 0;
+    }
+
+    private static bool CurriedChainEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_CURRIEDCHAINRESULT") is null;
+
+    // The result a curried call ends in: a call's result that is only ever the closure of the next
+    // call of the chain (or has its header read for that call's flags) is a partial application,
+    // which holds the argument only until the chain's last call returns.
+    private int CurriedChainResult(int callTarget)
+    {
+        int current = callTarget;
+        for (int hop = 0; hop < 64; hop++)
+        {
+            int next = -1;
+            foreach (IrInst inst in _inst)
+            {
+                switch (inst)
+                {
+                    case IrInst.CallClosure call when call.ClosureTemp == current && call.ArgTemp != current && call.RuntimeManagedArgumentFlagTemp != current:
+                        if (next >= 0)
+                        {
+                            return current;
+                        }
+
+                        next = call.Target;
+                        break;
+                    case IrInst.LoadMemOffset read when read.BasePtr == current:
+                        break;
+                    default:
+                        if (StateMachineTransform.GetUsedTemps(inst).Contains(current))
+                        {
+                            return current;
+                        }
+
+                        break;
+                }
+            }
+
+            if (next < 0)
+            {
+                return current;
+            }
+
+            current = next;
+        }
+
+        return current;
     }
 
     // The loop parameter positions an earlier iteration's value no name was bound to was handed to
@@ -541,10 +588,51 @@ public sealed partial class Lowering
         }
 
         HashSet<int> positions = [];
-        return HandedOnCallTargets(predecessor.Origin, SavedInto(predecessor, loopSlots), info.ParamSlots, positions) is { } callTargets
-            && AllStoredIntoOwnedResults(callTargets, loopSlots)
-            ? positions
-            : null;
+        if (HandedOnCallTargets(predecessor.Origin, SavedInto(predecessor, loopSlots), info.ParamSlots, positions) is not { } callTargets
+            || !AllStoredIntoOwnedResults(callTargets, loopSlots))
+        {
+            return null;
+        }
+
+        AddCallResultSuccessorPositions(predecessor.Origin, callTargets, info.ParamSlots, positions);
+        return positions;
+    }
+
+    // The loop parameters a call's result is handed to as a successor: the result may keep the
+    // argument it was given (a key stored into an association list), so those parameters can hold
+    // the earlier iteration's value as much as a parameter it was handed to directly. The calls are
+    // the ones reading the owned slot and the ones given the value the slot was stored from.
+    private void AddCallResultSuccessorPositions(int ownedSlot, HashSet<int> callTargets, int[] parameterSlots, HashSet<int> positions)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_CHAINRESULTSUCCESSOR") is not null)
+        {
+            return;
+        }
+
+        HashSet<int> storedValues = _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == ownedSlot).Select(store => store.Source).ToHashSet();
+        HashSet<int> targets = [.. callTargets];
+        foreach (IrInst inst in _inst)
+        {
+            if (inst is IrInst.CallClosure call && storedValues.Contains(call.ArgTemp) && !storedValues.Contains(call.ClosureTemp))
+            {
+                targets.Add(call.Target);
+            }
+            else if (inst is IrInst.CallKnown known && storedValues.Contains(known.ArgTemp) && !storedValues.Contains(known.EnvTemp))
+            {
+                targets.Add(known.Target);
+            }
+        }
+
+        HashSet<int> results = CurriedChainEnabled ? [.. targets.Select(CurriedChainResult)] : targets;
+        foreach (IrInst inst in _inst)
+        {
+            if (inst is IrInst.StoreLocal store
+                && results.Contains(store.Source)
+                && Array.IndexOf(parameterSlots, store.Slot) is >= 0 and var position)
+            {
+                positions.Add(position);
+            }
+        }
     }
 
     // The results of the calls an owned slot's value is the argument of, or null when it is read
@@ -679,9 +767,33 @@ public sealed partial class Lowering
     private readonly Dictionary<int, bool[]> _generalRcBackEdgeStrictParameterParts = [];
 
     private bool IsStrictLoopParameterPart(Expr argument, TcoContext tco)
-        => argument is Expr.Var variable
-            && Lookup(variable.Name) is Binding.Local local
-            && (tco.ParamSlots.Contains(local.Slot) || IsLoopParameterPartSlot(local.Slot));
+        => (argument is Expr.Var variable
+                && Lookup(variable.Name) is Binding.Local local
+                && (tco.ParamSlots.Contains(local.Slot) || IsLoopParameterPartSlot(local.Slot)))
+            || IsInlineConsOverLoopParameterPart(argument, tco);
+
+    // Inline heads consed onto a loop parameter (`loadPosition :: removed` over a `List(Int)`): the
+    // new cells hold only scalars and the tail is the parameter's value from before this iteration,
+    // so the successor holds no part of a value this iteration produced, whatever its type allows.
+    private bool IsInlineConsOverLoopParameterPart(Expr argument, TcoContext tco)
+        => Environment.GetEnvironmentVariable("GRC_NO_INLINECONSPARAMETERPART") is null
+            && argument is Expr.Cons cons
+            && InnermostConsTail(cons) is Expr.Var tail
+            && Lookup(tail.Name) is Binding.Local local
+            && Prune(local.T) is TypeRef.TList list
+            && CanArenaReset(Prune(list.Element))
+            && IsStrictLoopParameterPart(tail, tco);
+
+    private static Expr InnermostConsTail(Expr.Cons cons)
+    {
+        Expr tail = cons.Tail;
+        while (tail is Expr.Cons inner)
+        {
+            tail = inner.Tail;
+        }
+
+        return tail;
+    }
 
     private bool IsLoopParameterPart(Expr argument, TcoContext tco)
         => argument is Expr.Var variable
@@ -1051,6 +1163,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
             ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
             ReleaseHandedOverListHeads(callResultType, partTemps.MaskTemp, currentTemp);
+            TrySettleTakenOverBehindCopy(callResultType, currentTemp);
 
             Emit(new IrInst.Label(ownedLabel));
         }
@@ -1058,6 +1171,7 @@ public sealed partial class Lowering
         EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
         GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
         RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders, ownedSlot);
+        NoteTakenOverOwnedSlotSource(owned);
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -1087,7 +1201,7 @@ public sealed partial class Lowering
             return bodyTemp;
         }
 
-        bool contractResult = IsGeneralRcValueType(pruned);
+        bool contractResult = DropPartDuplicateSlotsWhenTheResultCopiesAnyway(bodyTemp, IsGeneralRcValueType(pruned));
         bool normalizesOwnedResult = !contractResult
             && _generalRcOwnedSlots.Count > 0
             && !CanArenaReset(pruned)
@@ -1162,6 +1276,8 @@ public sealed partial class Lowering
 
         List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
         ReleaseOwnedSlotsBehindIndependentForwardedResult(resultTemp, resultType, releasable, inLoop);
+        TryTakeOverAtReturn(label, resultType, [.. _generalRcOwnedSlots.Except(releasable)]);
+        EmitKeptOwnedSlotChildPreservingDrops(resultType, [.. _generalRcOwnedSlots.Except(releasable)]);
         int handedTemp = TryHandOverOwnedResultWhole(label, resultTemp, resultType, releasable, inLoop);
         if (handedTemp >= 0)
         {
@@ -1170,6 +1286,46 @@ public sealed partial class Lowering
 
         EmitGeneralRcOwnedSlotDrops(releasable);
         return resultTemp;
+    }
+
+    // A handed-over argument kept in an owned slot for its parts (KeepHandedOverArgumentInOwnedSlot
+    // with handedOverParts), that the result reaches but whose type the result's has no place for:
+    // the value's own cells are released here, child-preserving, as the call would have released
+    // them had it not kept the value for the result. The parts keep the one reference the result
+    // relies on. Any other owned slot is left as it is: its value may be a cell a reuse token already
+    // took for the result.
+    private void EmitKeptOwnedSlotChildPreservingDrops(TypeRef resultType, List<GeneralRcOwnedSlot> kept)
+    {
+        if (!HandedOverPartsSlotRuleEnabled)
+        {
+            return;
+        }
+
+        foreach (GeneralRcOwnedSlot owned in kept)
+        {
+            if (!owned.HandedOverParts
+                || owned.Type is TypeRef.TFun
+                || ContainsUnresolvedLayoutType(owned.Type, [])
+                || CallResultMayContainArgumentType(resultType, owned.Type, new HashSet<string>(StringComparer.Ordinal)))
+            {
+                continue;
+            }
+
+            int valueTemp = NewTemp();
+            Emit(new IrInst.LoadLocal(valueTemp, owned.Slot));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int presentTemp = NewTemp();
+            Emit(new IrInst.CmpIntNe(presentTemp, valueTemp, zeroTemp));
+            string skipLabel = NewLabel("general_rc_kept_absent");
+            Emit(new IrInst.JumpIfFalse(presentTemp, skipLabel));
+            int referenceCountedTemp = NewTemp();
+            Emit(new IrInst.IsReferenceCounted(referenceCountedTemp, valueTemp));
+            Emit(new IrInst.JumpIfFalse(referenceCountedTemp, skipLabel));
+            EmitRuntimeManagedChildPreservingDrop(valueTemp, owned.Type, resultType);
+            Emit(new IrInst.StoreLocal(owned.Slot, zeroTemp));
+            Emit(new IrInst.Label(skipLabel));
+        }
     }
 
     // A type variable of a function's result that is quantified by the function's scheme and occurs
@@ -1537,6 +1693,7 @@ public sealed partial class Lowering
         if (!keeps)
         {
             ReleaseFreshChildrenOfCopiedArenaTuple(bodyTemp, pruned);
+            ReleaseOwnedFieldsOfCopiedArenaRecord(bodyTemp, pruned);
         }
 
         MarkRuntimeManagedTemp(resultTemp);
@@ -1570,7 +1727,18 @@ public sealed partial class Lowering
     private bool HasFixedArenaCopyOut(TypeRef type)
         => Environment.GetEnvironmentVariable("GRC_NO_FIXEDCOPYRESULT") is null
             && (GetCallCopyOutKind(type, out _, out _) is CopyOutKind.DeepAdt or CopyOutKind.Shallow or CopyOutKind.List
-                || IsScalarFieldVariant(type));
+                || IsScalarFieldVariant(type)
+                || IsScalarFieldVariantList(type));
+
+    private static bool ScalarFieldVariantListResultEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_SCALARVARIANTLISTRESULT") is null;
+
+    // A list of such variants (optional integers): copied cell by cell with each element, it holds
+    // nothing of a value it may have been read out of.
+    private bool IsScalarFieldVariantList(TypeRef type)
+        => ScalarFieldVariantListResultEnabled
+            && Prune(type) is TypeRef.TList list
+            && IsScalarFieldVariant(list.Element);
 
     // A variant every field of which is inline (an optional integer): the contract does not govern
     // it, since it owns no heap child, and a generic one has no fixed copy-out either, so the
@@ -1585,7 +1753,7 @@ public sealed partial class Lowering
     private int EmitGeneralRcArenaResultCopy(int sourceTemp, TypeRef type)
     {
         CopyOutKind kind = GetCallCopyOutKind(type, out int sizeBytes, out IrInst.ListHeadCopyKind headCopy);
-        if (kind == CopyOutKind.DeepAdt)
+        if (kind == CopyOutKind.DeepAdt || (kind is not (CopyOutKind.Shallow or CopyOutKind.List) && IsScalarFieldVariantList(type)))
         {
             return EmitDeepCopy(sourceTemp, type);
         }
@@ -1644,14 +1812,15 @@ public sealed partial class Lowering
         // A value this iteration produced is out of reach of the successors that are the loop's own
         // parameters (or parts of them): they predate it. A value an earlier iteration left in its
         // slot may have become one of them, so that release is taken only when the slot is fresh.
-        foreach (GeneralRcOwnedSlot owned in iterationSlots.Where(owned => !released.Contains(owned)))
+        foreach (GeneralRcOwnedSlot owned in KeptPastTakenOverRecord(info, iterationSlots.Where(owned => !released.Contains(owned))))
         {
             if (owned.FreshSlot < 0)
             {
                 continue;
             }
 
-            if (NoSuccessorCanHoldPartOf(info, owned.Type, parameterParts, successorsNormalized, useParameterParts: true))
+            if (NoSuccessorCanHoldPartOf(info, owned.Type, parameterParts, successorsNormalized, useParameterParts: true)
+                || NoSuccessorNamesPartOf(info, owned, successorsNormalized))
             {
                 int freshTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(freshTemp, owned.FreshSlot));
@@ -1689,12 +1858,86 @@ public sealed partial class Lowering
                 || SuccessorPredatesTheLoop(info, index)
                 || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
                 || (index < unnamed.Length && unnamed[index])
-                || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
+                || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))))
+                || (predecessor.Origin >= 0 && SuccessorsHoldNoParameterPartBare(info));
             if (unreachable)
             {
                 EmitGeneralRcOwnedSlotDrops([predecessor]);
             }
         }
+    }
+
+    private static bool OwnedResultSuccessorPartsEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_OWNEDRESULTSUCCESSORPARTS") is null;
+
+    // An earlier iteration's value reaches this iteration's successors only through the loop's parameters,
+    // which are what the earlier successors were, and through this iteration's owned call results, which hold
+    // references of their own to everything they keep. A successor holds a parameter's part without a
+    // reference of its own only by naming it bare: as itself, or inside a cons, tuple, list or constructor it
+    // builds. A part handed to a call whose result is owned is kept by that result with a reference of its
+    // own, and a name bound out of an owned call result is that result's part. When no successor names a
+    // parameter part bare, whatever of the earlier value is still reachable is held by references of its own,
+    // and the slot keeping it releases its reference.
+    private bool SuccessorsHoldNoParameterPartBare(PendingTcoReset info)
+    {
+        if (!OwnedResultSuccessorPartsEnabled
+            || info.Tco.Body is not { } body
+            || !_generalRcBackEdgeSlots.TryGetValue(_generalRcBackEdgeId, out List<GeneralRcOwnedSlot>? loopSlots))
+        {
+            return false;
+        }
+
+        List<string> parameters = info.Tco.ParamNames;
+        HashSet<string> parameterParts = CollectDerivedNames(body, parameters, parameters, info.Tco.FlowPolicy);
+        foreach (GeneralRcOwnedSlot owned in loopSlots)
+        {
+            if (!owned.Predecessor && owned.Binders is { } binders)
+            {
+                parameterParts.ExceptWith(binders);
+            }
+        }
+
+        for (int index = 0; index < info.ArgExpressions.Length; index++)
+        {
+            if (!CanArenaReset(Prune(info.ArgTypes[index])) && NamesPartBare(info.ArgExpressions[index], parameterParts, 0))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool NamesPartBare(Expr expression, HashSet<string> parts, int depth)
+    {
+        if (depth > 256)
+        {
+            return true;
+        }
+
+        switch (expression)
+        {
+            case Expr.Var variable:
+                return parts.Contains(variable.Name);
+            case Expr.Cons or Expr.TupleLit or Expr.ListLit:
+                return EnumerateChildren(expression).Any(child => NamesPartBare(child, parts, depth + 1));
+            case Expr.Call call when IsOwnedResultCall(call):
+                return false;
+            case Expr.Call when TryDescribeConstructorExpression(expression, out _, out List<Expr>? arguments, out _) && arguments is not null:
+                return arguments.Any(argument => NamesPartBare(argument, parts, depth + 1));
+            default:
+                return parts.Any(part => ExprMentionsName(expression, part, depth));
+        }
+    }
+
+    // A full application of a function compiled to return its result owned on the reference-counted heap.
+    private bool IsOwnedResultCall(Expr.Call call)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(call, arguments);
+        return TryResolveKnownFunctionLabel(root, out string label)
+            && TryGetCompiledFunctionResultRuntimeManaged(label, arguments.Count, out bool runtimeManaged)
+            && runtimeManaged;
     }
 
     // The parts of an earlier iteration's value a successor could hold without a reference of its
@@ -1857,12 +2100,42 @@ public sealed partial class Lowering
             && info.Tco.ParamFacts.TryGetValue(info.ParamSlots[index], out TcoParamStaticFacts? facts)
             && (facts.LoopInvariant || (facts.ConsumedListTail && info.ConsumedListTail[index]));
 
+    // A value this iteration produced is out of every successor's reach when each successor that
+    // could hold a part of it by its type names none of the value's binders, nor anything derived
+    // from them (`closureTemp :: deadLoads` beside a successor built from the matched `definition`).
+    private bool NoSuccessorNamesPartOf(PendingTcoReset info, GeneralRcOwnedSlot owned, bool successorsNormalized)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_ITERATIONSLOTNAMES") is not null
+            || owned.Binders is not { Count: > 0 }
+            || SuccessorsNamingNoPartOf(info, owned, successorsNormalized) is not { } unnamed
+            || unnamed.Length != info.ArgTypes.Length)
+        {
+            return false;
+        }
+
+        List<TypeRef> parts = HeapPartTypes(owned.Type);
+        bool[] strictParts = _generalRcBackEdgeStrictParameterParts.GetValueOrDefault(_generalRcBackEdgeId, []);
+        return Enumerable.Range(0, info.ArgTypes.Length).All(index =>
+            unnamed[index]
+            || CanArenaReset(Prune(info.ArgTypes[index]))
+            || info.PassThrough[index]
+            || (index < strictParts.Length && strictParts[index])
+            || (successorsNormalized && info.ParamPlacements[index]?.Representation == TcoPlacementRepresentation.RuntimeRc)
+            || parts.TrueForAll(part => !CallResultMayContainArgumentType(info.ArgTypes[index], part, new HashSet<string>(StringComparer.Ordinal))));
+    }
+
+    // A string a successor keeps of this iteration's value holds a reference of its own, as one of an
+    // earlier iteration's does, so it does not hold the value back: a set of names threaded beside a
+    // list of records naming the same strings kept every record the loop produced.
+    private static bool IterationStringPartsRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ITERATIONSTRINGPARTS") is null;
+
     // Whether every successor either owns its parts or is of a type that cannot hold any heap part
     // of an owned value of this type (a list of integer pairs never holds a record of strings): the
     // iteration's reference to such a value is released whatever the other successors borrow.
     private bool NoSuccessorCanHoldPartOf(PendingTcoReset info, TypeRef ownedType, bool[] parameterParts, bool successorsNormalized, bool useParameterParts)
     {
-        List<TypeRef> parts = HeapPartTypes(ownedType);
+        List<TypeRef> parts = useParameterParts && IterationStringPartsRuleEnabled ? PredecessorPartTypes(ownedType) : HeapPartTypes(ownedType);
         bool[] strictParts = _generalRcBackEdgeStrictParameterParts.GetValueOrDefault(_generalRcBackEdgeId, []);
         return Enumerable.Range(0, info.ArgTypes.Length).All(index =>
             CanArenaReset(Prune(info.ArgTypes[index]))

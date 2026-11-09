@@ -191,8 +191,18 @@ public sealed partial class Lowering
     private readonly record struct ResultReachState(
         Dictionary<string, int> Counts,
         ResultReachCause Causes,
-        IReadOnlySet<string>? Whole = null)
+        IReadOnlySet<string>? Whole = null,
+        IReadOnlySet<string>? Spine = null,
+        IReadOnlySet<string>? Deep = null)
     {
+        // The roots a summary may hold below their elements: a part of a head, or a part the analysis
+        // could not name. Null before a summary is stripped, which reads as every root.
+        public bool HoldsPartsBelowElementsOf(string root) => Deep is null || Deep.Contains(root);
+
+        // The roots a summary may hold a list spine of: the root itself, a run of tails, or a part
+        // the analysis could not name. Null before a summary is stripped, which reads as every root.
+        public bool HoldsSpineOf(string root) => Spine is null || Spine.Contains(root);
+
         public bool Poison => Causes != ResultReachCause.None;
 
         public IReadOnlySet<string> WholeRoots => Whole ?? EmptyWholeRoots;
@@ -1112,7 +1122,7 @@ public sealed partial class Lowering
             callCensus,
             moveSafety,
             captures,
-            BuildResultReachFacts(resultReach),
+            BuildResultReachFacts(resultReach, _maSharedRoots.GetValueOrDefault(function)),
             expressionFreshness,
             _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
             provenance,
@@ -1124,7 +1134,7 @@ public sealed partial class Lowering
     // has always carried, built from the paths this analysis could follow, and separately what was
     // exposed to a construct it could not follow. Keeping the two apart is what lets the exposure
     // record answer a question of its own without moving any answer that was already there.
-    private static FunctionResultReachFacts BuildResultReachFacts(ResultReachState reach)
+    private static FunctionResultReachFacts BuildResultReachFacts(ResultReachState reach, HashSet<string>? sharedRoots)
     {
         var parameterReach = new SortedDictionary<string, int>(StringComparer.Ordinal);
         foreach ((string root, int multiplicity) in reach.Counts)
@@ -1149,7 +1159,25 @@ public sealed partial class Lowering
             }
         }
 
-        return new FunctionResultReachFacts(parameterReach, reach.Causes, whole, exposedWhole);
+        var spine = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string root in reach.Counts.Keys)
+        {
+            if (reach.HoldsSpineOf(root))
+            {
+                spine.Add(UntagRoot(root));
+            }
+        }
+
+        var deep = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string root in reach.Counts.Keys)
+        {
+            if (reach.HoldsPartsBelowElementsOf(root))
+            {
+                deep.Add(UntagRoot(root));
+            }
+        }
+
+        return new FunctionResultReachFacts(parameterReach, reach.Causes, whole, exposedWhole, spine, deep, sharedRoots is null ? null : new HashSet<string>(sharedRoots, StringComparer.Ordinal));
     }
 
     private (
@@ -2737,6 +2765,10 @@ public sealed partial class Lowering
         {
             next[name] = key;
         }
+        else if (ImportedFunctionAliasKey(binder) is { } aliased)
+        {
+            next[name] = aliased;
+        }
         else
         {
             next.Remove(name);
@@ -2744,6 +2776,17 @@ public sealed partial class Lowering
 
         return next;
     }
+
+    // A selector import (`import M.f`) arrives as `let f = M.f`: the name is the stitched function itself,
+    // so a call through it is that function's call, not an unknown callee.
+    private FuncKey? ImportedFunctionAliasKey(Expr binder)
+        => Environment.GetEnvironmentVariable("GRC_NO_IMPORTALIASSCOPE") is null
+            && binder is Expr.Let { Value: var value }
+            && StripOrSelf(value) is Expr.QualifiedVar qualified
+            && ResolveSpecializableCalleeName(qualified) is { } stitched
+            && _maNameIndex.TryGetValue(stitched, out FuncKey key)
+                ? key
+                : null;
 
     // Plain lets may bind an immutable alias of an exact function already present in scope. Live
     // TCO preserves that identity through the local slot's known function label, so structural TCO
@@ -4091,10 +4134,210 @@ public sealed partial class Lowering
         }
     }
 
+    // The roots a function's result may hold more than once (a count at the cap, a value beside one of its
+    // own parts, or a root a callee holds more than once), collected while its reach is evaluated.
+    private readonly Dictionary<FuncKey, HashSet<string>> _maSharedRoots = new();
+
+    [ThreadStatic]
+    private static HashSet<string>? s_reachSharedRoots;
+
+    private static void SetReachSharedRoots(HashSet<string>? roots) => s_reachSharedRoots = roots;
+
+    private static void NoteSharedToken(string token)
+    {
+        int slash = token.IndexOf('/');
+        string name = UntagRoot(slash < 0 ? token : token.Substring(0, slash));
+        if (name.Length > 0 && name[0] != '#')
+        {
+            s_reachSharedRoots?.Add(name);
+        }
+    }
+
+    // The taken-over record's reach mode: a call result whose owned slot a loop or return freed the
+    // spine of, handing its elements to the result, is a fresh value of the function's own ("#S"),
+    // never a reach of that call's arguments. The main reach follows the arguments, since a generic
+    // callee's result may hold them; lowering kept this one in an owned slot, where it holds its own
+    // references (see the record proof in Lowering.TakenOverRecord). Null outside that mode.
+    private HashSet<Expr>? _maRecordReachCuts;
+
+    // The unstripped reach of a function's result in the record mode, paths kept.
+    private ResultReachState? ComputeRecordReach(FuncKey function, HashSet<Expr> cuts)
+    {
+        if (!_maFuncs.TryGetValue(function, out var info))
+        {
+            return null;
+        }
+
+        var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
+        foreach (string parameter in info.Params)
+        {
+            env[parameter] = new ResultReachState(
+                new Dictionary<string, int>(StringComparer.Ordinal) { [parameter] = 1 },
+                ResultReachCause.None);
+        }
+
+        int savedToken = _maReachToken;
+        var savedSelf = _maSelfRecursive;
+        var savedCurrent = _maCurrentResultReachFunction;
+        _maReachToken = 0;
+        _maCurrentResultReachFunction = function;
+        _maSelfRecursive = _maNestedRecursive.TryGetValue(function, out var nested)
+            ? (function, nested.Recursive, nested.RecursiveName, nested.Outer, nested.Acc)
+            : null;
+        _maRecordReachCuts = cuts;
+        bool hadSummary = _maResultReach.TryGetValue(function, out ResultReachState original);
+        try
+        {
+            // The function's own calls read its record-mode summary, iterated to a fixpoint from the
+            // bottom: the main summary still follows the arguments of the calls cut here.
+            IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(function)
+                ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
+            return RecordReachFixpoint(function, info.Body, env, scope);
+        }
+        finally
+        {
+            if (hadSummary)
+            {
+                _maResultReach[function] = original;
+            }
+            else
+            {
+                _maResultReach.Remove(function);
+            }
+
+            _maRecordReachCuts = null;
+            _maSelfRecursive = savedSelf;
+            _maCurrentResultReachFunction = savedCurrent;
+            _maReachToken = savedToken;
+        }
+    }
+
+    // The record mode's own summary of the function, with paths: its calls to itself compose a path
+    // below each argument instead of the main reach's component, so a tail's fields keep their types.
+    private ResultReachState? _maRecordSelfReach;
+    private FuncKey? _maRecordFunction;
+
+    private ResultReachState RecordSelfCompose(
+        ResultReachState selfPaths,
+        List<string> parameters,
+        List<Expr> args,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        ResultReachCause causes = selfPaths.Causes;
+        foreach ((string token, int mult) in selfPaths.Counts)
+        {
+            int slash = token.IndexOf('/');
+            string root = slash < 0 ? token : token.Substring(0, slash);
+            string path = slash < 0 ? "" : token.Substring(slash);
+            if (root.StartsWith("#S", StringComparison.Ordinal) || root.StartsWith("#F", StringComparison.Ordinal))
+            {
+                counts[token] = Math.Min(ReachCap, counts.GetValueOrDefault(token) + mult);
+                continue;
+            }
+
+            int index = parameters.IndexOf(UntagRoot(root));
+            if (index < 0 || index >= args.Count)
+            {
+                return ReachPoisoned(ResultReachCause.ConservativeUnknown);
+            }
+
+            ResultReachState argument = ResultReach(args[index], env, scope);
+            causes |= argument.Causes;
+            foreach ((string argumentToken, int argumentMult) in argument.Counts)
+            {
+                string composed = NormalizeRecordPath(argumentToken + path);
+                counts[composed] = Math.Min(ReachCap, counts.GetValueOrDefault(composed) + (mult * argumentMult));
+            }
+        }
+
+        return new ResultReachState(counts, causes);
+    }
+
+    // Runs of tails collapse to one: a tail has its list's type, so the fixpoint stays finite.
+    private static string NormalizeRecordPath(string token)
+    {
+        string normalized = token;
+        while (normalized.Contains("/1/1", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("/1/1", "/1", StringComparison.Ordinal);
+        }
+
+        return normalized;
+    }
+
+    // The record mode's summary keeps paths and the "#S" values, and drops binding identity tokens.
+    private static ResultReachState RecordSummaryOf(ResultReachState reach)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach ((string token, int mult) in reach.Counts)
+        {
+            if (token.StartsWith("#B", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string prefix = token.StartsWith("#S", StringComparison.Ordinal) ? "#S" : token.StartsWith("#F", StringComparison.Ordinal) ? "#F" : "";
+            string normalized = NormalizeRecordPath(prefix.Length > 0 ? prefix + token.Substring(token.IndexOf('/') is int s && s > 0 ? s : token.Length) : token);
+            // A "#S" of the summary stands for each call's own owned list, a distinct value per call:
+            // held at presence. A body holding its own twice says so in its local "#S<n>" count.
+            counts[normalized] = normalized.StartsWith('#')
+                ? 1
+                : Math.Min(ReachCap, counts.GetValueOrDefault(normalized) + mult);
+        }
+
+        return new ResultReachState(counts, reach.Causes);
+    }
+
+    private ResultReachState? RecordReachFixpoint(
+        FuncKey function,
+        Expr body,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        ResultReachState current = ReachBottom();
+        _maRecordFunction = function;
+        try
+        {
+            for (int round = 0; round < 16; round++)
+            {
+                _maResultReach[function] = StripSyntheticTokens(current);
+                _maRecordSelfReach = current;
+                _maReachToken = 0;
+                ResultReachState reach = ResultReach(body, env, scope);
+                ResultReachState next = RecordSummaryOf(reach);
+                if (ReachEquals(next, current))
+                {
+                    return reach;
+                }
+
+                current = ReachJoin(current, next);
+            }
+
+            return null;
+        }
+        finally
+        {
+            _maRecordSelfReach = null;
+            _maRecordFunction = null;
+        }
+    }
+
+    private IReadOnlyList<string>? RecordReachParameters(FuncKey function)
+        => _maFuncs.TryGetValue(function, out var info) ? info.Params : null;
+
     private ResultReachState ComputeResultReachForFunction(
         FuncKey function,
         (List<string> Params, Expr Body) info)
     {
+        if (!_maSharedRoots.TryGetValue(function, out HashSet<string>? sharedRoots))
+        {
+            sharedRoots = new HashSet<string>(StringComparer.Ordinal);
+            _maSharedRoots[function] = sharedRoots;
+        }
+
+        SetReachSharedRoots(sharedRoots);
         var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
         foreach (string parameter in info.Params)
         {
@@ -4112,6 +4355,7 @@ public sealed partial class Lowering
             ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
         ResultReachState computed = StripSyntheticTokens(ResultReach(info.Body, env, scope));
         _maSelfRecursive = null;
+        SetReachSharedRoots(null);
         _maCurrentResultReachFunction = null;
         return computed;
     }
@@ -4246,6 +4490,14 @@ public sealed partial class Lowering
             counts[k] = nv >= ReachCap ? ReachCap : nv;
         }
 
+        foreach (var (k, v) in counts)
+        {
+            if (v >= ReachCap)
+            {
+                NoteSharedToken(k);
+            }
+        }
+
         foreach (var v in counts.Values)
         {
             if (v >= ReachCap)
@@ -4261,6 +4513,14 @@ public sealed partial class Lowering
         // ("map/1" and "map/2") are NOT in an ancestor relation, so partitioning a value and re-embedding
         // its distinct parts (a rebalance/rebuild) never falsely poisons. Only summed (simultaneously-live)
         // positions are checked — branch joins (ReachMax) never manufacture this.
+        if (s_reachSharedRoots is not null && HasPathAncestorPair(counts))
+        {
+            foreach (string k in counts.Keys)
+            {
+                NoteSharedToken(k);
+            }
+        }
+
         if ((causes & ResultReachCause.InternalSharing) == ResultReachCause.None
             && HasPathAncestorPair(counts))
         {
@@ -4322,7 +4582,7 @@ public sealed partial class Lowering
         IReadOnlySet<string>? whole = a.Whole is null && b.Whole is null
             ? null
             : new HashSet<string>(a.WholeRoots.Concat(b.WholeRoots), StringComparer.Ordinal);
-        return new ResultReachState(counts, a.Causes | b.Causes, whole);
+        return new ResultReachState(counts, a.Causes | b.Causes, whole, MergeSpine(a, b), MergeDeep(a, b));
     }
 
     // Fixpoint join: identical to the branch max (grow reach sets / poison until stable).
@@ -4349,6 +4609,7 @@ public sealed partial class Lowering
             int nv = v * factor;
             if (nv >= ReachCap)
             {
+                NoteSharedToken(k);
                 nv = ReachCap;
                 causes |= ResultReachCause.InternalSharing;
             }
@@ -4363,7 +4624,7 @@ public sealed partial class Lowering
         ResultReachState a,
         ResultReachState b)
     {
-        if (a.Causes != b.Causes || a.Counts.Count != b.Counts.Count || !a.WholeRoots.SetEquals(b.WholeRoots))
+        if (a.Causes != b.Causes || a.Counts.Count != b.Counts.Count || !a.WholeRoots.SetEquals(b.WholeRoots) || !SameSpine(a, b) || !SameDeep(a, b))
         {
             return false;
         }
@@ -4381,9 +4642,23 @@ public sealed partial class Lowering
 
     // A fresh per-binding synthetic identity token, reach {token:1}. Summed into a binding's env reach so
     // multiplicity of a fresh (non-parameter) heap value is tracked exactly as for a parameter.
+    // In the record mode a value the function constructs is a value of its own ("#F"), which the record
+    // proof declines: it cannot tell whether the function also releases it. Outside the mode, nothing.
+    private ResultReachState WithRecordConstruction(ResultReachState reach)
+    {
+        if (_maRecordReachCuts is null)
+        {
+            return reach;
+        }
+
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal) { ["#F" + _maReachToken] = 1 };
+        _maReachToken++;
+        return ReachSum(reach, new ResultReachState(counts, ResultReachCause.None));
+    }
+
     private ResultReachState TokenReach()
     {
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal) { ["#" + _maReachToken] = 1 };
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal) { [(_maRecordReachCuts is null ? "#" : "#B") + _maReachToken] = 1 };
         _maReachToken++;
         return new ResultReachState(counts, ResultReachCause.None);
     }
@@ -4401,6 +4676,8 @@ public sealed partial class Lowering
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
         var whole = new HashSet<string>(StringComparer.Ordinal);
+        var spine = new HashSet<string>(StringComparer.Ordinal);
+        var deep = new HashSet<string>(StringComparer.Ordinal);
         foreach (var k in r.Counts.Keys)
         {
             int slash = k.IndexOf('/');
@@ -4416,10 +4693,109 @@ public sealed partial class Lowering
             {
                 whole.Add(root);
             }
+
+            if (slash < 0 || IsSpinePath(k.Substring(slash + 1)))
+            {
+                spine.Add(root);
+            }
+
+            if (slash >= 0 && IsBelowElementPath(k.Substring(slash + 1)))
+            {
+                deep.Add(root);
+            }
         }
 
-        return new ResultReachState(counts, r.Causes, whole);
+        // The spine and below-element accounts take part in the fixpoint's convergence test, so they
+        // are kept only while a rule reads them: with both off the analysis is the one without them.
+        bool tracked = SpineReachRuleEnabled || TakenOverRecordRuleEnabled;
+        return new ResultReachState(counts, r.Causes, whole, tracked ? spine : null, tracked ? deep : null);
     }
+
+    // Whether a path below a root may name a list spine: a run of tails ("1") ending there, or any
+    // segment the analysis cannot read as an element ("*", a field name). A head ("0") or an
+    // element of a callee's ("e") ends the spine.
+    private static bool IsSpinePath(string path)
+    {
+        foreach (string segment in path.Split('/'))
+        {
+            if (string.Equals(segment, "1", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            return !string.Equals(segment, "0", StringComparison.Ordinal) && !string.Equals(segment, "e", StringComparison.Ordinal);
+        }
+
+        return true;
+    }
+
+    // Whether a path below a root goes below a list element: a run of tails, a head ("0") or a callee's
+    // element ("e"), then any further segment; a segment the analysis cannot read is below too.
+    private static bool IsBelowElementPath(string path)
+    {
+        bool atElement = false;
+        foreach (string segment in path.Split('/'))
+        {
+            if (atElement)
+            {
+                return true;
+            }
+
+            if (string.Equals(segment, "1", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(segment, "0", StringComparison.Ordinal) || string.Equals(segment, "e", StringComparison.Ordinal))
+            {
+                atElement = true;
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static IReadOnlySet<string>? MergeDeep(ResultReachState a, ResultReachState b)
+        => a.Deep is null && b.Deep is null
+            ? null
+            : new HashSet<string>((a.Deep ?? (IEnumerable<string>)a.Counts.Keys).Concat(b.Deep ?? (IEnumerable<string>)b.Counts.Keys), StringComparer.Ordinal);
+
+    private static bool SameDeep(ResultReachState a, ResultReachState b)
+        => (a.Deep is null && b.Deep is null)
+            || (a.Deep is { } left && b.Deep is { } right && left.SetEquals(right));
+
+    private static IReadOnlySet<string>? MergeSpine(ResultReachState a, ResultReachState b)
+        => a.Spine is null && b.Spine is null
+            ? null
+            : new HashSet<string>(SpineOrEveryRoot(a).Concat(SpineOrEveryRoot(b)), StringComparer.Ordinal);
+
+    // A state without a spine account holds a spine of every root it names (none, for the bottom).
+    private static IEnumerable<string> SpineOrEveryRoot(ResultReachState state)
+        => state.Spine ?? (IEnumerable<string>)state.Counts.Keys;
+
+    private static bool SameSpine(ResultReachState a, ResultReachState b)
+        => (a.Spine is null && b.Spine is null)
+            || (a.Spine is { } left && b.Spine is { } right && left.SetEquals(right));
+
+    // Extends every token by an element position: a callee whose result keeps only elements of its
+    // parameter (never the spine) holds elements of the argument, which a caller's summary reads as
+    // not reaching the argument's spine.
+    private static ResultReachState ExtendPathsElement(ResultReachState r)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, v) in r.Counts)
+        {
+            counts[k + "/e"] = v;
+        }
+
+        return new ResultReachState(counts, r.Causes);
+    }
+
+    private static bool SpineReachRuleEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_GENERICSPINERELEASE") is null;
 
     // Extends every token by an unspecified sub-cell position: a callee that reaches its parameter
     // only through destructured components hands the caller a value containing parts of the
@@ -4450,6 +4826,13 @@ public sealed partial class Lowering
         Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
+        if (_maRecordReachCuts is { } cuts && cuts.Contains(e))
+        {
+            var cut = new Dictionary<string, int>(StringComparer.Ordinal) { ["#S" + _maReachToken] = 1 };
+            _maReachToken++;
+            return new ResultReachState(cut, ResultReachCause.None);
+        }
+
         var result = ResultReachCore(e, env, scope);
         RecordExpressionFreshness(e, result);
         return result;
@@ -4515,13 +4898,13 @@ public sealed partial class Lowering
 
             // Aggregate/list literals: every element is simultaneously live, so reach sums.
             case Expr.Cons cons:
-                return ReachSum(ResultReach(cons.Head, env, scope), ResultReach(cons.Tail, env, scope));
+                return WithRecordConstruction(ReachSum(ResultReach(cons.Head, env, scope), ResultReach(cons.Tail, env, scope)));
             case Expr.ListLit lst:
-                return SumReach(lst.Elements, env, scope);
+                return lst.Elements.Count == 0 ? SumReach(lst.Elements, env, scope) : WithRecordConstruction(SumReach(lst.Elements, env, scope));
             case Expr.TupleLit t:
-                return SumReach(t.Elements, env, scope);
+                return WithRecordConstruction(SumReach(t.Elements, env, scope));
             case Expr.RecordLit rec:
-                return ResultReachRecordLit(rec, env, scope);
+                return WithRecordConstruction(ResultReachRecordLit(rec, env, scope));
             case Expr.RecordUpdate update:
                 return ResultReachRecordUpdate(update, env, scope);
 
@@ -4963,7 +5346,9 @@ public sealed partial class Lowering
 
             if (!selfSummary.WholeRoots.Contains(root))
             {
-                paramReach = ExtendPathsComponent(paramReach);
+                paramReach = SpineReachRuleEnabled && !selfSummary.HoldsSpineOf(root) && !selfSummary.HoldsPartsBelowElementsOf(root)
+                    ? ExtendPathsElement(paramReach)
+                    : ExtendPathsComponent(paramReach);
             }
 
             if (IsExposedRoot(root))
@@ -4978,6 +5363,15 @@ public sealed partial class Lowering
     }
 
     private ResultReachState CallReachConstructor(
+        ConstructorSymbol ctor,
+        List<Expr> args,
+        Dictionary<string, ResultReachState> env,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        return WithRecordConstruction(CallReachConstructorFields(ctor, args, env, scope));
+    }
+
+    private ResultReachState CallReachConstructorFields(
         ConstructorSymbol ctor,
         List<Expr> args,
         Dictionary<string, ResultReachState> env,
@@ -5092,6 +5486,11 @@ public sealed partial class Lowering
             return ReachExposed(SumReach(args, env, scope), ResultReachCause.UnmodelledReach);
         }
 
+        if (_maRecordSelfReach is { } selfPaths && _maRecordFunction is { } recordFunction && key.Equals(recordFunction))
+        {
+            return RecordSelfCompose(selfPaths, info.Params, args, env, scope);
+        }
+
         var result = new ResultReachState(
             new Dictionary<string, int>(StringComparer.Ordinal),
             summary.Causes);
@@ -5105,9 +5504,20 @@ public sealed partial class Lowering
             }
 
             ResultReachState argumentReach = ResultReach(args[idx], env, scope);
+            if ((summary.Causes & ResultReachCause.InternalSharing) != ResultReachCause.None
+                && (!_maSharedRoots.TryGetValue(key, out HashSet<string>? calleeShared) || calleeShared.Contains(UntagRoot(root))))
+            {
+                foreach (string token in argumentReach.Counts.Keys)
+                {
+                    NoteSharedToken(token);
+                }
+            }
+
             if (!summary.WholeRoots.Contains(root))
             {
-                argumentReach = ExtendPathsComponent(argumentReach);
+                argumentReach = SpineReachRuleEnabled && !summary.HoldsSpineOf(root) && !summary.HoldsPartsBelowElementsOf(root)
+                    ? ExtendPathsElement(argumentReach)
+                    : ExtendPathsComponent(argumentReach);
             }
 
             // What the callee exposed to something it could not see through, this call exposes too.

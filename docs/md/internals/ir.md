@@ -296,7 +296,14 @@ and, when bit 61 or bit 62 is set, releases the owned values the result reached 
 call. A caller taking the result reads only bit 62. Bit 60 says a generic list builder handed its
 list's heads over: each reference-counted head of an arena cell of the result holds a reference of
 its own, which the caller releases after copying the list out (a builder forwards the request to its
-own recursive call, so every arena cell of the spine follows the same rule).
+own recursive call, so every arena cell of the spine follows the same rule). Bit 59 says the
+result carries a taken-over record (see the memory model in architecture.md): at the positions the
+callee's result summary names, each reference-counted value an arena cell of the result points to
+holds a reference the result owns. An asked function sets it when it hands such a record up, and
+the caller that asked reads it, then moves those references into its copy of the result, or releases
+them before it reclaims the result's region, or forwards the bit to its own caller when it does not
+know the concrete type at those positions. Like bits 60 to 62, it belongs to the call protocol and
+not to any value's layout.
 The dropper releases moved resources or RC captures. Supported captured
 ordinary graphs also have code-label metadata for normalizing the complete
 environment when a closure crosses into RC ownership. `CallClosure` loads the

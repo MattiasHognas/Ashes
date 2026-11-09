@@ -48,6 +48,8 @@ export (
     value reachSummaryNamed,
     value singleFunctionReach,
     value reachFactsOf,
+    value recordReachOf,
+    value summariesTable,
 )
 
 type ResultReachState =
@@ -350,35 +352,103 @@ let wholeEntry (root: Str) = ParameterReachEntry(parameterName = root, reachCoun
 
 let componentEntry (root: Str) = ParameterReachEntry(parameterName = root + "/*", reachCount = 1)
 
-// Records a root at presence one; a whole reach replaces a component-only one of the same root.
-let recursive recordRoot (root: Str) (whole: Bool) (entries: List(ParameterReachEntry)) =
+// A root's entry in a stored summary: whole ("p"), held only as whole list elements ("p/e", or
+// "p/e!" when the result may hold one of them twice), or through a part the walk cannot name
+// ("p/*", a list spine or a part below an element). Stage 0 keeps the element-only and shared
+// roots as sets beside the summary (`Spine`, `Deep`, `_maSharedRoots`).
+let elementEntry (root: Str) (shared: Bool) =
+    ParameterReachEntry(parameterName = root + (if shared
+    then "/e!"
+    else "/e"), reachCount = 1)
+
+let textEndsWith (suffix: Str) (text: Str) =
+    Ashes.Text.length(text) >= Ashes.Text.length(suffix) && Ashes.Text.substring(text)(Ashes.Text.length(text) - Ashes.Text.length(suffix))(Ashes.Text.length(suffix)) == suffix
+
+let isElementName (name: Str) = textEndsWith("/e")(name) || textEndsWith("/e!")(name)
+
+let isSharedElementName (name: Str) = textEndsWith("/e!")(name)
+
+// 0 = held through an element only, 1 = through a part the walk cannot name, 2 = whole.
+let entryRank (name: Str) =
+    if isWholeName(name)
+    then 2
+    else
+        if isElementName(name)
+        then 0
+        else 1
+
+// Whether a path below a root names whole list elements only: a run of tails ("1") ending in one
+// head ("0") or callee element ("e"), stage 0's complement of `IsSpinePath` and `IsBelowElementPath`.
+let recursive isElementPath (segments: List(Str)) =
+    match segments with
+        | [] -> false
+        | "1" :: rest -> isElementPath(rest)
+        | "0" :: [] -> true
+        | "e" :: [] -> true
+        | _ -> false
+
+let isElementPathBelowRoot (segments: List(Str)) =
+    match segments with
+        | _root :: rest -> isElementPath(rest)
+        | [] -> false
+
+let tokenRank (name: Str) =
+    if isWholeName(name)
+    then 2
+    else
+        if "/"
+        |> Ashes.Text.split(name)
+        |> isElementPathBelowRoot
+        then 0
+        else 1
+
+// Records a root at presence one; a whole reach replaces any other of the same root, and a part the
+// walk cannot name replaces an element-only one. A shared element-only root stays shared.
+let entryFor (root: Str) (rank: Int) (shared: Bool) =
+    if rank == 2
+    then wholeEntry(root)
+    else
+        if rank == 1
+        then componentEntry(root)
+        else elementEntry(root)(shared)
+
+let recursive recordRoot (root: Str) (rank: Int) (shared: Bool) (entries: List(ParameterReachEntry)) =
     match entries with
-        | [] ->
-            if whole
-            then [wholeEntry(root)]
-            else [componentEntry(root)]
+        | [] -> [entryFor(root)(rank)(shared)]
         | (ParameterReachEntry { parameterName = name } as entry) :: rest ->
             if rootOf(name) == root
             then
-                if whole
-                then wholeEntry(root) :: rest
-                else entry :: rest
-            else entry :: recordRoot(root)(whole)(rest)
+                if rank > entryRank(name)
+                then entryFor(root)(rank)(shared) :: rest
+                else
+                    if rank == 0 && entryRank(name) == 0 && shared && !isSharedElementName(name)
+                    then elementEntry(root)(true) :: rest
+                    else entry :: rest
+            else entry :: recordRoot(root)(rank)(shared)(rest)
 
-let recursive stripEntries (entries: List(ParameterReachEntry)) (stripped: List(ParameterReachEntry)) =
+// Whether another token of the reach is a proper path ancestor of this one.
+let recursive hasAncestorIn (name: Str) (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> false
+        | ParameterReachEntry { parameterName = candidate } :: rest -> Ashes.Text.startsWith(name)(candidate + "/") || hasAncestorIn(name)(rest)
+
+// A token the result may hold twice: counted twice, or beside one of its own sub-cells or containers.
+let tokenShared (name: Str) (count: Int) (all: List(ParameterReachEntry)) = count >= 2 || hasDescendantOf(name + "/")(all) || hasAncestorIn(name)(all)
+
+let recursive stripEntries (all: List(ParameterReachEntry)) (entries: List(ParameterReachEntry)) (stripped: List(ParameterReachEntry)) =
     match entries with
         | [] -> stripped
-        | ParameterReachEntry { parameterName = name } :: rest ->
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
             let root = rootOf(name)
             in
                 if root
                 |> untagRoot
                 |> isSyntheticRoot
-                then stripEntries(rest)(stripped)
+                then stripEntries(all)(rest)(stripped)
                 else
                     stripped
-                    |> recordRoot(root)(isWholeName(name))
-                    |> stripEntries(rest)
+                    |> recordRoot(root)(tokenRank(name))(tokenShared(name)(count)(all))
+                    |> stripEntries(all)(rest)
 
 // Collapses a working reach to the stored summary: each path token reduces to its root, the
 // synthetic tokens drop, and each parameter is recorded once, whole when any path reached it
@@ -386,7 +456,7 @@ let recursive stripEntries (entries: List(ParameterReachEntry)) (stripped: List(
 let stripSyntheticTokens (state: ResultReachState) =
     match state with
         | ResultReachState { counts = counts, causes = causes } ->
-            withCounts(stripEntries(counts)([]))(causes)
+            withCounts(stripEntries(counts)(counts)([]))(causes)
 
 let recursive countsSubsumed (entries: List(ParameterReachEntry)) (within: List(ParameterReachEntry)) =
     match entries with
@@ -934,11 +1004,21 @@ let setTable (key: Str) (reach: ResultReachState) (table: ReachTable) = Ashes.Co
 
 // One function's walk: the registry and the summaries so far, the function whose body is walked
 // (its nested shape resolves the inner self-call), and the nesting of over-applications inlined.
+// The taken-over record's reach mode (stage 0's `ComputeRecordReach`): a call whose result a loop or
+// return freed the spine of is a value of the function's own ("#S"), a binding's identity token is
+// "#B", and every construction adds a value of the function's own ("#F"); the function's calls to
+// itself compose paths below each argument with its own summary so far.
+type ReachRecordMode =
+    | cuts: List(TextSpan)
+    | recordKey: Str
+    | selfPaths: ResultReachState
+
 type ReachContext =
     | registry: ReachRegistry
     | table: ReachTable
     | current: ReachFunction
     | overDepth: Int
+    | record: Maybe(ReachRecordMode)
 
 let maxOverApplicationDepth = 4
 
@@ -951,6 +1031,65 @@ type ReachStep =
 let stepOf (reach: ResultReachState) (token: Int) = ReachStep(reach = reach, token = token)
 
 let tokenReach (token: Int) = reachOfToken("#" + Ashes.Text.fromInt(token))
+
+// A binding's identity token, "#B" in the record mode.
+let bindingTokenReach (context: ReachContext) (token: Int) =
+    match context.record with
+        | Some(_mode) -> reachOfToken("#B" + Ashes.Text.fromInt(token))
+        | None -> tokenReach(token)
+
+// A construction adds a value of the function's own in the record mode, nothing outside it.
+let withRecordConstruction (context: ReachContext) (step: ReachStep) =
+    match (context.record, step) with
+        | (Some(_mode), ReachStep { reach = reach, token = token }) ->
+            stepOf("#F" + Ashes.Text.fromInt(token)
+            |> reachOfToken
+            |> reachSum(reach))(token + 1)
+        | _ -> step
+
+let recursive spanListedIn (span: TextSpan) (spans: List(TextSpan)) =
+    match spans with
+        | [] -> false
+        | candidate :: rest -> candidate == span || spanListedIn(span)(rest)
+
+// Whether the record mode cuts the call at this span.
+let recordCut (context: ReachContext) (span: TextSpan) =
+    match context.record with
+        | Some(ReachRecordMode { cuts = cuts }) -> spanListedIn(span)(cuts)
+        | None -> false
+
+let isRecordSelfCall (context: ReachContext) (key: Str) =
+    match context.record with
+        | Some(ReachRecordMode { recordKey = recordKey }) -> recordKey == key
+        | None -> false
+
+// The path of an entry below its root, with its leading slash ("" for a whole root).
+let pathOf (name: Str) =
+    (let slash = Ashes.Text.indexOf(name)("/")
+    in
+        if slash < 0
+        then ""
+        else Ashes.Text.substring(name)(slash)(Ashes.Text.length(name) - slash))
+
+let recursive collapseTailRuns (segments: List(Str)) (previousTail: Bool) =
+    match segments with
+        | [] -> []
+        | segment :: rest ->
+            if segment == "1" && previousTail
+            then collapseTailRuns(rest)(true)
+            else segment :: collapseTailRuns(rest)(segment == "1")
+
+// Runs of tails collapse to one: a tail has its list's type, so the fixpoint stays finite.
+let normalizeRecordPath (name: Str) =
+    "/"
+    |> Ashes.Text.split(name)
+    |> (given (segments: List(Str)) -> collapseTailRuns(segments)(false))
+    |> Ashes.Text.join("/")
+
+let addRecordCount (key: Str) (count: Int) (entries: List(ParameterReachEntry)) =
+    setCount(key)(capped(lookupCountOr(0)(entries)(key) + count))(entries)
+
+let isRecordValueRoot (root: Str) = Ashes.Text.startsWith(root)("#S") || Ashes.Text.startsWith(root)("#F")
 
 let recursive lookupEnv (name: Str) (env: List((Str, ResultReachState))) =
     match env with
@@ -1117,7 +1256,11 @@ let deeper (context: ReachContext) = context with overDepth = context.overDepth 
 
 let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (expr: Expr) =
     match expr with
-        | ExprAt(_span, inner) -> reachOf(context)(env)(scope)(token)(inner)
+        | ExprAt(span, inner) ->
+            if recordCut(context)(span)
+            then
+                stepOf(reachOfToken("#S" + Ashes.Text.fromInt(token)))(token + 1)
+            else reachOf(context)(env)(scope)(token)(inner)
         | ExprInt(_value) ->
             stepOf(reachBottom(Unit))(token)
         | ExprBigInt(_value) ->
@@ -1185,21 +1328,29 @@ let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState)
         | ExprMatch(scrutinee, arms, _defaultArm) ->
             match reachOf(context)(env)(scope)(token)(scrutinee) with
                 | ReachStep { reach = scrutineeReach, token = afterScrutinee } -> armsReach(context)(env)(scope)(afterScrutinee)(scrutineeReach)(arms)(None)
-        | ExprCons(head, tail) -> sumPair(context)(env)(scope)(token)(head)(tail)
+        | ExprCons(head, tail) ->
+            tail
+            |> sumPair(context)(env)(scope)(token)(head)
+            |> withRecordConstruction(context)
+        | ExprList([], _isMultiline) ->
+            stepOf(reachBottom(Unit))(token)
         | ExprList(elements, _isMultiline) ->
             Unit
             |> reachBottom
             |> sumList(context)(env)(scope)(token)(elements)
+            |> withRecordConstruction(context)
         | ExprTuple(elements) ->
             Unit
             |> reachBottom
             |> sumList(context)(env)(scope)(token)(elements)
+            |> withRecordConstruction(context)
         | ExprRecord(typeName, fields, _isMultiline) ->
             Unit
             |> reachBottom
             |> sumFields(context)(env)(scope)(token)(context
             |> constructorsOf
             |> lookupConstructor(typeName))(fields)
+            |> withRecordConstruction(context)
         | ExprRecordUpdate(target, fields) ->
             match reachOf(context)(env)(scope)(token)(target) with
                 | ReachStep { reach = targetReach, token = afterTarget } ->
@@ -1252,7 +1403,7 @@ and letReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope
     match reachOf(context)(env)(scope)(token)(value) with
         | ReachStep { reach = valueReach, token = afterValue } ->
             reachOf(context)((name, afterValue
-            |> tokenReach
+            |> bindingTokenReach(context)
             |> reachSum(valueReach)) :: env)(bindingScope(context)(scope)(name)(value))(afterValue + 1)(body)
 // The arms of a match join; each arm's pattern binders take the scrutinee's reach by component.
 and armsReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (scrutineeReach: ResultReachState) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: Maybe(ResultReachState)) =
@@ -1285,7 +1436,7 @@ and bindPatternReach (context: ReachContext) (pattern: Pattern) (parent: ResultR
             then (env, token)
             else
                 ((name, token
-                |> tokenReach
+                |> bindingTokenReach(context)
                 |> reachSum(parent)) :: env, token + 1)
         | PatternConstructor(_constructor, patterns) -> bindPatternList(context)(patterns)(0)(parent)(env)(token)
         | PatternTuple(elements) -> bindPatternList(context)(elements)(0)(parent)(env)(token)
@@ -1301,7 +1452,7 @@ and bindPatternReach (context: ReachContext) (pattern: Pattern) (parent: ResultR
                 | None -> (env, token)
         | PatternAs(inner, name) ->
             bindPatternReach(context)(inner)(parent)((name, token
-            |> tokenReach
+            |> bindingTokenReach(context)
             |> reachSum(parent)) :: env)(token + 1)
         | PatternOr(first :: _rest) -> bindPatternReach(context)(first)(parent)(env)(token)
         | _ -> (env, token)
@@ -1381,6 +1532,7 @@ and constructorReach (context: ReachContext) (env: List((Str, ResultReachState))
                 Unit
                 |> reachBottom
                 |> sumConstructorFields(context)(env)(scope)(token)(copyFields)(arguments)
+                |> withRecordConstruction(context)
 and sumConstructorFields (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (copyFields: List(Bool)) (arguments: List(Expr)) (acc: ResultReachState) =
     match arguments with
         | [] -> stepOf(acc)(token)
@@ -1417,11 +1569,49 @@ and registeredReach (context: ReachContext) (env: List((Str, ResultReachState)))
                     | ReachStep { reach = inputs, token = next } ->
                         stepOf(reachExposed(inputs)(UnmodelledReach))(next)
             else
-                match lookupTable(key)(context.table) with
-                    | ResultReachState { counts = counts, causes = causes } ->
-                        causes
-                        |> withCounts([])
-                        |> substituteEntries(context)(env)(scope)(token)(parameters)(arguments)(counts)
+                if isRecordSelfCall(context)(key)
+                then recordSelfReach(context)(env)(scope)(token)(parameters)(arguments)
+                else
+                    match lookupTable(key)(context.table) with
+                        | ResultReachState { counts = counts, causes = causes } ->
+                            causes
+                            |> withCounts([])
+                            |> substituteEntries(context)(env)(scope)(token)(parameters)(arguments)(counts)
+and recordSelfReach (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (parameters: List(Str)) (arguments: List(Expr)) =
+    match context.record with
+        | Some(ReachRecordMode { selfPaths = ResultReachState { counts = selfCounts, causes = selfCauses } }) ->
+            selfCauses
+            |> withCounts([])
+            |> recordSelfCompose(context)(env)(scope)(token)(parameters)(arguments)(selfCounts)
+        | None ->
+            stepOf(reachPoisoned(ConservativeUnknownReach))(token)
+// Stage 0's `RecordSelfCompose`: the record mode's own summary over a call to itself, each path
+// composed below the argument's reach, the function's own values kept as they are.
+and recordSelfCompose (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (parameters: List(Str)) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
+    match entries with
+        | [] -> stepOf(acc)(token)
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if name
+            |> rootOf
+            |> isRecordValueRoot
+            then recordSelfCompose(context)(env)(scope)(token)(parameters)(arguments)(rest)((acc with counts = addRecordCount(name)(count)(acc.counts)))
+            else
+                match argumentAt(indexOfName(name
+                |> rootOf
+                |> untagRoot)(parameters)(0))(arguments) with
+                    | None ->
+                        stepOf(reachPoisoned(ConservativeUnknownReach))(token)
+                    | Some(argument) ->
+                        match reachOf(context)(env)(scope)(token)(argument) with
+                            | ReachStep { reach = ResultReachState { counts = argumentCounts, causes = argumentCauses }, token = next } ->
+                                recordSelfCompose(context)(env)(scope)(next)(parameters)(arguments)(rest)((acc with counts = composeRecordPaths(pathOf(name))(count)(argumentCounts)(acc.counts), causes = mergeCauses(acc.causes)(argumentCauses)))
+and composeRecordPaths (path: Str) (count: Int) (argumentCounts: List(ParameterReachEntry)) (counts: List(ParameterReachEntry)) =
+    match argumentCounts with
+        | [] -> counts
+        | ParameterReachEntry { parameterName = argumentName, reachCount = argumentCount } :: rest ->
+            counts
+            |> addRecordCount(normalizeRecordPath(argumentName + path))(count * argumentCount)
+            |> composeRecordPaths(path)(count)(rest)
 and substituteEntries (context: ReachContext) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (parameters: List(Str)) (arguments: List(Expr)) (entries: List(ParameterReachEntry)) (acc: ResultReachState) =
     match entries with
         | [] -> stepOf(acc)(token)
@@ -1443,7 +1633,10 @@ and placedReach (name: Str) (argumentReach: ResultReachState) =
     (let placed =
         if isWholeName(name)
         then argumentReach
-        else extendPathsComponent(argumentReach)
+        else
+            if isElementName(name)
+            then extendEntries("/e")(argumentReach)
+            else extendPathsComponent(argumentReach)
     in
         if isExposedRoot(name)
         then tagExposed(placed)
@@ -1563,7 +1756,7 @@ and overApplyLet (context: ReachContext) (markers: List(Str)) (index: Int) (env:
     match reachOf(context)(env)(scope)(token)(value) with
         | ReachStep { reach = valueReach, token = afterValue } ->
             overApplyReach(context)(letBody)(markers)(index)((name, afterValue
-            |> tokenReach
+            |> bindingTokenReach(context)
             |> reachSum(valueReach)) :: env)(bindingScope(context)(scope)(name)(value))(afterValue + 1)
 and overApplyArms (context: ReachContext) (markers: List(Str)) (index: Int) (env: List((Str, ResultReachState))) (scope: ReachScope) (token: Int) (scrutineeReach: ResultReachState) (arms: List((Pattern, Expr, Maybe(Expr)))) (acc: Maybe(ResultReachState)) =
     match arms with
@@ -1591,7 +1784,7 @@ let recursive parameterEnv (parameters: List(Str)) =
 let functionReach (registry: ReachRegistry) (table: ReachTable) (function: ReachFunction) =
     match function with
         | ReachFunction { parameters = parameters, body = body, scope = scope } ->
-            match reachOf(ReachContext(registry = registry, table = table, current = function, overDepth = 0))(parameterEnv(parameters))(scope)(0)(body) with
+            match reachOf(ReachContext(registry = registry, table = table, current = function, overDepth = 0, record = None))(parameterEnv(parameters))(scope)(0)(body) with
                 | ReachStep { reach = reach } -> stripSyntheticTokens(reach)
 
 // The keys a body can consult the summary of: every name it resolves through its scope to a
@@ -1931,6 +2124,70 @@ let summaryOf (table: ReachTable) (mustTable: MapTree(Str, List(Str))) (function
             | Some(reached) -> reached
             | None -> []
     )
+
+// Stage 0's `RecordSummaryOf`: the record mode's summary keeps paths and the function's own values,
+// each at presence, and drops binding identity tokens.
+let recursive recordSummaryEntries (entries: List(ParameterReachEntry)) (counts: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> counts
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if Ashes.Text.startsWith(name)("#B")
+            then recordSummaryEntries(rest)(counts)
+            else
+                if Ashes.Text.startsWith(name)("#S")
+                then
+                    counts
+                    |> setCount(normalizeRecordPath("#S" + pathOf(name)))(1)
+                    |> recordSummaryEntries(rest)
+                else
+                    if Ashes.Text.startsWith(name)("#F")
+                    then
+                        counts
+                        |> setCount(normalizeRecordPath("#F" + pathOf(name)))(1)
+                        |> recordSummaryEntries(rest)
+                    else
+                        counts
+                        |> addRecordCount(normalizeRecordPath(name))(count)
+                        |> recordSummaryEntries(rest)
+
+let recordSummaryOf (reach: ResultReachState) = reach with counts = recordSummaryEntries(reach.counts)([])
+
+// Stage 0's `RecordReachFixpoint`: the function's body under its own record-mode summary, grown from
+// bottom until it repeats; the unstripped reach of the last round, or nothing past sixteen rounds.
+let recursive recordReachRounds (registry: ReachRegistry) (table: ReachTable) (function: ReachFunction) (cuts: List(TextSpan)) (current: ResultReachState) (round: Int) =
+    if round >= 16
+    then None
+    else
+        let context =
+            ReachContext(registry = registry, table = setTable(function.key)(stripSyntheticTokens(current))(table), current = function, overDepth = 0, record = Some(ReachRecordMode(cuts = cuts, recordKey = function.key, selfPaths = current)))
+        in
+            match reachOf(context)(parameterEnv(function.parameters))(function.scope)(0)(function.body) with
+                | ReachStep { reach = reach } ->
+                    let next = recordSummaryOf(reach)
+                    in
+                        if reachEquals(next)(current)
+                        then Some(reach)
+                        else
+                            recordReachRounds(registry)(table)(function)(cuts)(reachJoin(current)(next))(round + 1)
+
+// Stage 0's `ComputeRecordReach`: the record-mode reach of the function a key names, with the calls
+// at the cut spans as values of its own.
+let recordReachOf (registry: ReachRegistry) (table: ReachTable) (key: Str) (cuts: List(TextSpan)) =
+    match Ashes.Collection.Map.getStr(key)(registry.byKey) with
+        | Some(function) ->
+            recordReachRounds(registry)(table)(function)(cuts)(reachBottom(Unit))(0)
+        | None -> None
+
+let recursive summariesTableInto (summaries: List(ReachSummary)) (table: ReachTable) =
+    match summaries with
+        | [] -> table
+        | ReachSummary { function = ReachFunction { key = key }, reach = reach } :: rest ->
+            table
+            |> setTable(key)(reach)
+            |> summariesTableInto(rest)
+
+// The summaries as the table a record-mode walk reads its callees from.
+let summariesTable (summaries: List(ReachSummary)) = summariesTableInto(summaries)(Ashes.Collection.Map.empty)
 
 // The least fixpoint over every registered function: each starts at bottom, and every sweep
 // recomputes each body under the summaries so far, joining the growth in, until a sweep changes

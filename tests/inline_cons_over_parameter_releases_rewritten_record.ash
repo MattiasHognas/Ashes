@@ -1,0 +1,105 @@
+// expect: 21
+type Loc =
+    | filePath: Str
+    | line: Int
+
+type Kind =
+    | CallKnown(Int, Str, Int, Int, Int, Bool)
+    | LoadEnv(Int, Int)
+    | Other(Int)
+    | Switch(Int, List(Int))
+
+type IrInstruction =
+    | instruction: Kind
+    | location: Maybe(Loc)
+
+let recursive lookupAssociation key entries =
+    match entries with
+        | [] -> None
+        | (k, v) :: tail ->
+            if k == key
+            then Some(v)
+            else lookupAssociation(key)(tail)
+
+let recursive setAssociation key value entries =
+    match entries with
+        | [] -> [(key, value)]
+        | (k, v) :: tail ->
+            if k == key
+            then (key, value) :: tail
+            else (k, v) :: setAssociation(key)(value)(tail)
+
+let retarget (stackEnv: Int) (stackAllocated: Bool) irInst =
+    match irInst with
+        | IrInstruction { instruction = CallKnown(dest, label, _, argTemp, flagTemp, _), location = loc } -> IrInstruction(instruction = CallKnown(dest)(label)(stackEnv)(argTemp)(flagTemp)(stackAllocated), location = loc)
+        | other -> other
+
+let recursive collect indexed remaining (nextTemp: Int) expansions (removed: List(Int)) rewrites =
+    match remaining with
+        | [] -> (expansions, removed, rewrites, nextTemp)
+        | (position, irInst) :: tail ->
+            match irInst with
+                | IrInstruction { instruction = CallKnown(resultTemp, stageLabel, envTemp, argTemp, _, _), location = loc } ->
+                    match lookupAssociation(position)(rewrites) with
+                        | Some(_) -> collect(indexed)(tail)(nextTemp)(expansions)(removed)(rewrites)
+                        | None ->
+                            let callPosition = position + 1
+                            in
+                                let replacement = [IrInstruction(instruction = Other(envTemp), location = loc)]
+                                in
+                                    let retargeted =
+                                        match lookupAssociation(callPosition)(indexed) with
+                                            | Some(nextCall) -> retarget(nextTemp)(resultTemp > 0)(nextCall)
+                                            | None -> irInst
+                                    in
+                                        rewrites
+                                        |> setAssociation(callPosition)(retargeted)
+                                        |> collect(indexed)(tail)(nextTemp + 1)(setAssociation(position)(replacement)(expansions))(position :: removed)
+                | _ -> collect(indexed)(tail)(nextTemp)(expansions)(removed)(rewrites)
+
+let recursive rebuild indexed expansions (removed: List(Int)) rewrites acc =
+    match indexed with
+        | [] -> Ashes.Collection.List.reverse(acc)
+        | (position, irInst) :: tail ->
+            match lookupAssociation(position)(expansions) with
+                | Some(replacement) ->
+                    replacement
+                    |> Ashes.Collection.List.append(acc)
+                    |> rebuild(tail)(expansions)(removed)(rewrites)
+                | None ->
+                    match lookupAssociation(position)(rewrites) with
+                        | Some(rewritten) -> rebuild(tail)(expansions)(removed)(rewrites)(rewritten :: acc)
+                        | None -> rebuild(tail)(expansions)(removed)(rewrites)(irInst :: acc)
+
+let recursive indexInstructions (insts: List(IrInstruction)) (n: Int) acc =
+    match insts with
+        | [] -> Ashes.Collection.List.reverse(acc)
+        | i :: rest -> indexInstructions(rest)(n + 1)((n, i) :: acc)
+
+let once (insts: List(IrInstruction)) (tempCount: Int) =
+    (let indexed = indexInstructions(insts)(0)([])
+    in
+        match collect(indexed)(indexed)(tempCount)([])([])([]) with
+            | ([], _, _, _) -> (insts, false)
+            | (expansions, removed, rewrites, nextTemp) -> (rebuild(indexed)(expansions)(removed)(rewrites)([]), nextTemp > 0))
+
+let recursive weigh (insts: List(IrInstruction)) =
+    match insts with
+        | [] -> 0
+        | IrInstruction { instruction = CallKnown(_, label, _, _, _, _) } :: rest -> Ashes.Text.byteLength(label) + weigh(rest)
+        | _ :: rest -> 1 + weigh(rest)
+
+let probe (n: Int) =
+    (let insts = [IrInstruction(instruction = CallKnown(1)("s" + Ashes.Text.fromInt(n))(2)(3)(4)(false), location = Some(Loc(filePath = "a", line = n))), IrInstruction(instruction = CallKnown(5)("t" + Ashes.Text.fromInt(n))(6)(7)(8)(false), location = Some(Loc(filePath = "b" + Ashes.Text.fromInt(n), line = n))), IrInstruction(instruction = CallKnown(9)("u")(1)(2)(3)(false), location = Some(Loc(filePath = "c" + Ashes.Text.fromInt(n), line = n))), IrInstruction(instruction = CallKnown(10)("v")(1)(2)(3)(false), location = None), IrInstruction(instruction = CallKnown(11)("w")(1)(2)(3)(false), location = Some(Loc(filePath = "d", line = 1))), IrInstruction(instruction = Other(n), location = None)]
+    in
+        match once(insts)(10) with
+            | (rewritten, _) -> weigh(rewritten))
+
+let recursive loop (n: Int) (acc: Int) =
+    if n == 0
+    then acc
+    else loop(n - 1)(acc + probe(n))
+
+0
+|> loop(3)
+|> Ashes.IO.print

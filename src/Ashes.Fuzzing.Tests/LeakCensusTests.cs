@@ -190,3 +190,48 @@ public sealed class LeakCensusPoisonTests
     }
 }
 
+
+public sealed class CurriedChainPredecessorLeakTests
+{
+    // The curried-chain loop at a fixed seed, built by stage 0 with the runtime's live-cell count,
+    // holds as many cells after two rounds as after one, and its two-round build with every freed
+    // block overwritten still ends normally: the predecessor its back edge releases is released
+    // exactly once.
+    [Test]
+    public async Task TheCurriedChainLoopReleasesEachPredecessorOnce()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string repositoryRoot = Environment.CurrentDirectory;
+        while (!File.Exists(Path.Combine(repositoryRoot, "Ashes.slnx")))
+        {
+            repositoryRoot = Directory.GetParent(repositoryRoot)!.FullName;
+        }
+
+        var fixture = TestFixture.Create();
+        FuzzProfile profile = fixture.Profiles.Get("memory-growth");
+        int caseIndex = Array.IndexOf(fixture.Generator.RotationOrder(profile), "leak.curried-chain-predecessor");
+        caseIndex.ShouldBeGreaterThanOrEqualTo(0);
+        GeneratedFuzzCase generated = fixture.Generator.Generate(1, caseIndex, profile, profile.EffectiveDefaults.MaximumNodes);
+        CompilerExecution compiler = new();
+        long?[] live = new long?[2];
+        for (int rounds = 1; rounds <= 2; rounds++)
+        {
+            (ProcessResult _, ProcessResult? run) = await compiler.CompileAndRunAsync(
+                ObservableValueRenderer.RenderMemoryWorkload(generated, rounds), repositoryRoot, "host", "-O2", TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10), 4096, CancellationToken.None, leakCheck: true);
+            run.ShouldNotBeNull();
+            run.ExitCode.ShouldBe(0);
+            live[rounds - 1] = LeakCensus.ParseLiveCells(run.StandardError);
+        }
+
+        live[0].ShouldNotBeNull();
+        live[1].ShouldBe(live[0]);
+        (ProcessResult _, ProcessResult? poisoned) = await compiler.CompileAndRunAsync(
+            ObservableValueRenderer.RenderMemoryWorkload(generated, 2), repositoryRoot, "host", "-O2", TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(10), 4096, CancellationToken.None, poison: true);
+        poisoned.ShouldNotBeNull();
+        poisoned.ExitCode.ShouldBe(0);
+    }
+}

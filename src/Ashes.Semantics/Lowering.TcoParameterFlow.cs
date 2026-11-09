@@ -228,6 +228,10 @@ public sealed partial class Lowering
                     or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot or Expr.LogicalAnd or Expr.LogicalOr
                     or Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
                     or Expr.Equal or Expr.NotEqual => false,
+                // The condition is a Bool: only the branches can hand on a part of the value.
+                Expr.If conditional when Environment.GetEnvironmentVariable("GRC_NO_IFCONDFLOW") is null
+                    => FlowMentionsName(conditional.Then, name, parameters, policy, depth + 1)
+                        || FlowMentionsName(conditional.Else, name, parameters, policy, depth + 1),
                 Expr.Call call => CallFlowMentionsName(call, name, parameters, policy, depth),
                 Expr.Cons or Expr.TupleLit or Expr.ListLit => EnumerateChildren(expression).Any(child => FlowMentionsName(child, name, parameters, policy, depth + 1)),
                 _ => ExprMentionsName(expression, name, depth),
