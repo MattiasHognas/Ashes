@@ -305,6 +305,7 @@ public sealed partial class Lowering
         {
             return cached;
         }
+        if (Environment.GetEnvironmentVariable("ASHES_COUNT_COPIES") is not null) { Console.Error.WriteLine($"ASHES_COPY {(constrained ? "constrained" : "plain")} {candidate.Name} depth={_elementSpecializationDepth}"); }
 
         string label = _elementSpecializations.Count == 0
             ? $"{candidate.GenericLabel}__element"
