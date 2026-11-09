@@ -10470,7 +10470,7 @@ let recursive isTransferRetainIn (temp: Int) (instructions: List(IrInstruction))
 // The fields of an arena constructor cell, back to the allocation that made it: its tag, whether it
 // is tagless, and each (field index, stored temp). None when the cell is reference-counted or was
 // not allocated in this body.
-let recursive arenaCellFields (cell: Int) (instructions: List(IrInstruction)) (fields: List((Int, Int))) =
+let recursive allocatedArenaCellFields (cell: Int) (instructions: List(IrInstruction)) (fields: List((Int, Int))) =
     match instructions with
         | [] -> None
         | IrInstruction { instruction = AllocAdt(target, tag, _fieldCount, runtimeManaged, tagless) } :: rest ->
@@ -10479,12 +10479,12 @@ let recursive arenaCellFields (cell: Int) (instructions: List(IrInstruction)) (f
                 if runtimeManaged
                 then None
                 else Some((tag, tagless, fields))
-            else arenaCellFields(cell)(rest)(fields)
+            else allocatedArenaCellFields(cell)(rest)(fields)
         | IrInstruction { instruction = SetAdtField(pointer, fieldIndex, source, _tagless) } :: rest ->
             if pointer == cell
-            then arenaCellFields(cell)(rest)((fieldIndex, source) :: fields)
-            else arenaCellFields(cell)(rest)(fields)
-        | _ :: rest -> arenaCellFields(cell)(rest)(fields)
+            then allocatedArenaCellFields(cell)(rest)((fieldIndex, source) :: fields)
+            else allocatedArenaCellFields(cell)(rest)(fields)
+        | _ :: rest -> allocatedArenaCellFields(cell)(rest)(fields)
 
 // Stage 0's `CopyTransferDuplicatedChildrenIntoArena` for one field: a value of bounded, resolved
 // type takes an arena copy, stored back into the cell, and its retain is released.
@@ -10516,7 +10516,7 @@ let copyTransferDuplicatedChildren (argument: TcoResetArgument) (state: CoreLowe
         | TcoResetArgument { argumentTemp = cell, argumentType = argumentType, managedList = None, managedAdt = None, managedStr = None } ->
             match resolveType(state)(argumentType) with
                 | SemNamed(_symbolId, typeName, typeArguments) ->
-                    match arenaCellFields(cell)(state.reversedInstructions)([]) with
+                    match allocatedArenaCellFields(cell)(state.reversedInstructions)([]) with
                         | Some((tag, tagless, fields)) ->
                             (state with currentSpan = None)
                             |> copyTransferDuplicatedFields(cell)(typeName)(typeArguments)(tag)(tagless)(fields)
