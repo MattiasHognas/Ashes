@@ -115,6 +115,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("constructor_owning_fresh_list_child")]
     [Arguments("loop_result_some_holding_pattern_binding")]
     [Arguments("loop_result_some_holding_a_field_of_a_list_head")]
+    [Arguments("borrowed_call_after_renamed_reload")]
     [Arguments("concat_runtime_result")]
     [Arguments("curried_known_call_result")]
     [Arguments("generic_list_result_deep_copy")]

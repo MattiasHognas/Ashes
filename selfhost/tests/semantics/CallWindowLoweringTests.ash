@@ -301,8 +301,24 @@ let expectLoopResultPartDuplicateMatchesStageZero unit =
     |> withoutLocations
     |> withFunctionLocalLabels)
 
+// A loop body whose deferred call-result copy-out renames a reload: the borrowed `expand(pattern)`
+// call after it is rebuilt by the splice and still borrows, so placement takes no duplicate of the
+// pattern owner for it, as stage 1 records the call by its target.
+let expectBorrowedCallAfterRenamedReloadMatchesStageZero unit =
+    "borrowed_call_after_renamed_reload"
+    |> loweredFixtureLines
+    |> functionLines("[ClosureHelper from expandCases]")
+    |> withoutLocations
+    |> withFunctionLocalLabels
+    |> expectSameLines("borrowed call after a renamed reload")("borrowed_call_after_renamed_reload"
+    |> stageZeroFixtureLines
+    |> functionLines("[ClosureHelper from expandCases]")
+    |> withoutLocations
+    |> withFunctionLocalLabels)
+
 let runCallWindowLoweringTests unit =
     Unit
+    |> (given (_) -> expectBorrowedCallAfterRenamedReloadMatchesStageZero(Unit))
     |> expectUnknownResultPlacementReadsReturnsBit
     |> (given (_) -> expectGenericListResultDeepCopyMatchesStageZero(Unit))
     |> (given (_) -> expectLoopResultPartDuplicateMatchesStageZero(Unit))

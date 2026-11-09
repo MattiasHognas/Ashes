@@ -16861,6 +16861,30 @@ public sealed partial class Lowering
     // back to the call result itself, so later passes (lifetime placement keeping a borrowed argument
     // alive while the result that shares it is used, say) see the call exactly as they would have
     // without the deferral.
+    // The calls lowering recorded as borrowing their argument or asking for an arena result are found
+    // by reference; a call the splice rebuilds with renamed temps keeps its place in both sets
+    // (`GRC_NO_SPLICEKEEPSCALLSETS`). Losing it made placement duplicate a borrowed argument.
+    private void CarryCallSetMembership(IrInst raw, IrInst rebuilt)
+    {
+        if (ReferenceEquals(raw, rebuilt)
+            || raw is not IrInst.CallClosure original
+            || rebuilt is not IrInst.CallClosure renamed
+            || Environment.GetEnvironmentVariable("GRC_NO_SPLICEKEEPSCALLSETS") is not null)
+        {
+            return;
+        }
+
+        if (_borrowedArgumentCalls.Remove(original))
+        {
+            _borrowedArgumentCalls.Add(renamed);
+        }
+
+        if (_arenaResultRequestingCalls.Remove(original))
+        {
+            _arenaResultRequestingCalls.Add(renamed);
+        }
+    }
+
     private void SpliceDeferredPlaceholders(IReadOnlyList<IrInst> original, Action<IrInst> emit)
     {
         var renames = new Dictionary<int, int>();
@@ -16869,6 +16893,7 @@ public sealed partial class Lowering
         foreach (IrInst raw in original)
         {
             IrInst inst = renames.Count > 0 ? IrOptimizer.RemapSourceTemps(raw, renames) : raw;
+            CarryCallSetMembership(raw, inst);
             if (pendingReloadSlot >= 0)
             {
                 bool isReload = inst is IrInst.LoadLocal reload && reload.Slot == pendingReloadSlot;
