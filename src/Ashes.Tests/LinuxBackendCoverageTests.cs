@@ -25024,4 +25024,36 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("loop result constructor of parameter fields", samples, maxRssKb: 16_000);
     }
+
+
+    private static string BuildArenaRecordUpdateReplacingFieldProgram(int rounds)
+        => BuildArenaRecordReadBeforeReturnProgram(rounds)
+            .Replace(
+                "| Some(s) -> if s > 1000 then (built with borrowsOnly = true) else built",
+                "| Some(s) -> if s > 2 then (built with borrowsOnly = true) else (built with pendingRootSlot = None)",
+                StringComparison.Ordinal);
+
+    [Test]
+    public async Task Linux_backend_arena_record_update_replacing_field_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // handOff returns either an update copying the retained Maybe field or one replacing it with
+        // None. The record's own reference to the field is released once after the result's copy, on
+        // both arms; before, the replacing arm left it behind once per call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildArenaRecordUpdateReplacingFieldProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena record update replacing field", samples, maxRssKb: 16_000);
+    }
 }

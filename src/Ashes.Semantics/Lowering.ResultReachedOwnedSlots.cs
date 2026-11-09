@@ -159,19 +159,28 @@ public sealed partial class Lowering
             }
 
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, index, named));
-            if (CanArenaReset(fieldType) || !HoldsOwnReference(source) || !updates.All(update => CopiesFieldRaw(update, index, cell)))
+            bool fromRecord = updates.Count > 0 && ArenaRecordReplacedFieldEnabled;
+            if (CanArenaReset(fieldType)
+                || !HoldsOwnReference(source)
+                || !fromRecord && !updates.All(update => CopiesFieldRaw(update, index, cell)))
             {
                 continue;
             }
 
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, bodyTemp, index, tagless));
+            Emit(new IrInst.GetAdtField(childTemp, fromRecord ? cell : bodyTemp, index, tagless));
             EmitRuntimeManagedChildDrop(childTemp, fieldType);
         }
     }
 
     private static bool ArenaRecordJoinMoveEnabled =>
         Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDJOINMOVE") is null;
+
+    // With updates in the join, the record's own reference is released from the record itself, on
+    // every arm: an update that copies the field leaves the copy's retain, one that replaces it leaves
+    // the field with no holder but the dead arena record.
+    private static bool ArenaRecordReplacedFieldEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDREPLACEDFIELD") is null;
 
     // A result joining one arena record with arena record updates of it (`if c then built with
     // { f = v } else built`): the record, and each update, whose fields are read from the record

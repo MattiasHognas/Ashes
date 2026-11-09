@@ -22,14 +22,17 @@ internal sealed partial class ArenaRecordOwnedFieldTemplate() : LeakCombinationT
 
     protected override string Declarations(LeakNames names) => Render(names, readBeforeReturn: false);
 
-    internal static string Render(LeakNames names, bool readBeforeReturn)
+    internal static string Render(LeakNames names, bool readBeforeReturn, bool replaceField = false)
     {
+        string someArm = replaceField
+            ? "if s > 2 then (built with borrowsOnly = true) else (built with pendingRootSlot = None)"
+            : "if s > 1000 then (built with borrowsOnly = true) else built";
         string source = readBeforeReturn
             ? Program
                 .Replace("\n            HandOff(\n", "\n            let built = HandOff(\n", StringComparison.Ordinal)
                 .Replace(
                     "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n",
-                    "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> if s > 1000 then (built with borrowsOnly = true) else built\n                | None -> built\n",
+                    "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> " + someArm + "\n                | None -> built\n",
                     StringComparison.Ordinal)
             : Program;
         string program = source.Replace("ENTRY", names.Entry, StringComparison.Ordinal)
@@ -145,4 +148,16 @@ internal sealed class ArenaRecordReadBeforeReturnTemplate() : LeakCombinationTem
     "leak.arena-record-read-before-return", "arenaRecordReadBeforeReturn", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.TailCall)
 {
     protected override string Declarations(LeakNames names) => ArenaRecordOwnedFieldTemplate.Render(names, readBeforeReturn: true);
+}
+
+/// <summary>
+/// The same function returns either an update that copies the retained field or one that replaces
+/// it with <c>None</c>. The record's own reference to the field is released once, from the record,
+/// after the result's copy: the copy retains the field where it kept it, and nothing else holds it
+/// where it was replaced.
+/// </summary>
+internal sealed class ArenaRecordUpdateReplacingFieldTemplate() : LeakCombinationTemplate(
+    "leak.arena-record-update-replacing-field", "arenaRecordUpdateReplacingField", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.TailCall)
+{
+    protected override string Declarations(LeakNames names) => ArenaRecordOwnedFieldTemplate.Render(names, readBeforeReturn: true, replaceField: true);
 }
