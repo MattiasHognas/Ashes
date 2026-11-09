@@ -167,8 +167,15 @@ public sealed partial class Lowering
                 continue;
             }
 
-            int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, fromRecord ? cell : bodyTemp, index, tagless));
+            // With updates in the join, the reference the record took is released through the value
+            // stored into it, since the record itself may already be released as the scope's owner.
+            int childTemp = source;
+            if (!fromRecord)
+            {
+                childTemp = NewTemp();
+                Emit(new IrInst.GetAdtField(childTemp, bodyTemp, index, tagless));
+            }
+
             EmitRuntimeManagedChildDrop(childTemp, fieldType);
         }
     }
