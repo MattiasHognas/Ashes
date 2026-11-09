@@ -11183,6 +11183,75 @@ let recursive emitTuplePartRetainsAtReturn (resultTemp: Int) (parts: List(Int)) 
                     |> emitRetainIfReferenceCounted(childTemp)
                     |> emitTuplePartRetainsAtReturn(resultTemp)(rest)
 
+// The same, giving back the temps the parts were read into.
+let recursive emitTuplePartRetainsReading (resultTemp: Int) (parts: List(Int)) (partTemps: List(Int)) (state: CoreLoweringState) =
+    match parts with
+        | [] -> (state, partTemps)
+        | part :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = childTemp } ->
+                    allocated
+                    |> emit(LoadMemOffset(childTemp)(resultTemp)(part * 8))
+                    |> emitRetainIfReferenceCounted(childTemp)
+                    |> emitTuplePartRetainsReading(resultTemp)(rest)(childTemp :: partTemps)
+
+let recursive emitJumpIfAnyPartIs (valueTemp: Int) (partTemps: List(Int)) (dropLabel: Str) (state: CoreLoweringState) =
+    match partTemps with
+        | [] -> state
+        | partTemp :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = sameTemp } ->
+                    match freshLabel("tuple_part_owner_other")(allocated) with
+                        | FreshLabel { state = labelled, label = otherLabel } ->
+                            labelled
+                            |> emit(CmpIntEq(sameTemp)(valueTemp)(partTemp))
+                            |> emit(JumpIfFalse(sameTemp)(otherLabel))
+                            |> emit(Jump(dropLabel))
+                            |> emit(Label(otherLabel))
+                            |> emitJumpIfAnyPartIs(valueTemp)(rest)(dropLabel)
+
+// Stage 0's `EmitOwnedSlotDropsBehindRetainedParts`: a part retained at the return that is the
+// very value an owned slot holds has the slot's reference released behind it, so the retain hands
+// that reference over rather than adding one the function never releases. An owned value a part
+// only reads out of keeps its reference.
+let recursive emitOwnedSlotDropsBehindRetainedParts (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (partTemps: List(Int)) (state: CoreLoweringState) =
+    match slots with
+        | [] -> state
+        | (owner, slot, semanticType) :: rest ->
+            if owner == origin
+            then
+                match freshLabel("tuple_part_owner_kept")(state) with
+                    | FreshLabel { state = keptState, label = nextLabel } ->
+                        match freshLabel("tuple_part_owner_moved")(keptState) with
+                            | FreshLabel { state = movedState, label = dropLabel } ->
+                                match freshTempRun(2)(movedState) with
+                                    | FreshTemp { state = allocated, temp = valueTemp } ->
+                                        allocated
+                                        |> emit(LoadLocal(valueTemp)(slot))
+                                        |> emitSkipUnlessReferenceCounted(valueTemp)(nextLabel)
+                                        |> emitJumpIfAnyPartIs(valueTemp)(partTemps)(dropLabel)
+                                        |> emit(Jump(nextLabel))
+                                        |> emit(Label(dropLabel))
+                                        |> emitOwnedValueChildDrop(valueTemp)(semanticType)
+                                        |> emit(LoadConstInt(valueTemp + 1)(0))
+                                        |> emit(StoreLocal(slot)(valueTemp + 1))
+                                        |> emit(Label(nextLabel))
+                                        |> emitOwnedSlotDropsBehindRetainedParts(origin)(rest)(partTemps)
+            else emitOwnedSlotDropsBehindRetainedParts(origin)(rest)(partTemps)(state)
+
+let recursive slotNumberAmong (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (_owner, candidate, _semanticType) :: rest -> candidate == slot || slotNumberAmong(slot)(rest)
+
+let recursive ownedSlotsBesideKept (kept: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> []
+        | ((_owner, slot, _semanticType) as entry) :: rest ->
+            if slotNumberAmong(slot)(kept)
+            then ownedSlotsBesideKept(kept)(rest)
+            else entry :: ownedSlotsBesideKept(kept)(rest)
+
 // Stage 0's `TryReleaseOwnedSlotsHandingOverTupleParts`: the return of a function whose result is
 // a generic tuple with contract elements. When the caller asks for the parts and the result is an
 // arena cell, each part holds a reference of its own and the owned values only the parts read out
@@ -11628,7 +11697,81 @@ let handOverListBuilderHeads (label: Str) (resultTemp: Int) (resultType: Semanti
                 | _ -> state
         else state)
 
-let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
+let recursive tuplePartElementType (index: Int) (elements: List(SemanticType)) =
+    match elements with
+        | [] -> None
+        | element :: rest ->
+            if index == 0
+            then Some(element)
+            else tuplePartElementType(index - 1)(rest)
+
+// An arena result the caller asked for (bit 1 of the ownership word) holds nothing that needs an
+// owner, so a part that is the very value an owned slot holds is copied into the arena in the
+// result's field and the slot's reference is released. The caller reads the part as an arena value
+// and never releases it; left as it was, the slot's reference was released by nobody.
+let recursive emitArenaCopyOfOwnedPart (resultTemp: Int) (part: Int) (elementType: SemanticType) (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> state
+        | (owner, slot, slotType) :: rest ->
+            if owner == origin
+            then
+                match freshLabel("tuple_part_arena_owner_kept")(state) with
+                    | FreshLabel { state = labelled, label = nextLabel } ->
+                        match freshTempRun(4)(labelled) with
+                            | FreshTemp { state = allocated, temp = valueTemp } ->
+                                match allocated
+                                |> emit(LoadLocal(valueTemp)(slot))
+                                |> emitSkipUnlessReferenceCounted(valueTemp)(nextLabel)
+                                |> emit(LoadMemOffset(valueTemp + 1)(resultTemp)(part * 8))
+                                |> emit(CmpIntEq(valueTemp + 2)(valueTemp)(valueTemp + 1))
+                                |> emit(JumpIfFalse(valueTemp + 2)(nextLabel))
+                                |> emitArenaResultDeepCopy(valueTemp + 1)(elementType) with
+                                    | (copied, copyTemp) ->
+                                        copied
+                                        |> emit(StoreMemOffset(resultTemp)(part * 8)(copyTemp))
+                                        |> emitOwnedValueChildDrop(valueTemp)(slotType)
+                                        |> emit(LoadConstInt(valueTemp + 3)(0))
+                                        |> emit(StoreLocal(slot)(valueTemp + 3))
+                                        |> emit(Label(nextLabel))
+                                        |> emitArenaCopyOfOwnedPart(resultTemp)(part)(elementType)(origin)(rest)
+            else emitArenaCopyOfOwnedPart(resultTemp)(part)(elementType)(origin)(rest)(state)
+
+let recursive emitArenaCopiesOfOwnedParts (resultTemp: Int) (elements: List(SemanticType)) (parts: List(Int)) (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match parts with
+        | [] -> state
+        | part :: rest ->
+            match tuplePartElementType(part)(elements) with
+                | Some(elementType) ->
+                    state
+                    |> emitArenaCopyOfOwnedPart(resultTemp)(part)(elementType)(origin)(slots)
+                    |> emitArenaCopiesOfOwnedParts(resultTemp)(elements)(rest)(origin)(slots)
+                | None -> emitArenaCopiesOfOwnedParts(resultTemp)(elements)(rest)(origin)(slots)(state)
+
+// The same under the caller's arena-result request only, for an arena tuple result.
+let emitArenaCopiesOfOwnedPartsWhenRequested (resultTemp: Int) (resultType: SemanticType) (parts: List(Int)) (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemTuple(elements) ->
+            match freshLabel("tuple_parts_arena_not_requested")(state) with
+                | FreshLabel { state = labelled, label = skipLabel } ->
+                    match freshLabel("tuple_parts_arena_copy")(labelled) with
+                        | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                            match freshTempRun(5)(copyLabelled) with
+                                | FreshTemp { state = allocated, temp = wordTemp } ->
+                                    allocated
+                                    |> emit(LoadArgumentOwnership(wordTemp))
+                                    |> emit(LoadConstInt(wordTemp + 1)(1))
+                                    |> emit(ShrInt(wordTemp + 2)(wordTemp)(wordTemp + 1))
+                                    |> emit(AndInt(wordTemp + 3)(wordTemp + 2)(wordTemp + 1))
+                                    |> emit(JumpIfFalse(wordTemp + 3)(skipLabel))
+                                    |> emit(IsReferenceCounted(wordTemp + 4)(resultTemp))
+                                    |> emit(JumpIfFalse(wordTemp + 4)(copyLabel))
+                                    |> emit(Jump(skipLabel))
+                                    |> emit(Label(copyLabel))
+                                    |> emitArenaCopiesOfOwnedParts(resultTemp)(elements)(parts)(origin)(slots)
+                                    |> emit(Label(skipLabel))
+        | _ -> state
+
+let handOverTupleParts (label: Str) (resultTemp: Int) (resultType: SemanticType) (parts: List(Int)) (scalars: List(Int)) origin registered kept (state: CoreLoweringState) =
     match tuplePartsHandOverPlan(resultTemp)(parts)(scalars)(registered)(kept)(state) with
         | (handedOver, spliced, cellsKnown) ->
             match freshLabel("tuple_parts_not_requested")(spliced) with
@@ -11640,11 +11783,15 @@ let handOverTupleParts (label: Str) (resultTemp: Int) (parts: List(Int)) (scalar
                             |> (given (requested: CoreLoweringState) ->
                                 if cellsKnown
                                 then requested
-                                else emitTuplePartRetainsAtReturn(resultTemp)(parts)(requested))
+                                else
+                                    match emitTuplePartRetainsReading(resultTemp)(parts)([])(requested) with
+                                        | (retained, partTemps) ->
+                                            emitOwnedSlotDropsBehindRetainedParts(origin)(ownedSlotsBesideKept(kept)(registered))(partTemps)(retained))
                             |> emitTupleResultPartsMask(parts)
                             |> emitGeneralRcOwnedSlotDropsOf(origin)(handedOver)
                             |> emit(Jump(doneLabel))
                             |> emit(Label(keepLabel))
+                            |> emitArenaCopiesOfOwnedPartsWhenRequested(resultTemp)(resultType)(parts)(origin)(ownedSlotsBesideKept(kept)(registered))
                             |> emitGeneralRcOwnedSlotDropsOf(origin)(kept)
                             |> emit(Label(doneLabel))
                             |> (given (finished: CoreLoweringState) ->
@@ -11671,7 +11818,7 @@ let releaseOwnedSlotsHandingOverTupleParts (label: Str) (resultTemp: Int) (resul
                             withStateTupleResultPartLabels(finished
                             |> stateTupleResultPartLabels
                             |> Ashes.Collection.Map.setStr(label)(parts))(finished))
-                    | None -> handOverTupleParts(label)(resultTemp)(parts)(scalars)(origin)(registered)(kept)(state))
+                    | None -> handOverTupleParts(label)(resultTemp)(resultType)(parts)(scalars)(origin)(registered)(kept)(state))
 
 // The return of a function whose result is outside the contract's types and holds no part of
 // a generic tuple: an independent copy, a move onto the heap, or the owned slots out of reach.
