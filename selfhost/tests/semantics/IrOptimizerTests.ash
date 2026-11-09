@@ -904,6 +904,26 @@ let recursive bytesSubTextSource instructions =
         | IrInstruction { instruction = BytesSubText(_target, bytesTemp, _start, _length, _runtimeManaged) } :: _ -> Some(bytesTemp)
         | _ :: tail -> bytesSubTextSource(tail)
 
+// Counting the same borrowed temp again must expose its updated count. Treating it as a
+// single use would incorrectly select the single-use ownership-copy elision rule.
+let testMultiUseBorrowIsNotElided unit =
+    (let optimized =
+        optimizeInstructions([
+            0
+            |> LoadLocal(0)
+            |> makeInstruction,
+            0
+            |> Borrow(1)
+            |> makeInstruction,
+            makeInstruction(PrintInt(1)),
+            makeInstruction(PrintInt(1)),
+            makeInstruction(Return(0))
+        ])(1)(2)
+    in
+        if hasBorrow(optimized)
+        then Unit
+        else test.fail("testMultiUseBorrowIsNotElided: repeated uses must retain the non-copy Borrow"))
+
 // Eliding a single-use Borrow remaps its use for every instruction kind: the borrowed operand of
 // a builtin such as BytesSubText must end up naming the borrowed source, never the erased temp.
 let testBorrowElisionRemapsBytesOperand unit =
@@ -2690,6 +2710,7 @@ let testRetainingStageIsNotInlined unit =
 
 let runIrOptimizerTests unit =
     unit
+    |> testMultiUseBorrowIsNotElided
     |> testConstantFolding
     |> (given (_) -> testCapturedClosureCallDevirtualizes(Unit))
     |> (given (_) -> testDisagreeingCreationSitesKeepIndirectCall(Unit))
