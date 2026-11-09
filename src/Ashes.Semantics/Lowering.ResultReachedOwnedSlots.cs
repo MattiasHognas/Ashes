@@ -201,29 +201,124 @@ public sealed partial class Lowering
             return false;
         }
 
-        foreach (int candidate in cells)
+        if (TryLetBoundRecordBehindJoin(cells, out cell, updates))
         {
-            if (!_inst.Any(instruction => instruction is IrInst.SetAdtField { Ptr: var ptr, Source: var source }
-                && ptr == candidate
-                && DefinitionOf(source) is IrInst.GetAdtField))
-            {
-                if (cell >= 0)
-                {
-                    return false;
-                }
-
-                cell = candidate;
-            }
+            return true;
         }
 
-        if (cell < 0)
+        List<int> fresh = cells.Where(candidate => !ReadsFieldsOfRecord(candidate)).ToList();
+        if (fresh.Count != 1)
         {
             return false;
         }
 
+        cell = fresh[0];
+
         int record = cell;
         updates.AddRange(cells.Where(candidate => candidate != record));
         return updates.Count > 0;
+    }
+
+    private bool ReadsFieldsOfRecord(int candidate)
+        => _inst.Any(instruction => instruction is IrInst.SetAdtField { Ptr: var ptr, Source: var source }
+            && ptr == candidate
+            && DefinitionOf(source) is IrInst.GetAdtField);
+
+    private static bool ArenaRecordDerivedJoinEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ARENARECORDDERIVEDJOIN") is null;
+
+    // A join whose arms are all records built from one let-bound arena record (updates of it, or a
+    // record of the type assembled from its fields with one replaced) or fresh records that read
+    // nothing of it (`match built.slot with | Some(s) -> built with f = v | None -> Record(...)`):
+    // the let-bound record is the one whose retained fields no arm's copy takes over. Its binding
+    // encloses the join, so it is defined on every arm.
+    private bool TryLetBoundRecordBehindJoin(HashSet<int> cells, out int record, List<int> updates)
+    {
+        record = -1;
+        if (!ArenaRecordDerivedJoinEnabled)
+        {
+            return false;
+        }
+
+        HashSet<int> origins = [];
+        foreach (IrInst instruction in _inst)
+        {
+            if (instruction is not IrInst.SetAdtField { Ptr: var ptr, Source: var source }
+                || !cells.Contains(ptr)
+                || DefinitionOf(source) is not IrInst.GetAdtField { Ptr: var from })
+            {
+                continue;
+            }
+
+            if (DefinitionOf(from) is IrInst.Borrow { SourceTemp: var borrowed })
+            {
+                from = borrowed;
+            }
+
+            if (DefinitionOf(from) is not IrInst.LoadLocal { Slot: var slot }
+                || StoredRecordOf(slot) is not { } stored)
+            {
+                return false;
+            }
+
+            origins.Add(stored);
+        }
+
+        if (origins.Count != 1 || cells.Contains(origins.First()) || !DefinedOnEveryPathTo(origins.First(), cells))
+        {
+            return false;
+        }
+
+        record = origins.First();
+        updates.AddRange(cells);
+        return true;
+    }
+
+    // Whether the record is defined before every arm of the join: no branch taken before its
+    // definition lands between the definition and the last arm, so a path reaching an arm that does
+    // not read the record (a fresh record) has still defined it.
+    private bool DefinedOnEveryPathTo(int record, HashSet<int> cells)
+    {
+        int definition = _inst.FindIndex(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(record));
+        int last = cells.Max(cell => _inst.FindIndex(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(cell)));
+        if (definition < 0 || last < definition)
+        {
+            return false;
+        }
+
+        HashSet<string> enteredLabels = [];
+        for (int index = definition + 1; index <= last; index++)
+        {
+            if (_inst[index] is IrInst.Label label)
+            {
+                enteredLabels.Add(label.Name);
+            }
+        }
+
+        for (int index = 0; index < definition; index++)
+        {
+            string? target = _inst[index] switch
+            {
+                IrInst.Jump jump => jump.Target,
+                IrInst.JumpIfFalse branch => branch.Target,
+                _ => null,
+            };
+            if (target is not null && enteredLabels.Contains(target))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // The arena record a let slot was stored from once, or nothing.
+    private int? StoredRecordOf(int slot)
+    {
+        List<IrInst.StoreLocal> stores = _inst.OfType<IrInst.StoreLocal>().Where(store => store.Slot == slot).ToList();
+        return stores is [{ Source: var source }] && DefinitionOf(source) is IrInst.AllocAdt { RuntimeManaged: false, FieldCount: > 0 }
+            ? source
+            : null;
     }
 
     // The arena records a value is, through locals and borrows; false when a store is anything else

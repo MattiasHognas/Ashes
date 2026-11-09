@@ -22,7 +22,7 @@ internal sealed partial class ArenaRecordOwnedFieldTemplate() : LeakCombinationT
 
     protected override string Declarations(LeakNames names) => Render(names, readBeforeReturn: false);
 
-    internal static string Render(LeakNames names, bool readBeforeReturn, bool replaceField = false)
+    internal static string Render(LeakNames names, bool readBeforeReturn, bool replaceField = false, string noneArm = "built")
     {
         string someArm = replaceField
             ? "if s > 2 then (built with borrowsOnly = true) else (built with pendingRootSlot = None)"
@@ -32,7 +32,7 @@ internal sealed partial class ArenaRecordOwnedFieldTemplate() : LeakCombinationT
                 .Replace("\n            HandOff(\n", "\n            let built = HandOff(\n", StringComparison.Ordinal)
                 .Replace(
                     "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n",
-                    "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> " + someArm + "\n                | None -> built\n",
+                    "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> " + someArm + "\n                | None -> " + noneArm + "\n",
                     StringComparison.Ordinal)
             : Program;
         string program = source.Replace("ENTRY", names.Entry, StringComparison.Ordinal)
@@ -160,4 +160,22 @@ internal sealed class ArenaRecordUpdateReplacingFieldTemplate() : LeakCombinatio
     "leak.arena-record-update-replacing-field", "arenaRecordUpdateReplacingField", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.TailCall)
 {
     protected override string Declarations(LeakNames names) => ArenaRecordOwnedFieldTemplate.Render(names, readBeforeReturn: true, replaceField: true);
+}
+
+/// <summary>
+/// The same function's other arm returns another record of the type: a fresh one, or one assembled
+/// from the record's fields with the retained field replaced. No arm returns the let-bound record
+/// itself, so its own reference to the field is released from it once after the result's copy.
+/// </summary>
+internal sealed class ArenaRecordDerivedJoinTemplate() : LeakCombinationTemplate(
+    "leak.arena-record-derived-join", "arenaRecordDerivedJoin", GeneratedFeature.Record, GeneratedFeature.Match, GeneratedFeature.TailCall)
+{
+    protected override string Declarations(LeakNames names)
+        => ArenaRecordOwnedFieldTemplate.Render(
+            names,
+            readBeforeReturn: true,
+            replaceField: true,
+            noneArm: names.Coin("fresh-arm")
+                ? "HandOff(borrowsOnly = true, runtimeArgument = false, mayReach = false, borrowedReach = false, pendingRootSlot = None)"
+                : "HandOff(borrowsOnly = built.borrowsOnly, runtimeArgument = built.runtimeArgument, mayReach = built.mayReach, borrowedReach = built.borrowedReach, pendingRootSlot = Some(7))");
 }

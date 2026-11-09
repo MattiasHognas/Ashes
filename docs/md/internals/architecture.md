@@ -1831,8 +1831,11 @@ built`) is the same move: a field every update copies from the record without a 
 reference whichever arm returned, and moves into the copy (`GRC_NO_ARENARECORDJOINMOVE`). The
 record's own reference is then released from the record itself once after the copy, so an update
 that replaces the field (`built with f = None`) is covered too: on its arm nothing else holds the
-field (`GRC_NO_ARENARECORDREPLACEDFIELD`). A join with an arm returning another record of the type
-is declined.
+field (`GRC_NO_ARENARECORDREPLACEDFIELD`). A join none of whose arms returns the let-bound record
+itself, every arm an update of it, a record of the type assembled from its fields, or a fresh record,
+releases the same way from the let-bound record that every reading arm reads from, provided no branch
+taken before its binding lands inside the join, so it is defined on every arm
+(`GRC_NO_ARENARECORDDERIVEDJOIN`).
 
 A generic list builder stores results it cannot release. A function whose result is a list of
 unresolved element type built from arena cells, each consing a closure call's result onto the empty

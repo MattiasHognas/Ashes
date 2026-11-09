@@ -25121,4 +25121,39 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("generic parameter list argument", samples, maxRssKb: 16_000);
     }
+
+    private static string BuildArenaRecordDerivedJoinProgram(int rounds)
+        => ArenaRecordOwnedFieldDeclarations
+            .Replace("\n            HandOff(\n", "\n            let built = HandOff(\n", StringComparison.Ordinal)
+            .Replace(
+                "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n",
+                "pendingRootSlot = if runtimeArgument then None else rootSlot\n            )\n            in match built.pendingRootSlot with\n                | Some(s) -> if s > 2 then (built with borrowsOnly = true) else (built with pendingRootSlot = None)\n                | None -> HandOff(borrowsOnly = true, runtimeArgument = false, mayReach = false, borrowedReach = false, pendingRootSlot = None)\n",
+                StringComparison.Ordinal)
+            + $$"""
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_arena_record_derived_join_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // handOff binds an arena record holding a retained slot and returns, on every arm, another
+        // record of the type: an update of it or a fresh one. No arm returned the record itself, so its
+        // own reference to the slot stayed behind once per call.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildArenaRecordDerivedJoinProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena record derived join", samples, maxRssKb: 16_000);
+    }
 }
