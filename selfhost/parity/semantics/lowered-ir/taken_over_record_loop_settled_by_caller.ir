@@ -1,0 +1,2357 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from reverseOnto]
+  locals=21 temps=25
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_loop_settled_by_caller.ash:9:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_loop_settled_by_caller.ash:10:11)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    LoadLocal             Target=5 Slot=1   (taken_over_record_loop_settled_by_caller.ash:11:17)
+    StoreLocal            Slot=9 Source=5   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    Jump                  Target=match_end_0   (taken_over_record_loop_settled_by_caller.ash:10:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
+    Jump                  Target=match_next_2   (taken_over_record_loop_settled_by_caller.ash:10:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=6 Value=0   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    StoreLocal            Slot=16 Source=8   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    StoreLocal            Slot=17 Source=9   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    LoadLocal             Target=10 Slot=17   (taken_over_record_loop_settled_by_caller.ash:12:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=16   (taken_over_record_loop_settled_by_caller.ash:12:45)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=15 Slot=1   (taken_over_record_loop_settled_by_caller.ash:12:53)
+    RcDup                 Target=16 SourceTemp=13
+    RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=16
+    Alloc                 Target=17 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:12:45)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (taken_over_record_loop_settled_by_caller.ash:12:45)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=15   (taken_over_record_loop_settled_by_caller.ash:12:45)
+    LoadLocal             Target=18 Slot=2   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    LoadLocal             Target=19 Slot=1   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    StoreLocal            Slot=2 Source=11   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
+    StoreLocal            Slot=1 Source=17   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    RestoreStackPointer   Slot=8   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    Jump                  Target=lambda_1_body   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    LoadConstInt          Target=20 Value=0   (taken_over_record_loop_settled_by_caller.ash:12:27)
+    StoreLocal            Slot=9 Source=20   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=18
+    Jump                  Target=match_end_0   (taken_over_record_loop_settled_by_caller.ash:10:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
+    Jump                  Target=match_none_1   (taken_over_record_loop_settled_by_caller.ash:10:5)
+  match_none_1:
+    LoadConstInt          Target=23 Value=0   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    StoreLocal            Slot=9 Source=23   (taken_over_record_loop_settled_by_caller.ash:10:5)
+  match_end_0:
+    LoadLocal             Target=24 Slot=9   (taken_over_record_loop_settled_by_caller.ash:10:5)
+    Return                Source=24   (taken_over_record_loop_settled_by_caller.ash:9:1)
+
+function lambda_0  [SourceFunction from reverseOnto]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:9:1)
+
+function lambda_3  [ClosureHelper from appendTo]
+  locals=28 temps=41
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreLocal            Slot=6 Source=1   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreLocal            Slot=7 Source=1   (taken_over_record_loop_settled_by_caller.ash:14:1)
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    LoadLocal             Target=2 Slot=1   (taken_over_record_loop_settled_by_caller.ash:15:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_8   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    LoadLocal             Target=5 Slot=2   (taken_over_record_loop_settled_by_caller.ash:16:17)
+    StoreLocal            Slot=11 Source=5   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    Jump                  Target=match_end_5   (taken_over_record_loop_settled_by_caller.ash:15:5)
+  match_arm_cleanup_8:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_7   (taken_over_record_loop_settled_by_caller.ash:15:5)
+  match_next_7:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_9   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    StoreLocal            Slot=18 Source=8   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    StoreLocal            Slot=19 Source=9   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    LoadLocal             Target=10 Slot=18   (taken_over_record_loop_settled_by_caller.ash:17:27)
+    Borrow                Target=11 SourceTemp=10
+    SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
+    LoadEnv               Target=12 Index=1   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadLocal             Target=13 Slot=2   (taken_over_record_loop_settled_by_caller.ash:17:44)
+    LoadMemOffset         Target=14 BasePtr=12 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=15 Value=62   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    ShrInt                Target=16 Left=14 Right=15   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=17 Value=1   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=18 Value=0   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    StoreLocal            Slot=22 Source=13   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    JumpIfFalse           CondTemp=18 Target=rc_call_argument_not_retained_10   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    RcDup                 Target=19 SourceTemp=13 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=19   (taken_over_record_loop_settled_by_caller.ash:17:35)
+  rc_call_argument_not_retained_10:
+    LoadLocal             Target=20 Slot=22   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    CallClosure           Target=21 ClosureTemp=12 ArgTemp=20 RuntimeManagedArgumentFlagTemp=18   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadLocal             Target=22 Slot=19   (taken_over_record_loop_settled_by_caller.ash:17:50)
+    Borrow                Target=23 SourceTemp=22
+    LoadMemOffset         Target=24 BasePtr=21 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=25 Value=62   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    ShrInt                Target=26 Left=24 Right=25   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=27 Value=1   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=28 Value=0   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    StoreLocal            Slot=23 Source=23   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_11   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=23 Source=29   (taken_over_record_loop_settled_by_caller.ash:17:35)
+  rc_call_argument_not_retained_11:
+    LoadLocal             Target=30 Slot=23   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    LoadConstInt          Target=32 Value=2   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    OrInt                 Target=33 Left=28 Right=32   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    CallClosure           Target=31 ClosureTemp=21 ArgTemp=30 RuntimeManagedArgumentFlagTemp=33   (taken_over_record_loop_settled_by_caller.ash:17:35)
+    RcDup                 Target=35 SourceTemp=11
+    RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=18
+    Alloc                 Target=36 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:17:27)
+    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=35   (taken_over_record_loop_settled_by_caller.ash:17:27)
+    StoreMemOffset        BasePtr=36 OffsetBytes=8 Source=31   (taken_over_record_loop_settled_by_caller.ash:17:27)
+    StoreLocal            Slot=11 Source=36   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    Jump                  Target=match_end_5   (taken_over_record_loop_settled_by_caller.ash:15:5)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=27
+    Jump                  Target=match_none_6   (taken_over_record_loop_settled_by_caller.ash:15:5)
+  match_none_6:
+    LoadConstInt          Target=39 Value=0   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    StoreLocal            Slot=11 Source=39   (taken_over_record_loop_settled_by_caller.ash:15:5)
+  match_end_5:
+    LoadLocal             Target=40 Slot=11   (taken_over_record_loop_settled_by_caller.ash:15:5)
+    Return                Source=40   (taken_over_record_loop_settled_by_caller.ash:14:1)
+
+function lambda_2  [SourceFunction from appendTo]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    LoadLocal             Target=3 Slot=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    MakeClosure           Target=2 FuncLabel=lambda_2 EnvPtrTemp=3 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:14:1)
+
+function __rcnorm_6  [RuntimeManagedAdtNormalizer]
+  locals=14 temps=67
+    LoadLocal             Target=0 Slot=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_30   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_31   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_30:
+    GetAdtTag             Target=3 Ptr=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    SwitchTag             TagTemp=3 Cases=[6] DefaultLabel=rcnorm_ctor_32   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_ctor_32:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=5 Ptr=0 FieldIndex=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=6 SourceTemp=5
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_39   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=7   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_40   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_39:
+    LoadConstInt          Target=9 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallKnown             Target=10 FuncLabel=__rcnorm_6 EnvTemp=9 ArgTemp=5   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=4 Source=10   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_40:
+    LoadLocal             Target=11 Slot=4   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    SetAdtField           Ptr=4 FieldIndex=1 Source=11   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=3 Source=4   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rcnorm_end_38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_ctor_33:
+    CopyOutArena          DestTemp=12 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=12   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rcnorm_end_38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_ctor_34:
+    CopyOutArena          DestTemp=13 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=14 Ptr=0 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=15 SourceTemp=14
+    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_41   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=16 SourceTemp=14 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_41:
+    CopyOutArena          DestTemp=17 SrcTemp=14 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=5 Source=17   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_42:
+    LoadLocal             Target=18 Slot=5   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=18   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=3 Source=13   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rcnorm_end_38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_ctor_35:
+    CopyOutArena          DestTemp=19 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=19   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rcnorm_end_38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_ctor_36:
+    CopyOutArena          DestTemp=20 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=21 Ptr=0 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=22 SourceTemp=21
+    JumpIfFalse           CondTemp=22 Target=rc_representation_copy_43   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=23 SourceTemp=21 RuntimeManaged=true
+    StoreLocal            Slot=6 Source=23   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_44   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_43:
+    LoadConstInt          Target=25 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallKnown             Target=26 FuncLabel=__rcnorm_6 EnvTemp=25 ArgTemp=21   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=6 Source=26   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_44:
+    LoadLocal             Target=27 Slot=6   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    SetAdtField           Ptr=20 FieldIndex=0 Source=27   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    GetAdtField           Target=28 Ptr=0 FieldIndex=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=29 SourceTemp=28
+    JumpIfFalse           CondTemp=29 Target=rc_representation_copy_45   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=30 SourceTemp=28 RuntimeManaged=true
+    StoreLocal            Slot=7 Source=30   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_46   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_45:
+    LoadConstInt          Target=32 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallKnown             Target=33 FuncLabel=__rcnorm_6 EnvTemp=32 ArgTemp=28   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=7 Source=33   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_46:
+    LoadLocal             Target=34 Slot=7   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    SetAdtField           Ptr=20 FieldIndex=1 Source=34   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=3 Source=20   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rcnorm_end_38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_ctor_37:
+    CopyOutArena          DestTemp=35 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=36 Ptr=0 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=37 SourceTemp=36
+    JumpIfFalse           CondTemp=37 Target=rc_representation_copy_47   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=38 SourceTemp=36 RuntimeManaged=true
+    StoreLocal            Slot=8 Source=38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_48   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_47:
+    IsReferenceCounted    Target=40 SourceTemp=36
+    JumpIfFalse           CondTemp=40 Target=rc_representation_copy_49   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=41 SourceTemp=36 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=41   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_50   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_49:
+    LoadConstInt          Target=42 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=10 Source=36   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=11 Source=42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=12 Source=42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_51:
+    LoadLocal             Target=43 Slot=10   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CmpIntNe              Target=44 Left=43 Right=42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_end_52   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=45 SourceTemp=43
+    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_cell_53   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=46 SourceTemp=43 RuntimeManaged=true
+    LoadLocal             Target=47 Slot=11   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CmpIntNe              Target=48 Left=47 Right=42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=48 Target=rc_normalize_list_first_54   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=49 Slot=12   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=46   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_linked_55   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_first_54:
+    StoreLocal            Slot=11 Source=46   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_linked_55:
+    StoreLocal            Slot=12 Source=46   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_end_52   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_cell_53:
+    LoadMemOffset         Target=50 BasePtr=43 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadMemOffset         Target=51 BasePtr=43 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=52 SourceTemp=50
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_56   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=53 SourceTemp=50 RuntimeManaged=true
+    StoreLocal            Slot=13 Source=53   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_57   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_56:
+    LoadConstInt          Target=55 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallKnown             Target=56 FuncLabel=__rcnorm_6 EnvTemp=55 ArgTemp=50   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=13 Source=56   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_57:
+    LoadLocal             Target=57 Slot=13   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Alloc                 Target=58 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=58 OffsetBytes=0 Source=57   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=58 OffsetBytes=8 Source=42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=59 Slot=11   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CmpIntNe              Target=60 Left=59 Right=42   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=60 Target=rc_normalize_list_first_58   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=61 Slot=12   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=61 OffsetBytes=8 Source=58   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_linked_59   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_first_58:
+    StoreLocal            Slot=11 Source=58   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_linked_59:
+    StoreLocal            Slot=12 Source=58   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=10 Source=51   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_51   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_end_52:
+    LoadLocal             Target=62 Slot=11   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=9 Source=62   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_50:
+    LoadLocal             Target=63 Slot=9   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=8 Source=63   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_48:
+    LoadLocal             Target=64 Slot=8   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    SetAdtField           Ptr=35 FieldIndex=0 Source=64   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=3 Source=35   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rcnorm_end_38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rcnorm_end_38:
+    LoadLocal             Target=65 Slot=3   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=2 Source=65   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_31:
+    LoadLocal             Target=66 Slot=2   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Return                Source=66   (taken_over_record_loop_settled_by_caller.ash:21:17)
+
+function __rcdrop_general_7  [RuntimeManagedAdtDropper]
+  locals=3 temps=23
+    LoadLocal             Target=0 Slot=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    GetAdtTag             Target=2 Ptr=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    SwitchTag             TagTemp=2 Cases=[6] DefaultLabel=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_ctor_94:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=4 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=5 FuncLabel=__rcdrop_general_7 EnvTemp=4 ArgTemp=3   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_ctor_95:
+    Jump                  Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_ctor_96:
+    GetAdtField           Target=6 Ptr=0 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDrop                SourceTemp=6 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_ctor_97:
+    Jump                  Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_ctor_98:
+    GetAdtField           Target=7 Ptr=0 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=8 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=9 FuncLabel=__rcdrop_general_7 EnvTemp=8 ArgTemp=7   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    GetAdtField           Target=10 Ptr=0 FieldIndex=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=11 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=12 FuncLabel=__rcdrop_general_7 EnvTemp=11 ArgTemp=10   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_ctor_99:
+    GetAdtField           Target=13 Ptr=0 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=2 Source=13   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_100:
+    LoadLocal             Target=14 Slot=2   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=15 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=16 Left=14 Right=15   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=16 Target=rcdrop_list_end_102   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcIsUnique            Target=17 SourceTemp=14
+    JumpIfFalse           CondTemp=17 Target=rcdrop_list_shared_101   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=18 BasePtr=14 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=19 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=20 FuncLabel=__rcdrop_general_7 EnvTemp=19 ArgTemp=18   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=21 BasePtr=14 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDrop                SourceTemp=14 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=21   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rcdrop_list_100   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_shared_101:
+    RcDrop                SourceTemp=14 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_102   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_end_102:
+    Jump                  Target=rcdrop_general_shared_93   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_general_shared_93:
+    RcDrop                SourceTemp=0 TypeName=Pat RuntimeManaged=true
+    LoadConstInt          Target=22 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Return                Source=22   (taken_over_record_loop_settled_by_caller.ash:19:1)
+
+function lambda_5  [ClosureHelper from consCombinations]
+  locals=65 temps=242
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=96 Slot=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadArgumentOwnership Target=97   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=98 Value=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    AndInt                Target=99 Left=97 Right=98   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=99 Target=rc_arg_normalize_copy_65   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=40 Source=96   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_arg_normalize_done_66   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_arg_normalize_copy_65:
+    IsReferenceCounted    Target=100 SourceTemp=96
+    JumpIfFalse           CondTemp=100 Target=rc_representation_copy_67   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDup                 Target=101 SourceTemp=96 RuntimeManaged=true
+    StoreLocal            Slot=41 Source=101   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_representation_done_68   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_copy_67:
+    LoadConstInt          Target=103 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=42 Source=96   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=43 Source=103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=44 Source=103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_69:
+    LoadLocal             Target=104 Slot=42   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=105 Left=104 Right=103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=105 Target=rc_normalize_list_end_70   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=106 BasePtr=104 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=107 BasePtr=104 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    IsReferenceCounted    Target=108 SourceTemp=106
+    JumpIfFalse           CondTemp=108 Target=rc_representation_copy_71   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDup                 Target=109 SourceTemp=106 RuntimeManaged=true
+    StoreLocal            Slot=45 Source=109   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_representation_done_72   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_copy_71:
+    LoadConstInt          Target=111 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=112 FuncLabel=__rcnorm_6 EnvTemp=111 ArgTemp=106   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=45 Source=112   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_done_72:
+    LoadLocal             Target=113 Slot=45   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Alloc                 Target=114 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=114 OffsetBytes=0 Source=113   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=114 OffsetBytes=8 Source=103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=115 Slot=43   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=116 Left=115 Right=103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=116 Target=rc_normalize_list_first_73   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=117 Slot=44   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=117 OffsetBytes=8 Source=114   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_normalize_list_linked_74   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_first_73:
+    StoreLocal            Slot=43 Source=114   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_linked_74:
+    StoreLocal            Slot=44 Source=114   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=42 Source=107   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_normalize_list_69   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_end_70:
+    LoadLocal             Target=118 Slot=43   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=41 Source=118   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_done_68:
+    LoadLocal             Target=119 Slot=41   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=40 Source=119   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_arg_normalize_done_66:
+    LoadLocal             Target=120 Slot=40   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=1 Source=120   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=121 Value=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=32 Source=121   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_loop_settled_by_caller.ash:20:11)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_15   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=5 Index=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=6 Slot=1   (taken_over_record_loop_settled_by_caller.ash:21:29)
+    LoadMemOffset         Target=7 BasePtr=5 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadConstInt          Target=8 Value=62   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    ShrInt                Target=9 Left=7 Right=8   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadConstInt          Target=10 Value=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    AndInt                Target=11 Left=9 Right=10   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=14 Source=6   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=11 Target=rc_call_argument_not_retained_16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=12 SourceTemp=6 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=14 Source=12   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_call_argument_not_retained_16:
+    LoadLocal             Target=13 Slot=14   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallClosure           Target=14 ClosureTemp=5 ArgTemp=13 RuntimeManagedArgumentFlagTemp=11   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadConstInt          Target=15 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:34)
+    LoadConstInt          Target=17 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallClosure           Target=16 ClosureTemp=14 ArgTemp=15 RuntimeManagedArgumentFlagTemp=17   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadMemOffset         Target=18 BasePtr=14 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadConstInt          Target=19 Value=60   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    ShrInt                Target=20 Left=18 Right=19   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadConstInt          Target=21 Value=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    AndInt                Target=22 Left=20 Right=21   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=23 Slot=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=17 Source=23   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=16 Source=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    JumpIfFalse           CondTemp=22 Target=general_rc_result_normalize_18   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=general_rc_result_owned_17   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  general_rc_result_normalize_18:
+    IsReferenceCounted    Target=24 SourceTemp=16
+    JumpIfFalse           CondTemp=24 Target=rc_representation_copy_19   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=25 SourceTemp=16 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=25   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_20   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_19:
+    IsReferenceCounted    Target=27 SourceTemp=16
+    JumpIfFalse           CondTemp=27 Target=rc_representation_copy_21   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=28 SourceTemp=16 RuntimeManaged=true
+    StoreLocal            Slot=19 Source=28   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_22   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_21:
+    LoadConstInt          Target=29 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=20 Source=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=21 Source=29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=22 Source=29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_23:
+    LoadLocal             Target=30 Slot=20   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CmpIntNe              Target=31 Left=30 Right=29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=31 Target=rc_normalize_list_end_24   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=32 SourceTemp=30
+    JumpIfFalse           CondTemp=32 Target=rc_normalize_list_cell_25   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=33 SourceTemp=30 RuntimeManaged=true
+    LoadLocal             Target=34 Slot=21   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CmpIntNe              Target=35 Left=34 Right=29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=35 Target=rc_normalize_list_first_26   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=36 Slot=22   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=36 OffsetBytes=8 Source=33   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_linked_27   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_first_26:
+    StoreLocal            Slot=21 Source=33   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_linked_27:
+    StoreLocal            Slot=22 Source=33   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_end_24   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_cell_25:
+    LoadMemOffset         Target=37 BasePtr=30 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadMemOffset         Target=38 BasePtr=30 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    IsReferenceCounted    Target=39 SourceTemp=37
+    JumpIfFalse           CondTemp=39 Target=rc_representation_copy_28   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    RcDup                 Target=40 SourceTemp=37 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=40   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_representation_done_29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_copy_28:
+    LoadConstInt          Target=42 Value=0   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CallKnown             Target=43 FuncLabel=__rcnorm_6 EnvTemp=42 ArgTemp=37   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=23 Source=43   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_29:
+    LoadLocal             Target=44 Slot=23   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Alloc                 Target=45 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=45 OffsetBytes=0 Source=44   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=45 OffsetBytes=8 Source=29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=46 Slot=21   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    CmpIntNe              Target=47 Left=46 Right=29   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    JumpIfFalse           CondTemp=47 Target=rc_normalize_list_first_60   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=48 Slot=22   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreMemOffset        BasePtr=48 OffsetBytes=8 Source=45   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_linked_61   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_first_60:
+    StoreLocal            Slot=21 Source=45   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_linked_61:
+    StoreLocal            Slot=22 Source=45   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=20 Source=38   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    Jump                  Target=rc_normalize_list_23   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_normalize_list_end_24:
+    LoadLocal             Target=49 Slot=21   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=19 Source=49   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_22:
+    LoadLocal             Target=50 Slot=19   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=18 Source=50   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  rc_representation_done_20:
+    LoadLocal             Target=51 Slot=18   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=16 Source=51   (taken_over_record_loop_settled_by_caller.ash:21:17)
+  general_rc_result_owned_17:
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    LoadConstInt          Target=52 Value=1   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=24 Source=52   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    LoadLocal             Target=53 Slot=16   (taken_over_record_loop_settled_by_caller.ash:21:17)
+    StoreLocal            Slot=9 Source=53   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    Jump                  Target=match_end_12   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_arm_cleanup_15:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=26
+    Jump                  Target=match_next_14   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_next_14:
+    SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
+    LoadConstInt          Target=54 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    CmpIntNe              Target=55 Left=2 Right=54   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    JumpIfFalse           CondTemp=55 Target=match_arm_cleanup_63   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=56 BasePtr=2 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=57 BasePtr=2 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadConstInt          Target=58 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    CmpIntNe              Target=59 Left=56 Right=58   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    JumpIfFalse           CondTemp=59 Target=match_arm_cleanup_63   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=60 BasePtr=56 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=61 BasePtr=56 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    StoreLocal            Slot=29 Source=60   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadConstInt          Target=62 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    CmpIntNe              Target=63 Left=61 Right=62   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    JumpIfFalse           CondTemp=63 Target=match_arm_cleanup_63   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=64 BasePtr=61 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=65 BasePtr=61 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    StoreLocal            Slot=30 Source=64   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadConstInt          Target=66 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    CmpIntEq              Target=67 Left=65 Right=66   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    JumpIfFalse           CondTemp=67 Target=match_arm_cleanup_63   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    StoreLocal            Slot=31 Source=57   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadLocal             Target=68 Slot=31   (taken_over_record_loop_settled_by_caller.ash:22:60)
+    Borrow                Target=69 SourceTemp=68
+    LoadLocal             Target=70 Slot=29   (taken_over_record_loop_settled_by_caller.ash:22:72)
+    Borrow                Target=71 SourceTemp=70
+    LoadLocal             Target=72 Slot=30   (taken_over_record_loop_settled_by_caller.ash:22:78)
+    Borrow                Target=73 SourceTemp=72
+    AllocAdt              Target=74 Tag=4 FieldCount=2   (taken_over_record_loop_settled_by_caller.ash:22:66)
+    SetAdtField           Ptr=74 FieldIndex=0 Source=71   (taken_over_record_loop_settled_by_caller.ash:22:66)
+    SetAdtField           Ptr=74 FieldIndex=1 Source=73   (taken_over_record_loop_settled_by_caller.ash:22:66)
+    LoadLocal             Target=75 Slot=1   (taken_over_record_loop_settled_by_caller.ash:22:87)
+    Alloc                 Target=76 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:22:66)
+    StoreMemOffset        BasePtr=76 OffsetBytes=0 Source=74   (taken_over_record_loop_settled_by_caller.ash:22:66)
+    StoreMemOffset        BasePtr=76 OffsetBytes=8 Source=75   (taken_over_record_loop_settled_by_caller.ash:22:66)
+    LoadLocal             Target=77 Slot=2   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    LoadLocal             Target=78 Slot=1   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    StoreLocal            Slot=2 Source=69   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    RcDrop                SourceTemp=57 TypeName=List OwnerSlot=31
+    StoreLocal            Slot=1 Source=76   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    IsReferenceCounted    Target=193 SourceTemp=76
+    JumpIfFalse           CondTemp=193 Target=rc_representation_copy_213
+    RcDup                 Target=194 SourceTemp=76 RuntimeManaged=true
+    RcDrop                SourceTemp=64 TypeName=Pat OwnerSlot=30
+    RcDrop                SourceTemp=60 TypeName=Pat OwnerSlot=29
+    StoreLocal            Slot=56 Source=194
+    Jump                  Target=rc_representation_done_214
+  rc_representation_copy_213:
+    IsReferenceCounted    Target=196 SourceTemp=76
+    JumpIfFalse           CondTemp=196 Target=rc_representation_copy_215
+    RcDup                 Target=197 SourceTemp=76 RuntimeManaged=true
+    RcDrop                SourceTemp=64 TypeName=Pat OwnerSlot=30
+    RcDrop                SourceTemp=60 TypeName=Pat OwnerSlot=29
+    StoreLocal            Slot=57 Source=197
+    Jump                  Target=rc_representation_done_216
+  rc_representation_copy_215:
+    LoadConstInt          Target=198 Value=0
+    StoreLocal            Slot=58 Source=76
+    StoreLocal            Slot=59 Source=198
+    StoreLocal            Slot=60 Source=198
+  rc_normalize_list_217:
+    LoadLocal             Target=199 Slot=58
+    CmpIntNe              Target=200 Left=199 Right=198
+    JumpIfFalse           CondTemp=200 Target=lambda_5_rc_edge_29_53
+    IsReferenceCounted    Target=201 SourceTemp=199
+    JumpIfFalse           CondTemp=201 Target=rc_normalize_list_cell_219
+    RcDup                 Target=202 SourceTemp=199 RuntimeManaged=true
+    RcDrop                SourceTemp=64 TypeName=Pat OwnerSlot=30
+    RcDrop                SourceTemp=60 TypeName=Pat OwnerSlot=29
+    LoadLocal             Target=203 Slot=59
+    CmpIntNe              Target=204 Left=203 Right=198
+    JumpIfFalse           CondTemp=204 Target=rc_normalize_list_first_220
+    LoadLocal             Target=205 Slot=60
+    StoreMemOffset        BasePtr=205 OffsetBytes=8 Source=202
+    Jump                  Target=rc_normalize_list_linked_221
+  rc_normalize_list_first_220:
+    StoreLocal            Slot=59 Source=202
+  rc_normalize_list_linked_221:
+    StoreLocal            Slot=60 Source=202
+    Jump                  Target=rc_normalize_list_end_218
+  rc_normalize_list_cell_219:
+    LoadMemOffset         Target=206 BasePtr=199 OffsetBytes=0
+    LoadMemOffset         Target=207 BasePtr=199 OffsetBytes=8
+    IsReferenceCounted    Target=208 SourceTemp=206
+    JumpIfFalse           CondTemp=208 Target=rc_representation_copy_222
+    RcDup                 Target=209 SourceTemp=206 RuntimeManaged=true
+    StoreLocal            Slot=61 Source=209
+    Jump                  Target=rc_representation_done_223
+  rc_representation_copy_222:
+    LoadConstInt          Target=211 Value=0
+    CallKnown             Target=212 FuncLabel=__rcnorm_6 EnvTemp=211 ArgTemp=206
+    StoreLocal            Slot=61 Source=212
+  rc_representation_done_223:
+    LoadLocal             Target=213 Slot=61
+    Alloc                 Target=214 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=214 OffsetBytes=0 Source=213
+    StoreMemOffset        BasePtr=214 OffsetBytes=8 Source=198
+    LoadLocal             Target=215 Slot=59
+    CmpIntNe              Target=216 Left=215 Right=198
+    JumpIfFalse           CondTemp=216 Target=rc_normalize_list_first_224
+    LoadLocal             Target=217 Slot=60
+    StoreMemOffset        BasePtr=217 OffsetBytes=8 Source=214
+    Jump                  Target=rc_normalize_list_linked_225
+  rc_normalize_list_first_224:
+    StoreLocal            Slot=59 Source=214
+  rc_normalize_list_linked_225:
+    StoreLocal            Slot=60 Source=214
+    StoreLocal            Slot=58 Source=207
+    Jump                  Target=rc_normalize_list_217
+  rc_normalize_list_end_218:
+    LoadLocal             Target=218 Slot=59
+    StoreLocal            Slot=57 Source=218
+  rc_representation_done_216:
+    LoadLocal             Target=219 Slot=57
+    StoreLocal            Slot=56 Source=219
+  rc_representation_done_214:
+    LoadLocal             Target=220 Slot=56
+    LoadLocal             Target=221 Slot=32
+    JumpIfFalse           CondTemp=221 Target=rc_tco_drop_inactive_226
+    StoreLocal            Slot=62 Source=78
+  rcdrop_list_227:
+    LoadLocal             Target=222 Slot=62
+    LoadConstInt          Target=223 Value=0
+    CmpIntNe              Target=224 Left=222 Right=223
+    JumpIfFalse           CondTemp=224 Target=rcdrop_list_end_229
+    RcIsUnique            Target=225 SourceTemp=222
+    JumpIfFalse           CondTemp=225 Target=rcdrop_list_shared_228
+    LoadMemOffset         Target=226 BasePtr=222 OffsetBytes=0
+    LoadConstInt          Target=227 Value=0
+    CallKnown             Target=228 FuncLabel=__rcdrop_general_7 EnvTemp=227 ArgTemp=226
+    LoadMemOffset         Target=229 BasePtr=222 OffsetBytes=8
+    RcDrop                SourceTemp=222 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=62 Source=229
+    Jump                  Target=rcdrop_list_227
+  rcdrop_list_shared_228:
+    RcDrop                SourceTemp=222 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_229
+  rcdrop_list_end_229:
+  rc_tco_drop_inactive_226:
+    StoreLocal            Slot=1 Source=220
+    LoadConstInt          Target=230 Value=1
+    StoreLocal            Slot=32 Source=230
+    RestoreStackPointer   Slot=8   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    Jump                  Target=lambda_5_body   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    LoadConstInt          Target=79 Value=0   (taken_over_record_loop_settled_by_caller.ash:22:43)
+    StoreLocal            Slot=9 Source=79   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=33
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=33
+    Jump                  Target=match_end_12   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_arm_cleanup_63:
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=34
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=34
+    Jump                  Target=match_next_62   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_next_62:
+    SaveArenaState        CursorLocalSlot=35 EndLocalSlot=36
+    LoadConstInt          Target=83 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    CmpIntNe              Target=84 Left=2 Right=83   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    JumpIfFalse           CondTemp=84 Target=match_arm_cleanup_64   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=85 BasePtr=2 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadMemOffset         Target=86 BasePtr=2 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    StoreLocal            Slot=37 Source=86   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    LoadLocal             Target=87 Slot=37   (taken_over_record_loop_settled_by_caller.ash:23:41)
+    Borrow                Target=88 SourceTemp=87
+    LoadLocal             Target=89 Slot=1   (taken_over_record_loop_settled_by_caller.ash:23:47)
+    LoadLocal             Target=90 Slot=2   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    LoadLocal             Target=91 Slot=1   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    StoreLocal            Slot=2 Source=88   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    RcDrop                SourceTemp=86 TypeName=List OwnerSlot=37
+    StoreLocal            Slot=1 Source=89   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    RcDup                 Target=231 SourceTemp=89 RuntimeManaged=true MayBeEmpty=true
+    LoadLocal             Target=232 Slot=32
+    JumpIfFalse           CondTemp=232 Target=rc_tco_drop_inactive_230
+    StoreLocal            Slot=64 Source=91
+  rcdrop_list_231:
+    LoadLocal             Target=233 Slot=64
+    LoadConstInt          Target=234 Value=0
+    CmpIntNe              Target=235 Left=233 Right=234
+    JumpIfFalse           CondTemp=235 Target=rcdrop_list_end_233
+    RcIsUnique            Target=236 SourceTemp=233
+    JumpIfFalse           CondTemp=236 Target=rcdrop_list_shared_232
+    LoadMemOffset         Target=237 BasePtr=233 OffsetBytes=0
+    LoadConstInt          Target=238 Value=0
+    CallKnown             Target=239 FuncLabel=__rcdrop_general_7 EnvTemp=238 ArgTemp=237
+    LoadMemOffset         Target=240 BasePtr=233 OffsetBytes=8
+    RcDrop                SourceTemp=233 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=64 Source=240
+    Jump                  Target=rcdrop_list_231
+  rcdrop_list_shared_232:
+    RcDrop                SourceTemp=233 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_233
+  rcdrop_list_end_233:
+  rc_tco_drop_inactive_230:
+    StoreLocal            Slot=1 Source=231
+    LoadConstInt          Target=241 Value=1
+    StoreLocal            Slot=32 Source=241
+    RestoreStackPointer   Slot=8   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    Jump                  Target=lambda_5_body   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    LoadConstInt          Target=92 Value=0   (taken_over_record_loop_settled_by_caller.ash:23:24)
+    StoreLocal            Slot=9 Source=92   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    RestoreArenaState     CursorLocalSlot=35 EndLocalSlot=36 PreRestoreEndSlot=38
+    ReclaimArenaChunks    SavedEndSlot=36 PreRestoreEndSlot=38
+    Jump                  Target=match_end_12   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_arm_cleanup_64:
+    RestoreArenaState     CursorLocalSlot=35 EndLocalSlot=36 PreRestoreEndSlot=39
+    ReclaimArenaChunks    SavedEndSlot=36 PreRestoreEndSlot=39
+    Jump                  Target=match_none_13   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_none_13:
+    LoadConstInt          Target=94 Value=0   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    StoreLocal            Slot=9 Source=94   (taken_over_record_loop_settled_by_caller.ash:20:5)
+  match_end_12:
+    LoadLocal             Target=95 Slot=9   (taken_over_record_loop_settled_by_caller.ash:20:5)
+    IsReferenceCounted    Target=122 SourceTemp=95
+    JumpIfFalse           CondTemp=122 Target=rc_representation_copy_75   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDup                 Target=123 SourceTemp=95 RuntimeManaged=true
+    StoreLocal            Slot=46 Source=123   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_representation_done_76   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_copy_75:
+    IsReferenceCounted    Target=125 SourceTemp=95
+    JumpIfFalse           CondTemp=125 Target=rc_representation_copy_77   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDup                 Target=126 SourceTemp=95 RuntimeManaged=true
+    StoreLocal            Slot=47 Source=126   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_representation_done_78   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_copy_77:
+    LoadConstInt          Target=127 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=48 Source=95   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=49 Source=127   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=50 Source=127   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_79:
+    LoadLocal             Target=128 Slot=48   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=129 Left=128 Right=127   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=129 Target=rc_normalize_list_end_80   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    IsReferenceCounted    Target=130 SourceTemp=128
+    JumpIfFalse           CondTemp=130 Target=rc_normalize_list_cell_81   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDup                 Target=131 SourceTemp=128 RuntimeManaged=true
+    LoadLocal             Target=132 Slot=49   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=133 Left=132 Right=127   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=133 Target=rc_normalize_list_first_82   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=134 Slot=50   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=134 OffsetBytes=8 Source=131   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_normalize_list_linked_83   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_first_82:
+    StoreLocal            Slot=49 Source=131   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_linked_83:
+    StoreLocal            Slot=50 Source=131   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_normalize_list_end_80   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_cell_81:
+    LoadMemOffset         Target=135 BasePtr=128 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=136 BasePtr=128 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    IsReferenceCounted    Target=137 SourceTemp=135
+    JumpIfFalse           CondTemp=137 Target=rc_representation_copy_84   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDup                 Target=138 SourceTemp=135 RuntimeManaged=true
+    StoreLocal            Slot=51 Source=138   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_representation_done_85   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_copy_84:
+    LoadConstInt          Target=140 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=141 FuncLabel=__rcnorm_6 EnvTemp=140 ArgTemp=135   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=51 Source=141   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_done_85:
+    LoadLocal             Target=142 Slot=51   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Alloc                 Target=143 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=143 OffsetBytes=0 Source=142   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=143 OffsetBytes=8 Source=127   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=144 Slot=49   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=145 Left=144 Right=127   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=145 Target=rc_normalize_list_first_86   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=146 Slot=50   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=146 OffsetBytes=8 Source=143   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_normalize_list_linked_87   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_first_86:
+    StoreLocal            Slot=49 Source=143   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_linked_87:
+    StoreLocal            Slot=50 Source=143   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=48 Source=136   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rc_normalize_list_79   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_normalize_list_end_80:
+    LoadLocal             Target=147 Slot=49   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=47 Source=147   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_done_78:
+    LoadLocal             Target=148 Slot=47   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=46 Source=148   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rc_representation_done_76:
+    LoadLocal             Target=149 Slot=46   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadArgumentOwnership Target=150   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=151 Value=2   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    ShrInt                Target=152 Left=150 Right=151   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=153 Value=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    AndInt                Target=154 Left=152 Right=153   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=154 Target=independent_result_not_requested_88   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadArgumentOwnership Target=155   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=156 Value=-8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    AndInt                Target=157 Left=155 Right=156   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=158 Value=2305843009213693952   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=157 OffsetBytes=0 Source=158   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  independent_result_not_requested_88:
+    LoadLocal             Target=159 Slot=16   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=160 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=161 Left=159 Right=160   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=161 Target=general_rc_owned_absent_89   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    IsReferenceCounted    Target=162 SourceTemp=159
+    JumpIfFalse           CondTemp=162 Target=general_rc_owned_absent_89   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=52 Source=159   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_90:
+    LoadLocal             Target=163 Slot=52   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=164 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=165 Left=163 Right=164   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=165 Target=rcdrop_list_end_92   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcIsUnique            Target=166 SourceTemp=163
+    JumpIfFalse           CondTemp=166 Target=rcdrop_list_shared_91   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=167 BasePtr=163 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=168 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=169 FuncLabel=__rcdrop_general_7 EnvTemp=168 ArgTemp=167   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=170 BasePtr=163 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDrop                SourceTemp=163 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=52 Source=170   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rcdrop_list_90   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_shared_91:
+    RcDrop                SourceTemp=163 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_92   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_end_92:
+    StoreLocal            Slot=16 Source=160   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  general_rc_owned_absent_89:
+    LoadLocal             Target=171 Slot=17   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=172 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=173 Left=171 Right=172   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=173 Target=general_rc_owned_absent_103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    IsReferenceCounted    Target=174 SourceTemp=171
+    JumpIfFalse           CondTemp=174 Target=general_rc_owned_absent_103   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=53 Source=171   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_104:
+    LoadLocal             Target=175 Slot=53   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=176 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=177 Left=175 Right=176   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=177 Target=rcdrop_list_end_106   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcIsUnique            Target=178 SourceTemp=175
+    JumpIfFalse           CondTemp=178 Target=rcdrop_list_shared_105   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=179 BasePtr=175 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=180 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=181 FuncLabel=__rcdrop_general_7 EnvTemp=180 ArgTemp=179   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=182 BasePtr=175 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDrop                SourceTemp=175 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=53 Source=182   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rcdrop_list_104   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_shared_105:
+    RcDrop                SourceTemp=175 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_106   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_end_106:
+    StoreLocal            Slot=17 Source=172   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  general_rc_owned_absent_103:
+    LoadLocal             Target=183 Slot=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=184 Slot=32   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=184 Target=rc_tco_exit_drop_inactive_107   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=54 Source=183   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_108:
+    LoadLocal             Target=185 Slot=54   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=186 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CmpIntNe              Target=187 Left=185 Right=186   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    JumpIfFalse           CondTemp=187 Target=rcdrop_list_end_110   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcIsUnique            Target=188 SourceTemp=185
+    JumpIfFalse           CondTemp=188 Target=rcdrop_list_shared_109   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=189 BasePtr=185 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=190 Value=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    CallKnown             Target=191 FuncLabel=__rcdrop_general_7 EnvTemp=190 ArgTemp=189   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadMemOffset         Target=192 BasePtr=185 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    RcDrop                SourceTemp=185 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=54 Source=192   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Jump                  Target=rcdrop_list_108   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_shared_109:
+    RcDrop                SourceTemp=185 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_110   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  rcdrop_list_end_110:
+  rc_tco_exit_drop_inactive_107:
+    Return                Source=149   (taken_over_record_loop_settled_by_caller.ash:19:1)
+  lambda_5_rc_edge_29_53:
+    RcDrop                SourceTemp=64 TypeName=Pat OwnerSlot=30
+    RcDrop                SourceTemp=60 TypeName=Pat OwnerSlot=29
+    Jump                  Target=rc_normalize_list_end_218
+
+function lambda_4  [SourceFunction from consCombinations]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadEnv               Target=2 Index=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    MakeClosure           Target=5 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    Return                Source=5   (taken_over_record_loop_settled_by_caller.ash:19:1)
+
+function lambda_10  [ClosureHelper from prefixAll]
+  locals=60 temps=221
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadEnv               Target=1 Index=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=3 Source=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=32 Slot=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadArgumentOwnership Target=33   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=34 Value=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    AndInt                Target=35 Left=33 Right=34   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=35 Target=rc_arg_normalize_copy_116   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=22 Source=32   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_arg_normalize_done_117   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_arg_normalize_copy_116:
+    IsReferenceCounted    Target=36 SourceTemp=32
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_118   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=37 SourceTemp=32 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=37   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_119   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_118:
+    LoadConstInt          Target=39 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=24 Source=32   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=25 Source=39   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=26 Source=39   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_120:
+    LoadLocal             Target=40 Slot=24   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=41 Left=40 Right=39   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_end_121   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=42 BasePtr=40 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=43 BasePtr=40 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=44 SourceTemp=42
+    JumpIfFalse           CondTemp=44 Target=rc_representation_copy_122   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=45 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=27 Source=45   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_123   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_122:
+    IsReferenceCounted    Target=47 SourceTemp=42
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_124   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=48 SourceTemp=42 RuntimeManaged=true
+    StoreLocal            Slot=28 Source=48   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_125   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_124:
+    LoadConstInt          Target=49 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=29 Source=42   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=30 Source=49   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=31 Source=49   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_126:
+    LoadLocal             Target=50 Slot=29   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=51 Left=50 Right=49   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=51 Target=rc_normalize_list_end_127   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=52 SourceTemp=50
+    JumpIfFalse           CondTemp=52 Target=rc_normalize_list_cell_128   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=53 SourceTemp=50 RuntimeManaged=true
+    LoadLocal             Target=54 Slot=30   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=55 Left=54 Right=49   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=55 Target=rc_normalize_list_first_129   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=56 Slot=31   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=56 OffsetBytes=8 Source=53   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_130   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_129:
+    StoreLocal            Slot=30 Source=53   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_130:
+    StoreLocal            Slot=31 Source=53   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_end_127   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_cell_128:
+    LoadMemOffset         Target=57 BasePtr=50 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=58 BasePtr=50 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=59 SourceTemp=57
+    JumpIfFalse           CondTemp=59 Target=rc_representation_copy_131   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=60 SourceTemp=57 RuntimeManaged=true
+    StoreLocal            Slot=32 Source=60   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_132   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_131:
+    LoadConstInt          Target=62 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CallKnown             Target=63 FuncLabel=__rcnorm_6 EnvTemp=62 ArgTemp=57   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=32 Source=63   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_132:
+    LoadLocal             Target=64 Slot=32   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Alloc                 Target=65 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=65 OffsetBytes=0 Source=64   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=65 OffsetBytes=8 Source=49   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=66 Slot=30   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=67 Left=66 Right=49   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=67 Target=rc_normalize_list_first_133   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=68 Slot=31   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=68 OffsetBytes=8 Source=65   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_134   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_133:
+    StoreLocal            Slot=30 Source=65   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_134:
+    StoreLocal            Slot=31 Source=65   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=29 Source=58   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_126   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_end_127:
+    LoadLocal             Target=69 Slot=30   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=28 Source=69   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_125:
+    LoadLocal             Target=70 Slot=28   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=27 Source=70   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_123:
+    LoadLocal             Target=71 Slot=27   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Alloc                 Target=72 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=72 OffsetBytes=0 Source=71   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=72 OffsetBytes=8 Source=39   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=73 Slot=25   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=74 Left=73 Right=39   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=74 Target=rc_normalize_list_first_135   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=75 Slot=26   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=75 OffsetBytes=8 Source=72   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_136   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_135:
+    StoreLocal            Slot=25 Source=72   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_136:
+    StoreLocal            Slot=26 Source=72   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=24 Source=43   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_120   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_end_121:
+    LoadLocal             Target=76 Slot=25   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=23 Source=76   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_119:
+    LoadLocal             Target=77 Slot=23   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=22 Source=77   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_arg_normalize_done_117:
+    LoadLocal             Target=78 Slot=22   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=1 Source=78   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=79 Value=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=19 Source=79   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=6 Source=2   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  lambda_10_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=3 Slot=2   (taken_over_record_loop_settled_by_caller.ash:26:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=4 Value=0   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_114   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    LoadLocal             Target=6 Slot=1   (taken_over_record_loop_settled_by_caller.ash:27:17)
+    StoreLocal            Slot=10 Source=6   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    Jump                  Target=match_end_111   (taken_over_record_loop_settled_by_caller.ash:26:5)
+  match_arm_cleanup_114:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_next_113   (taken_over_record_loop_settled_by_caller.ash:26:5)
+  match_next_113:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=7 Value=0   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    CmpIntNe              Target=8 Left=3 Right=7   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    JumpIfFalse           CondTemp=8 Target=match_arm_cleanup_115   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    LoadMemOffset         Target=9 BasePtr=3 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    LoadMemOffset         Target=10 BasePtr=3 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    StoreLocal            Slot=17 Source=9   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    StoreLocal            Slot=18 Source=10   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    LoadLocal             Target=11 Slot=3   (taken_over_record_loop_settled_by_caller.ash:28:34)
+    LoadLocal             Target=12 Slot=18   (taken_over_record_loop_settled_by_caller.ash:28:40)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=3   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    RcDup                 Target=16 SourceTemp=14
+    LoadLocal             Target=17 Slot=17   (taken_over_record_loop_settled_by_caller.ash:28:55)
+    Borrow                Target=18 SourceTemp=17
+    RcDup                 Target=19 SourceTemp=18
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
+    Alloc                 Target=20 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    StoreMemOffset        BasePtr=20 OffsetBytes=0 Source=16   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    StoreMemOffset        BasePtr=20 OffsetBytes=8 Source=19   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    LoadLocal             Target=22 Slot=1   (taken_over_record_loop_settled_by_caller.ash:28:61)
+    Alloc                 Target=23 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=20   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=22   (taken_over_record_loop_settled_by_caller.ash:28:47)
+    LoadLocal             Target=24 Slot=3   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    LoadLocal             Target=25 Slot=2   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    LoadLocal             Target=26 Slot=1   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    StoreLocal            Slot=3 Source=11   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    StoreLocal            Slot=2 Source=13   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    RcDrop                SourceTemp=10 TypeName=List OwnerSlot=18
+    StoreLocal            Slot=1 Source=23   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    IsReferenceCounted    Target=155 SourceTemp=23
+    JumpIfFalse           CondTemp=155 Target=rc_representation_copy_234
+    RcDup                 Target=156 SourceTemp=23 RuntimeManaged=true
+    StoreLocal            Slot=47 Source=156
+    Jump                  Target=rc_representation_done_235
+  rc_representation_copy_234:
+    IsReferenceCounted    Target=158 SourceTemp=23
+    JumpIfFalse           CondTemp=158 Target=rc_representation_copy_236
+    RcDup                 Target=159 SourceTemp=23 RuntimeManaged=true
+    StoreLocal            Slot=48 Source=159
+    Jump                  Target=rc_representation_done_237
+  rc_representation_copy_236:
+    LoadConstInt          Target=160 Value=0
+    StoreLocal            Slot=49 Source=23
+    StoreLocal            Slot=50 Source=160
+    StoreLocal            Slot=51 Source=160
+  rc_normalize_list_238:
+    LoadLocal             Target=161 Slot=49
+    CmpIntNe              Target=162 Left=161 Right=160
+    JumpIfFalse           CondTemp=162 Target=rc_normalize_list_end_239
+    IsReferenceCounted    Target=163 SourceTemp=161
+    JumpIfFalse           CondTemp=163 Target=rc_normalize_list_cell_240
+    RcDup                 Target=164 SourceTemp=161 RuntimeManaged=true
+    LoadLocal             Target=165 Slot=50
+    CmpIntNe              Target=166 Left=165 Right=160
+    JumpIfFalse           CondTemp=166 Target=rc_normalize_list_first_241
+    LoadLocal             Target=167 Slot=51
+    StoreMemOffset        BasePtr=167 OffsetBytes=8 Source=164
+    Jump                  Target=rc_normalize_list_linked_242
+  rc_normalize_list_first_241:
+    StoreLocal            Slot=50 Source=164
+  rc_normalize_list_linked_242:
+    StoreLocal            Slot=51 Source=164
+    Jump                  Target=rc_normalize_list_end_239
+  rc_normalize_list_cell_240:
+    LoadMemOffset         Target=168 BasePtr=161 OffsetBytes=0
+    LoadMemOffset         Target=169 BasePtr=161 OffsetBytes=8
+    IsReferenceCounted    Target=170 SourceTemp=168
+    JumpIfFalse           CondTemp=170 Target=rc_representation_copy_243
+    RcDup                 Target=171 SourceTemp=168 RuntimeManaged=true
+    StoreLocal            Slot=52 Source=171
+    Jump                  Target=rc_representation_done_244
+  rc_representation_copy_243:
+    IsReferenceCounted    Target=173 SourceTemp=168
+    JumpIfFalse           CondTemp=173 Target=rc_representation_copy_245
+    RcDup                 Target=174 SourceTemp=168 RuntimeManaged=true
+    StoreLocal            Slot=53 Source=174
+    Jump                  Target=rc_representation_done_246
+  rc_representation_copy_245:
+    LoadConstInt          Target=175 Value=0
+    StoreLocal            Slot=54 Source=168
+    StoreLocal            Slot=55 Source=175
+    StoreLocal            Slot=56 Source=175
+  rc_normalize_list_247:
+    LoadLocal             Target=176 Slot=54
+    CmpIntNe              Target=177 Left=176 Right=175
+    JumpIfFalse           CondTemp=177 Target=rc_normalize_list_end_248
+    IsReferenceCounted    Target=178 SourceTemp=176
+    JumpIfFalse           CondTemp=178 Target=rc_normalize_list_cell_249
+    RcDup                 Target=179 SourceTemp=176 RuntimeManaged=true
+    LoadLocal             Target=180 Slot=55
+    CmpIntNe              Target=181 Left=180 Right=175
+    JumpIfFalse           CondTemp=181 Target=rc_normalize_list_first_250
+    LoadLocal             Target=182 Slot=56
+    StoreMemOffset        BasePtr=182 OffsetBytes=8 Source=179
+    Jump                  Target=rc_normalize_list_linked_251
+  rc_normalize_list_first_250:
+    StoreLocal            Slot=55 Source=179
+  rc_normalize_list_linked_251:
+    StoreLocal            Slot=56 Source=179
+    Jump                  Target=rc_normalize_list_end_248
+  rc_normalize_list_cell_249:
+    LoadMemOffset         Target=183 BasePtr=176 OffsetBytes=0
+    LoadMemOffset         Target=184 BasePtr=176 OffsetBytes=8
+    IsReferenceCounted    Target=185 SourceTemp=183
+    JumpIfFalse           CondTemp=185 Target=rc_representation_copy_252
+    RcDup                 Target=186 SourceTemp=183 RuntimeManaged=true
+    StoreLocal            Slot=57 Source=186
+    Jump                  Target=rc_representation_done_253
+  rc_representation_copy_252:
+    LoadConstInt          Target=188 Value=0
+    CallKnown             Target=189 FuncLabel=__rcnorm_6 EnvTemp=188 ArgTemp=183
+    StoreLocal            Slot=57 Source=189
+  rc_representation_done_253:
+    LoadLocal             Target=190 Slot=57
+    Alloc                 Target=191 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=191 OffsetBytes=0 Source=190
+    StoreMemOffset        BasePtr=191 OffsetBytes=8 Source=175
+    LoadLocal             Target=192 Slot=55
+    CmpIntNe              Target=193 Left=192 Right=175
+    JumpIfFalse           CondTemp=193 Target=rc_normalize_list_first_254
+    LoadLocal             Target=194 Slot=56
+    StoreMemOffset        BasePtr=194 OffsetBytes=8 Source=191
+    Jump                  Target=rc_normalize_list_linked_255
+  rc_normalize_list_first_254:
+    StoreLocal            Slot=55 Source=191
+  rc_normalize_list_linked_255:
+    StoreLocal            Slot=56 Source=191
+    StoreLocal            Slot=54 Source=184
+    Jump                  Target=rc_normalize_list_247
+  rc_normalize_list_end_248:
+    LoadLocal             Target=195 Slot=55
+    StoreLocal            Slot=53 Source=195
+  rc_representation_done_246:
+    LoadLocal             Target=196 Slot=53
+    StoreLocal            Slot=52 Source=196
+  rc_representation_done_244:
+    LoadLocal             Target=197 Slot=52
+    Alloc                 Target=198 SizeBytes=16 RuntimeManaged=true
+    StoreMemOffset        BasePtr=198 OffsetBytes=0 Source=197
+    StoreMemOffset        BasePtr=198 OffsetBytes=8 Source=160
+    LoadLocal             Target=199 Slot=50
+    CmpIntNe              Target=200 Left=199 Right=160
+    JumpIfFalse           CondTemp=200 Target=rc_normalize_list_first_256
+    LoadLocal             Target=201 Slot=51
+    StoreMemOffset        BasePtr=201 OffsetBytes=8 Source=198
+    Jump                  Target=rc_normalize_list_linked_257
+  rc_normalize_list_first_256:
+    StoreLocal            Slot=50 Source=198
+  rc_normalize_list_linked_257:
+    StoreLocal            Slot=51 Source=198
+    StoreLocal            Slot=49 Source=169
+    Jump                  Target=rc_normalize_list_238
+  rc_normalize_list_end_239:
+    LoadLocal             Target=202 Slot=50
+    StoreLocal            Slot=48 Source=202
+  rc_representation_done_237:
+    LoadLocal             Target=203 Slot=48
+    StoreLocal            Slot=47 Source=203
+  rc_representation_done_235:
+    LoadLocal             Target=204 Slot=47
+    LoadLocal             Target=205 Slot=19
+    JumpIfFalse           CondTemp=205 Target=rc_tco_drop_inactive_258
+    StoreLocal            Slot=58 Source=26
+  rcdrop_list_259:
+    LoadLocal             Target=206 Slot=58
+    LoadConstInt          Target=207 Value=0
+    CmpIntNe              Target=208 Left=206 Right=207
+    JumpIfFalse           CondTemp=208 Target=rcdrop_list_end_261
+    RcIsUnique            Target=209 SourceTemp=206
+    JumpIfFalse           CondTemp=209 Target=rcdrop_list_shared_260
+    LoadMemOffset         Target=210 BasePtr=206 OffsetBytes=0
+    StoreLocal            Slot=59 Source=210
+  rcdrop_list_262:
+    LoadLocal             Target=211 Slot=59
+    LoadConstInt          Target=212 Value=0
+    CmpIntNe              Target=213 Left=211 Right=212
+    JumpIfFalse           CondTemp=213 Target=rcdrop_list_end_264
+    RcIsUnique            Target=214 SourceTemp=211
+    JumpIfFalse           CondTemp=214 Target=rcdrop_list_shared_263
+    LoadMemOffset         Target=215 BasePtr=211 OffsetBytes=0
+    LoadConstInt          Target=216 Value=0
+    CallKnown             Target=217 FuncLabel=__rcdrop_general_7 EnvTemp=216 ArgTemp=215
+    LoadMemOffset         Target=218 BasePtr=211 OffsetBytes=8
+    RcDrop                SourceTemp=211 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=59 Source=218
+    Jump                  Target=rcdrop_list_262
+  rcdrop_list_shared_263:
+    RcDrop                SourceTemp=211 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_264
+  rcdrop_list_end_264:
+    LoadMemOffset         Target=219 BasePtr=206 OffsetBytes=8
+    RcDrop                SourceTemp=206 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=58 Source=219
+    Jump                  Target=rcdrop_list_259
+  rcdrop_list_shared_260:
+    RcDrop                SourceTemp=206 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_261
+  rcdrop_list_end_261:
+  rc_tco_drop_inactive_258:
+    StoreLocal            Slot=1 Source=204
+    LoadConstInt          Target=220 Value=1
+    StoreLocal            Slot=19 Source=220
+    RestoreStackPointer   Slot=9   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    Jump                  Target=lambda_10_body   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    LoadConstInt          Target=27 Value=0   (taken_over_record_loop_settled_by_caller.ash:28:24)
+    StoreLocal            Slot=10 Source=27   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=20
+    Jump                  Target=match_end_111   (taken_over_record_loop_settled_by_caller.ash:26:5)
+  match_arm_cleanup_115:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=21
+    Jump                  Target=match_none_112   (taken_over_record_loop_settled_by_caller.ash:26:5)
+  match_none_112:
+    LoadConstInt          Target=30 Value=0   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    StoreLocal            Slot=10 Source=30   (taken_over_record_loop_settled_by_caller.ash:26:5)
+  match_end_111:
+    LoadLocal             Target=31 Slot=10   (taken_over_record_loop_settled_by_caller.ash:26:5)
+    IsReferenceCounted    Target=80 SourceTemp=31
+    JumpIfFalse           CondTemp=80 Target=rc_representation_copy_137   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=81 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=33 Source=81   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_138   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_137:
+    IsReferenceCounted    Target=83 SourceTemp=31
+    JumpIfFalse           CondTemp=83 Target=rc_representation_copy_139   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=84 SourceTemp=31 RuntimeManaged=true
+    StoreLocal            Slot=34 Source=84   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_140   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_139:
+    LoadConstInt          Target=85 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=35 Source=31   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=36 Source=85   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=37 Source=85   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_141:
+    LoadLocal             Target=86 Slot=35   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=87 Left=86 Right=85   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=87 Target=rc_normalize_list_end_142   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=88 SourceTemp=86
+    JumpIfFalse           CondTemp=88 Target=rc_normalize_list_cell_143   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=89 SourceTemp=86 RuntimeManaged=true
+    LoadLocal             Target=90 Slot=36   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=91 Left=90 Right=85   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=91 Target=rc_normalize_list_first_144   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=92 Slot=37   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=92 OffsetBytes=8 Source=89   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_145   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_144:
+    StoreLocal            Slot=36 Source=89   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_145:
+    StoreLocal            Slot=37 Source=89   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_end_142   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_cell_143:
+    LoadMemOffset         Target=93 BasePtr=86 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=94 BasePtr=86 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=95 SourceTemp=93
+    JumpIfFalse           CondTemp=95 Target=rc_representation_copy_146   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=96 SourceTemp=93 RuntimeManaged=true
+    StoreLocal            Slot=38 Source=96   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_147   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_146:
+    IsReferenceCounted    Target=98 SourceTemp=93
+    JumpIfFalse           CondTemp=98 Target=rc_representation_copy_148   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=99 SourceTemp=93 RuntimeManaged=true
+    StoreLocal            Slot=39 Source=99   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_149   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_148:
+    LoadConstInt          Target=100 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=40 Source=93   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=41 Source=100   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=42 Source=100   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_150:
+    LoadLocal             Target=101 Slot=40   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=102 Left=101 Right=100   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=102 Target=rc_normalize_list_end_151   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=103 SourceTemp=101
+    JumpIfFalse           CondTemp=103 Target=rc_normalize_list_cell_152   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=104 SourceTemp=101 RuntimeManaged=true
+    LoadLocal             Target=105 Slot=41   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=106 Left=105 Right=100   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=106 Target=rc_normalize_list_first_153   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=107 Slot=42   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=107 OffsetBytes=8 Source=104   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_154   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_153:
+    StoreLocal            Slot=41 Source=104   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_154:
+    StoreLocal            Slot=42 Source=104   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_end_151   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_cell_152:
+    LoadMemOffset         Target=108 BasePtr=101 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=109 BasePtr=101 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    IsReferenceCounted    Target=110 SourceTemp=108
+    JumpIfFalse           CondTemp=110 Target=rc_representation_copy_155   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDup                 Target=111 SourceTemp=108 RuntimeManaged=true
+    StoreLocal            Slot=43 Source=111   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_representation_done_156   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_copy_155:
+    LoadConstInt          Target=113 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CallKnown             Target=114 FuncLabel=__rcnorm_6 EnvTemp=113 ArgTemp=108   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=43 Source=114   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_156:
+    LoadLocal             Target=115 Slot=43   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Alloc                 Target=116 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=116 OffsetBytes=0 Source=115   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=116 OffsetBytes=8 Source=100   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=117 Slot=41   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=118 Left=117 Right=100   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=118 Target=rc_normalize_list_first_157   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=119 Slot=42   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=119 OffsetBytes=8 Source=116   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_158   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_157:
+    StoreLocal            Slot=41 Source=116   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_158:
+    StoreLocal            Slot=42 Source=116   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=40 Source=109   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_150   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_end_151:
+    LoadLocal             Target=120 Slot=41   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=39 Source=120   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_149:
+    LoadLocal             Target=121 Slot=39   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=38 Source=121   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_147:
+    LoadLocal             Target=122 Slot=38   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Alloc                 Target=123 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=123 OffsetBytes=0 Source=122   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=123 OffsetBytes=8 Source=85   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=124 Slot=36   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=125 Left=124 Right=85   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=125 Target=rc_normalize_list_first_159   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=126 Slot=37   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=126 OffsetBytes=8 Source=123   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_linked_160   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_first_159:
+    StoreLocal            Slot=36 Source=123   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_linked_160:
+    StoreLocal            Slot=37 Source=123   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=35 Source=94   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rc_normalize_list_141   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_normalize_list_end_142:
+    LoadLocal             Target=127 Slot=36   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=34 Source=127   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_140:
+    LoadLocal             Target=128 Slot=34   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=33 Source=128   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rc_representation_done_138:
+    LoadLocal             Target=129 Slot=33   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadArgumentOwnership Target=130   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=131 Value=2   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    ShrInt                Target=132 Left=130 Right=131   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=133 Value=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    AndInt                Target=134 Left=132 Right=133   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=134 Target=independent_result_not_requested_161   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadArgumentOwnership Target=135   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=136 Value=-8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    AndInt                Target=137 Left=135 Right=136   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=138 Value=2305843009213693952   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=137 OffsetBytes=0 Source=138   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  independent_result_not_requested_161:
+    LoadLocal             Target=139 Slot=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=140 Slot=19   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=140 Target=rc_tco_exit_drop_inactive_162   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=44 Source=139   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rcdrop_list_163:
+    LoadLocal             Target=141 Slot=44   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=142 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=143 Left=141 Right=142   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=143 Target=rcdrop_list_end_165   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcIsUnique            Target=144 SourceTemp=141
+    JumpIfFalse           CondTemp=144 Target=rcdrop_list_shared_164   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=145 BasePtr=141 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=45 Source=145   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rcdrop_list_166:
+    LoadLocal             Target=146 Slot=45   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=147 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CmpIntNe              Target=148 Left=146 Right=147   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    JumpIfFalse           CondTemp=148 Target=rcdrop_list_end_168   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcIsUnique            Target=149 SourceTemp=146
+    JumpIfFalse           CondTemp=149 Target=rcdrop_list_shared_167   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=150 BasePtr=146 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=151 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    CallKnown             Target=152 FuncLabel=__rcdrop_general_7 EnvTemp=151 ArgTemp=150   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadMemOffset         Target=153 BasePtr=146 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDrop                SourceTemp=146 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=45 Source=153   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rcdrop_list_166   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rcdrop_list_shared_167:
+    RcDrop                SourceTemp=146 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_168   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rcdrop_list_end_168:
+    LoadMemOffset         Target=154 BasePtr=141 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    RcDrop                SourceTemp=141 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=44 Source=154   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Jump                  Target=rcdrop_list_163   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rcdrop_list_shared_164:
+    RcDrop                SourceTemp=141 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_165   (taken_over_record_loop_settled_by_caller.ash:25:1)
+  rcdrop_list_end_165:
+  rc_tco_exit_drop_inactive_162:
+    Return                Source=129   (taken_over_record_loop_settled_by_caller.ash:25:1)
+
+function lambda_9  [ClosureHelper from prefixAll]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadEnv               Target=3 Index=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    MakeClosure           Target=4 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=16 ReturnsRuntimeManaged=true AcceptsRuntimeManagedArgument=true ReturnsGeneralRcOwned=true   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:25:1)
+
+function lambda_8  [SourceFunction from prefixAll]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadLocal             Target=3 Slot=1   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=3   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    MakeClosure           Target=4 FuncLabel=lambda_9 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:25:1)
+
+function __rcdrop_structural_13  [StructuralOwnerDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CallKnown             Target=2 FuncLabel=__rcdrop_general_7 EnvTemp=1 ArgTemp=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Return                Source=3   (taken_over_record_loop_settled_by_caller.ash:30:1)
+
+function lambda_12  [ClosureHelper from expand]
+  locals=32 temps=86
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=29 Slot=2   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    IsReferenceCounted    Target=30 SourceTemp=29
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_174   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=31   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_representation_done_175   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_copy_174:
+    LoadConstInt          Target=34 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CallKnown             Target=35 FuncLabel=__rcnorm_6 EnvTemp=34 ArgTemp=29   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=24 Source=35   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_done_175:
+    LoadLocal             Target=36 Slot=24   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=2 Source=36   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=37 Value=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=16 Source=37   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=6 Source=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=7 Source=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  lambda_12_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_loop_settled_by_caller.ash:31:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    CmpIntNe              Target=4 Left=2 Right=3   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_172   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    GetAdtTag             Target=5 Ptr=2   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    LoadConstInt          Target=7 Value=0   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    CmpIntEq              Target=6 Left=5 Right=7   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_172   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    GetAdtField           Target=8 Ptr=2 FieldIndex=0   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    StoreLocal            Slot=14 Source=8   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    GetAdtField           Target=9 Ptr=2 FieldIndex=1   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    StoreLocal            Slot=15 Source=9   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    LoadLocal             Target=10 Slot=15   (taken_over_record_loop_settled_by_caller.ash:32:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (taken_over_record_loop_settled_by_caller.ash:32:46)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=Pat OwnerSlot=15
+    LoadLocal             Target=14 Slot=2   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    LoadConstInt          Target=15 Value=0   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    StoreLocal            Slot=16 Source=15   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    LoadLocal             Target=16 Slot=2   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    LoadLocal             Target=17 Slot=1   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    StoreLocal            Slot=2 Source=13   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    StoreLocal            Slot=1 Source=12   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    LoadLocal             Target=79 Slot=16
+    JumpIfFalse           CondTemp=79 Target=rc_tco_drop_inactive_265
+    LoadConstInt          Target=80 Value=0
+    CallKnown             Target=81 FuncLabel=__rcdrop_general_7 EnvTemp=80 ArgTemp=16
+  rc_tco_drop_inactive_265:
+    LoadConstInt          Target=82 Value=0
+    CallKnown             Target=83 FuncLabel=__rcdrop_general_7 EnvTemp=82 ArgTemp=14
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=84 Value=0
+    StoreLocal            Slot=6 Source=84
+    StoreLocal            Slot=7 Source=84
+    StoreLocal            Slot=2 Source=13
+    LoadConstInt          Target=85 Value=1
+    StoreLocal            Slot=16 Source=85
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
+    RestoreStackPointer   Slot=10   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    Jump                  Target=lambda_12_body   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    LoadConstInt          Target=18 Value=0   (taken_over_record_loop_settled_by_caller.ash:32:32)
+    StoreLocal            Slot=11 Source=18   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=17
+    Jump                  Target=match_end_169   (taken_over_record_loop_settled_by_caller.ash:31:5)
+  match_arm_cleanup_172:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=18
+    Jump                  Target=match_next_171   (taken_over_record_loop_settled_by_caller.ash:31:5)
+  match_next_171:
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    StoreLocal            Slot=21 Source=2   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    LoadLocal             Target=27 Slot=21   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    RcDup                 Target=28 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=28   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=20 Value=0   (taken_over_record_loop_settled_by_caller.ash:33:20)
+    LoadLocal             Target=21 Slot=21   (taken_over_record_loop_settled_by_caller.ash:33:21)
+    Borrow                Target=22 SourceTemp=21
+    Alloc                 Target=23 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:33:20)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=22   (taken_over_record_loop_settled_by_caller.ash:33:20)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=20   (taken_over_record_loop_settled_by_caller.ash:33:20)
+    StoreLocal            Slot=11 Source=23   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    RcDrop                SourceTemp=2 TypeName=Pat OwnerSlot=21 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_13
+    Jump                  Target=match_end_169   (taken_over_record_loop_settled_by_caller.ash:31:5)
+  match_arm_cleanup_173:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
+    Jump                  Target=match_none_170   (taken_over_record_loop_settled_by_caller.ash:31:5)
+  match_none_170:
+    LoadConstInt          Target=25 Value=0   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    StoreLocal            Slot=11 Source=25   (taken_over_record_loop_settled_by_caller.ash:31:5)
+  match_end_169:
+    LoadLocal             Target=26 Slot=11   (taken_over_record_loop_settled_by_caller.ash:31:5)
+    IsReferenceCounted    Target=38 SourceTemp=26
+    JumpIfFalse           CondTemp=38 Target=rc_representation_copy_176   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    RcDup                 Target=39 SourceTemp=26 RuntimeManaged=true
+    StoreLocal            Slot=25 Source=39   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_representation_done_177   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_copy_176:
+    IsReferenceCounted    Target=41 SourceTemp=26
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_178   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    RcDup                 Target=42 SourceTemp=26 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=42   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_representation_done_179   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_copy_178:
+    LoadConstInt          Target=43 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=27 Source=26   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=28 Source=43   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=29 Source=43   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_180:
+    LoadLocal             Target=44 Slot=27   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CmpIntNe              Target=45 Left=44 Right=43   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_end_181   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    IsReferenceCounted    Target=46 SourceTemp=44
+    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_cell_182   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    RcDup                 Target=47 SourceTemp=44 RuntimeManaged=true
+    LoadLocal             Target=48 Slot=28   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CmpIntNe              Target=49 Left=48 Right=43   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_first_183   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=50 Slot=29   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=47   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_normalize_list_linked_184   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_first_183:
+    StoreLocal            Slot=28 Source=47   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_linked_184:
+    StoreLocal            Slot=29 Source=47   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_normalize_list_end_181   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_cell_182:
+    LoadMemOffset         Target=51 BasePtr=44 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadMemOffset         Target=52 BasePtr=44 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    IsReferenceCounted    Target=53 SourceTemp=51
+    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_185   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    RcDup                 Target=54 SourceTemp=51 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=54   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_representation_done_186   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_copy_185:
+    LoadConstInt          Target=56 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CallKnown             Target=57 FuncLabel=__rcnorm_6 EnvTemp=56 ArgTemp=51   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=30 Source=57   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_done_186:
+    LoadLocal             Target=58 Slot=30   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Alloc                 Target=59 SizeBytes=16 RuntimeManaged=true   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=0 Source=58   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=8 Source=43   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=60 Slot=28   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CmpIntNe              Target=61 Left=60 Right=43   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_first_187   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=62 Slot=29   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=59   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_normalize_list_linked_188   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_first_187:
+    StoreLocal            Slot=28 Source=59   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_linked_188:
+    StoreLocal            Slot=29 Source=59   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=27 Source=52   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Jump                  Target=rc_normalize_list_180   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_normalize_list_end_181:
+    LoadLocal             Target=63 Slot=28   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=26 Source=63   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_done_179:
+    LoadLocal             Target=64 Slot=26   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=25 Source=64   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_representation_done_177:
+    LoadLocal             Target=65 Slot=25   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadArgumentOwnership Target=66   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=67 Value=2   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    ShrInt                Target=68 Left=66 Right=67   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=69 Value=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    AndInt                Target=70 Left=68 Right=69   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    JumpIfFalse           CondTemp=70 Target=independent_result_not_requested_189   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadArgumentOwnership Target=71   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=72 Value=-8   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    AndInt                Target=73 Left=71 Right=72   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=74 Value=2305843009213693952   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreMemOffset        BasePtr=73 OffsetBytes=0 Source=74   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  independent_result_not_requested_189:
+    LoadLocal             Target=75 Slot=2   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=76 Slot=16   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_190   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=77 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    CallKnown             Target=78 FuncLabel=__rcdrop_general_7 EnvTemp=77 ArgTemp=75   (taken_over_record_loop_settled_by_caller.ash:30:1)
+  rc_tco_exit_drop_inactive_190:
+    Return                Source=65   (taken_over_record_loop_settled_by_caller.ash:30:1)
+
+function lambda_11  [SourceFunction from expand]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    MakeClosure           Target=4 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:30:1)
+
+function lambda_17  [ClosureHelper from expandedArms]
+  locals=23 temps=39
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadEnv               Target=1 Index=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreLocal            Slot=3 Source=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadEnv               Target=2 Index=2   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreLocal            Slot=4 Source=2   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreLocal            Slot=7 Source=3   (taken_over_record_loop_settled_by_caller.ash:35:1)
+  lambda_17_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadLocal             Target=4 Slot=2   (taken_over_record_loop_settled_by_caller.ash:36:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=5 Value=0   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    CmpIntEq              Target=6 Left=4 Right=5   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_194   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    LoadLocal             Target=7 Slot=1   (taken_over_record_loop_settled_by_caller.ash:37:17)
+    StoreLocal            Slot=11 Source=7   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    Jump                  Target=match_end_191   (taken_over_record_loop_settled_by_caller.ash:36:5)
+  match_arm_cleanup_194:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_193   (taken_over_record_loop_settled_by_caller.ash:36:5)
+  match_next_193:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=8 Value=0   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    CmpIntNe              Target=9 Left=4 Right=8   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_195   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    LoadMemOffset         Target=10 BasePtr=4 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    LoadMemOffset         Target=11 BasePtr=4 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    StoreLocal            Slot=18 Source=10   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    StoreLocal            Slot=19 Source=11   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    LoadLocal             Target=12 Slot=19   (taken_over_record_loop_settled_by_caller.ash:38:43)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=3   (taken_over_record_loop_settled_by_caller.ash:38:49)
+    LoadLocal             Target=15 Slot=4   (taken_over_record_loop_settled_by_caller.ash:38:55)
+    LoadLocal             Target=16 Slot=18   (taken_over_record_loop_settled_by_caller.ash:38:63)
+    Borrow                Target=17 SourceTemp=16
+    Borrow                Target=18 SourceTemp=17
+    RcDup                 Target=19 SourceTemp=18
+    RcDrop                SourceTemp=10 TypeName=PatternBinding OwnerSlot=18
+    LoadLocal             Target=20 Slot=3   (taken_over_record_loop_settled_by_caller.ash:38:72)
+    Borrow                Target=21 SourceTemp=20
+    LoadLocal             Target=22 Slot=4   (taken_over_record_loop_settled_by_caller.ash:38:78)
+    Borrow                Target=23 SourceTemp=22
+    RcDup                 Target=25 SourceTemp=21
+    RcDup                 Target=26 SourceTemp=23
+    Alloc                 Target=24 SizeBytes=24   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=19   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    StoreMemOffset        BasePtr=24 OffsetBytes=8 Source=25   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    StoreMemOffset        BasePtr=24 OffsetBytes=16 Source=26   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    LoadLocal             Target=28 Slot=1   (taken_over_record_loop_settled_by_caller.ash:38:88)
+    Alloc                 Target=29 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=24   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=28   (taken_over_record_loop_settled_by_caller.ash:38:62)
+    LoadLocal             Target=30 Slot=2   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    LoadLocal             Target=31 Slot=3   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    LoadLocal             Target=32 Slot=4   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    LoadLocal             Target=33 Slot=1   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    StoreLocal            Slot=2 Source=13   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    RcDrop                SourceTemp=11 TypeName=List OwnerSlot=19
+    StoreLocal            Slot=3 Source=14   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    StoreLocal            Slot=4 Source=15   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    StoreLocal            Slot=1 Source=29   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    RestoreStackPointer   Slot=10   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    Jump                  Target=lambda_17_body   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    LoadConstInt          Target=34 Value=0   (taken_over_record_loop_settled_by_caller.ash:38:30)
+    StoreLocal            Slot=11 Source=34   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_end_191   (taken_over_record_loop_settled_by_caller.ash:36:5)
+  match_arm_cleanup_195:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_none_192   (taken_over_record_loop_settled_by_caller.ash:36:5)
+  match_none_192:
+    LoadConstInt          Target=37 Value=0   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    StoreLocal            Slot=11 Source=37   (taken_over_record_loop_settled_by_caller.ash:36:5)
+  match_end_191:
+    LoadLocal             Target=38 Slot=11   (taken_over_record_loop_settled_by_caller.ash:36:5)
+    Return                Source=38   (taken_over_record_loop_settled_by_caller.ash:35:1)
+
+function lambda_16  [ClosureHelper from expandedArms]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=24   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadEnv               Target=1 Index=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadEnv               Target=3 Index=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadLocal             Target=4 Slot=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    MakeClosure           Target=5 FuncLabel=lambda_17 EnvPtrTemp=0 EnvSizeBytes=24   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    Return                Source=5   (taken_over_record_loop_settled_by_caller.ash:35:1)
+
+function lambda_15  [ClosureHelper from expandedArms]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadEnv               Target=1 Index=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadLocal             Target=3 Slot=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    MakeClosure           Target=4 FuncLabel=lambda_16 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:35:1)
+
+function lambda_14  [SourceFunction from expandedArms]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    MakeClosure           Target=4 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:35:1)
+
+function lambda_20  [ClosureHelper from expandCases]
+  locals=44 temps=106
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=1 Index=2   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreLocal            Slot=3 Source=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreLocal            Slot=6 Source=2   (taken_over_record_loop_settled_by_caller.ash:40:1)
+  lambda_20_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadLocal             Target=3 Slot=2   (taken_over_record_loop_settled_by_caller.ash:41:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=4 Value=0   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_199   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadEnv               Target=6 Index=1   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    LoadLocal             Target=7 Slot=1   (taken_over_record_loop_settled_by_caller.ash:42:29)
+    LoadMemOffset         Target=8 BasePtr=6 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    LoadConstInt          Target=9 Value=62   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    ShrInt                Target=10 Left=8 Right=9   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    LoadConstInt          Target=11 Value=1   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    LoadConstInt          Target=12 Value=0   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    StoreLocal            Slot=15 Source=7   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    JumpIfFalse           CondTemp=12 Target=rc_call_argument_not_retained_200   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    RcDup                 Target=13 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=15 Source=13   (taken_over_record_loop_settled_by_caller.ash:42:17)
+  rc_call_argument_not_retained_200:
+    LoadLocal             Target=14 Slot=15   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    CallClosure           Target=15 ClosureTemp=6 ArgTemp=14 RuntimeManagedArgumentFlagTemp=12   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    LoadConstInt          Target=16 Value=0   (taken_over_record_loop_settled_by_caller.ash:42:34)
+    LoadConstInt          Target=18 Value=2   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16 RuntimeManagedArgumentFlagTemp=18   (taken_over_record_loop_settled_by_caller.ash:42:17)
+    StoreLocal            Slot=10 Source=17   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    Jump                  Target=match_end_196   (taken_over_record_loop_settled_by_caller.ash:41:5)
+  match_arm_cleanup_199:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=19
+    Jump                  Target=match_next_198   (taken_over_record_loop_settled_by_caller.ash:41:5)
+  match_next_198:
+    SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
+    LoadConstInt          Target=20 Value=0   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    CmpIntNe              Target=21 Left=3 Right=20   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    JumpIfFalse           CondTemp=21 Target=match_arm_cleanup_201   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    LoadMemOffset         Target=22 BasePtr=3 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    LoadMemOffset         Target=23 BasePtr=3 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    LoadMemOffset         Target=24 BasePtr=22 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    StoreLocal            Slot=22 Source=24   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    LoadMemOffset         Target=25 BasePtr=22 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    StoreLocal            Slot=23 Source=25   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    StoreLocal            Slot=24 Source=26   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    StoreLocal            Slot=25 Source=23   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    LoadLocal             Target=27 Slot=25   (taken_over_record_loop_settled_by_caller.ash:46:28)
+    Borrow                Target=28 SourceTemp=27
+    LoadLocal             Target=29 Slot=3   (taken_over_record_loop_settled_by_caller.ash:46:34)
+    SaveArenaState        CursorLocalSlot=26 EndLocalSlot=27
+    LoadEnv               Target=30 Index=3   (taken_over_record_loop_settled_by_caller.ash:45:16)
+    SaveArenaState        CursorLocalSlot=28 EndLocalSlot=29
+    LoadEnv               Target=31 Index=4   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadLocal             Target=32 Slot=22   (taken_over_record_loop_settled_by_caller.ash:45:36)
+    Borrow                Target=33 SourceTemp=32
+    CallClosure           Target=34 ClosureTemp=31 ArgTemp=33   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadLocal             Target=35 Slot=3   (taken_over_record_loop_settled_by_caller.ash:45:45)
+    LoadMemOffset         Target=36 BasePtr=34 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadConstInt          Target=37 Value=62   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    ShrInt                Target=38 Left=36 Right=37   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadConstInt          Target=39 Value=1   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadConstInt          Target=40 Value=0   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    StoreLocal            Slot=30 Source=35   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    JumpIfFalse           CondTemp=40 Target=rc_call_argument_not_retained_202   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    RcDup                 Target=41 SourceTemp=35 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=41   (taken_over_record_loop_settled_by_caller.ash:45:29)
+  rc_call_argument_not_retained_202:
+    LoadLocal             Target=42 Slot=30   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    CallClosure           Target=43 ClosureTemp=34 ArgTemp=42 RuntimeManagedArgumentFlagTemp=40   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadLocal             Target=44 Slot=32   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    StoreLocal            Slot=33 Source=44   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    StoreLocal            Slot=32 Source=43   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    RestoreArenaState     CursorLocalSlot=28 EndLocalSlot=29 PreRestoreEndSlot=31
+    ReclaimArenaChunks    SavedEndSlot=29 PreRestoreEndSlot=31
+    LoadConstInt          Target=45 Value=1   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    StoreLocal            Slot=34 Source=45   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    LoadLocal             Target=46 Slot=32   (taken_over_record_loop_settled_by_caller.ash:45:29)
+    CallClosure           Target=47 ClosureTemp=30 ArgTemp=46   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadLocal             Target=48 Slot=23   (taken_over_record_loop_settled_by_caller.ash:45:59)
+    Borrow                Target=49 SourceTemp=48
+    LoadMemOffset         Target=50 BasePtr=47 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=51 Value=62   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    ShrInt                Target=52 Left=50 Right=51   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=53 Value=1   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    AndInt                Target=54 Left=52 Right=53   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=55 Value=0   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    StoreLocal            Slot=35 Source=49   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    JumpIfFalse           CondTemp=55 Target=rc_call_argument_not_retained_203   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    RcDup                 Target=56 SourceTemp=49 RuntimeManaged=true
+    StoreLocal            Slot=35 Source=56   (taken_over_record_loop_settled_by_caller.ash:44:13)
+  rc_call_argument_not_retained_203:
+    LoadLocal             Target=57 Slot=35   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    CallClosure           Target=58 ClosureTemp=47 ArgTemp=57 RuntimeManagedArgumentFlagTemp=55   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadLocal             Target=59 Slot=24   (taken_over_record_loop_settled_by_caller.ash:45:65)
+    Borrow                Target=60 SourceTemp=59
+    LoadMemOffset         Target=61 BasePtr=58 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=62 Value=62   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    ShrInt                Target=63 Left=61 Right=62   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=64 Value=1   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    AndInt                Target=65 Left=63 Right=64   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=66 Value=0   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    StoreLocal            Slot=36 Source=60   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    JumpIfFalse           CondTemp=66 Target=rc_call_argument_not_retained_204   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    RcDup                 Target=67 SourceTemp=60 RuntimeManaged=true
+    StoreLocal            Slot=36 Source=67   (taken_over_record_loop_settled_by_caller.ash:44:13)
+  rc_call_argument_not_retained_204:
+    LoadLocal             Target=68 Slot=36   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    CallClosure           Target=69 ClosureTemp=58 ArgTemp=68 RuntimeManagedArgumentFlagTemp=66   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadLocal             Target=70 Slot=1   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadMemOffset         Target=71 BasePtr=69 OffsetBytes=16   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=72 Value=62   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    ShrInt                Target=73 Left=71 Right=72   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=74 Value=1   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=75 Value=0   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    StoreLocal            Slot=37 Source=70   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    JumpIfFalse           CondTemp=75 Target=rc_call_argument_not_retained_205   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    RcDup                 Target=76 SourceTemp=70 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=37 Source=76   (taken_over_record_loop_settled_by_caller.ash:44:13)
+  rc_call_argument_not_retained_205:
+    LoadLocal             Target=77 Slot=37   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=79 Value=2   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    OrInt                 Target=80 Left=75 Right=79   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    CallClosure           Target=78 ClosureTemp=69 ArgTemp=77 RuntimeManagedArgumentFlagTemp=80   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadLocal             Target=82 Slot=2   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadLocal             Target=83 Slot=3   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadLocal             Target=84 Slot=1   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    StoreLocal            Slot=2 Source=28   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    RcDrop                SourceTemp=23 TypeName=List OwnerSlot=25
+    StoreLocal            Slot=3 Source=29   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    StoreLocal            Slot=1 Source=78   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    RcDrop                SourceTemp=26 TypeName=PatternBinding OwnerSlot=24
+    RcDrop                SourceTemp=25 TypeName=PatternBinding OwnerSlot=23
+    LoadLocal             Target=92 Slot=34
+    JumpIfFalse           CondTemp=92 Target=lambda_20_rc_edge_22_15
+    LoadLocal             Target=93 Slot=32
+    LoadConstInt          Target=94 Value=0
+    CmpIntNe              Target=95 Left=93 Right=94
+    JumpIfFalse           CondTemp=95 Target=lambda_20_rc_edge_22_16
+    LoadConstInt          Target=96 Value=0
+    CmpIntNe              Target=97 Left=93 Right=96
+    JumpIfFalse           CondTemp=97 Target=lambda_20_rc_edge_22_17
+    IsReferenceCounted    Target=98 SourceTemp=93
+    JumpIfFalse           CondTemp=98 Target=lambda_20_rc_edge_22_18
+    StoreLocal            Slot=43 Source=93
+  rcdrop_list_spine_267:
+    LoadLocal             Target=99 Slot=43
+    LoadConstInt          Target=100 Value=0
+    CmpIntNe              Target=101 Left=99 Right=100
+    JumpIfFalse           CondTemp=101 Target=lambda_20_rc_edge_22_20
+    RcIsUnique            Target=102 SourceTemp=99
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_spine_shared_268
+    LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=8
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=43 Source=103
+    Jump                  Target=rcdrop_list_spine_267
+  rcdrop_list_spine_shared_268:
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=rcdrop_list_spine_end_269
+  rcdrop_list_spine_end_269:
+    LoadConstInt          Target=104 Value=0
+    StoreLocal            Slot=32 Source=104
+  taken_over_skip_266:
+    LoadConstInt          Target=105 Value=0
+    StoreLocal            Slot=34 Source=105
+    RestoreStackPointer   Slot=9   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    Jump                  Target=lambda_20_body   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    LoadConstInt          Target=85 Value=0   (taken_over_record_loop_settled_by_caller.ash:44:13)
+    StoreLocal            Slot=10 Source=85   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=40
+    ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=40
+    Jump                  Target=match_end_196   (taken_over_record_loop_settled_by_caller.ash:41:5)
+  match_arm_cleanup_201:
+    RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=41
+    ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=41
+    Jump                  Target=match_none_197   (taken_over_record_loop_settled_by_caller.ash:41:5)
+  match_none_197:
+    LoadConstInt          Target=90 Value=0   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    StoreLocal            Slot=10 Source=90   (taken_over_record_loop_settled_by_caller.ash:41:5)
+  match_end_196:
+    LoadLocal             Target=91 Slot=10   (taken_over_record_loop_settled_by_caller.ash:41:5)
+    Return                Source=91   (taken_over_record_loop_settled_by_caller.ash:40:1)
+  lambda_20_rc_edge_22_20:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=rcdrop_list_spine_end_269
+  lambda_20_rc_edge_22_15:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+  lambda_20_rc_edge_22_16:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+  lambda_20_rc_edge_22_17:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+  lambda_20_rc_edge_22_18:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+
+function lambda_19  [ClosureHelper from expandCases]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=40   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=1 Index=0   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=2 Index=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadLocal             Target=4 Slot=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=5 Index=2   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=6 Index=3   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=6   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    MakeClosure           Target=7 FuncLabel=lambda_20 EnvPtrTemp=0 EnvSizeBytes=40   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    Return                Source=7   (taken_over_record_loop_settled_by_caller.ash:40:1)
+
+function lambda_18  [SourceFunction from expandCases]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=32   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=2 Index=0   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=5 Index=1   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadEnv               Target=6 Index=2   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    MakeClosure           Target=7 FuncLabel=lambda_19 EnvPtrTemp=0 EnvSizeBytes=32   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    Return                Source=7   (taken_over_record_loop_settled_by_caller.ash:40:1)
+
+function lambda_21  [SourceFunction from count]
+  locals=15 temps=19
+    LoadLocal             Target=0 Slot=1   (taken_over_record_loop_settled_by_caller.ash:49:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    CmpIntEq              Target=2 Left=0 Right=1   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_209   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:50:17)
+    StoreLocal            Slot=2 Source=3   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Jump                  Target=match_end_206   (taken_over_record_loop_settled_by_caller.ash:49:5)
+  match_arm_cleanup_209:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_next_208   (taken_over_record_loop_settled_by_caller.ash:49:5)
+  match_next_208:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=4 Value=0   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    CmpIntNe              Target=5 Left=0 Right=4   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_210   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    StoreLocal            Slot=9 Source=7   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    LoadConstInt          Target=8 Value=1   (taken_over_record_loop_settled_by_caller.ash:51:24)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=10 Slot=0   (taken_over_record_loop_settled_by_caller.ash:51:28)
+    MakeClosure           Target=9 FuncLabel=lambda_21 EnvPtrTemp=10 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:51:28)
+    LoadLocal             Target=11 Slot=9   (taken_over_record_loop_settled_by_caller.ash:51:34)
+    Borrow                Target=12 SourceTemp=11
+    LoadConstInt          Target=14 Value=2   (taken_over_record_loop_settled_by_caller.ash:51:28)
+    CallClosure           Target=13 ClosureTemp=9 ArgTemp=12 RuntimeManagedArgumentFlagTemp=14   (taken_over_record_loop_settled_by_caller.ash:51:28)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    AddInt                Target=15 Left=8 Right=13   (taken_over_record_loop_settled_by_caller.ash:51:24)
+    RcDrop                SourceTemp=7 TypeName=List OwnerSlot=9
+    StoreLocal            Slot=2 Source=15   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=13
+    Jump                  Target=match_end_206   (taken_over_record_loop_settled_by_caller.ash:49:5)
+  match_arm_cleanup_210:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=14
+    Jump                  Target=match_none_207   (taken_over_record_loop_settled_by_caller.ash:49:5)
+  match_none_207:
+    LoadConstInt          Target=17 Value=0   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    StoreLocal            Slot=2 Source=17   (taken_over_record_loop_settled_by_caller.ash:49:5)
+  match_end_206:
+    LoadLocal             Target=18 Slot=2   (taken_over_record_loop_settled_by_caller.ash:49:5)
+    Return                Source=18   (taken_over_record_loop_settled_by_caller.ash:48:1)
+
+function __tospacecopy_list_23  [ListDeepCopier]
+  locals=2 temps=11
+    LoadLocal             Target=0 Slot=1   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadEnv               Target=1 Index=0   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadConstInt          Target=2 Value=0   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CmpIntEq              Target=3 Left=0 Right=2   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    JumpIfFalse           CondTemp=3 Target=__tospacecopy_list_23_copy   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadConstInt          Target=4 Value=0   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    Return                Source=4   (taken_over_record_loop_settled_by_caller.ash:53:28)
+  __tospacecopy_list_23_copy:
+    LoadMemOffset         Target=5 BasePtr=0 OffsetBytes=0   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=8   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CopyOutArenaToSpace   DestTemp=7 SrcTemp=5
+    CallClosure           Target=8 ClosureTemp=1 ArgTemp=6   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    Alloc                 Target=9 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=7   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=8   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CopyOutArenaToSpace   DestTemp=10 SrcTemp=9 StaticSizeBytes=16
+    Return                Source=10   (taken_over_record_loop_settled_by_caller.ash:53:28)
+
+function lambda_22  [SourceFunction from probe]
+  locals=10 temps=34
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:53:22)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadEnv               Target=1 Index=1   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadConstInt          Target=2 Value=0   (taken_over_record_loop_settled_by_caller.ash:53:40)
+    AllocAdt              Target=3 Tag=1 FieldCount=0   (taken_over_record_loop_settled_by_caller.ash:53:42)
+    LoadConstInt          Target=4 Value=1   (taken_over_record_loop_settled_by_caller.ash:53:50)
+    AllocAdt              Target=5 Tag=0 FieldCount=0   (taken_over_record_loop_settled_by_caller.ash:53:53)
+    Alloc                 Target=6 SizeBytes=24   (taken_over_record_loop_settled_by_caller.ash:53:41)
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=3   (taken_over_record_loop_settled_by_caller.ash:53:41)
+    StoreMemOffset        BasePtr=6 OffsetBytes=8 Source=4   (taken_over_record_loop_settled_by_caller.ash:53:41)
+    StoreMemOffset        BasePtr=6 OffsetBytes=16 Source=5   (taken_over_record_loop_settled_by_caller.ash:53:41)
+    Alloc                 Target=7 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:53:40)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=6   (taken_over_record_loop_settled_by_caller.ash:53:40)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=2   (taken_over_record_loop_settled_by_caller.ash:53:40)
+    CallClosure           Target=8 ClosureTemp=1 ArgTemp=7   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadConstInt          Target=9 Value=0   (taken_over_record_loop_settled_by_caller.ash:53:61)
+    LoadConstStr          Target=10 StrLabel=str_0   (taken_over_record_loop_settled_by_caller.ash:53:62)
+    Alloc                 Target=11 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:53:61)
+    StoreMemOffset        BasePtr=11 OffsetBytes=0 Source=10   (taken_over_record_loop_settled_by_caller.ash:53:61)
+    StoreMemOffset        BasePtr=11 OffsetBytes=8 Source=9   (taken_over_record_loop_settled_by_caller.ash:53:61)
+    Alloc                 Target=12 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    MakeClosure           Target=13 FuncLabel=__tospacecopy_list_23 EnvPtrTemp=12 EnvSizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=13   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CallClosure           Target=14 ClosureTemp=13 ArgTemp=11   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CallClosure           Target=15 ClosureTemp=8 ArgTemp=14   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    LoadConstInt          Target=16 Value=0   (taken_over_record_loop_settled_by_caller.ash:53:70)
+    LoadConstInt          Target=18 Value=2   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16 RuntimeManagedArgumentFlagTemp=18   (taken_over_record_loop_settled_by_caller.ash:53:28)
+    CallClosure           Target=20 ClosureTemp=0 ArgTemp=17   (taken_over_record_loop_settled_by_caller.ash:53:22)
+    StoreLocal            Slot=9 Source=17
+  taken_over_cell_271:
+    LoadLocal             Target=21 Slot=9
+    LoadConstInt          Target=22 Value=0
+    CmpIntNe              Target=23 Left=21 Right=22
+    JumpIfFalse           CondTemp=23 Target=taken_over_done_270
+    IsReferenceCounted    Target=24 SourceTemp=21
+    JumpIfFalse           CondTemp=24 Target=taken_over_arena_cell_272
+    Jump                  Target=taken_over_done_270
+  taken_over_arena_cell_272:
+    LoadMemOffset         Target=25 BasePtr=21 OffsetBytes=0
+    IsReferenceCounted    Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=taken_over_arena_head_274
+    Jump                  Target=taken_over_next_273
+  taken_over_arena_head_274:
+    LoadMemOffset         Target=27 BasePtr=25 OffsetBytes=0
+    LoadConstInt          Target=28 Value=0
+    CmpIntNe              Target=29 Left=27 Right=28
+    JumpIfFalse           CondTemp=29 Target=taken_over_next_273
+    IsReferenceCounted    Target=30 SourceTemp=27
+    JumpIfFalse           CondTemp=30 Target=taken_over_next_273
+    LoadConstInt          Target=31 Value=0
+    CallKnown             Target=32 FuncLabel=__rcdrop_general_7 EnvTemp=31 ArgTemp=27
+  taken_over_next_273:
+    LoadMemOffset         Target=33 BasePtr=21 OffsetBytes=8
+    StoreLocal            Slot=9 Source=33
+    Jump                  Target=taken_over_cell_271
+  taken_over_done_270:
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=8
+    Return                Source=20   (taken_over_record_loop_settled_by_caller.ash:53:1)
+
+function lambda_25  [ClosureHelper from loop]
+  locals=16 temps=19
+    LoadEnv               Target=0 Index=0   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    StoreLocal            Slot=6 Source=1   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    StoreLocal            Slot=7 Source=1   (taken_over_record_loop_settled_by_caller.ash:55:1)
+  lambda_25_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_loop_settled_by_caller.ash:56:8)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_loop_settled_by_caller.ash:56:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_loop_settled_by_caller.ash:56:8)
+    JumpIfFalse           CondTemp=4 Target=else_211   (taken_over_record_loop_settled_by_caller.ash:56:5)
+    LoadLocal             Target=5 Slot=1   (taken_over_record_loop_settled_by_caller.ash:57:10)
+    StoreLocal            Slot=11 Source=5   (taken_over_record_loop_settled_by_caller.ash:56:5)
+    Jump                  Target=endif_212   (taken_over_record_loop_settled_by_caller.ash:56:5)
+  else_211:
+    LoadLocal             Target=6 Slot=2   (taken_over_record_loop_settled_by_caller.ash:58:15)
+    LoadConstInt          Target=7 Value=1   (taken_over_record_loop_settled_by_caller.ash:58:19)
+    SubInt                Target=8 Left=6 Right=7   (taken_over_record_loop_settled_by_caller.ash:58:15)
+    LoadLocal             Target=9 Slot=1   (taken_over_record_loop_settled_by_caller.ash:58:22)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (taken_over_record_loop_settled_by_caller.ash:58:28)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=2   (taken_over_record_loop_settled_by_caller.ash:58:34)
+    CallClosure           Target=13 ClosureTemp=11 ArgTemp=12   (taken_over_record_loop_settled_by_caller.ash:58:28)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    AddInt                Target=14 Left=9 Right=13   (taken_over_record_loop_settled_by_caller.ash:58:22)
+    LoadLocal             Target=15 Slot=2   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    LoadLocal             Target=16 Slot=1   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    StoreLocal            Slot=2 Source=8   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    StoreLocal            Slot=1 Source=14   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
+    RestoreStackPointer   Slot=10   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    Jump                  Target=lambda_25_body   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    LoadConstInt          Target=17 Value=0   (taken_over_record_loop_settled_by_caller.ash:58:10)
+    StoreLocal            Slot=11 Source=17   (taken_over_record_loop_settled_by_caller.ash:56:5)
+  endif_212:
+    LoadLocal             Target=18 Slot=11   (taken_over_record_loop_settled_by_caller.ash:56:5)
+    Return                Source=18   (taken_over_record_loop_settled_by_caller.ash:55:1)
+
+function lambda_24  [SourceFunction from loop]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    LoadEnv               Target=4 Index=0   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    MakeClosure           Target=6 FuncLabel=lambda_25 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    Return                Source=6   (taken_over_record_loop_settled_by_caller.ash:55:1)
+
+function _start_main  [ProgramEntry]
+  locals=17 temps=36
+    LoadConstInt          Target=0 Value=0   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    StoreLocal            Slot=0 Source=1   (taken_over_record_loop_settled_by_caller.ash:9:1)
+    LoadConstInt          Target=2 Value=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    StoreLocal            Slot=1 Source=3   (taken_over_record_loop_settled_by_caller.ash:14:1)
+    Alloc                 Target=4 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadLocal             Target=5 Slot=0   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreMemOffset        BasePtr=4 OffsetBytes=0 Source=5   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    MakeClosure           Target=6 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    StoreLocal            Slot=2 Source=6   (taken_over_record_loop_settled_by_caller.ash:19:1)
+    LoadConstInt          Target=7 Value=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    MakeClosure           Target=8 FuncLabel=lambda_8 EnvPtrTemp=7 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    StoreLocal            Slot=3 Source=8   (taken_over_record_loop_settled_by_caller.ash:25:1)
+    LoadConstInt          Target=9 Value=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    MakeClosure           Target=10 FuncLabel=lambda_11 EnvPtrTemp=9 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    StoreLocal            Slot=4 Source=10   (taken_over_record_loop_settled_by_caller.ash:30:1)
+    LoadConstInt          Target=11 Value=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    MakeClosure           Target=12 FuncLabel=lambda_14 EnvPtrTemp=11 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    StoreLocal            Slot=5 Source=12   (taken_over_record_loop_settled_by_caller.ash:35:1)
+    Alloc                 Target=13 SizeBytes=24   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadLocal             Target=14 Slot=0   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=0 Source=14   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadLocal             Target=15 Slot=5   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=8 Source=15   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadLocal             Target=16 Slot=4   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreMemOffset        BasePtr=13 OffsetBytes=16 Source=16   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    MakeClosure           Target=17 FuncLabel=lambda_18 EnvPtrTemp=13 EnvSizeBytes=24   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    StoreLocal            Slot=6 Source=17   (taken_over_record_loop_settled_by_caller.ash:40:1)
+    LoadConstInt          Target=18 Value=0   (taken_over_record_loop_settled_by_caller.ash:48:1)
+    MakeClosure           Target=19 FuncLabel=lambda_21 EnvPtrTemp=18 EnvSizeBytes=0   (taken_over_record_loop_settled_by_caller.ash:48:1)
+    StoreLocal            Slot=7 Source=19   (taken_over_record_loop_settled_by_caller.ash:48:1)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    AllocStack            Target=20 SizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    LoadLocal             Target=21 Slot=7   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    StoreMemOffset        BasePtr=20 OffsetBytes=0 Source=21   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    LoadLocal             Target=22 Slot=6   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    StoreMemOffset        BasePtr=20 OffsetBytes=8 Source=22   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    MakeClosureStack      Target=23 FuncLabel=lambda_22 EnvPtrTemp=20 EnvSizeBytes=16   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    StoreLocal            Slot=10 Source=23   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    Alloc                 Target=24 SizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    LoadLocal             Target=25 Slot=10   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    Borrow                Target=26 SourceTemp=25
+    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=26   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    MakeClosure           Target=27 FuncLabel=lambda_24 EnvPtrTemp=24 EnvSizeBytes=8   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    StoreLocal            Slot=11 Source=27   (taken_over_record_loop_settled_by_caller.ash:55:1)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=28 Slot=11   (taken_over_record_loop_settled_by_caller.ash:60:16)
+    LoadConstInt          Target=29 Value=3   (taken_over_record_loop_settled_by_caller.ash:60:21)
+    CallClosure           Target=30 ClosureTemp=28 ArgTemp=29   (taken_over_record_loop_settled_by_caller.ash:60:16)
+    LoadConstInt          Target=31 Value=0   (taken_over_record_loop_settled_by_caller.ash:60:24)
+    CallClosure           Target=32 ClosureTemp=30 ArgTemp=31   (taken_over_record_loop_settled_by_caller.ash:60:16)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    PrintInt              Source=32   (taken_over_record_loop_settled_by_caller.ash:60:1)
+    AllocAdt              Target=33 Tag=0 FieldCount=0   (taken_over_record_loop_settled_by_caller.ash:60:1)
+    StoreLocal            Slot=15 Source=33   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    LoadLocal             Target=34 Slot=10   (taken_over_record_loop_settled_by_caller.ash:53:1)
+    CleanupResource       SourceTemp=34 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=16
+    CopyOutArena          DestTemp=35 SrcTemp=33 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=16
+    Return                Source=35
+

@@ -1163,6 +1163,7 @@ public sealed partial class Lowering
             Emit(new IrInst.StoreLocal(ownedSlot, EmitRuntimeManagedTcoDeepCopy(currentTemp, callResultType)));
             ReleaseHandedOverTupleParts(callResultType, handedParts, partTemps);
             ReleaseHandedOverListHeads(callResultType, partTemps.MaskTemp, currentTemp);
+            TrySettleTakenOverBehindCopy(callResultType, currentTemp);
 
             Emit(new IrInst.Label(ownedLabel));
         }
@@ -1170,6 +1171,7 @@ public sealed partial class Lowering
         EmitPostGuardedArenaReclaim(callWmEndSlot, callPreRestoreEndSlot);
         GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(callResultType));
         RegisterGeneralRcOwnedPredecessor(predecessorSlot, Prune(callResultType), owned.Binders, ownedSlot);
+        NoteTakenOverOwnedSlotSource(owned);
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, ownedSlot));
         return resultTemp;
@@ -1274,6 +1276,7 @@ public sealed partial class Lowering
 
         List<GeneralRcOwnedSlot> releasable = OwnedSlotsOutOfResultReach(resultTemp, resultType, _generalRcOwnedSlots);
         ReleaseOwnedSlotsBehindIndependentForwardedResult(resultTemp, resultType, releasable, inLoop);
+        TryTakeOverAtReturn(label, resultType, [.. _generalRcOwnedSlots.Except(releasable)]);
         EmitKeptOwnedSlotChildPreservingDrops(resultType, [.. _generalRcOwnedSlots.Except(releasable)]);
         int handedTemp = TryHandOverOwnedResultWhole(label, resultTemp, resultType, releasable, inLoop);
         if (handedTemp >= 0)
@@ -1809,7 +1812,7 @@ public sealed partial class Lowering
         // A value this iteration produced is out of reach of the successors that are the loop's own
         // parameters (or parts of them): they predate it. A value an earlier iteration left in its
         // slot may have become one of them, so that release is taken only when the slot is fresh.
-        foreach (GeneralRcOwnedSlot owned in iterationSlots.Where(owned => !released.Contains(owned)))
+        foreach (GeneralRcOwnedSlot owned in KeptPastTakenOverRecord(info, iterationSlots.Where(owned => !released.Contains(owned))))
         {
             if (owned.FreshSlot < 0)
             {

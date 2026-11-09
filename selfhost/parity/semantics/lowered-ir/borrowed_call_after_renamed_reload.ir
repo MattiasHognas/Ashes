@@ -1861,7 +1861,7 @@ function lambda_14  [SourceFunction from expandedArms]
     Return                Source=4   (borrowed_call_after_renamed_reload.ash:35:1)
 
 function lambda_20  [ClosureHelper from expandCases]
-  locals=43 temps=93
+  locals=44 temps=106
     LoadEnv               Target=0 Index=0   (borrowed_call_after_renamed_reload.ash:40:1)
     StoreLocal            Slot=2 Source=0   (borrowed_call_after_renamed_reload.ash:40:1)
     LoadEnv               Target=1 Index=2   (borrowed_call_after_renamed_reload.ash:40:1)
@@ -2001,9 +2001,39 @@ function lambda_20  [ClosureHelper from expandCases]
     StoreLocal            Slot=1 Source=78   (borrowed_call_after_renamed_reload.ash:44:13)
     RcDrop                SourceTemp=26 TypeName=PatternBinding OwnerSlot=24
     RcDrop                SourceTemp=25 TypeName=PatternBinding OwnerSlot=23
+    LoadLocal             Target=92 Slot=34
+    JumpIfFalse           CondTemp=92 Target=lambda_20_rc_edge_22_15
+    LoadLocal             Target=93 Slot=32
+    LoadConstInt          Target=94 Value=0
+    CmpIntNe              Target=95 Left=93 Right=94
+    JumpIfFalse           CondTemp=95 Target=lambda_20_rc_edge_22_16
+    LoadConstInt          Target=96 Value=0
+    CmpIntNe              Target=97 Left=93 Right=96
+    JumpIfFalse           CondTemp=97 Target=lambda_20_rc_edge_22_17
+    IsReferenceCounted    Target=98 SourceTemp=93
+    JumpIfFalse           CondTemp=98 Target=lambda_20_rc_edge_22_18
+    StoreLocal            Slot=43 Source=93
+  rcdrop_list_spine_267:
+    LoadLocal             Target=99 Slot=43
+    LoadConstInt          Target=100 Value=0
+    CmpIntNe              Target=101 Left=99 Right=100
+    JumpIfFalse           CondTemp=101 Target=lambda_20_rc_edge_22_20
+    RcIsUnique            Target=102 SourceTemp=99
+    JumpIfFalse           CondTemp=102 Target=rcdrop_list_spine_shared_268
+    LoadMemOffset         Target=103 BasePtr=99 OffsetBytes=8
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=43 Source=103
+    Jump                  Target=rcdrop_list_spine_267
+  rcdrop_list_spine_shared_268:
+    RcDrop                SourceTemp=99 TypeName=List RuntimeManaged=true
     RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
-    LoadConstInt          Target=92 Value=0
-    StoreLocal            Slot=34 Source=92
+    Jump                  Target=rcdrop_list_spine_end_269
+  rcdrop_list_spine_end_269:
+    LoadConstInt          Target=104 Value=0
+    StoreLocal            Slot=32 Source=104
+  taken_over_skip_266:
+    LoadConstInt          Target=105 Value=0
+    StoreLocal            Slot=34 Source=105
     RestoreStackPointer   Slot=9   (borrowed_call_after_renamed_reload.ash:44:13)
     Jump                  Target=lambda_20_body   (borrowed_call_after_renamed_reload.ash:44:13)
     LoadConstInt          Target=85 Value=0   (borrowed_call_after_renamed_reload.ash:44:13)
@@ -2021,6 +2051,21 @@ function lambda_20  [ClosureHelper from expandCases]
   match_end_196:
     LoadLocal             Target=91 Slot=10   (borrowed_call_after_renamed_reload.ash:41:5)
     Return                Source=91   (borrowed_call_after_renamed_reload.ash:40:1)
+  lambda_20_rc_edge_22_20:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=rcdrop_list_spine_end_269
+  lambda_20_rc_edge_22_15:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+  lambda_20_rc_edge_22_16:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+  lambda_20_rc_edge_22_17:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
+  lambda_20_rc_edge_22_18:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_266
 
 function lambda_19  [ClosureHelper from expandCases]
   locals=2 temps=8
@@ -2124,7 +2169,7 @@ function __tospacecopy_list_23  [ListDeepCopier]
     Return                Source=10   (borrowed_call_after_renamed_reload.ash:53:28)
 
 function lambda_22  [SourceFunction from probe]
-  locals=9 temps=21
+  locals=10 temps=34
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     LoadEnv               Target=0 Index=0   (borrowed_call_after_renamed_reload.ash:53:22)
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
@@ -2155,6 +2200,34 @@ function lambda_22  [SourceFunction from probe]
     LoadConstInt          Target=18 Value=2   (borrowed_call_after_renamed_reload.ash:53:28)
     CallClosure           Target=17 ClosureTemp=15 ArgTemp=16 RuntimeManagedArgumentFlagTemp=18   (borrowed_call_after_renamed_reload.ash:53:28)
     CallClosure           Target=20 ClosureTemp=0 ArgTemp=17   (borrowed_call_after_renamed_reload.ash:53:22)
+    StoreLocal            Slot=9 Source=17
+  taken_over_cell_271:
+    LoadLocal             Target=21 Slot=9
+    LoadConstInt          Target=22 Value=0
+    CmpIntNe              Target=23 Left=21 Right=22
+    JumpIfFalse           CondTemp=23 Target=taken_over_done_270
+    IsReferenceCounted    Target=24 SourceTemp=21
+    JumpIfFalse           CondTemp=24 Target=taken_over_arena_cell_272
+    Jump                  Target=taken_over_done_270
+  taken_over_arena_cell_272:
+    LoadMemOffset         Target=25 BasePtr=21 OffsetBytes=0
+    IsReferenceCounted    Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=taken_over_arena_head_274
+    Jump                  Target=taken_over_next_273
+  taken_over_arena_head_274:
+    LoadMemOffset         Target=27 BasePtr=25 OffsetBytes=0
+    LoadConstInt          Target=28 Value=0
+    CmpIntNe              Target=29 Left=27 Right=28
+    JumpIfFalse           CondTemp=29 Target=taken_over_next_273
+    IsReferenceCounted    Target=30 SourceTemp=27
+    JumpIfFalse           CondTemp=30 Target=taken_over_next_273
+    LoadConstInt          Target=31 Value=0
+    CallKnown             Target=32 FuncLabel=__rcdrop_general_7 EnvTemp=31 ArgTemp=27
+  taken_over_next_273:
+    LoadMemOffset         Target=33 BasePtr=21 OffsetBytes=8
+    StoreLocal            Slot=9 Source=33
+    Jump                  Target=taken_over_cell_271
+  taken_over_done_270:
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=8
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=8
     Return                Source=20   (borrowed_call_after_renamed_reload.ash:53:1)

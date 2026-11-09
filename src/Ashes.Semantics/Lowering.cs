@@ -3232,13 +3232,26 @@ public sealed partial class Lowering
     /// </summary>
     private void ResolveDeferredTcoResets()
     {
-        if (_pendingTcoResets.Count == 0 && _pendingCallResultCopyOuts.Count == 0)
+        if (_pendingTcoResets.Count == 0 && _pendingCallResultCopyOuts.Count == 0 && _pendingTakenOverSettles.Count == 0)
         {
             return;
         }
 
+        SpliceAllDeferredPlaceholders();
+        _takenOverSettleRound = true;
+        SpliceAllDeferredPlaceholders();
+        _takenOverSettleRound = false;
+        ReportTakenOverDeclines();
+        _pendingTcoResets.Clear();
+        _pendingCallResultCopyOuts.Clear();
+        _pendingTakenOverSettles.Clear();
+        _takenOverAnchors.Clear();
+    }
+
+    private void SpliceAllDeferredPlaceholders()
+    {
         // The entry instruction list (_inst) is spliced in place with the live counters.
-        if (_inst.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending))
+        if (_inst.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending) || (_takenOverSettleRound && HasTakenOverAnchor(_inst)))
         {
             var entryOriginal = new List<IrInst>(_inst);
             _inst.Clear();
@@ -3251,7 +3264,8 @@ public sealed partial class Lowering
         for (int fi = 0; fi < originalCount; fi++)
         {
             var f = _funcs[fi];
-            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending))
+            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending)
+                && !(_takenOverSettleRound && HasTakenOverAnchor(f.Instructions)))
             {
                 continue;
             }
@@ -3440,7 +3454,7 @@ public sealed partial class Lowering
             RecursiveGroupExpr group => LowerRecursiveGroup(group, request),
             Expr.If iff => LowerIf(iff, request),
             Expr.Lambda lam => LowerLambda(lam, request: request),
-            Expr.Call call => LowerCall(call, request),
+            Expr.Call call => NoteTakenOverCallResult(call, LowerCall(call, request)),
             Expr.TupleLit tuple => LowerTupleLit(tuple, request),
             Expr.ListLit list => LowerListLit(list, request),
             Expr.Cons cons => LowerCons(cons, request),
@@ -3987,6 +4001,11 @@ public sealed partial class Lowering
             {
                 _coroutineHelperArity.Remove(frame.Name);
             }
+            if (frame.Kind == SequentialBindingKind.Ordinary && frame.Binding is Expr.Let settledLet)
+            {
+                SettleLetScopedTakenOver(settledLet);
+            }
+
             _currentSourceExpr = frame.Binding ?? enclosingSourceExpr;
             result = frame.Kind == SequentialBindingKind.Ordinary
                 ? PopLetScope(result.Temp, result.Type, frame.SuppressArenaReclaim)
@@ -15330,6 +15349,7 @@ public sealed partial class Lowering
         ref int runtimeManagedResultFlagTemp)
     {
         CheckClosureCapturesLiveAtApplication(rootExpr, closureTemp);
+        NoteTakenOverArgument(rootExpr, argument, argumentIndex, argumentType);
 
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
         int originalArgumentTemp = argumentTemp;
@@ -16902,6 +16922,7 @@ public sealed partial class Lowering
                 if (isReload)
                 {
                     renames[((IrInst.LoadLocal)inst).Target] = pendingReloadSource;
+                    CarryTakenOverAnchors(raw, renames);
                     continue;
                 }
 
@@ -16931,6 +16952,8 @@ public sealed partial class Lowering
             {
                 emit(inst);
             }
+
+            CarryTakenOverAnchors(raw, renames);
         }
     }
 

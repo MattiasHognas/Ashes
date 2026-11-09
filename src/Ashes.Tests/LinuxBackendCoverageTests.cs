@@ -25160,4 +25160,125 @@ public sealed class LinuxBackendCoverageTests
 
         AssertMemoryPlateaus("arena record derived join", samples, maxRssKb: 16_000);
     }
+
+    private const string TakenOverRecordPrelude = """
+        type Pat =
+            | PAt(Int, Pat)
+            | PEmpty
+            | PVar(Str)
+
+        let recursive expand pattern environment =
+            match pattern with
+                | PAt(_span, inner) -> expand(inner)(environment)
+                | other -> [other]
+
+        let recursive count xs =
+            match xs with
+                | [] -> 0
+                | _ :: rest -> 1 + count(rest)
+
+        let makeCases (n: Int) = [(PAt(n, PVar("head" + Ashes.Text.fromInt(n))), 1, Some(n)), (PVar("v" + Ashes.Text.fromInt(n)), 2, None), (PEmpty, 3, Some(0))]
+
+        """;
+
+    private static string BuildTakenOverRecordGroupProgram(int rounds)
+        => TakenOverRecordPrelude + $$"""
+            let recursive expandCases cases environment acc =
+                match cases with
+                    | [] -> Ashes.Collection.List.reverse(acc)
+                    | (pattern, body, guard) :: rest ->
+                        acc
+                        |> expandedArms(expand(pattern)(environment))(body)(guard)
+                        |> expandCases(rest)(environment)
+            and expandedArms patterns body guard acc =
+                match patterns with
+                    | [] -> acc
+                    | pattern :: rest -> expandedArms(rest)(body)(guard)((pattern, body, guard) :: acc)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + count(expandCases(makeCases(n))(["env"])([])))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    private static string BuildTakenOverRecordLetHolderProgram(int rounds)
+        => TakenOverRecordPrelude + $$"""
+            let recursive expandedArms patterns body guard acc =
+                match patterns with
+                    | [] -> acc
+                    | pattern :: rest -> expandedArms(rest)(body)(guard)((pattern, body, guard) :: acc)
+
+            let recursive expandCases cases environment acc =
+                match cases with
+                    | [] -> Ashes.Collection.List.reverse(acc)
+                    | (pattern, body, guard) :: rest ->
+                        acc
+                        |> expandedArms(expand(pattern)(environment))(body)(guard)
+                        |> expandCases(rest)(environment)
+
+            let check cases environment =
+                (let expanded = expandCases(cases)(environment)([])
+                in count(expanded) + count(expanded))
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + check(makeCases(n))(["env"]))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_taken_over_record_group_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A recursive group member hands each case's expanded pattern list to a generic helper that conses
+        // its elements into tuples of the accumulator. The list's cells are freed at the member's return
+        // and the tuples' first fields keep the references the concrete caller releases behind its copy.
+        // The rounds stay below the point where a separate growth of the expansion itself (no cells
+        // live at exit) passes the ceiling; without the record the leaked cells pass it by 80000.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildTakenOverRecordGroupProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("taken-over record, recursive group", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
+    public async Task Linux_backend_taken_over_record_generic_let_holder_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // The record of a generic loop's result is settled by a generic function that binds the result
+        // with a let and returns only a count of it: the patterns are resolved there, so the let's end
+        // releases the references the result's tuples took over.
+        // The rounds stay below the point where a separate growth of the expansion itself (no cells
+        // live at exit) passes the ceiling; without the record the leaked cells pass it by 80000.
+        int[] roundCounts = [5000, 20000, 80000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildTakenOverRecordLetHolderProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("taken-over record, generic let holder", samples, maxRssKb: 16_000);
+    }
 }

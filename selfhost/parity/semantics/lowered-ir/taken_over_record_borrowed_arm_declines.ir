@@ -1,0 +1,1530 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from reverseOnto]
+  locals=21 temps=25
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_borrowed_arm_declines.ash:6:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_borrowed_arm_declines.ash:7:11)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    LoadLocal             Target=5 Slot=1   (taken_over_record_borrowed_arm_declines.ash:8:17)
+    StoreLocal            Slot=9 Source=5   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    Jump                  Target=match_end_0   (taken_over_record_borrowed_arm_declines.ash:7:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13
+    Jump                  Target=match_next_2   (taken_over_record_borrowed_arm_declines.ash:7:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    LoadConstInt          Target=6 Value=0   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_4   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    StoreLocal            Slot=16 Source=8   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    StoreLocal            Slot=17 Source=9   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    LoadLocal             Target=10 Slot=17   (taken_over_record_borrowed_arm_declines.ash:9:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=16   (taken_over_record_borrowed_arm_declines.ash:9:45)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=15 Slot=1   (taken_over_record_borrowed_arm_declines.ash:9:53)
+    RcDup                 Target=16 SourceTemp=13
+    RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=16
+    Alloc                 Target=17 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:9:45)
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=16   (taken_over_record_borrowed_arm_declines.ash:9:45)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=15   (taken_over_record_borrowed_arm_declines.ash:9:45)
+    LoadLocal             Target=18 Slot=2   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    LoadLocal             Target=19 Slot=1   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    StoreLocal            Slot=2 Source=11   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=17
+    StoreLocal            Slot=1 Source=17   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    RestoreStackPointer   Slot=8   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    Jump                  Target=lambda_1_body   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    LoadConstInt          Target=20 Value=0   (taken_over_record_borrowed_arm_declines.ash:9:27)
+    StoreLocal            Slot=9 Source=20   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=18
+    Jump                  Target=match_end_0   (taken_over_record_borrowed_arm_declines.ash:7:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=14 EndLocalSlot=15 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=15 PreRestoreEndSlot=19
+    Jump                  Target=match_none_1   (taken_over_record_borrowed_arm_declines.ash:7:5)
+  match_none_1:
+    LoadConstInt          Target=23 Value=0   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    StoreLocal            Slot=9 Source=23   (taken_over_record_borrowed_arm_declines.ash:7:5)
+  match_end_0:
+    LoadLocal             Target=24 Slot=9   (taken_over_record_borrowed_arm_declines.ash:7:5)
+    Return                Source=24   (taken_over_record_borrowed_arm_declines.ash:6:1)
+
+function lambda_0  [SourceFunction from reverseOnto]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    Return                Source=4   (taken_over_record_borrowed_arm_declines.ash:6:1)
+
+function lambda_3  [ClosureHelper from appendTo]
+  locals=28 temps=41
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreLocal            Slot=6 Source=1   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreLocal            Slot=7 Source=1   (taken_over_record_borrowed_arm_declines.ash:11:1)
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    LoadLocal             Target=2 Slot=1   (taken_over_record_borrowed_arm_declines.ash:12:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_8   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    LoadLocal             Target=5 Slot=2   (taken_over_record_borrowed_arm_declines.ash:13:17)
+    StoreLocal            Slot=11 Source=5   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    Jump                  Target=match_end_5   (taken_over_record_borrowed_arm_declines.ash:12:5)
+  match_arm_cleanup_8:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_7   (taken_over_record_borrowed_arm_declines.ash:12:5)
+  match_next_7:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=6 Value=0   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    CmpIntNe              Target=7 Left=2 Right=6   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_9   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    LoadMemOffset         Target=8 BasePtr=2 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    LoadMemOffset         Target=9 BasePtr=2 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    StoreLocal            Slot=18 Source=8   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    StoreLocal            Slot=19 Source=9   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    LoadLocal             Target=10 Slot=18   (taken_over_record_borrowed_arm_declines.ash:14:27)
+    Borrow                Target=11 SourceTemp=10
+    SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
+    LoadEnv               Target=12 Index=1   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadLocal             Target=13 Slot=2   (taken_over_record_borrowed_arm_declines.ash:14:44)
+    LoadMemOffset         Target=14 BasePtr=12 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=15 Value=62   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    ShrInt                Target=16 Left=14 Right=15   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=17 Value=1   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=18 Value=0   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    StoreLocal            Slot=22 Source=13   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    JumpIfFalse           CondTemp=18 Target=rc_call_argument_not_retained_10   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    RcDup                 Target=19 SourceTemp=13 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=19   (taken_over_record_borrowed_arm_declines.ash:14:35)
+  rc_call_argument_not_retained_10:
+    LoadLocal             Target=20 Slot=22   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    CallClosure           Target=21 ClosureTemp=12 ArgTemp=20 RuntimeManagedArgumentFlagTemp=18   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadLocal             Target=22 Slot=19   (taken_over_record_borrowed_arm_declines.ash:14:50)
+    Borrow                Target=23 SourceTemp=22
+    LoadMemOffset         Target=24 BasePtr=21 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=25 Value=62   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    ShrInt                Target=26 Left=24 Right=25   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=27 Value=1   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=28 Value=0   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    StoreLocal            Slot=23 Source=23   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    JumpIfFalse           CondTemp=28 Target=rc_call_argument_not_retained_11   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    RcDup                 Target=29 SourceTemp=23 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=23 Source=29   (taken_over_record_borrowed_arm_declines.ash:14:35)
+  rc_call_argument_not_retained_11:
+    LoadLocal             Target=30 Slot=23   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    LoadConstInt          Target=32 Value=2   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    OrInt                 Target=33 Left=28 Right=32   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    CallClosure           Target=31 ClosureTemp=21 ArgTemp=30 RuntimeManagedArgumentFlagTemp=33   (taken_over_record_borrowed_arm_declines.ash:14:35)
+    RcDup                 Target=35 SourceTemp=11
+    RcDrop                SourceTemp=8 TypeName=PatternBinding OwnerSlot=18
+    Alloc                 Target=36 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:14:27)
+    StoreMemOffset        BasePtr=36 OffsetBytes=0 Source=35   (taken_over_record_borrowed_arm_declines.ash:14:27)
+    StoreMemOffset        BasePtr=36 OffsetBytes=8 Source=31   (taken_over_record_borrowed_arm_declines.ash:14:27)
+    StoreLocal            Slot=11 Source=36   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    RcDrop                SourceTemp=9 TypeName=List OwnerSlot=19
+    Jump                  Target=match_end_5   (taken_over_record_borrowed_arm_declines.ash:12:5)
+  match_arm_cleanup_9:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=27
+    Jump                  Target=match_none_6   (taken_over_record_borrowed_arm_declines.ash:12:5)
+  match_none_6:
+    LoadConstInt          Target=39 Value=0   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    StoreLocal            Slot=11 Source=39   (taken_over_record_borrowed_arm_declines.ash:12:5)
+  match_end_5:
+    LoadLocal             Target=40 Slot=11   (taken_over_record_borrowed_arm_declines.ash:12:5)
+    Return                Source=40   (taken_over_record_borrowed_arm_declines.ash:11:1)
+
+function lambda_2  [SourceFunction from appendTo]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    LoadLocal             Target=3 Slot=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    MakeClosure           Target=2 FuncLabel=lambda_2 EnvPtrTemp=3 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    Return                Source=4   (taken_over_record_borrowed_arm_declines.ash:11:1)
+
+function __rcdrop_general_7  [RuntimeManagedAdtDropper]
+  locals=2 temps=8
+    LoadLocal             Target=0 Slot=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_17   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    GetAdtTag             Target=2 Ptr=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    SwitchTag             TagTemp=2 Cases=[3] DefaultLabel=rcdrop_general_shared_17   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcdrop_general_ctor_18:
+    GetAdtField           Target=3 Ptr=0 FieldIndex=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=4 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CallKnown             Target=5 FuncLabel=__rcdrop_general_7 EnvTemp=4 ArgTemp=3   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rcdrop_general_shared_17   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcdrop_general_ctor_19:
+    Jump                  Target=rcdrop_general_shared_17   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcdrop_general_ctor_20:
+    GetAdtField           Target=6 Ptr=0 FieldIndex=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDrop                SourceTemp=6 TypeName=String RuntimeManaged=true
+    Jump                  Target=rcdrop_general_shared_17   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcdrop_general_shared_17:
+    RcDrop                SourceTemp=0 TypeName=Pat RuntimeManaged=true
+    LoadConstInt          Target=7 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Return                Source=7   (taken_over_record_borrowed_arm_declines.ash:16:1)
+
+function __rcdrop_structural_6  [StructuralOwnerDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=1 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CallKnown             Target=2 FuncLabel=__rcdrop_general_7 EnvTemp=1 ArgTemp=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Return                Source=3   (taken_over_record_borrowed_arm_declines.ash:16:1)
+
+function __rcnorm_8  [RuntimeManagedAdtNormalizer]
+  locals=6 temps=21
+    LoadLocal             Target=0 Slot=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_23   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_24   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_23:
+    GetAdtTag             Target=3 Ptr=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    SwitchTag             TagTemp=3 Cases=[3] DefaultLabel=rcnorm_ctor_25   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcnorm_ctor_25:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=24 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=5 Ptr=0 FieldIndex=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    IsReferenceCounted    Target=6 SourceTemp=5
+    JumpIfFalse           CondTemp=6 Target=rc_representation_copy_29   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=7 SourceTemp=5 RuntimeManaged=true
+    StoreLocal            Slot=4 Source=7   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_30   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_29:
+    LoadConstInt          Target=9 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CallKnown             Target=10 FuncLabel=__rcnorm_8 EnvTemp=9 ArgTemp=5   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=4 Source=10   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_30:
+    LoadLocal             Target=11 Slot=4   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    SetAdtField           Ptr=4 FieldIndex=1 Source=11   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=3 Source=4   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rcnorm_end_28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcnorm_ctor_26:
+    CopyOutArena          DestTemp=12 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=12   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rcnorm_end_28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcnorm_ctor_27:
+    CopyOutArena          DestTemp=13 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    GetAdtField           Target=14 Ptr=0 FieldIndex=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    IsReferenceCounted    Target=15 SourceTemp=14
+    JumpIfFalse           CondTemp=15 Target=rc_representation_copy_31   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=16 SourceTemp=14 RuntimeManaged=true
+    StoreLocal            Slot=5 Source=16   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_32   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_31:
+    CopyOutArena          DestTemp=17 SrcTemp=14 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=5 Source=17   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_32:
+    LoadLocal             Target=18 Slot=5   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    SetAdtField           Ptr=13 FieldIndex=0 Source=18   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=3 Source=13   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rcnorm_end_28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rcnorm_end_28:
+    LoadLocal             Target=19 Slot=3   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=2 Source=19   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_24:
+    LoadLocal             Target=20 Slot=2   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Return                Source=20   (taken_over_record_borrowed_arm_declines.ash:16:1)
+
+function lambda_5  [ClosureHelper from expand]
+  locals=32 temps=86
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=29 Slot=2   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    IsReferenceCounted    Target=30 SourceTemp=29
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_21   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=31   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_22   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_21:
+    LoadConstInt          Target=34 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CallKnown             Target=35 FuncLabel=__rcnorm_8 EnvTemp=34 ArgTemp=29   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=24 Source=35   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_22:
+    LoadLocal             Target=36 Slot=24   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=2 Source=36   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=37 Value=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=16 Source=37   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=6 Source=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=7 Source=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  lambda_5_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_borrowed_arm_declines.ash:17:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    CmpIntNe              Target=4 Left=2 Right=3   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_15   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    GetAdtTag             Target=5 Ptr=2   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    LoadConstInt          Target=7 Value=0   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    CmpIntEq              Target=6 Left=5 Right=7   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_15   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    GetAdtField           Target=8 Ptr=2 FieldIndex=0   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    StoreLocal            Slot=14 Source=8   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    GetAdtField           Target=9 Ptr=2 FieldIndex=1   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    StoreLocal            Slot=15 Source=9   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    LoadLocal             Target=10 Slot=15   (taken_over_record_borrowed_arm_declines.ash:18:39)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=1   (taken_over_record_borrowed_arm_declines.ash:18:46)
+    RcDup                 Target=13 SourceTemp=11 RuntimeManaged=true MayBeEmpty=true
+    RcDrop                SourceTemp=9 TypeName=Pat OwnerSlot=15
+    LoadLocal             Target=14 Slot=2   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    LoadConstInt          Target=15 Value=0   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    StoreLocal            Slot=16 Source=15   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    LoadLocal             Target=16 Slot=2   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    LoadLocal             Target=17 Slot=1   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    StoreLocal            Slot=2 Source=13   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    StoreLocal            Slot=1 Source=12   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    LoadLocal             Target=79 Slot=16
+    JumpIfFalse           CondTemp=79 Target=rc_tco_drop_inactive_138
+    LoadConstInt          Target=80 Value=0
+    CallKnown             Target=81 FuncLabel=__rcdrop_general_7 EnvTemp=80 ArgTemp=16
+  rc_tco_drop_inactive_138:
+    LoadConstInt          Target=82 Value=0
+    CallKnown             Target=83 FuncLabel=__rcdrop_general_7 EnvTemp=82 ArgTemp=14
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=31
+    LoadConstInt          Target=84 Value=0
+    StoreLocal            Slot=6 Source=84
+    StoreLocal            Slot=7 Source=84
+    StoreLocal            Slot=2 Source=13
+    LoadConstInt          Target=85 Value=1
+    StoreLocal            Slot=16 Source=85
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=31
+    RestoreStackPointer   Slot=10   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    Jump                  Target=lambda_5_body   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    LoadConstInt          Target=18 Value=0   (taken_over_record_borrowed_arm_declines.ash:18:32)
+    StoreLocal            Slot=11 Source=18   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=17
+    Jump                  Target=match_end_12   (taken_over_record_borrowed_arm_declines.ash:17:5)
+  match_arm_cleanup_15:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=18
+    Jump                  Target=match_next_14   (taken_over_record_borrowed_arm_declines.ash:17:5)
+  match_next_14:
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    StoreLocal            Slot=21 Source=2   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    LoadLocal             Target=27 Slot=21   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=28 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=20 Value=0   (taken_over_record_borrowed_arm_declines.ash:19:20)
+    LoadLocal             Target=21 Slot=21   (taken_over_record_borrowed_arm_declines.ash:19:21)
+    Borrow                Target=22 SourceTemp=21
+    Alloc                 Target=23 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:19:20)
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=22   (taken_over_record_borrowed_arm_declines.ash:19:20)
+    StoreMemOffset        BasePtr=23 OffsetBytes=8 Source=20   (taken_over_record_borrowed_arm_declines.ash:19:20)
+    StoreLocal            Slot=11 Source=23   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    RcDrop                SourceTemp=2 TypeName=Pat OwnerSlot=21 RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_6
+    Jump                  Target=match_end_12   (taken_over_record_borrowed_arm_declines.ash:17:5)
+  match_arm_cleanup_16:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
+    Jump                  Target=match_none_13   (taken_over_record_borrowed_arm_declines.ash:17:5)
+  match_none_13:
+    LoadConstInt          Target=25 Value=0   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    StoreLocal            Slot=11 Source=25   (taken_over_record_borrowed_arm_declines.ash:17:5)
+  match_end_12:
+    LoadLocal             Target=26 Slot=11   (taken_over_record_borrowed_arm_declines.ash:17:5)
+    IsReferenceCounted    Target=38 SourceTemp=26
+    JumpIfFalse           CondTemp=38 Target=rc_representation_copy_33   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=39 SourceTemp=26 RuntimeManaged=true
+    StoreLocal            Slot=25 Source=39   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_34   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_33:
+    IsReferenceCounted    Target=41 SourceTemp=26
+    JumpIfFalse           CondTemp=41 Target=rc_representation_copy_35   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=42 SourceTemp=26 RuntimeManaged=true
+    StoreLocal            Slot=26 Source=42   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_36   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_35:
+    LoadConstInt          Target=43 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=27 Source=26   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=28 Source=43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=29 Source=43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_37:
+    LoadLocal             Target=44 Slot=27   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CmpIntNe              Target=45 Left=44 Right=43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    JumpIfFalse           CondTemp=45 Target=rc_normalize_list_end_38   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    IsReferenceCounted    Target=46 SourceTemp=44
+    JumpIfFalse           CondTemp=46 Target=rc_normalize_list_cell_39   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=47 SourceTemp=44 RuntimeManaged=true
+    LoadLocal             Target=48 Slot=28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CmpIntNe              Target=49 Left=48 Right=43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    JumpIfFalse           CondTemp=49 Target=rc_normalize_list_first_40   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=50 Slot=29   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=47   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_normalize_list_linked_41   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_first_40:
+    StoreLocal            Slot=28 Source=47   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_linked_41:
+    StoreLocal            Slot=29 Source=47   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_normalize_list_end_38   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_cell_39:
+    LoadMemOffset         Target=51 BasePtr=44 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadMemOffset         Target=52 BasePtr=44 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    IsReferenceCounted    Target=53 SourceTemp=51
+    JumpIfFalse           CondTemp=53 Target=rc_representation_copy_42   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    RcDup                 Target=54 SourceTemp=51 RuntimeManaged=true
+    StoreLocal            Slot=30 Source=54   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_representation_done_43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_copy_42:
+    LoadConstInt          Target=56 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CallKnown             Target=57 FuncLabel=__rcnorm_8 EnvTemp=56 ArgTemp=51   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=30 Source=57   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_43:
+    LoadLocal             Target=58 Slot=30   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Alloc                 Target=59 SizeBytes=16 RuntimeManaged=true   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=0 Source=58   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreMemOffset        BasePtr=59 OffsetBytes=8 Source=43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=60 Slot=28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CmpIntNe              Target=61 Left=60 Right=43   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    JumpIfFalse           CondTemp=61 Target=rc_normalize_list_first_44   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=62 Slot=29   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=59   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_normalize_list_linked_45   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_first_44:
+    StoreLocal            Slot=28 Source=59   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_linked_45:
+    StoreLocal            Slot=29 Source=59   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=27 Source=52   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Jump                  Target=rc_normalize_list_37   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_normalize_list_end_38:
+    LoadLocal             Target=63 Slot=28   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=26 Source=63   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_36:
+    LoadLocal             Target=64 Slot=26   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=25 Source=64   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_representation_done_34:
+    LoadLocal             Target=65 Slot=25   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadArgumentOwnership Target=66   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=67 Value=2   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    ShrInt                Target=68 Left=66 Right=67   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=69 Value=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    AndInt                Target=70 Left=68 Right=69   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    JumpIfFalse           CondTemp=70 Target=independent_result_not_requested_46   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadArgumentOwnership Target=71   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=72 Value=-8   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    AndInt                Target=73 Left=71 Right=72   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=74 Value=2305843009213693952   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreMemOffset        BasePtr=73 OffsetBytes=0 Source=74   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  independent_result_not_requested_46:
+    LoadLocal             Target=75 Slot=2   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=76 Slot=16   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    JumpIfFalse           CondTemp=76 Target=rc_tco_exit_drop_inactive_47   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=77 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    CallKnown             Target=78 FuncLabel=__rcdrop_general_7 EnvTemp=77 ArgTemp=75   (taken_over_record_borrowed_arm_declines.ash:16:1)
+  rc_tco_exit_drop_inactive_47:
+    Return                Source=65   (taken_over_record_borrowed_arm_declines.ash:16:1)
+
+function lambda_4  [SourceFunction from expand]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    MakeClosure           Target=4 FuncLabel=lambda_5 EnvPtrTemp=0 EnvSizeBytes=8 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    Return                Source=4   (taken_over_record_borrowed_arm_declines.ash:16:1)
+
+function lambda_12  [ClosureHelper from expandedArms]
+  locals=23 temps=39
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadEnv               Target=1 Index=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreLocal            Slot=3 Source=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadEnv               Target=2 Index=2   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreLocal            Slot=4 Source=2   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreLocal            Slot=7 Source=3   (taken_over_record_borrowed_arm_declines.ash:21:1)
+  lambda_12_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadLocal             Target=4 Slot=2   (taken_over_record_borrowed_arm_declines.ash:22:11)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=5 Value=0   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    CmpIntEq              Target=6 Left=4 Right=5   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_51   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    LoadLocal             Target=7 Slot=1   (taken_over_record_borrowed_arm_declines.ash:23:17)
+    StoreLocal            Slot=11 Source=7   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    Jump                  Target=match_end_48   (taken_over_record_borrowed_arm_declines.ash:22:5)
+  match_arm_cleanup_51:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_next_50   (taken_over_record_borrowed_arm_declines.ash:22:5)
+  match_next_50:
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=8 Value=0   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    CmpIntNe              Target=9 Left=4 Right=8   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_52   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    LoadMemOffset         Target=10 BasePtr=4 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    LoadMemOffset         Target=11 BasePtr=4 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    StoreLocal            Slot=18 Source=10   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    StoreLocal            Slot=19 Source=11   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    LoadLocal             Target=12 Slot=19   (taken_over_record_borrowed_arm_declines.ash:24:43)
+    Borrow                Target=13 SourceTemp=12
+    LoadLocal             Target=14 Slot=3   (taken_over_record_borrowed_arm_declines.ash:24:49)
+    LoadLocal             Target=15 Slot=4   (taken_over_record_borrowed_arm_declines.ash:24:55)
+    LoadLocal             Target=16 Slot=18   (taken_over_record_borrowed_arm_declines.ash:24:63)
+    Borrow                Target=17 SourceTemp=16
+    Borrow                Target=18 SourceTemp=17
+    RcDup                 Target=19 SourceTemp=18
+    RcDrop                SourceTemp=10 TypeName=PatternBinding OwnerSlot=18
+    LoadLocal             Target=20 Slot=3   (taken_over_record_borrowed_arm_declines.ash:24:72)
+    Borrow                Target=21 SourceTemp=20
+    LoadLocal             Target=22 Slot=4   (taken_over_record_borrowed_arm_declines.ash:24:78)
+    Borrow                Target=23 SourceTemp=22
+    RcDup                 Target=25 SourceTemp=21
+    RcDup                 Target=26 SourceTemp=23
+    Alloc                 Target=24 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    StoreMemOffset        BasePtr=24 OffsetBytes=0 Source=19   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    StoreMemOffset        BasePtr=24 OffsetBytes=8 Source=25   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    StoreMemOffset        BasePtr=24 OffsetBytes=16 Source=26   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    LoadLocal             Target=28 Slot=1   (taken_over_record_borrowed_arm_declines.ash:24:88)
+    Alloc                 Target=29 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    StoreMemOffset        BasePtr=29 OffsetBytes=0 Source=24   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    StoreMemOffset        BasePtr=29 OffsetBytes=8 Source=28   (taken_over_record_borrowed_arm_declines.ash:24:62)
+    LoadLocal             Target=30 Slot=2   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    LoadLocal             Target=31 Slot=3   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    LoadLocal             Target=32 Slot=4   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    LoadLocal             Target=33 Slot=1   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    StoreLocal            Slot=2 Source=13   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    RcDrop                SourceTemp=11 TypeName=List OwnerSlot=19
+    StoreLocal            Slot=3 Source=14   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    StoreLocal            Slot=4 Source=15   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    StoreLocal            Slot=1 Source=29   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    RestoreStackPointer   Slot=10   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    Jump                  Target=lambda_12_body   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    LoadConstInt          Target=34 Value=0   (taken_over_record_borrowed_arm_declines.ash:24:30)
+    StoreLocal            Slot=11 Source=34   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=20
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=20
+    Jump                  Target=match_end_48   (taken_over_record_borrowed_arm_declines.ash:22:5)
+  match_arm_cleanup_52:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_none_49   (taken_over_record_borrowed_arm_declines.ash:22:5)
+  match_none_49:
+    LoadConstInt          Target=37 Value=0   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    StoreLocal            Slot=11 Source=37   (taken_over_record_borrowed_arm_declines.ash:22:5)
+  match_end_48:
+    LoadLocal             Target=38 Slot=11   (taken_over_record_borrowed_arm_declines.ash:22:5)
+    Return                Source=38   (taken_over_record_borrowed_arm_declines.ash:21:1)
+
+function lambda_11  [ClosureHelper from expandedArms]
+  locals=2 temps=6
+    Alloc                 Target=0 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadEnv               Target=1 Index=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadEnv               Target=3 Index=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadLocal             Target=4 Slot=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    MakeClosure           Target=5 FuncLabel=lambda_12 EnvPtrTemp=0 EnvSizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    Return                Source=5   (taken_over_record_borrowed_arm_declines.ash:21:1)
+
+function lambda_10  [ClosureHelper from expandedArms]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadEnv               Target=1 Index=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadLocal             Target=3 Slot=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=3   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    MakeClosure           Target=4 FuncLabel=lambda_11 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    Return                Source=4   (taken_over_record_borrowed_arm_declines.ash:21:1)
+
+function lambda_9  [SourceFunction from expandedArms]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    MakeClosure           Target=4 FuncLabel=lambda_10 EnvPtrTemp=0 EnvSizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    Return                Source=4   (taken_over_record_borrowed_arm_declines.ash:21:1)
+
+function lambda_15  [ClosureHelper from expandCases]
+  locals=54 temps=135
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=1 Index=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreLocal            Slot=3 Source=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreLocal            Slot=6 Source=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+  lambda_15_body:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    SaveStackPointer      Slot=9   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadLocal             Target=3 Slot=2   (taken_over_record_borrowed_arm_declines.ash:27:11)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=4 Value=0   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_56   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadEnv               Target=6 Index=1   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    LoadLocal             Target=7 Slot=1   (taken_over_record_borrowed_arm_declines.ash:28:29)
+    LoadMemOffset         Target=8 BasePtr=6 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    LoadConstInt          Target=9 Value=62   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    ShrInt                Target=10 Left=8 Right=9   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    LoadConstInt          Target=11 Value=1   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    LoadConstInt          Target=12 Value=0   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    StoreLocal            Slot=15 Source=7   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    JumpIfFalse           CondTemp=12 Target=rc_call_argument_not_retained_57   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    RcDup                 Target=13 SourceTemp=7 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=15 Source=13   (taken_over_record_borrowed_arm_declines.ash:28:17)
+  rc_call_argument_not_retained_57:
+    LoadLocal             Target=14 Slot=15   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    CallClosure           Target=15 ClosureTemp=6 ArgTemp=14 RuntimeManagedArgumentFlagTemp=12   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    LoadConstInt          Target=16 Value=0   (taken_over_record_borrowed_arm_declines.ash:28:34)
+    LoadConstInt          Target=18 Value=2   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    CallClosure           Target=17 ClosureTemp=15 ArgTemp=16 RuntimeManagedArgumentFlagTemp=18   (taken_over_record_borrowed_arm_declines.ash:28:17)
+    StoreLocal            Slot=10 Source=17   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    Jump                  Target=match_end_53   (taken_over_record_borrowed_arm_declines.ash:27:5)
+  match_arm_cleanup_56:
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=19
+    Jump                  Target=match_next_55   (taken_over_record_borrowed_arm_declines.ash:27:5)
+  match_next_55:
+    SaveArenaState        CursorLocalSlot=20 EndLocalSlot=21
+    LoadConstInt          Target=20 Value=0   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    CmpIntNe              Target=21 Left=3 Right=20   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    JumpIfFalse           CondTemp=21 Target=match_arm_cleanup_58   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    LoadMemOffset         Target=22 BasePtr=3 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    LoadMemOffset         Target=23 BasePtr=3 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    LoadMemOffset         Target=24 BasePtr=22 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    StoreLocal            Slot=22 Source=24   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    LoadMemOffset         Target=25 BasePtr=22 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    StoreLocal            Slot=23 Source=25   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    LoadMemOffset         Target=26 BasePtr=22 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    StoreLocal            Slot=24 Source=26   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    StoreLocal            Slot=25 Source=23   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    LoadLocal             Target=27 Slot=22   (taken_over_record_borrowed_arm_declines.ash:30:19)
+    Borrow                Target=28 SourceTemp=27
+    SaveArenaState        CursorLocalSlot=27 EndLocalSlot=28
+    LoadConstInt          Target=29 Value=0   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    CmpIntNe              Target=30 Left=28 Right=29   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    JumpIfFalse           CondTemp=30 Target=match_arm_cleanup_62   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    GetAdtTag             Target=31 Ptr=28   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    LoadConstInt          Target=33 Value=2   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    CmpIntEq              Target=32 Left=31 Right=33   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    JumpIfFalse           CondTemp=32 Target=match_arm_cleanup_62   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    GetAdtField           Target=34 Ptr=28 FieldIndex=0   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    LoadLocal             Target=35 Slot=25   (taken_over_record_borrowed_arm_declines.ash:31:42)
+    Borrow                Target=36 SourceTemp=35
+    LoadLocal             Target=37 Slot=3   (taken_over_record_borrowed_arm_declines.ash:31:48)
+    LoadLocal             Target=38 Slot=22   (taken_over_record_borrowed_arm_declines.ash:31:62)
+    Borrow                Target=39 SourceTemp=38
+    RcDup                 Target=40 SourceTemp=39
+    LoadLocal             Target=41 Slot=23   (taken_over_record_borrowed_arm_declines.ash:31:71)
+    Borrow                Target=42 SourceTemp=41
+    RcDup                 Target=43 SourceTemp=42
+    LoadLocal             Target=44 Slot=24   (taken_over_record_borrowed_arm_declines.ash:31:77)
+    Borrow                Target=45 SourceTemp=44
+    RcDup                 Target=46 SourceTemp=45
+    Alloc                 Target=47 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    StoreMemOffset        BasePtr=47 OffsetBytes=0 Source=40   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    StoreMemOffset        BasePtr=47 OffsetBytes=8 Source=43   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    StoreMemOffset        BasePtr=47 OffsetBytes=16 Source=46   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    LoadLocal             Target=48 Slot=1   (taken_over_record_borrowed_arm_declines.ash:31:87)
+    Alloc                 Target=49 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    StoreMemOffset        BasePtr=49 OffsetBytes=0 Source=47   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    StoreMemOffset        BasePtr=49 OffsetBytes=8 Source=48   (taken_over_record_borrowed_arm_declines.ash:31:61)
+    LoadLocal             Target=50 Slot=2   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    LoadLocal             Target=51 Slot=3   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    LoadLocal             Target=52 Slot=1   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    StoreLocal            Slot=2 Source=36   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    RcDrop                SourceTemp=23 TypeName=List OwnerSlot=25
+    StoreLocal            Slot=3 Source=37   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    StoreLocal            Slot=1 Source=49   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    RcDrop                SourceTemp=26 TypeName=PatternBinding OwnerSlot=24
+    RcDrop                SourceTemp=25 TypeName=PatternBinding OwnerSlot=23
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    RestoreStackPointer   Slot=9   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    Jump                  Target=lambda_15_body   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    LoadConstInt          Target=53 Value=0   (taken_over_record_borrowed_arm_declines.ash:31:30)
+    StoreLocal            Slot=26 Source=53   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=29
+    Jump                  Target=match_end_59   (taken_over_record_borrowed_arm_declines.ash:30:13)
+  match_arm_cleanup_62:
+    RestoreArenaState     CursorLocalSlot=27 EndLocalSlot=28 PreRestoreEndSlot=30
+    ReclaimArenaChunks    SavedEndSlot=28 PreRestoreEndSlot=30
+    Jump                  Target=match_next_61   (taken_over_record_borrowed_arm_declines.ash:30:13)
+  match_next_61:
+    SaveArenaState        CursorLocalSlot=31 EndLocalSlot=32
+    LoadLocal             Target=54 Slot=25   (taken_over_record_borrowed_arm_declines.ash:35:36)
+    Borrow                Target=55 SourceTemp=54
+    LoadLocal             Target=56 Slot=3   (taken_over_record_borrowed_arm_declines.ash:35:42)
+    SaveArenaState        CursorLocalSlot=33 EndLocalSlot=34
+    LoadEnv               Target=57 Index=3   (taken_over_record_borrowed_arm_declines.ash:34:24)
+    SaveArenaState        CursorLocalSlot=35 EndLocalSlot=36
+    LoadEnv               Target=58 Index=4   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadLocal             Target=59 Slot=22   (taken_over_record_borrowed_arm_declines.ash:34:44)
+    Borrow                Target=60 SourceTemp=59
+    CallClosure           Target=61 ClosureTemp=58 ArgTemp=60   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadLocal             Target=62 Slot=3   (taken_over_record_borrowed_arm_declines.ash:34:53)
+    LoadMemOffset         Target=63 BasePtr=61 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadConstInt          Target=64 Value=62   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    ShrInt                Target=65 Left=63 Right=64   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadConstInt          Target=66 Value=1   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadConstInt          Target=67 Value=0   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    StoreLocal            Slot=37 Source=62   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    JumpIfFalse           CondTemp=67 Target=rc_call_argument_not_retained_64   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    RcDup                 Target=68 SourceTemp=62 RuntimeManaged=true
+    StoreLocal            Slot=37 Source=68   (taken_over_record_borrowed_arm_declines.ash:34:37)
+  rc_call_argument_not_retained_64:
+    LoadLocal             Target=69 Slot=37   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    CallClosure           Target=70 ClosureTemp=61 ArgTemp=69 RuntimeManagedArgumentFlagTemp=67   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadLocal             Target=71 Slot=39   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    StoreLocal            Slot=40 Source=71   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    StoreLocal            Slot=39 Source=70   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    RestoreArenaState     CursorLocalSlot=35 EndLocalSlot=36 PreRestoreEndSlot=38
+    ReclaimArenaChunks    SavedEndSlot=36 PreRestoreEndSlot=38
+    LoadConstInt          Target=72 Value=1   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    StoreLocal            Slot=41 Source=72   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    LoadLocal             Target=73 Slot=39   (taken_over_record_borrowed_arm_declines.ash:34:37)
+    CallClosure           Target=74 ClosureTemp=57 ArgTemp=73   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadLocal             Target=75 Slot=23   (taken_over_record_borrowed_arm_declines.ash:34:67)
+    Borrow                Target=76 SourceTemp=75
+    LoadMemOffset         Target=77 BasePtr=74 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=78 Value=62   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    ShrInt                Target=79 Left=77 Right=78   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=80 Value=1   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    AndInt                Target=81 Left=79 Right=80   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=82 Value=0   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    StoreLocal            Slot=42 Source=76   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    JumpIfFalse           CondTemp=82 Target=rc_call_argument_not_retained_65   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    RcDup                 Target=83 SourceTemp=76 RuntimeManaged=true
+    StoreLocal            Slot=42 Source=83   (taken_over_record_borrowed_arm_declines.ash:33:21)
+  rc_call_argument_not_retained_65:
+    LoadLocal             Target=84 Slot=42   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    CallClosure           Target=85 ClosureTemp=74 ArgTemp=84 RuntimeManagedArgumentFlagTemp=82   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadLocal             Target=86 Slot=24   (taken_over_record_borrowed_arm_declines.ash:34:73)
+    Borrow                Target=87 SourceTemp=86
+    LoadMemOffset         Target=88 BasePtr=85 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=89 Value=62   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    ShrInt                Target=90 Left=88 Right=89   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=91 Value=1   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    AndInt                Target=92 Left=90 Right=91   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=93 Value=0   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    StoreLocal            Slot=43 Source=87   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    JumpIfFalse           CondTemp=93 Target=rc_call_argument_not_retained_66   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    RcDup                 Target=94 SourceTemp=87 RuntimeManaged=true
+    StoreLocal            Slot=43 Source=94   (taken_over_record_borrowed_arm_declines.ash:33:21)
+  rc_call_argument_not_retained_66:
+    LoadLocal             Target=95 Slot=43   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    CallClosure           Target=96 ClosureTemp=85 ArgTemp=95 RuntimeManagedArgumentFlagTemp=93   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadLocal             Target=97 Slot=1   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadMemOffset         Target=98 BasePtr=96 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=99 Value=62   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    ShrInt                Target=100 Left=98 Right=99   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=101 Value=1   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=102 Value=0   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    StoreLocal            Slot=44 Source=97   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    JumpIfFalse           CondTemp=102 Target=rc_call_argument_not_retained_67   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    RcDup                 Target=103 SourceTemp=97 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=44 Source=103   (taken_over_record_borrowed_arm_declines.ash:33:21)
+  rc_call_argument_not_retained_67:
+    LoadLocal             Target=104 Slot=44   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=106 Value=2   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    OrInt                 Target=107 Left=102 Right=106   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    CallClosure           Target=105 ClosureTemp=96 ArgTemp=104 RuntimeManagedArgumentFlagTemp=107   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadLocal             Target=109 Slot=2   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadLocal             Target=110 Slot=3   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadLocal             Target=111 Slot=1   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    StoreLocal            Slot=2 Source=55   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    RcDrop                SourceTemp=23 TypeName=List OwnerSlot=25
+    StoreLocal            Slot=3 Source=56   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    StoreLocal            Slot=1 Source=105   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    RcDrop                SourceTemp=26 TypeName=PatternBinding OwnerSlot=24
+    RcDrop                SourceTemp=25 TypeName=PatternBinding OwnerSlot=23
+    LoadLocal             Target=121 Slot=41
+    JumpIfFalse           CondTemp=121 Target=lambda_15_rc_edge_22_20
+    LoadLocal             Target=122 Slot=39
+    LoadConstInt          Target=123 Value=0
+    CmpIntNe              Target=124 Left=122 Right=123
+    JumpIfFalse           CondTemp=124 Target=lambda_15_rc_edge_22_21
+    LoadConstInt          Target=125 Value=0
+    CmpIntNe              Target=126 Left=122 Right=125
+    JumpIfFalse           CondTemp=126 Target=lambda_15_rc_edge_22_22
+    IsReferenceCounted    Target=127 SourceTemp=122
+    JumpIfFalse           CondTemp=127 Target=lambda_15_rc_edge_22_23
+    StoreLocal            Slot=53 Source=122
+  rcdrop_list_spine_140:
+    LoadLocal             Target=128 Slot=53
+    LoadConstInt          Target=129 Value=0
+    CmpIntNe              Target=130 Left=128 Right=129
+    JumpIfFalse           CondTemp=130 Target=lambda_15_rc_edge_22_25
+    RcIsUnique            Target=131 SourceTemp=128
+    JumpIfFalse           CondTemp=131 Target=rcdrop_list_spine_shared_141
+    LoadMemOffset         Target=132 BasePtr=128 OffsetBytes=8
+    RcDrop                SourceTemp=128 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=53 Source=132
+    Jump                  Target=rcdrop_list_spine_140
+  rcdrop_list_spine_shared_141:
+    RcDrop                SourceTemp=128 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=rcdrop_list_spine_end_142
+  rcdrop_list_spine_end_142:
+    LoadConstInt          Target=133 Value=0
+    StoreLocal            Slot=39 Source=133
+  taken_over_skip_139:
+    LoadConstInt          Target=134 Value=0
+    StoreLocal            Slot=41 Source=134
+    RestoreStackPointer   Slot=9   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    Jump                  Target=lambda_15_body   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    LoadConstInt          Target=112 Value=0   (taken_over_record_borrowed_arm_declines.ash:33:21)
+    StoreLocal            Slot=26 Source=112   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=47
+    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=47
+    Jump                  Target=match_end_59   (taken_over_record_borrowed_arm_declines.ash:30:13)
+  match_arm_cleanup_63:
+    RestoreArenaState     CursorLocalSlot=31 EndLocalSlot=32 PreRestoreEndSlot=48
+    ReclaimArenaChunks    SavedEndSlot=32 PreRestoreEndSlot=48
+    Jump                  Target=match_none_60   (taken_over_record_borrowed_arm_declines.ash:30:13)
+  match_none_60:
+    LoadConstInt          Target=113 Value=0   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    StoreLocal            Slot=26 Source=113   (taken_over_record_borrowed_arm_declines.ash:30:13)
+  match_end_59:
+    LoadLocal             Target=114 Slot=26   (taken_over_record_borrowed_arm_declines.ash:30:13)
+    StoreLocal            Slot=10 Source=114   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=49
+    ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=49
+    Jump                  Target=match_end_53   (taken_over_record_borrowed_arm_declines.ash:27:5)
+  match_arm_cleanup_58:
+    RestoreArenaState     CursorLocalSlot=20 EndLocalSlot=21 PreRestoreEndSlot=50
+    ReclaimArenaChunks    SavedEndSlot=21 PreRestoreEndSlot=50
+    Jump                  Target=match_none_54   (taken_over_record_borrowed_arm_declines.ash:27:5)
+  match_none_54:
+    LoadConstInt          Target=119 Value=0   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    StoreLocal            Slot=10 Source=119   (taken_over_record_borrowed_arm_declines.ash:27:5)
+  match_end_53:
+    LoadLocal             Target=120 Slot=10   (taken_over_record_borrowed_arm_declines.ash:27:5)
+    Return                Source=120   (taken_over_record_borrowed_arm_declines.ash:26:1)
+  lambda_15_rc_edge_22_25:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=rcdrop_list_spine_end_142
+  lambda_15_rc_edge_22_20:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_139
+  lambda_15_rc_edge_22_21:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_139
+  lambda_15_rc_edge_22_22:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_139
+  lambda_15_rc_edge_22_23:
+    RcDrop                SourceTemp=24 TypeName=Pat OwnerSlot=22
+    Jump                  Target=taken_over_skip_139
+
+function lambda_14  [ClosureHelper from expandCases]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=40   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=1 Index=0   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=2 Index=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadLocal             Target=4 Slot=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=4   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=5 Index=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=5   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=6 Index=3   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=32 Source=6   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    MakeClosure           Target=7 FuncLabel=lambda_15 EnvPtrTemp=0 EnvSizeBytes=40   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    Return                Source=7   (taken_over_record_borrowed_arm_declines.ash:26:1)
+
+function lambda_13  [SourceFunction from expandCases]
+  locals=2 temps=8
+    Alloc                 Target=0 SizeBytes=32   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=2 Index=0   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=5 Index=1   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=16 Source=5   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadEnv               Target=6 Index=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=24 Source=6   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    MakeClosure           Target=7 FuncLabel=lambda_14 EnvPtrTemp=0 EnvSizeBytes=32   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    Return                Source=7   (taken_over_record_borrowed_arm_declines.ash:26:1)
+
+function lambda_16  [SourceFunction from count]
+  locals=15 temps=19
+    LoadLocal             Target=0 Slot=1   (taken_over_record_borrowed_arm_declines.ash:38:11)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    CmpIntEq              Target=2 Left=0 Right=1   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_71   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:39:17)
+    StoreLocal            Slot=2 Source=3   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Jump                  Target=match_end_68   (taken_over_record_borrowed_arm_declines.ash:38:5)
+  match_arm_cleanup_71:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_next_70   (taken_over_record_borrowed_arm_declines.ash:38:5)
+  match_next_70:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=4 Value=0   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    CmpIntNe              Target=5 Left=0 Right=4   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_72   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    LoadMemOffset         Target=6 BasePtr=0 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    LoadMemOffset         Target=7 BasePtr=0 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    StoreLocal            Slot=9 Source=7   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    LoadConstInt          Target=8 Value=1   (taken_over_record_borrowed_arm_declines.ash:40:24)
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadLocal             Target=10 Slot=0   (taken_over_record_borrowed_arm_declines.ash:40:28)
+    MakeClosure           Target=9 FuncLabel=lambda_16 EnvPtrTemp=10 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:40:28)
+    LoadLocal             Target=11 Slot=9   (taken_over_record_borrowed_arm_declines.ash:40:34)
+    Borrow                Target=12 SourceTemp=11
+    LoadConstInt          Target=14 Value=2   (taken_over_record_borrowed_arm_declines.ash:40:28)
+    CallClosure           Target=13 ClosureTemp=9 ArgTemp=12 RuntimeManagedArgumentFlagTemp=14   (taken_over_record_borrowed_arm_declines.ash:40:28)
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12
+    AddInt                Target=15 Left=8 Right=13   (taken_over_record_borrowed_arm_declines.ash:40:24)
+    RcDrop                SourceTemp=7 TypeName=List OwnerSlot=9
+    StoreLocal            Slot=2 Source=15   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=13
+    Jump                  Target=match_end_68   (taken_over_record_borrowed_arm_declines.ash:38:5)
+  match_arm_cleanup_72:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=14
+    Jump                  Target=match_none_69   (taken_over_record_borrowed_arm_declines.ash:38:5)
+  match_none_69:
+    LoadConstInt          Target=17 Value=0   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    StoreLocal            Slot=2 Source=17   (taken_over_record_borrowed_arm_declines.ash:38:5)
+  match_end_68:
+    LoadLocal             Target=18 Slot=2   (taken_over_record_borrowed_arm_declines.ash:38:5)
+    Return                Source=18   (taken_over_record_borrowed_arm_declines.ash:37:1)
+
+function __rcnorm_18  [RuntimeManagedAdtNormalizer]
+  locals=4 temps=8
+    LoadLocal             Target=0 Slot=1   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    IsReferenceCounted    Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rc_representation_copy_88   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=2 SourceTemp=0 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=2   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_representation_done_89   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_copy_88:
+    GetAdtTag             Target=3 Ptr=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    SwitchTag             TagTemp=3 Cases=[2] DefaultLabel=rcnorm_ctor_90   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rcnorm_ctor_90:
+    CopyOutArena          DestTemp=4 SrcTemp=0 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=4   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rcnorm_end_92   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rcnorm_ctor_91:
+    CopyOutArena          DestTemp=5 SrcTemp=0 StaticSizeBytes=16 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=3 Source=5   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rcnorm_end_92   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rcnorm_end_92:
+    LoadLocal             Target=6 Slot=3   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=2 Source=6   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_done_89:
+    LoadLocal             Target=7 Slot=2   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Return                Source=7   (taken_over_record_borrowed_arm_declines.ash:42:1)
+
+function lambda_17  [SourceFunction from makeCases]
+  locals=10 temps=78
+    LoadConstInt          Target=0 Value=0   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    AllocAdt              Target=1 Tag=1 FieldCount=0   (taken_over_record_borrowed_arm_declines.ash:42:134)
+    LoadConstInt          Target=2 Value=3   (taken_over_record_borrowed_arm_declines.ash:42:142)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:42:150)
+    AllocAdt              Target=4 Tag=1 FieldCount=1   (taken_over_record_borrowed_arm_declines.ash:42:145)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=3   (taken_over_record_borrowed_arm_declines.ash:42:145)
+    Alloc                 Target=5 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:42:133)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:42:133)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=2   (taken_over_record_borrowed_arm_declines.ash:42:133)
+    StoreMemOffset        BasePtr=5 OffsetBytes=16 Source=4   (taken_over_record_borrowed_arm_declines.ash:42:133)
+    Alloc                 Target=6 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    StoreMemOffset        BasePtr=6 OffsetBytes=0 Source=5   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    StoreMemOffset        BasePtr=6 OffsetBytes=8 Source=0   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    LoadConstStr          Target=7 StrLabel=str_0   (taken_over_record_borrowed_arm_declines.ash:42:93)
+    LoadLocal             Target=8 Slot=1   (taken_over_record_borrowed_arm_declines.ash:42:118)
+    TextFromInt           Target=9 ValueTemp=8   (taken_over_record_borrowed_arm_declines.ash:42:99)
+    ConcatStr             Target=10 Left=7 Right=9   (taken_over_record_borrowed_arm_declines.ash:42:93)
+    AllocAdt              Target=11 Tag=2 FieldCount=1   (taken_over_record_borrowed_arm_declines.ash:42:88)
+    SetAdtField           Ptr=11 FieldIndex=0 Source=10   (taken_over_record_borrowed_arm_declines.ash:42:88)
+    LoadConstInt          Target=12 Value=2   (taken_over_record_borrowed_arm_declines.ash:42:123)
+    AllocAdt              Target=13 Tag=0 FieldCount=0   (taken_over_record_borrowed_arm_declines.ash:42:126)
+    Alloc                 Target=14 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:42:87)
+    StoreMemOffset        BasePtr=14 OffsetBytes=0 Source=11   (taken_over_record_borrowed_arm_declines.ash:42:87)
+    StoreMemOffset        BasePtr=14 OffsetBytes=8 Source=12   (taken_over_record_borrowed_arm_declines.ash:42:87)
+    StoreMemOffset        BasePtr=14 OffsetBytes=16 Source=13   (taken_over_record_borrowed_arm_declines.ash:42:87)
+    Alloc                 Target=15 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=14   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=6   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    LoadLocal             Target=16 Slot=1   (taken_over_record_borrowed_arm_declines.ash:42:32)
+    LoadConstStr          Target=17 StrLabel=str_1   (taken_over_record_borrowed_arm_declines.ash:42:40)
+    LoadLocal             Target=18 Slot=1   (taken_over_record_borrowed_arm_declines.ash:42:68)
+    TextFromInt           Target=19 ValueTemp=18   (taken_over_record_borrowed_arm_declines.ash:42:49)
+    ConcatStr             Target=20 Left=17 Right=19   (taken_over_record_borrowed_arm_declines.ash:42:40)
+    AllocAdt              Target=21 Tag=2 FieldCount=1   (taken_over_record_borrowed_arm_declines.ash:42:35)
+    SetAdtField           Ptr=21 FieldIndex=0 Source=20   (taken_over_record_borrowed_arm_declines.ash:42:35)
+    AllocAdt              Target=22 Tag=0 FieldCount=2   (taken_over_record_borrowed_arm_declines.ash:42:28)
+    SetAdtField           Ptr=22 FieldIndex=0 Source=16   (taken_over_record_borrowed_arm_declines.ash:42:28)
+    SetAdtField           Ptr=22 FieldIndex=1 Source=21   (taken_over_record_borrowed_arm_declines.ash:42:28)
+    LoadConstInt          Target=23 Value=1   (taken_over_record_borrowed_arm_declines.ash:42:74)
+    LoadLocal             Target=24 Slot=1   (taken_over_record_borrowed_arm_declines.ash:42:82)
+    AllocAdt              Target=25 Tag=1 FieldCount=1   (taken_over_record_borrowed_arm_declines.ash:42:77)
+    SetAdtField           Ptr=25 FieldIndex=0 Source=24   (taken_over_record_borrowed_arm_declines.ash:42:77)
+    Alloc                 Target=26 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:42:27)
+    StoreMemOffset        BasePtr=26 OffsetBytes=0 Source=22   (taken_over_record_borrowed_arm_declines.ash:42:27)
+    StoreMemOffset        BasePtr=26 OffsetBytes=8 Source=23   (taken_over_record_borrowed_arm_declines.ash:42:27)
+    StoreMemOffset        BasePtr=26 OffsetBytes=16 Source=25   (taken_over_record_borrowed_arm_declines.ash:42:27)
+    Alloc                 Target=27 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    StoreMemOffset        BasePtr=27 OffsetBytes=0 Source=26   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    StoreMemOffset        BasePtr=27 OffsetBytes=8 Source=15   (taken_over_record_borrowed_arm_declines.ash:42:26)
+    IsReferenceCounted    Target=28 SourceTemp=27
+    JumpIfFalse           CondTemp=28 Target=rc_representation_copy_73   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=29 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=2 Source=29   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_representation_done_74   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_copy_73:
+    IsReferenceCounted    Target=31 SourceTemp=27
+    JumpIfFalse           CondTemp=31 Target=rc_representation_copy_75   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=32 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=3 Source=32   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_representation_done_76   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_copy_75:
+    LoadConstInt          Target=33 Value=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=4 Source=27   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=5 Source=33   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=6 Source=33   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_77:
+    LoadLocal             Target=34 Slot=4   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    CmpIntNe              Target=35 Left=34 Right=33   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    JumpIfFalse           CondTemp=35 Target=rc_normalize_list_end_78   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    IsReferenceCounted    Target=36 SourceTemp=34
+    JumpIfFalse           CondTemp=36 Target=rc_normalize_list_cell_79   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=37 SourceTemp=34 RuntimeManaged=true
+    LoadLocal             Target=38 Slot=5   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    CmpIntNe              Target=39 Left=38 Right=33   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    JumpIfFalse           CondTemp=39 Target=rc_normalize_list_first_80   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadLocal             Target=40 Slot=6   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=40 OffsetBytes=8 Source=37   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_normalize_list_linked_81   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_first_80:
+    StoreLocal            Slot=5 Source=37   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_linked_81:
+    StoreLocal            Slot=6 Source=37   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_normalize_list_end_78   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_cell_79:
+    LoadMemOffset         Target=41 BasePtr=34 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadMemOffset         Target=42 BasePtr=34 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    IsReferenceCounted    Target=43 SourceTemp=41
+    JumpIfFalse           CondTemp=43 Target=rc_representation_copy_82   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=44 SourceTemp=41 RuntimeManaged=true
+    StoreLocal            Slot=7 Source=44   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_representation_done_83   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_copy_82:
+    Alloc                 Target=45 SizeBytes=24 RuntimeManaged=true   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadMemOffset         Target=46 BasePtr=41 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    IsReferenceCounted    Target=47 SourceTemp=46
+    JumpIfFalse           CondTemp=47 Target=rc_representation_copy_84   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=48 SourceTemp=46 RuntimeManaged=true
+    StoreLocal            Slot=8 Source=48   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_representation_done_85   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_copy_84:
+    LoadConstInt          Target=50 Value=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    CallKnown             Target=51 FuncLabel=__rcnorm_8 EnvTemp=50 ArgTemp=46   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=8 Source=51   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_done_85:
+    LoadLocal             Target=52 Slot=8   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=45 OffsetBytes=0 Source=52   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadMemOffset         Target=53 BasePtr=41 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=45 OffsetBytes=8 Source=53   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadMemOffset         Target=54 BasePtr=41 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    IsReferenceCounted    Target=55 SourceTemp=54
+    JumpIfFalse           CondTemp=55 Target=rc_representation_copy_86   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    RcDup                 Target=56 SourceTemp=54 RuntimeManaged=true
+    StoreLocal            Slot=9 Source=56   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_representation_done_87   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_copy_86:
+    LoadConstInt          Target=58 Value=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    CallKnown             Target=59 FuncLabel=__rcnorm_18 EnvTemp=58 ArgTemp=54   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=9 Source=59   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_done_87:
+    LoadLocal             Target=60 Slot=9   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=45 OffsetBytes=16 Source=60   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=7 Source=45   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_done_83:
+    LoadLocal             Target=61 Slot=7   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Alloc                 Target=62 SizeBytes=16 RuntimeManaged=true   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=62 OffsetBytes=0 Source=61   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=62 OffsetBytes=8 Source=33   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadLocal             Target=63 Slot=5   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    CmpIntNe              Target=64 Left=63 Right=33   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    JumpIfFalse           CondTemp=64 Target=rc_normalize_list_first_93   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadLocal             Target=65 Slot=6   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=65 OffsetBytes=8 Source=62   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_normalize_list_linked_94   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_first_93:
+    StoreLocal            Slot=5 Source=62   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_linked_94:
+    StoreLocal            Slot=6 Source=62   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=4 Source=42   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Jump                  Target=rc_normalize_list_77   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_normalize_list_end_78:
+    LoadLocal             Target=66 Slot=5   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=3 Source=66   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_done_76:
+    LoadLocal             Target=67 Slot=3   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=2 Source=67   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  rc_representation_done_74:
+    LoadLocal             Target=68 Slot=2   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadArgumentOwnership Target=69   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadConstInt          Target=70 Value=2   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    ShrInt                Target=71 Left=69 Right=70   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadConstInt          Target=72 Value=1   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    AndInt                Target=73 Left=71 Right=72   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    JumpIfFalse           CondTemp=73 Target=independent_result_not_requested_95   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadArgumentOwnership Target=74   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadConstInt          Target=75 Value=-8   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    AndInt                Target=76 Left=74 Right=75   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadConstInt          Target=77 Value=2305843009213693952   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreMemOffset        BasePtr=76 OffsetBytes=0 Source=77   (taken_over_record_borrowed_arm_declines.ash:42:1)
+  independent_result_not_requested_95:
+    Return                Source=68   (taken_over_record_borrowed_arm_declines.ash:42:1)
+
+function __rcdrop_general_20  [RuntimeManagedAdtDropper]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=1   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=1 SourceTemp=0
+    JumpIfFalse           CondTemp=1 Target=rcdrop_general_shared_128   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    GetAdtTag             Target=2 Ptr=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    SwitchTag             TagTemp=2 Cases=[2] DefaultLabel=rcdrop_general_shared_128   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_general_ctor_129:
+    Jump                  Target=rcdrop_general_shared_128   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_general_ctor_130:
+    Jump                  Target=rcdrop_general_shared_128   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_general_shared_128:
+    RcDrop                SourceTemp=0 TypeName=Maybe RuntimeManaged=true
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    Return                Source=3   (taken_over_record_borrowed_arm_declines.ash:44:1)
+
+function lambda_19  [SourceFunction from probe]
+  locals=31 temps=118
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:45:17)
+    Borrow                Target=1 SourceTemp=0
+    LoadLocal             Target=2 Slot=1   (taken_over_record_borrowed_arm_declines.ash:45:27)
+    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2   (taken_over_record_borrowed_arm_declines.ash:45:17)
+    StoreLocal            Slot=7 Source=3   (taken_over_record_borrowed_arm_declines.ash:45:17)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
+    LoadLocal             Target=4 Slot=7   (taken_over_record_borrowed_arm_declines.ash:45:17)
+    StoreLocal            Slot=8 Source=4   (taken_over_record_borrowed_arm_declines.ash:45:5)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadEnv               Target=5 Index=1   (taken_over_record_borrowed_arm_declines.ash:46:8)
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadEnv               Target=6 Index=2   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadLocal             Target=7 Slot=8   (taken_over_record_borrowed_arm_declines.ash:46:26)
+    Borrow                Target=8 SourceTemp=7
+    CallClosure           Target=9 ClosureTemp=6 ArgTemp=8   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=10 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:33)
+    LoadConstStr          Target=11 StrLabel=str_2   (taken_over_record_borrowed_arm_declines.ash:46:34)
+    Alloc                 Target=12 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:46:33)
+    StoreMemOffset        BasePtr=12 OffsetBytes=0 Source=11   (taken_over_record_borrowed_arm_declines.ash:46:33)
+    StoreMemOffset        BasePtr=12 OffsetBytes=8 Source=10   (taken_over_record_borrowed_arm_declines.ash:46:33)
+    IsReferenceCounted    Target=13 SourceTemp=12
+    JumpIfFalse           CondTemp=13 Target=rc_representation_copy_96   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=14 SourceTemp=12 RuntimeManaged=true
+    StoreLocal            Slot=13 Source=14   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_representation_done_97   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_copy_96:
+    CopyOutList           DestTemp=15 SrcTemp=12 HeadCopy=String RuntimeManaged=true Purpose=RcNormalization   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=13 Source=15   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_done_97:
+    LoadLocal             Target=16 Slot=13   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=17 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=18 BasePtr=9 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=19 Value=62   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    ShrInt                Target=20 Left=18 Right=19   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=21 Value=1   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    AndInt                Target=22 Left=20 Right=21   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=14 Source=16   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    JumpIfFalse           CondTemp=22 Target=rc_call_argument_not_retained_98   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=23 SourceTemp=16 RuntimeManaged=true MayBeEmpty=true
+    StoreLocal            Slot=14 Source=23   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_call_argument_not_retained_98:
+    LoadLocal             Target=24 Slot=14   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CallClosure           Target=25 ClosureTemp=9 ArgTemp=24 RuntimeManagedArgumentFlagTemp=22   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=26 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:42)
+    CallClosure           Target=27 ClosureTemp=25 ArgTemp=26   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=28 BasePtr=25 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=29 Value=60   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    ShrInt                Target=30 Left=28 Right=29   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=31 Value=1   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    AndInt                Target=32 Left=30 Right=31   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=16 Source=27   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=15
+    JumpIfFalse           CondTemp=32 Target=general_rc_result_normalize_100   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=general_rc_result_owned_99   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  general_rc_result_normalize_100:
+    IsReferenceCounted    Target=33 SourceTemp=27
+    JumpIfFalse           CondTemp=33 Target=rc_representation_copy_101   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=34 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=17 Source=34   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_representation_done_102   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_copy_101:
+    IsReferenceCounted    Target=36 SourceTemp=27
+    JumpIfFalse           CondTemp=36 Target=rc_representation_copy_103   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=37 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=18 Source=37   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_representation_done_104   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_copy_103:
+    LoadConstInt          Target=38 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=19 Source=27   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=20 Source=38   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=21 Source=38   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_105:
+    LoadLocal             Target=39 Slot=19   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CmpIntNe              Target=40 Left=39 Right=38   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    JumpIfFalse           CondTemp=40 Target=rc_normalize_list_end_106   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    IsReferenceCounted    Target=41 SourceTemp=39
+    JumpIfFalse           CondTemp=41 Target=rc_normalize_list_cell_107   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=42 SourceTemp=39 RuntimeManaged=true
+    LoadLocal             Target=43 Slot=20   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CmpIntNe              Target=44 Left=43 Right=38   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    JumpIfFalse           CondTemp=44 Target=rc_normalize_list_first_108   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadLocal             Target=45 Slot=21   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=45 OffsetBytes=8 Source=42   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_normalize_list_linked_109   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_first_108:
+    StoreLocal            Slot=20 Source=42   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_linked_109:
+    StoreLocal            Slot=21 Source=42   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_normalize_list_end_106   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_cell_107:
+    LoadMemOffset         Target=46 BasePtr=39 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=47 BasePtr=39 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    IsReferenceCounted    Target=48 SourceTemp=46
+    JumpIfFalse           CondTemp=48 Target=rc_representation_copy_110   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=49 SourceTemp=46 RuntimeManaged=true
+    StoreLocal            Slot=22 Source=49   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_representation_done_111   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_copy_110:
+    Alloc                 Target=50 SizeBytes=24 RuntimeManaged=true   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=51 BasePtr=46 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    IsReferenceCounted    Target=52 SourceTemp=51
+    JumpIfFalse           CondTemp=52 Target=rc_representation_copy_112   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=53 SourceTemp=51 RuntimeManaged=true
+    StoreLocal            Slot=23 Source=53   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_representation_done_113   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_copy_112:
+    LoadConstInt          Target=55 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CallKnown             Target=56 FuncLabel=__rcnorm_8 EnvTemp=55 ArgTemp=51   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=23 Source=56   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_done_113:
+    LoadLocal             Target=57 Slot=23   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=50 OffsetBytes=0 Source=57   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=58 BasePtr=46 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=50 OffsetBytes=8 Source=58   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=59 BasePtr=46 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    IsReferenceCounted    Target=60 SourceTemp=59
+    JumpIfFalse           CondTemp=60 Target=rc_representation_copy_114   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDup                 Target=61 SourceTemp=59 RuntimeManaged=true
+    StoreLocal            Slot=24 Source=61   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_representation_done_115   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_copy_114:
+    LoadConstInt          Target=63 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CallKnown             Target=64 FuncLabel=__rcnorm_18 EnvTemp=63 ArgTemp=59   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=24 Source=64   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_done_115:
+    LoadLocal             Target=65 Slot=24   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=50 OffsetBytes=16 Source=65   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=22 Source=50   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_done_111:
+    LoadLocal             Target=66 Slot=22   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Alloc                 Target=67 SizeBytes=16 RuntimeManaged=true   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=67 OffsetBytes=0 Source=66   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=67 OffsetBytes=8 Source=38   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadLocal             Target=68 Slot=20   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CmpIntNe              Target=69 Left=68 Right=38   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    JumpIfFalse           CondTemp=69 Target=rc_normalize_list_first_116   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadLocal             Target=70 Slot=21   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreMemOffset        BasePtr=70 OffsetBytes=8 Source=67   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_normalize_list_linked_117   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_first_116:
+    StoreLocal            Slot=20 Source=67   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_linked_117:
+    StoreLocal            Slot=21 Source=67   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=19 Source=47   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_normalize_list_105   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_normalize_list_end_106:
+    LoadLocal             Target=71 Slot=20   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=18 Source=71   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_done_104:
+    LoadLocal             Target=72 Slot=18   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=17 Source=72   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_representation_done_102:
+    LoadLocal             Target=73 Slot=17   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    StoreLocal            Slot=16 Source=73   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  general_rc_result_owned_99:
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=15
+    LoadLocal             Target=74 Slot=16   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    JumpIfFalse           CondTemp=17 Target=rc_handed_over_not_adopted_118   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rc_handed_over_done_119   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rc_handed_over_not_adopted_118:
+    StoreLocal            Slot=25 Source=16   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rcdrop_list_120:
+    LoadLocal             Target=75 Slot=25   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadConstInt          Target=76 Value=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    CmpIntNe              Target=77 Left=75 Right=76   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    JumpIfFalse           CondTemp=77 Target=rcdrop_list_end_122   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcIsUnique            Target=78 SourceTemp=75
+    JumpIfFalse           CondTemp=78 Target=rcdrop_list_shared_121   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    LoadMemOffset         Target=79 BasePtr=75 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDrop                SourceTemp=79 TypeName=String RuntimeManaged=true
+    LoadMemOffset         Target=80 BasePtr=75 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=25 Source=80   (taken_over_record_borrowed_arm_declines.ash:46:14)
+    Jump                  Target=rcdrop_list_120   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rcdrop_list_shared_121:
+    RcDrop                SourceTemp=75 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_122   (taken_over_record_borrowed_arm_declines.ash:46:14)
+  rcdrop_list_end_122:
+  rc_handed_over_done_119:
+    CallClosure           Target=81 ClosureTemp=5 ArgTemp=74   (taken_over_record_borrowed_arm_declines.ash:46:8)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=26
+    StoreLocal            Slot=27 Source=81   (taken_over_record_borrowed_arm_declines.ash:45:5)
+    RcDrop                SourceTemp=4 TypeName=List OwnerSlot=8
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=28
+    LoadLocal             Target=83 Slot=27   (taken_over_record_borrowed_arm_declines.ash:45:5)
+    LoadLocal             Target=84 Slot=7   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=85 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=86 Left=84 Right=85   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    JumpIfFalse           CondTemp=86 Target=general_rc_owned_absent_123   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    IsReferenceCounted    Target=87 SourceTemp=84
+    JumpIfFalse           CondTemp=87 Target=general_rc_owned_absent_123   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=29 Source=84   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_list_124:
+    LoadLocal             Target=88 Slot=29   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=89 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=90 Left=88 Right=89   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    JumpIfFalse           CondTemp=90 Target=rcdrop_list_end_126   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=91 SourceTemp=88
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_shared_125   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=92 BasePtr=88 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=93 SourceTemp=92
+    JumpIfFalse           CondTemp=93 Target=rc_drop_tuple_shared_127   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=94 BasePtr=92 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=95 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=96 FuncLabel=__rcdrop_general_7 EnvTemp=95 ArgTemp=94   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=97 BasePtr=92 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=98 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=99 FuncLabel=__rcdrop_general_20 EnvTemp=98 ArgTemp=97   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rc_drop_tuple_shared_127:
+    RcDrop                SourceTemp=92 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=100 BasePtr=88 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=100   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    Jump                  Target=rcdrop_list_124   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_list_shared_125:
+    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_126   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_list_end_126:
+    StoreLocal            Slot=7 Source=85   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  general_rc_owned_absent_123:
+    LoadLocal             Target=101 Slot=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=102 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=103 Left=101 Right=102   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    JumpIfFalse           CondTemp=103 Target=general_rc_owned_absent_131   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    IsReferenceCounted    Target=104 SourceTemp=101
+    JumpIfFalse           CondTemp=104 Target=general_rc_owned_absent_131   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=30 Source=101   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_list_132:
+    LoadLocal             Target=105 Slot=30   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=106 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=107 Left=105 Right=106   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    JumpIfFalse           CondTemp=107 Target=rcdrop_list_end_134   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=108 SourceTemp=105
+    JumpIfFalse           CondTemp=108 Target=rcdrop_list_shared_133   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=109 BasePtr=105 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=110 SourceTemp=109
+    JumpIfFalse           CondTemp=110 Target=rc_drop_tuple_shared_135   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=111 BasePtr=109 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=112 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=113 FuncLabel=__rcdrop_general_7 EnvTemp=112 ArgTemp=111   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=114 BasePtr=109 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=115 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=116 FuncLabel=__rcdrop_general_20 EnvTemp=115 ArgTemp=114   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rc_drop_tuple_shared_135:
+    RcDrop                SourceTemp=109 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=117 BasePtr=105 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=117   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    Jump                  Target=rcdrop_list_132   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_list_shared_133:
+    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_134   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  rcdrop_list_end_134:
+    StoreLocal            Slot=16 Source=102   (taken_over_record_borrowed_arm_declines.ash:44:1)
+  general_rc_owned_absent_131:
+    Return                Source=83   (taken_over_record_borrowed_arm_declines.ash:44:1)
+
+function lambda_22  [ClosureHelper from loop]
+  locals=16 temps=24
+    LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    StoreLocal            Slot=2 Source=0   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    StoreLocal            Slot=5 Source=1   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    StoreLocal            Slot=6 Source=1   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    StoreLocal            Slot=7 Source=1   (taken_over_record_borrowed_arm_declines.ash:48:1)
+  lambda_22_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    LoadLocal             Target=2 Slot=2   (taken_over_record_borrowed_arm_declines.ash:49:8)
+    LoadConstInt          Target=3 Value=0   (taken_over_record_borrowed_arm_declines.ash:49:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (taken_over_record_borrowed_arm_declines.ash:49:8)
+    JumpIfFalse           CondTemp=4 Target=else_136   (taken_over_record_borrowed_arm_declines.ash:49:5)
+    LoadLocal             Target=5 Slot=1   (taken_over_record_borrowed_arm_declines.ash:50:10)
+    StoreLocal            Slot=11 Source=5   (taken_over_record_borrowed_arm_declines.ash:49:5)
+    Jump                  Target=endif_137   (taken_over_record_borrowed_arm_declines.ash:49:5)
+  else_136:
+    LoadLocal             Target=6 Slot=2   (taken_over_record_borrowed_arm_declines.ash:51:15)
+    LoadConstInt          Target=7 Value=1   (taken_over_record_borrowed_arm_declines.ash:51:19)
+    SubInt                Target=8 Left=6 Right=7   (taken_over_record_borrowed_arm_declines.ash:51:15)
+    LoadLocal             Target=9 Slot=1   (taken_over_record_borrowed_arm_declines.ash:51:22)
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadEnv               Target=10 Index=1   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    Borrow                Target=11 SourceTemp=10
+    LoadLocal             Target=12 Slot=2   (taken_over_record_borrowed_arm_declines.ash:51:34)
+    LoadMemOffset         Target=13 BasePtr=11 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    LoadConstInt          Target=14 Value=62   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    ShrInt                Target=15 Left=13 Right=14   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    LoadConstInt          Target=16 Value=1   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    LoadConstInt          Target=17 Value=0   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    CallClosure           Target=18 ClosureTemp=11 ArgTemp=12 RuntimeManagedArgumentFlagTemp=17   (taken_over_record_borrowed_arm_declines.ash:51:28)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    AddInt                Target=19 Left=9 Right=18   (taken_over_record_borrowed_arm_declines.ash:51:22)
+    LoadLocal             Target=20 Slot=2   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    LoadLocal             Target=21 Slot=1   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    StoreLocal            Slot=2 Source=8   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    StoreLocal            Slot=1 Source=19   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=15
+    RestoreStackPointer   Slot=10   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    Jump                  Target=lambda_22_body   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    LoadConstInt          Target=22 Value=0   (taken_over_record_borrowed_arm_declines.ash:51:10)
+    StoreLocal            Slot=11 Source=22   (taken_over_record_borrowed_arm_declines.ash:49:5)
+  endif_137:
+    LoadLocal             Target=23 Slot=11   (taken_over_record_borrowed_arm_declines.ash:49:5)
+    Return                Source=23   (taken_over_record_borrowed_arm_declines.ash:48:1)
+
+function lambda_21  [SourceFunction from loop]
+  locals=2 temps=7
+    Alloc                 Target=0 SizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    LoadLocal             Target=1 Slot=1   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    LoadEnv               Target=4 Index=0   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    Borrow                Target=5 SourceTemp=4
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=5   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    MakeClosure           Target=6 FuncLabel=lambda_22 EnvPtrTemp=0 EnvSizeBytes=16   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    Return                Source=6   (taken_over_record_borrowed_arm_declines.ash:48:1)
+
+function _start_main  [ProgramEntry]
+  locals=20 temps=37
+    LoadConstInt          Target=0 Value=0   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    StoreLocal            Slot=0 Source=1   (taken_over_record_borrowed_arm_declines.ash:6:1)
+    LoadConstInt          Target=2 Value=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    MakeClosure           Target=3 FuncLabel=lambda_2 EnvPtrTemp=2 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    StoreLocal            Slot=1 Source=3   (taken_over_record_borrowed_arm_declines.ash:11:1)
+    LoadConstInt          Target=4 Value=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    MakeClosure           Target=5 FuncLabel=lambda_4 EnvPtrTemp=4 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    StoreLocal            Slot=2 Source=5   (taken_over_record_borrowed_arm_declines.ash:16:1)
+    LoadConstInt          Target=6 Value=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    MakeClosure           Target=7 FuncLabel=lambda_9 EnvPtrTemp=6 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    StoreLocal            Slot=3 Source=7   (taken_over_record_borrowed_arm_declines.ash:21:1)
+    Alloc                 Target=8 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadLocal             Target=9 Slot=0   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadLocal             Target=10 Slot=3   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=8 OffsetBytes=8 Source=10   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadLocal             Target=11 Slot=2   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreMemOffset        BasePtr=8 OffsetBytes=16 Source=11   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    MakeClosure           Target=12 FuncLabel=lambda_13 EnvPtrTemp=8 EnvSizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    StoreLocal            Slot=4 Source=12   (taken_over_record_borrowed_arm_declines.ash:26:1)
+    LoadConstInt          Target=13 Value=0   (taken_over_record_borrowed_arm_declines.ash:37:1)
+    MakeClosure           Target=14 FuncLabel=lambda_16 EnvPtrTemp=13 EnvSizeBytes=0   (taken_over_record_borrowed_arm_declines.ash:37:1)
+    StoreLocal            Slot=5 Source=14   (taken_over_record_borrowed_arm_declines.ash:37:1)
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=15 Value=0   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    MakeClosureStack      Target=16 FuncLabel=lambda_17 EnvPtrTemp=15 EnvSizeBytes=0 ReturnsRuntimeManaged=true ReturnsGeneralRcOwned=true   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    StoreLocal            Slot=8 Source=16   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    AllocStack            Target=17 SizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadLocal             Target=18 Slot=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    Borrow                Target=19 SourceTemp=18
+    StoreMemOffset        BasePtr=17 OffsetBytes=0 Source=19   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadLocal             Target=20 Slot=5   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=8 Source=20   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadLocal             Target=21 Slot=4   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreMemOffset        BasePtr=17 OffsetBytes=16 Source=21   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    MakeClosureStack      Target=22 FuncLabel=lambda_19 EnvPtrTemp=17 EnvSizeBytes=24   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=11 Source=22   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    Alloc                 Target=23 SizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    LoadLocal             Target=24 Slot=11   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    Borrow                Target=25 SourceTemp=24
+    StoreMemOffset        BasePtr=23 OffsetBytes=0 Source=25   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    MakeClosure           Target=26 FuncLabel=lambda_21 EnvPtrTemp=23 EnvSizeBytes=8   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    StoreLocal            Slot=12 Source=26   (taken_over_record_borrowed_arm_declines.ash:48:1)
+    SaveArenaState        CursorLocalSlot=13 EndLocalSlot=14
+    LoadLocal             Target=27 Slot=12   (taken_over_record_borrowed_arm_declines.ash:53:16)
+    LoadConstInt          Target=28 Value=3   (taken_over_record_borrowed_arm_declines.ash:53:21)
+    CallClosure           Target=29 ClosureTemp=27 ArgTemp=28   (taken_over_record_borrowed_arm_declines.ash:53:16)
+    LoadConstInt          Target=30 Value=0   (taken_over_record_borrowed_arm_declines.ash:53:24)
+    CallClosure           Target=31 ClosureTemp=29 ArgTemp=30   (taken_over_record_borrowed_arm_declines.ash:53:16)
+    RestoreArenaState     CursorLocalSlot=13 EndLocalSlot=14 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=14 PreRestoreEndSlot=15
+    PrintInt              Source=31   (taken_over_record_borrowed_arm_declines.ash:53:1)
+    AllocAdt              Target=32 Tag=0 FieldCount=0   (taken_over_record_borrowed_arm_declines.ash:53:1)
+    StoreLocal            Slot=16 Source=32   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadLocal             Target=33 Slot=11   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CleanupResource       SourceTemp=33 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=17
+    CopyOutArena          DestTemp=34 SrcTemp=32 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=17
+    StoreLocal            Slot=18 Source=34   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    LoadLocal             Target=35 Slot=8   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    CleanupResource       SourceTemp=35 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=19
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=19
+    LoadLocal             Target=36 Slot=18   (taken_over_record_borrowed_arm_declines.ash:42:1)
+    Return                Source=36
+

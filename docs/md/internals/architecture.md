@@ -1848,6 +1848,62 @@ any other head is retained), and writes bit 60 into the mask; the caller copies 
 releases the reference each arena cell's reference-counted head holds, up to the first
 reference-counted cell. A builder with any other cell in its result hands nothing over.
 
+An arena value can also take over references that a function further down kept for it. A generic
+body stores what it reads into arena cells as raw pointers, whatever its type: `expandedArms`
+conses `(pattern, body, guard)` tuples whose `pattern` is the head of a list its caller owns, and
+`setAssociation`, called with a dictionary through a curried chain, conses a key the caller handed
+over. The reference that keeps such a field alive belongs to an owned value of the function that
+called the generic code (the list `expand` returned, the handed-over key). That function cannot
+release it while the arena value lives, and the value is copied out (normalized, or copied across
+a scope or loop boundary) only in some function above it. An arena value therefore carries a
+*taken-over record*: the field positions of its type, as result-reach paths (`/e/0`, the first
+element of every list element), at which each reference-counted value holds a reference the arena
+value owns. The record is a compile-time fact, never part of the runtime value:
+- **Where it lives.** It is kept on the owned slot, loop parameter or call result that holds the arena
+  value, and in a function's result summary beside its result reach. A callee summary says, for
+  each position of its result, whether the value there is moved from a position of a consumed
+  argument, is a fresh owned value, or is borrowed. The caller combines that with what it knows
+  of its arguments: an argument passed at its last use gives its record to the result, and one
+  still live afterwards gives none. A loop parameter's record is the one every entry and back
+  edge agrees on (`[]` agrees with anything).
+- **What happens at the call.** Once a call result's record covers the positions where it holds an
+  owned value's parts, that value is released child-preserving: its cells are freed and its parts
+  keep the one reference the arena value now owns. So `expand`'s singleton list is freed after
+  `expandedArms`, and the key's owned slot is emptied instead of being kept to the loop's exit.
+- **Who reads it.** The function that copies the value out. Its copy moves the reference at each
+  recorded position into the copy instead of retaining it. A function that returns the value
+  hands its record up through its result summary to a caller that names it. A caller that cannot
+  name it (a closure, a forwarder) asks with the hidden ownership word's bit 2, and an asked
+  function that hands a record over writes bit 59 into the mask; it hands nothing over when it
+  is not asked.
+- **What releases it.** The value's last holder, and that is always a function that knows the
+  concrete type at the recorded positions, since only such a function can settle the record. It
+  moves the references into a copy it makes, or, when the value is never copied out (read and
+  dropped, or reclaimed with its region), releases each recorded reference type-directed before
+  the region reclaims the cells. Settling reads only the recorded positions, so a holder that is
+  itself a generic body settles the record when the type at each recorded position is resolved
+  there. `matchCoverageError` is generic, but the first field of `coverageExpandCases`' tuples is
+  a `Pattern` in it too, so it releases those references at the end of the `let` that binds the
+  result, once a reach of its own result, with that value as a value of its own, shows nothing of
+  it escaping: not in the returned value, and not in a closure that captures it. A holder for which
+  a recorded position is still a type variable settles nothing. The record then travels up through
+  its result summary (or bit 59, when it was asked) to the first caller that knows the type there. An arena compaction at a loop's back edge moves the recorded
+  references into the compacted copy as well.
+- **Mixed joins.** A join whose arms put an owned value and a borrowed one at the same position has
+  no record at that position. Its owned value is kept in its owned slot as before, which is a
+  named leak and not a release. Covering that join would take a per-cell record in the runtime
+  value.
+The local case needs no record: when the copy-out runs in the same function that kept the
+reference, the copy moves the fields in place of retaining them, which is the move-over-dup of
+fresh arena constructor fields.
+
+Stage 0 implements the record for a list of tuples whose first field has a resolved type
+(`GRC_NO_TAKENOVERRECORD`). The proof rests on element-level result reach, which says that a callee
+holds a parameter only as whole, unshared list elements (`GRC_NO_GENERICSPINERELEASE`), and on a
+separate reach of the record holder's result in which each list whose cells were freed is a value of
+the holder's own. A construction, an unrecognised token, or a borrowed value that can hold the
+record's type at a recorded position declines, so the references stay where they were.
+
 A result that is a list of variants with only inline fields (`List(Maybe(Int))`) has no fixed
 copy-out and is not one of the contract's types, yet it can point into an owned value that holds
 such a variant (a syntax tree with an optional offset). When an owned value is in its reach, the

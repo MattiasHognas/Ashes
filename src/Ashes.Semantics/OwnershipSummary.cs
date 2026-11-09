@@ -83,11 +83,20 @@ internal enum ResultReachCause
 /// <paramref name="ParameterReach"/> and <paramref name="WholeParameterReach"/>, which describe only
 /// what the analysis could follow and whose readers answer for a poisoned summary by consulting
 /// <see cref="Poisoned"/>.</param>
+/// <param name="SpineParameterReach">The parameters the result may hold a list spine of: the parameter
+/// itself, a run of its tails, or a part the analysis could not name. A parameter absent from it is
+/// held, if at all, only through its elements.</param>
+/// <param name="DeepParameterReach">The parameters the result may hold a part of below their list elements
+/// (a part of a head, or a part the analysis could not name).</param>
+/// <param name="SharedParameterReach">The parameters the result may hold more than once (null when unknown).</param>
 internal sealed record FunctionResultReachFacts(
     IReadOnlyDictionary<string, int> ParameterReach,
     ResultReachCause Causes,
     IReadOnlySet<string> WholeParameterReach,
-    IReadOnlySet<string> ExposedWholeParameterReach)
+    IReadOnlySet<string> ExposedWholeParameterReach,
+    IReadOnlySet<string>? SpineParameterReach = null,
+    IReadOnlySet<string>? DeepParameterReach = null,
+    IReadOnlySet<string>? SharedParameterReach = null)
 {
     public bool Poisoned => Causes != ResultReachCause.None;
 
@@ -375,4 +384,25 @@ internal sealed record FunctionOwnershipSummary(
         => ResultReachFacts.ReachEnumerated
             && !ResultReachesWhole(parameter)
             && !ResultReachFacts.ExposedWholeParameterReach.Contains(parameter);
+
+    /// <summary>
+    /// True if the result provably never holds a list spine of parameter <paramref name="parameter"/>:
+    /// it may hold the list's elements (or parts of them), but not the list, nor any of its tails.
+    /// Like <see cref="ResultCannotKeepParameterWhole"/> it needs a complete reach account.
+    /// </summary>
+    public bool ResultCannotKeepParameterSpine(string parameter)
+        => ResultCannotKeepParameterWhole(parameter)
+            && ResultReachFacts.SpineParameterReach is { } spine
+            && !spine.Contains(parameter);
+
+    /// <summary>
+    /// True if the result holds parameter <paramref name="parameter"/> only as whole list elements: never
+    /// the list, a tail of it, or a part of an element.
+    /// </summary>
+    public bool ResultHoldsOnlyElementsOf(string parameter)
+        => ResultCannotKeepParameterSpine(parameter)
+            && ResultReachFacts.DeepParameterReach is { } deep
+            && !deep.Contains(parameter)
+            && ((ResultReachFacts.Causes & ResultReachCause.InternalSharing) == ResultReachCause.None
+                || (ResultReachFacts.SharedParameterReach is { } shared && !shared.Contains(parameter)));
 }
