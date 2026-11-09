@@ -1789,6 +1789,14 @@ alone is copied into the arena and released when it was fresh, so the borrowed s
 (`GRC_NO_DEMOTEBESIDEARENA` switches this off). Likewise, a loop parameter kept in the arena on a
 back edge that does not reset the arena takes an arena copy of a successor retained out of an owner
 the iteration releases (a bounded value: no list, no recursive type), and the retain is released.
+The same holds for a field of the constructor that is the successor itself: `Some(label)` for an
+`agreed` parameter kept in the arena by a sibling list whose elements reach a recursive type, with
+`label` bound out of a call result the iteration releases. The field's retain is never released by
+the arena cell or the parameter, so the back edge copies the field's value into the arena, stores
+the copy back into the cell, and releases the retain. Only the constructor the argument is counts,
+not one nested inside it, and only a field of bounded, resolved type
+(`GRC_NO_ARENASUCCESSORCHILDCOPY`; stage 1's optimizer leaked one label per resolved capture group
+this way).
 A loop parameter of still unresolved layout that such a tuple stores (an unannotated accumulator in
 `| [] -> (known, conflicting, extra)`, kept in the arena by the unannotated `extra` passed through
 unchanged) is retained when it is stored, since its placement is decided only once the loop body is

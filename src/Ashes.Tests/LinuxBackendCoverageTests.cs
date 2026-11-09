@@ -22851,6 +22851,35 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("dictionary call key in local loop", samples, maxRssKb: 16_000);
     }
 
+    // The capture-label fixpoint of the e2e test of the same shape, at a round count of its own.
+    private static string BuildArenaSuccessorChildProgram(int rounds)
+        => File.ReadAllText(Path.Combine(GetRepositoryRoot(), "tests", "arena_loop_parameter_some_of_released_label_copied_into_arena.ash"))
+            .Replace("|> loop(3)", $"|> loop({rounds})", StringComparison.Ordinal);
+
+    [Test]
+    public async Task Linux_backend_arena_successor_child_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // A capture-label fixpoint keeps its agreed label in the arena beside a list of records over a
+        // recursive type and rebuilds it as Some(label) from a label bound out of a released call
+        // result: the field's retain is copied into the arena and released at the back edge.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithImports(BuildArenaSuccessorChildProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{rounds * 3}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena successor child", samples, maxRssKb: 16_000);
+    }
+
     private static string BuildScalarVariantListResultProgram(int rounds)
         => $$"""
             type TextSpan =
