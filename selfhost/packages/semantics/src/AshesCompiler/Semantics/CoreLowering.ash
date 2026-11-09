@@ -73,6 +73,11 @@ import AshesCompiler.Semantics.ResultReachSummaries.ResultReachState
 import AshesCompiler.Semantics.ResultReachSummaries.ReachSummary
 import AshesCompiler.Semantics.ResultReachSummaries.ReachFunction
 import AshesCompiler.Semantics.ResultReachSummaries.programReachSummaries
+import AshesCompiler.Semantics.ResultReachSummaries.ReachRegistry
+import AshesCompiler.Semantics.ResultReachSummaries.buildReachRegistry
+import AshesCompiler.Semantics.ResultReachSummaries.computeReachSummaries
+import AshesCompiler.Semantics.ResultReachSummaries.recordReachOf
+import AshesCompiler.Semantics.ResultReachSummaries.summariesTable
 import AshesCompiler.Semantics.ResultReachSummaries.expressionReachSummaries
 import AshesCompiler.Semantics.ResultReachSummaries.lambdaIdentityOf
 import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
@@ -536,6 +541,14 @@ type CorePendingCallCopyOut =
     | deferredSelfCall: Bool
     | deferredOwned: Bool
 
+// A settlement of a taken-over record (stage 0's `PendingTakenOverSettle`): the walk releasing what
+// a callee's arena cells took over, at a placeholder resolved once the body is lowered.
+type CoreTakenOverSettle =
+    | settleId: Int
+    | settleTemp: Int
+    | settleCallee: Str
+    | settleElement: SemanticType
+
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
     | coverageTypes: TypeEnvironment
@@ -588,6 +601,10 @@ type CoreProgramState =
     | letLambdaIdentities: MapTree(Str, Int)
     // The whole-program result-reach summaries of the program being lowered.
     | reachSummaries: List(ReachSummary)
+    // The registry and the summaries table the taken-over record proof walks a function in the record
+    // mode with; no registry for a lowering without a program.
+    | reachRegistry: Maybe(ReachRegistry)
+    | reachTable: MapTree(Str, ResultReachState)
     // The heap-layout facts of every declared argument-free named type, by the type's name,
     // recomputed whenever the constructor layouts change.
     | heapLayoutFactsByType: MapTree(Str, HeapLayoutFacts)
@@ -737,6 +754,15 @@ type CoreOwnerState =
     // The part duplicates the constructor whose arguments are being lowered took, kept once its cell is
     // known to stay in the arena.
     | loopResultPartDuplicates: List((Int, SemanticType))
+    // The taken-over record (stage 0's `GRC_NO_TAKENOVERRECORD`): each owned call-result slot handed
+    // to a named callee, with whether the callee holds it only as whole unshared list elements, and
+    // the functions found to hand a record over.
+    | takenOverConsumers: List((Maybe(IrFunctionOrigin), Int, Bool))
+    | takenOverRecordNames: List(Str)
+    // The call each owned call-result slot holds the result of (stage 0's `_ownedSlotSources`), and the
+    // calls whose result slot a loop or a return freed the spine of (`_spineFreedSources`).
+    | takenOverSlotSources: List((Maybe(IrFunctionOrigin), Int, TextSpan))
+    | spineFreedSpans: List(TextSpan)
     // The match arms and if branches being lowered, innermost first, each by its join label and a
     // label of its own; and, per owned slot, the ones it was stored inside.
     | generalRcBranches: List((Str, Str))
@@ -863,6 +889,14 @@ type CoreTcoState =
     // The call results of this function whose copy-out kind was undecidable when their window
     // closed, resolved with the pending resets once the body is lowered.
     | pendingCallCopyOuts: List(CorePendingCallCopyOut)
+    // The taken-over record settlements of this function's calls, the call results it holds that a
+    // later scalar consumer settles (result temp, callee, element), and the call sites a settlement
+    // behind the copy already covers.
+    | pendingTakenOverSettles: List(CoreTakenOverSettle)
+    | takenOverHeldResults: List((Int, Str, SemanticType, Maybe(TextSpan)))
+    // Each named call's arguments by the call's span: index, whether it is an empty list literal, type.
+    | takenOverCallArguments: List((TextSpan, Int, Bool, SemanticType))
+    | settledBehindCopySpans: List(TextSpan)
     // The tuple-parts requests withdrawn from this function's calls, by result temp: the request
     // constant and the parts asked for (stage 0's `_withdrawnTupleResultPartsRequests`).
     | withdrawnTuplePartsRequests: List((Int, Int, List(Int)))
@@ -1169,6 +1203,22 @@ let stateReachSummaries (state: CoreLoweringState) =
 let withStateReachSummaries value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with reachSummaries = value))
+
+let stateReachRegistry (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.reachRegistry)
+
+let withStateReachRegistry value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with reachRegistry = value))
+
+let stateReachTable (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.reachTable)
+
+let withStateReachTable value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with reachTable = value))
 
 let stateReachByIdentity (state: CoreLoweringState) =
     (let group = state.programState
@@ -1767,6 +1817,38 @@ let withStateGeneralRcPartDuplicateSlots value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with generalRcPartDuplicateSlots = value))
 
+let stateTakenOverConsumers (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.takenOverConsumers)
+
+let withStateTakenOverConsumers value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with takenOverConsumers = value))
+
+let stateTakenOverRecordNames (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.takenOverRecordNames)
+
+let withStateTakenOverRecordNames value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with takenOverRecordNames = value))
+
+let stateTakenOverSlotSources (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.takenOverSlotSources)
+
+let withStateTakenOverSlotSources value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with takenOverSlotSources = value))
+
+let stateSpineFreedSpans (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.spineFreedSpans)
+
+let withStateSpineFreedSpans value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with spineFreedSpans = value))
+
 let stateLoopResultPartDuplicates (state: CoreLoweringState) =
     (let group = state.ownerState
     in group.loopResultPartDuplicates)
@@ -1973,6 +2055,38 @@ let statePendingCallCopyOuts (state: CoreLoweringState) =
 let withStatePendingCallCopyOuts value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with pendingCallCopyOuts = value))
+
+let statePendingTakenOverSettles (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.pendingTakenOverSettles)
+
+let withStatePendingTakenOverSettles value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with pendingTakenOverSettles = value))
+
+let stateTakenOverHeldResults (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.takenOverHeldResults)
+
+let withStateTakenOverHeldResults value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with takenOverHeldResults = value))
+
+let stateTakenOverCallArguments (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.takenOverCallArguments)
+
+let withStateTakenOverCallArguments value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with takenOverCallArguments = value))
+
+let stateSettledBehindCopySpans (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.settledBehindCopySpans)
+
+let withStateSettledBehindCopySpans value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with settledBehindCopySpans = value))
 
 let stateWithdrawnTuplePartsRequests (state: CoreLoweringState) =
     (let group = state.tcoState
@@ -2645,6 +2759,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             letLambdaLabels = Ashes.Collection.Map.empty,
             letLambdaIdentities = Ashes.Collection.Map.empty,
             reachSummaries = [],
+            reachRegistry = None,
+            reachTable = Ashes.Collection.Map.empty,
             reachByIdentity = Ashes.Collection.Map.empty,
             reachByName = Ashes.Collection.Map.empty,
             programParameterOwnership = [],
@@ -2706,6 +2822,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             generalRcHandedOverPartsSlots = [],
             generalRcPartDuplicateSlots = [],
             loopResultPartDuplicates = [],
+            takenOverConsumers = [],
+            takenOverRecordNames = [],
+            takenOverSlotSources = [],
+            spineFreedSpans = [],
             generalRcBranches = [],
             generalRcSlotBranches = [],
             generalRcFinishedResult = None,
@@ -2744,6 +2864,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             tmcActivatedLabels = [],
             pendingTcoResets = [],
             pendingCallCopyOuts = [],
+            pendingTakenOverSettles = [],
+            takenOverHeldResults = [],
+            takenOverCallArguments = [],
+            settledBehindCopySpans = [],
             withdrawnTuplePartsRequests = [],
             listHeadCells = [],
             selfResultDeferredNames = [],
@@ -6548,6 +6672,10 @@ let restoreOuterFrame outer bodyState =
                 withStatePendingTraitGoals(statePendingTraitGoals(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingSiblingCallResults(statePendingSiblingCallResults(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
+                withStateTakenOverRecordNames(stateTakenOverRecordNames(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
+                withStateSpineFreedSpans(stateSpineFreedSpans(bodyState))(current))
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -6623,6 +6751,10 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             |> withStateTcoLoopFrame(None)
             |> withStatePendingTcoResets([])
             |> withStatePendingCallCopyOuts([])
+            |> withStatePendingTakenOverSettles([])
+            |> withStateTakenOverHeldResults([])
+            |> withStateTakenOverCallArguments([])
+            |> withStateSettledBehindCopySpans([])
             |> withStateWithdrawnTuplePartsRequests([])
             |> withStateListHeadCells([])
             |> withStateSelfCallResultUnifications([])
@@ -9563,6 +9695,182 @@ let recursive emitReleasedGeneralRcSlots (facts: List((Int, SemanticType, Int, L
                 |> emitReleasedGeneralRcSlots(rest)(released)
             else emitReleasedGeneralRcSlots(rest)(released)(state)
 
+// Stage 0's `EmitSkipUnlessReferenceCounted`: jumps to `skipLabel` unless the value is present and
+// reference-counted.
+let emitSkipUnlessReferenceCounted (valueTemp: Int) (skipLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = allocated, temp = zeroTemp } ->
+            allocated
+            |> emit(LoadConstInt(zeroTemp)(0))
+            |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+            |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
+            |> emit(IsReferenceCounted(zeroTemp + 2)(valueTemp))
+            |> emit(JumpIfFalse(zeroTemp + 2)(skipLabel))
+
+// Stage 0's `EmitSkipUnlessPresent`.
+let emitSkipUnlessPresent (valueTemp: Int) (skipLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(2)(state) with
+        | FreshTemp { state = allocated, temp = zeroTemp } ->
+            allocated
+            |> emit(LoadConstInt(zeroTemp)(0))
+            |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+            |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
+
+// The loop, shared-cell, and end labels of a list release walk, allocated in that order.
+let freshListDropLabels (prefix: Str) (state: CoreLoweringState) =
+    match freshLabel(prefix)(state) with
+        | FreshLabel { state = loopLabelled, label = loopLabel } ->
+            match freshLabel(prefix + "_shared")(loopLabelled) with
+                | FreshLabel { state = sharedLabelled, label = sharedLabel } ->
+                    match freshLabel(prefix + "_end")(sharedLabelled) with
+                        | FreshLabel { state = labelled, label = endLabel } -> (loopLabel, sharedLabel, endLabel, labelled)
+
+// Loads the walk's current cell from its slot and leaves the loop on the empty list; yields the
+// state and the current cell temp.
+let emitListDropTest (currentSlot: Int) (endLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = reserved, temp = currentTemp } ->
+            reserved
+            |> emit(LoadLocal(currentTemp)(currentSlot))
+            |> emit(LoadConstInt(currentTemp + 1)(0))
+            |> emit(CmpIntNe(currentTemp + 2)(currentTemp)(currentTemp + 1))
+            |> emit(JumpIfFalse(currentTemp + 2)(endLabel))
+            |> (given (tested) -> (tested, currentTemp))
+
+// Jumps to the shared exit unless the cell is uniquely owned.
+let emitUniqueCellTest (cellTemp: Int) (sharedLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = uniqueTemp } ->
+            reserved
+            |> emit(RcIsUnique(uniqueTemp)(cellTemp))
+            |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
+
+// Releases the unique cell and continues the walk through its tail.
+let emitListDropAdvance (cellTemp: Int) (currentSlot: Int) (loopLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = tailTemp } ->
+            reserved
+            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
+            |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+            |> emit(StoreLocal(currentSlot)(tailTemp))
+            |> emit(Jump(loopLabel))
+
+let emitListDropSharedExit (cellTemp: Int) (sharedLabel: Str) (endLabel: Str) (state: CoreLoweringState) =
+    state
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
+// Stage 0's `EmitRuntimeManagedListSpineDrop`: the spine's cells are released one by one, the
+// elements left in place.
+let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = currentSlot } ->
+            match allocated
+            |> emit(StoreLocal(currentSlot)(listTemp))
+            |> freshListDropLabels("rcdrop_list_spine") with
+                | (loopLabel, sharedLabel, endLabel, labelled) ->
+                    match labelled
+                    |> emit(Label(loopLabel))
+                    |> emitListDropTest(currentSlot)(endLabel) with
+                        | (tested, currentTemp) ->
+                            tested
+                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
+                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
+                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
+
+let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | SemList(element) -> containsUnresolvedLayout(element)(state)
+        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
+        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
+        | _ -> false
+and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
+
+// Whether the owned call-result slot was handed to a callee that holds it only as whole unshared
+// list elements (stage 0's `OwnedListHandedAsElementsOnly`).
+let recursive takenOverConsumerAccepts (origin: Maybe(IrFunctionOrigin)) (slot: Int) (consumers: List((Maybe(IrFunctionOrigin), Int, Bool))) =
+    match consumers with
+        | [] -> false
+        | (owner, candidate, accepts) :: rest ->
+            if owner == origin && candidate == slot
+            then accepts
+            else takenOverConsumerAccepts(origin)(slot)(rest)
+
+let recursive anyUnresolvedArgumentType (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> false
+        | TcoResetArgument { argumentType = argumentType } :: rest -> containsUnresolvedLayout(argumentType)(state) || anyUnresolvedArgumentType(rest)(state)
+
+// Stage 0's `IsTakeOverCandidateList`: a list of a resolved element type that holds a heap value.
+let isTakeOverCandidateList (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(element) -> !containsUnresolvedLayout(element)(state) && !resultSurvivesReset(element)(state)
+        | _ -> false
+
+// Stage 0's `TryTakeOverAtBackEdge` decision: an owned list this iteration stored, of a resolved element
+// type, left behind a successor of unresolved layout, and handed to a callee holding only its elements.
+let takesOverAtBackEdge (slot: Int) (semanticType: SemanticType) (arguments: List(TcoResetArgument)) (state: CoreLoweringState) =
+    isTakeOverCandidateList(semanticType)(state) && anyUnresolvedArgumentType(arguments)(state) && takenOverConsumerAccepts(stateActiveFunctionOrigin(state))(slot)(stateTakenOverConsumers(state))
+
+let noteTakenOverRecordOfLoop (state: CoreLoweringState) =
+    match stateTcoLoop(state) with
+        | Some(CoreTcoLoop { selfName = selfName }) -> withStateTakenOverRecordNames(selfName :: stateTakenOverRecordNames(state))(state)
+        | None -> state
+
+let recursive slotSourceSpan (origin: Maybe(IrFunctionOrigin)) (slot: Int) (sources: List((Maybe(IrFunctionOrigin), Int, TextSpan))) =
+    match sources with
+        | [] -> None
+        | (owner, candidate, span) :: rest ->
+            if owner == origin && candidate == slot
+            then Some(span)
+            else slotSourceSpan(origin)(slot)(rest)
+
+// The call whose result slot gives up its spine is a value of the function's own in the record proof.
+let noteSpineFreedSlot (slot: Int) (state: CoreLoweringState) =
+    match state
+    |> stateTakenOverSlotSources
+    |> slotSourceSpan(stateActiveFunctionOrigin(state))(slot) with
+        | Some(span) -> withStateSpineFreedSpans(span :: stateSpineFreedSpans(state))(state)
+        | None -> state
+
+// Stage 0's `EmitTakeOverSpineRelease`: behind the slot's fresh flag, a present reference-counted list
+// gives up its cells, its elements keeping the reference the successor's arena cells now own; the slot
+// is emptied, the flag cleared, and the loop's function noted as handing a record over.
+let emitTakeOverSpineRelease (slot: Int) (freshSlot: Int) (state: CoreLoweringState) =
+    match freshLabel("taken_over_skip")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            match freshTempRun(2)(labelled) with
+                | FreshTemp { state = allocated, temp = freshTempValue } ->
+                    allocated
+                    |> emit(LoadLocal(freshTempValue)(freshSlot))
+                    |> emit(JumpIfFalse(freshTempValue)(skipLabel))
+                    |> emit(LoadLocal(freshTempValue + 1)(slot))
+                    |> emitSkipUnlessPresent(freshTempValue + 1)(skipLabel)
+                    |> emitSkipUnlessReferenceCounted(freshTempValue + 1)(skipLabel)
+                    |> emitRuntimeListSpineDrop(freshTempValue + 1)
+                    |> (given (dropped: CoreLoweringState) ->
+                        match freshTemp(dropped) with
+                            | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                zeroState
+                                |> emit(LoadConstInt(zeroTemp)(0))
+                                |> emit(StoreLocal(slot)(zeroTemp))
+                                |> emit(Label(skipLabel)))
+                    |> (given (skipped: CoreLoweringState) ->
+                        match freshTemp(skipped) with
+                            | FreshTemp { state = clearState, temp = clearTemp } ->
+                                clearState
+                                |> emit(LoadConstInt(clearTemp)(0))
+                                |> emit(StoreLocal(freshSlot)(clearTemp)))
+                    |> noteTakenOverRecordOfLoop
+                    |> noteSpineFreedSlot(slot)
+
 // A value this iteration stored is released behind its fresh flag when only the loop's own
 // parameters could otherwise hold it; the flag is cleared either way, the value now being a
 // successor's or gone.
@@ -9624,11 +9932,17 @@ let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List
             if released(fact) || freshSlot < 0
             then emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)(state)
             else
-                state
-                |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(freshSlotBlockersOf(slot)(blockers)(reset.generalRcFreshSlotBlockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
-                |> slotUnnamedSuccessors(slot)(normalized)
-                |> blockersNamingTheValue(blockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
-                |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
+                if takesOverAtBackEdge(slot)(semanticType)(arguments)(state)
+                then
+                    state
+                    |> emitTakeOverSpineRelease(slot)(freshSlot)
+                    |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
+                else
+                    state
+                    |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(freshSlotBlockersOf(slot)(blockers)(reset.generalRcFreshSlotBlockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
+                    |> slotUnnamedSuccessors(slot)(normalized)
+                    |> blockersNamingTheValue(blockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
+                    |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
 
 // Stage 0's `EmitGeneralRcBackEdgeDrops`: the earlier iterations' values first, then the owned
 // values this iteration holds, all released once every successor owns its parts, and otherwise
@@ -10078,19 +10392,6 @@ let emitAdvancingCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(T
 
 // Stage 0's `ContainsUnresolvedLayoutType`: a type variable or type parameter anywhere in the
 // value's layout.
-let recursive containsUnresolvedLayout (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemList(element) -> containsUnresolvedLayout(element)(state)
-        | SemTuple(elements) -> anyUnresolvedLayout(elements)(state)
-        | SemNamed(_symbolId, _name, arguments) -> anyUnresolvedLayout(arguments)(state)
-        | _ -> false
-and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> false
-        | semanticType :: rest -> containsUnresolvedLayout(semanticType)(state) || anyUnresolvedLayout(rest)(state)
-
 let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
@@ -10415,6 +10716,40 @@ let dropDeferredStore (pending: CorePendingCallCopyOut) (state: CoreLoweringStat
 
 let keepSplicedInstruction (renames: List((Int, Int))) (instruction: IrInstruction) (state: CoreLoweringState) = state with reversedInstructions = renameInstructionTemps(renames)(instruction) :: state.reversedInstructions
 
+// The id range of the taken-over record settlement placeholders, apart from the reset ids.
+let takenOverSettleBase = 3000000
+
+let recursive lookupTakenOverSettle (id: Int) (settles: List(CoreTakenOverSettle)) =
+    match settles with
+        | [] -> None
+        | (CoreTakenOverSettle { settleId = candidate } as settle) :: rest ->
+            if candidate == id
+            then Some(settle)
+            else lookupTakenOverSettle(id)(rest)
+
+let recursive renameTakenOverSettle (id: Int) (temp: Int) (settles: List(CoreTakenOverSettle)) =
+    match settles with
+        | [] -> []
+        | settle :: rest ->
+            if settle.settleId == id
+            then (settle with settleTemp = temp) :: rest
+            else settle :: renameTakenOverSettle(id)(temp)(rest)
+
+// A settlement placeholder kept through the first splice round keeps its result temp under the
+// round's renames.
+let keepTakenOverSettleRenamed (renames: List((Int, Int))) (resetId: Int) (state: CoreLoweringState) =
+    if resetId >= takenOverSettleBase
+    then
+        match state
+        |> statePendingTakenOverSettles
+        |> lookupTakenOverSettle(resetId - takenOverSettleBase) with
+            | Some(settle) ->
+                withStatePendingTakenOverSettles(state
+                |> statePendingTakenOverSettles
+                |> renameTakenOverSettle(settle.settleId)(renamedTemp(renames)(settle.settleTemp)))(state)
+            | None -> state
+    else state
+
 // Every placeholder of a lowered body becomes its block in one walk, in instruction order, as
 // stage 0's `ResolvePendingBlocks` does: a `TcoResetPending` its arena block, a deferred
 // call-result copy-out (found by its own reload instruction) the copy-out block ahead of the
@@ -10445,12 +10780,101 @@ let recursive splicePendingBlocks (instructions: List(IrInstruction)) (resets: L
                                     |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
                                 | None ->
                                     state
+                                    |> keepTakenOverSettleRenamed(renames)(resetId)
                                     |> keepSplicedInstruction(renames)(instruction)
                                     |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
                         | _ ->
                             state
                             |> keepSplicedInstruction(renames)(instruction)
                             |> splicePendingBlocks(rest)(resets)(copyOuts)(renames)
+
+// Stage 0's `EmitTakenOverWalk`: releases the reference each arena cell's head tuple holds at its
+// first field, up to the first reference-counted cell; a head tuple on the reference-counted heap
+// owns its fields already.
+let emitTakenOverWalk (resultTemp: Int) (element: SemanticType) (state: CoreLoweringState) =
+    match freshLabel("taken_over_done")(state) with
+        | FreshLabel { state = doneState, label = doneLabel } ->
+            match freshLocal(doneState) with
+                | FreshLocal { state = slotted, local = cursorSlot } ->
+                    match slotted
+                    |> emit(StoreLocal(cursorSlot)(resultTemp))
+                    |> freshLabel("taken_over_cell") with
+                        | FreshLabel { state = loopState, label = loopLabel } ->
+                            match loopState
+                            |> emit(Label(loopLabel))
+                            |> freshTemp with
+                                | FreshTemp { state = cellState, temp = cellTemp } ->
+                                    match cellState
+                                    |> emit(LoadLocal(cellTemp)(cursorSlot))
+                                    |> emitSkipUnlessPresent(cellTemp)(doneLabel)
+                                    |> freshTemp with
+                                        | FreshTemp { state = countedState, temp = countedTemp } ->
+                                            match countedState
+                                            |> emit(IsReferenceCounted(countedTemp)(cellTemp))
+                                            |> freshLabel("taken_over_arena_cell") with
+                                                | FreshLabel { state = arenaState, label = arenaLabel } ->
+                                                    match arenaState
+                                                    |> emit(JumpIfFalse(countedTemp)(arenaLabel))
+                                                    |> emit(Jump(doneLabel))
+                                                    |> emit(Label(arenaLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = headState, temp = headTemp } ->
+                                                            match headState
+                                                            |> emit(LoadMemOffset(headTemp)(cellTemp)(0))
+                                                            |> freshLabel("taken_over_next") with
+                                                                | FreshLabel { state = nextState, label = nextLabel } ->
+                                                                    match freshTemp(nextState) with
+                                                                        | FreshTemp { state = headCountedState, temp = headCountedTemp } ->
+                                                                            match headCountedState
+                                                                            |> emit(IsReferenceCounted(headCountedTemp)(headTemp))
+                                                                            |> freshLabel("taken_over_arena_head") with
+                                                                                | FreshLabel { state = headArenaState, label = headArenaLabel } ->
+                                                                                    match headArenaState
+                                                                                    |> emit(JumpIfFalse(headCountedTemp)(headArenaLabel))
+                                                                                    |> emit(Jump(nextLabel))
+                                                                                    |> emit(Label(headArenaLabel))
+                                                                                    |> freshTemp with
+                                                                                        | FreshTemp { state = fieldState, temp = fieldTemp } ->
+                                                                                            match fieldState
+                                                                                            |> emit(LoadMemOffset(fieldTemp)(headTemp)(0))
+                                                                                            |> emitSkipUnlessReferenceCounted(fieldTemp)(nextLabel)
+                                                                                            |> emitOwnedValueChildDrop(fieldTemp)(element)
+                                                                                            |> emit(Label(nextLabel))
+                                                                                            |> freshTemp with
+                                                                                                | FreshTemp { state = tailState, temp = tailTemp } ->
+                                                                                                    tailState
+                                                                                                    |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
+                                                                                                    |> emit(StoreLocal(cursorSlot)(tailTemp))
+                                                                                                    |> emit(Jump(loopLabel))
+                                                                                                    |> emit(Label(doneLabel))
+
+// Stage 0's settlement round: each placeholder kept through the first round becomes the walk
+// over its call's result, or nothing.
+let recursive spliceTakenOverSettles (instructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> state
+        | (IrInstruction { instruction = TcoResetPending(resetId, _usedTemps, _readLocals) } as instruction) :: rest ->
+            if resetId >= takenOverSettleBase
+            then
+                match state
+                |> statePendingTakenOverSettles
+                |> lookupTakenOverSettle(resetId - takenOverSettleBase) with
+                    | Some(settle) ->
+                        state
+                        |> emitTakenOverWalk(settle.settleTemp)(settle.settleElement)
+                        |> spliceTakenOverSettles(rest)
+                    | None -> spliceTakenOverSettles(rest)(state)
+            else spliceTakenOverSettles(rest)((state with reversedInstructions = instruction :: state.reversedInstructions))
+        | instruction :: rest -> spliceTakenOverSettles(rest)((state with reversedInstructions = instruction :: state.reversedInstructions))
+
+let resolveTakenOverSettles (state: CoreLoweringState) =
+    match statePendingTakenOverSettles(state) with
+        | [] -> state
+        | _settles ->
+            state.reversedInstructions
+            |> reverse
+            |> (given (instructions: List(IrInstruction)) -> spliceTakenOverSettles(instructions)((state with reversedInstructions = [])))
+            |> withStatePendingTakenOverSettles([])
 
 // Stage 0's `ResolveDeferredTcoResets` for one function, once its whole body is lowered: every
 // `TcoResetPending` placeholder becomes its arena block and every deferred call-result copy-out
@@ -10460,16 +10884,17 @@ let recursive splicePendingBlocks (instructions: List(IrInstruction)) (resets: L
 // recorded as one group per function, and `numberDeferredLabels` gives them stage 0's ids at
 // the end.
 let resolvePendingTcoResets (state: CoreLoweringState) =
-    match (statePendingTcoResets(state), statePendingCallCopyOuts(state)) with
-        | ([], []) -> state
-        | (resets, copyOuts) ->
+    match (statePendingTcoResets(state), statePendingCallCopyOuts(state), statePendingTakenOverSettles(state)) with
+        | ([], [], []) -> state
+        | (resets, copyOuts, _settles) ->
             state.reversedInstructions
             |> reverse
             |> (given (instructions: List(IrInstruction)) ->
                 (state with reversedInstructions = [], nextLabelId = stateDeferredLabelNext(state))
                 |> withStatePendingTcoResets([])
                 |> withStatePendingCallCopyOuts([])
-                |> splicePendingBlocks(instructions)(resets)(copyOuts)([]))
+                |> splicePendingBlocks(instructions)(resets)(copyOuts)([])
+                |> resolveTakenOverSettles)
             |> (given (resolved: CoreLoweringState) ->
                 (resolved with nextLabelId = state.nextLabelId)
                 |> withStateDeferredLabelNext(resolved.nextLabelId)
@@ -10590,6 +11015,11 @@ let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((May
     match slots with
         | [] -> false
         | (owner, _slot, _semanticType) :: rest -> owner == origin || anyOwnedSlotOf(origin)(rest)
+
+let recursive isOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slot: Int) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
+    match slots with
+        | [] -> false
+        | (owner, candidate, _semanticType) :: rest -> owner == origin && candidate == slot || isOwnedSlotOf(origin)(slot)(rest)
 
 let functionOwnsGeneralRcSlots (state: CoreLoweringState) =
     state
@@ -11019,18 +11449,6 @@ let tupleResultParts (bodyType: SemanticType) (state: CoreLoweringState) =
             then contractElementIndices(elements)(0)(state)
             else []
         | _ -> []
-
-// Stage 0's `EmitSkipUnlessReferenceCounted`: jumps to `skipLabel` unless the value is present and
-// reference-counted.
-let emitSkipUnlessReferenceCounted (valueTemp: Int) (skipLabel: Str) (state: CoreLoweringState) =
-    match freshTempRun(3)(state) with
-        | FreshTemp { state = allocated, temp = zeroTemp } ->
-            allocated
-            |> emit(LoadConstInt(zeroTemp)(0))
-            |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
-            |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
-            |> emit(IsReferenceCounted(zeroTemp + 2)(valueTemp))
-            |> emit(JumpIfFalse(zeroTemp + 2)(skipLabel))
 
 // Stage 0's `EmitRetainIfReferenceCounted`.
 let emitRetainIfReferenceCounted (valueTemp: Int) (state: CoreLoweringState) =
@@ -11914,15 +12332,6 @@ let emitWrappedResultCopy (resultTemp: Int) (resultSlot: Int) (wrapper: (Int, In
             |> copyWrappedResultFields(resultTemp)(copyTemp)(0)(arity)(tagless)
             |> emit(StoreLocal(resultSlot)(copyTemp))
 
-// Stage 0's `EmitSkipUnlessPresent`.
-let emitSkipUnlessPresent (valueTemp: Int) (skipLabel: Str) (state: CoreLoweringState) =
-    match freshTempRun(2)(state) with
-        | FreshTemp { state = allocated, temp = zeroTemp } ->
-            allocated
-            |> emit(LoadConstInt(zeroTemp)(0))
-            |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
-            |> emit(JumpIfFalse(zeroTemp + 1)(skipLabel))
-
 let emitWrappedResultTagTest (resultTemp: Int) (tag: Int) (tagless: Bool) (otherLabel: Str) (state: CoreLoweringState) =
     if tagless
     then state
@@ -12128,70 +12537,6 @@ let emitRuntimeShallowAggregateDrop (valueTemp: Int) (typeName: Str) (state: Cor
                     |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
                     |> emit(Label(endLabel))
 
-// The loop, shared-cell, and end labels of a list release walk, allocated in that order.
-let freshListDropLabels (prefix: Str) (state: CoreLoweringState) =
-    match freshLabel(prefix)(state) with
-        | FreshLabel { state = loopLabelled, label = loopLabel } ->
-            match freshLabel(prefix + "_shared")(loopLabelled) with
-                | FreshLabel { state = sharedLabelled, label = sharedLabel } ->
-                    match freshLabel(prefix + "_end")(sharedLabelled) with
-                        | FreshLabel { state = labelled, label = endLabel } -> (loopLabel, sharedLabel, endLabel, labelled)
-
-// Loads the walk's current cell from its slot and leaves the loop on the empty list; yields the
-// state and the current cell temp.
-let emitListDropTest (currentSlot: Int) (endLabel: Str) (state: CoreLoweringState) =
-    match freshTempRun(3)(state) with
-        | FreshTemp { state = reserved, temp = currentTemp } ->
-            reserved
-            |> emit(LoadLocal(currentTemp)(currentSlot))
-            |> emit(LoadConstInt(currentTemp + 1)(0))
-            |> emit(CmpIntNe(currentTemp + 2)(currentTemp)(currentTemp + 1))
-            |> emit(JumpIfFalse(currentTemp + 2)(endLabel))
-            |> (given (tested) -> (tested, currentTemp))
-
-// Jumps to the shared exit unless the cell is uniquely owned.
-let emitUniqueCellTest (cellTemp: Int) (sharedLabel: Str) (state: CoreLoweringState) =
-    match freshTemp(state) with
-        | FreshTemp { state = reserved, temp = uniqueTemp } ->
-            reserved
-            |> emit(RcIsUnique(uniqueTemp)(cellTemp))
-            |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
-
-// Releases the unique cell and continues the walk through its tail.
-let emitListDropAdvance (cellTemp: Int) (currentSlot: Int) (loopLabel: Str) (state: CoreLoweringState) =
-    match freshTemp(state) with
-        | FreshTemp { state = reserved, temp = tailTemp } ->
-            reserved
-            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
-            |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
-            |> emit(StoreLocal(currentSlot)(tailTemp))
-            |> emit(Jump(loopLabel))
-
-let emitListDropSharedExit (cellTemp: Int) (sharedLabel: Str) (endLabel: Str) (state: CoreLoweringState) =
-    state
-    |> emit(Label(sharedLabel))
-    |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
-    |> emit(Jump(endLabel))
-    |> emit(Label(endLabel))
-
-// Stage 0's `EmitRuntimeManagedListSpineDrop`: the spine's cells are released one by one, the
-// elements left in place.
-let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
-    match freshLocal(state) with
-        | FreshLocal { state = allocated, local = currentSlot } ->
-            match allocated
-            |> emit(StoreLocal(currentSlot)(listTemp))
-            |> freshListDropLabels("rcdrop_list_spine") with
-                | (loopLabel, sharedLabel, endLabel, labelled) ->
-                    match labelled
-                    |> emit(Label(loopLabel))
-                    |> emitListDropTest(currentSlot)(endLabel) with
-                        | (tested, currentTemp) ->
-                            tested
-                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
-                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
-                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
-
 // Stage 0's `EmitRuntimeManagedChildPreservingDrop` for a kept owned value: a list gives up its
 // spine, an aggregate its own cell, and a value with no parts is released with its children.
 let emitKeptValueChildPreservingDrop (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
@@ -12253,6 +12598,52 @@ let recursive emitKeptOwnedSlotChildPreservingDrops (resultType: SemanticType) (
 // run time, the reference-counted value one of the other owned slots holds, or an arena cell of a
 // wrapping constructor around one, that slot's reference is handed over whole with the mask
 // instead of being left. The state and the temp to return.
+// Whether an owned slot was stored inside a loop (it has a fresh flag).
+let recursive hasFreshSlot (origin: Maybe(IrFunctionOrigin)) (slot: Int) (fresh: List((Maybe(IrFunctionOrigin), Int, Int))) =
+    match fresh with
+        | [] -> false
+        | (owner, candidate, _flag) :: rest -> owner == origin && candidate == slot || hasFreshSlot(origin)(slot)(rest)
+
+let noteTakenOverRecordOfFunction (state: CoreLoweringState) =
+    match stateActiveFunctionOrigin(state) with
+        | Some(IrFunctionOrigin { sourceOrigin = Some(SourceFunctionOrigin { functionSourceName = name }) }) -> withStateTakenOverRecordNames(name :: stateTakenOverRecordNames(state))(state)
+        | _ -> state
+
+// Stage 0's `EmitTakeOverSpineRelease` without a loop: a present reference-counted list gives up its
+// cells and the slot is emptied.
+let emitTakeOverSpineReleaseAtReturn (slot: Int) (state: CoreLoweringState) =
+    match freshLabel("taken_over_skip")(state) with
+        | FreshLabel { state = labelled, label = skipLabel } ->
+            match freshTemp(labelled) with
+                | FreshTemp { state = allocated, temp = valueTemp } ->
+                    allocated
+                    |> emit(LoadLocal(valueTemp)(slot))
+                    |> emitSkipUnlessPresent(valueTemp)(skipLabel)
+                    |> emitSkipUnlessReferenceCounted(valueTemp)(skipLabel)
+                    |> emitRuntimeListSpineDrop(valueTemp)
+                    |> (given (dropped: CoreLoweringState) ->
+                        match freshTemp(dropped) with
+                            | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                zeroState
+                                |> emit(LoadConstInt(zeroTemp)(0))
+                                |> emit(StoreLocal(slot)(zeroTemp))
+                                |> emit(Label(skipLabel)))
+                    |> noteTakenOverRecordOfFunction
+                    |> noteSpineFreedSlot(slot)
+
+// Stage 0's `TryTakeOverAtReturn`: a recursive group member has no back edge, so an owned list kept
+// behind a result of unresolved layout gives up its cells at the return.
+let recursive takeOverAtReturn (resultType: SemanticType) (kept: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match kept with
+        | [] -> state
+        | (owner, slot, semanticType) :: rest ->
+            if containsUnresolvedLayout(resultType)(state) && !hasFreshSlot(owner)(slot)(stateGeneralRcFreshSlots(state)) && isTakeOverCandidateList(semanticType)(state) && takenOverConsumerAccepts(owner)(slot)(stateTakenOverConsumers(state))
+            then
+                state
+                |> emitTakeOverSpineReleaseAtReturn(slot)
+                |> takeOverAtReturn(resultType)(rest)
+            else takeOverAtReturn(resultType)(rest)(state)
+
 let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     (let origin = stateActiveFunctionOrigin(state)
     in
@@ -12267,6 +12658,7 @@ let emitOwnedSlotDropsOrWholeHandOver (label: Str) (resultTemp: Int) (resultType
                 let released =
                     state
                     |> releaseOwnedSlotsBehindIndependentForwardedResult(resultTemp)(resultType)(registered)(releasable)
+                    |> takeOverAtReturn(resultType)(ownedSlotsNotIn(origin)(releasable)(registered))
                     |> emitKeptOwnedSlotChildPreservingDrops(resultType)(ownedSlotsNotIn(origin)(releasable)(registered))
                 in
                     match (stateTcoLoopFrame(released), wholeResultCandidates(origin)(releasable)(registered)) with
@@ -18055,6 +18447,68 @@ let withEscapingArgumentCell (argument: Expr) (escapes: Bool) (state: CoreLoweri
                 | _ -> state
         | _ -> state
 
+// Stage 0's `ResultHoldsOnlyElementsOf` for a named callee's parameter by index: an enumerated reach
+// that holds the parameter, if at all, only as whole unshared list elements (its entry `p/e`).
+let recursive parameterAt (index: Int) (parameters: List(Str)) =
+    match parameters with
+        | [] -> None
+        | parameter :: rest ->
+            if index == 0
+            then Some(parameter)
+            else parameterAt(index - 1)(rest)
+
+let recursive entryOfRoot (root: Str) (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> None
+        | ParameterReachEntry { parameterName = name } :: rest ->
+            if name == root || Ashes.Text.startsWith(name)(root + "/")
+            then Some(name)
+            else entryOfRoot(root)(rest)
+
+let recursive hasUnenumeratedInputs (causes: List(ResultReachCause)) =
+    match causes with
+        | [] -> false
+        | UnenumeratedInputs :: _rest -> true
+        | _cause :: rest -> hasUnenumeratedInputs(rest)
+
+let calleeHoldsOnlyElementsOf (callee: Str) (index: Int) (state: CoreLoweringState) =
+    match calleeSummaryOf(callee)(state) with
+        | Some(ReachSummary { function = ReachFunction { parameters = parameters }, reach = ResultReachState { counts = counts, causes = causes } }) ->
+            match parameterAt(index)(parameters) with
+                | Some(parameter) ->
+                    !hasUnenumeratedInputs(causes) && (match entryOfRoot(parameter)(counts) with
+                        | None -> true
+                        | Some(name) -> name == parameter + "/e")
+                | None -> false
+        | None -> false
+
+let isEmptyListLiteral (argument: Expr) =
+    match unspanArgument(argument) with
+        | ExprList([], _isMultiline) -> true
+        | _ -> false
+
+// Stage 0's `_argumentTypes`: each argument of a named call, by the call's span, for the record proof.
+let noteTakenOverArgumentType (context: CoreCallContext) (index: Int) (argument: Expr) (lowered: LoweredCoreValue) =
+    match (lowered, context.calleeName, context.siteSpan) with
+        | (LoweredCoreValue { state = state, semanticType = semanticType, error = None }, Some(_callee), Some(span)) -> lowered with state = withStateTakenOverCallArguments((span, index, isEmptyListLiteral(argument), semanticType) :: stateTakenOverCallArguments(state))(state)
+        | _ -> lowered
+
+// Stage 0's `NoteTakenOverArgument`: an argument read out of an owned call-result slot, handed to a
+// named callee, is recorded with its index, which the back edge or the return that would keep the slot
+// reads to ask whether the callee holds the list only as whole unshared elements.
+let noteTakenOverArgument (context: CoreCallContext) (index: Int) (lowered: LoweredCoreValue) =
+    match (lowered, context.calleeName) with
+        | (LoweredCoreValue { state = state, temp = temp, error = None }, Some(callee)) ->
+            match definitionOfTemp(temp)(state.reversedInstructions) with
+                | Some(LoadLocal(_target, slot)) ->
+                    if state
+                    |> stateGeneralRcOwnedSlots
+                    |> isOwnedSlotOf(stateActiveFunctionOrigin(state))(slot)
+                    then lowered with state = withStateTakenOverConsumers((stateActiveFunctionOrigin(state), slot, calleeHoldsOnlyElementsOf(callee)(index)(state)) :: stateTakenOverConsumers(state))(state)
+                    else lowered
+                | _ -> lowered
+        | _ -> lowered
+
 let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Bool) consumed lower functionTemp resolved =
     match resolved with
         | FunctionTypeResolution { state = typedState, error = Some(error) } ->
@@ -18073,6 +18527,8 @@ let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Boo
                     |> calleeResultReachesArgument(context.facts))
                     |> withEscapingArgumentCell(argument)(transfers == false && mayHoldListCell(resultType)(deferredState))
                     |> lower(argument)
+                    |> noteTakenOverArgument(context)(context.argumentCount - arity)
+                    |> noteTakenOverArgumentType(context)(context.argumentCount - arity)(argument)
                     |> stopCollectingCallArgumentRetains
                     |> retainTransferredChild(argument)(transfers)
                     |> retainAliasArgumentOwners(argument)(transfers == false && calleeResultReachesArgument(context.facts)(argumentIndexOf(context.facts)(arity)))
@@ -19093,14 +19549,314 @@ let releaseHandedOverListHeads (semanticType: SemanticType) (maskTemp: Int) (res
                                                                                             |> emit(Label(doneLabel))
         | _ -> state
 
+let recursive spanListed (span: TextSpan) (spans: List(TextSpan)) =
+    match spans with
+        | [] -> false
+        | candidate :: rest -> candidate == span || spanListed(span)(rest)
+
+// Stage 0's `TryNewTakenOverSettle`: the element of a call result that a taken-over record can be
+// settled behind, a tuple whose first field is of a resolved heap type.
+let takenOverSettleElement (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemList(element) ->
+            match resolveType(state)(element) with
+                | SemTuple(first :: _rest) ->
+                    if containsUnresolvedLayout(first)(state) || resultSurvivesReset(first)(state)
+                    then None
+                    else Some(first)
+                | _ -> None
+        | _ -> None
+
+// The callee a settlement names: a function the call resolved by name.
+let takenOverSettleCallee (context: CoreCallContext) =
+    match (context.facts, context.calleeName) with
+        | (Some(_facts), Some(name)) -> Some(name)
+        | _ -> None
+
+let recursive callArgumentsAt (span: TextSpan) (facts: List((TextSpan, Int, Bool, SemanticType))) (found: List((Int, Bool, SemanticType))) =
+    match facts with
+        | [] -> found
+        | (candidate, index, empty, argumentType) :: rest ->
+            if candidate == span
+            then callArgumentsAt(span)(rest)((index, empty, argumentType) :: found)
+            else callArgumentsAt(span)(rest)(found)
+
+let recursive argumentFactAt (index: Int) (arguments: List((Int, Bool, SemanticType))) =
+    match arguments with
+        | [] -> None
+        | (candidate, empty, argumentType) :: rest ->
+            if candidate == index
+            then Some((empty, argumentType))
+            else argumentFactAt(index)(rest)
+
+let recursive elementAtSegment (segment: Str) (index: Int) (elements: List(SemanticType)) =
+    match elements with
+        | [] -> None
+        | element :: rest ->
+            if Ashes.Text.fromInt(index) == segment
+            then Some(element)
+            else elementAtSegment(segment)(index + 1)(rest)
+
+// Stage 0's `TypeAtReachPath`: the type a reach path names inside a value of this type, as far as the
+// path can be read: a list's head ("0", or a callee's element "e") and tail ("1"), a tuple's field
+// by index. A segment it cannot read leaves the type reached so far.
+let recursive typeAtReachPath (semanticType: SemanticType) (segments: List(Str)) (state: CoreLoweringState) =
+    match (segments, resolveType(state)(semanticType)) with
+        | ([], resolved) -> resolved
+        | (segment :: rest, SemList(element)) ->
+            if segment == "0" || segment == "e"
+            then typeAtReachPath(element)(rest)(state)
+            else
+                if segment == "1"
+                then typeAtReachPath(SemList(element))(rest)(state)
+                else SemList(element)
+        | (segment :: rest, SemTuple(elements)) ->
+            match elementAtSegment(segment)(0)(elements) with
+                | Some(element) -> typeAtReachPath(element)(rest)(state)
+                | None -> SemTuple(elements)
+        | (_segments, resolved) -> resolved
+
+let recursive seenRecordHolderType (target: SemanticType) (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | candidate :: rest -> candidate == target || seenRecordHolderType(target)(rest)
+
+// Stage 0's `ContainsResolvedType`: whether a value of this type can hold a value of the record's
+// type: the type itself, a type argument, a constructor field, or a function. A type variable cannot.
+let recursive containsResolvedType (semanticType: SemanticType) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | resolved ->
+            if resolved == target
+            then true
+            else
+                match resolved with
+                    | SemList(element) -> containsResolvedType(element)(target)(seen)(state)
+                    | SemTuple(elements) -> anyContainsResolvedType(elements)(target)(seen)(state)
+                    | SemFunction(_parameter, _result, _row) -> true
+                    | SemNamed(_id, name, arguments) ->
+                        if seenRecordHolderType(resolved)(seen)
+                        then false
+                        else
+                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state
+                            |> stateConstructorLayouts
+                            |> constructorLayoutsOfType(name))(target)(resolved :: seen)(state)
+                    | _ -> false
+and anyContainsResolvedType (types: List(SemanticType)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | candidate :: rest -> containsResolvedType(candidate)(target)(seen)(state) || anyContainsResolvedType(rest)(target)(seen)(state)
+and anyLayoutFieldContains (layouts: List(CoreConstructorLayout)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> false
+        | layout :: rest ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, _resultType) -> anyContainsResolvedType(fieldTypes)(target)(seen)(state) || anyLayoutFieldContains(rest)(target)(seen)(state)
+
+let withoutExposedTag (root: Str) =
+    if Ashes.Text.startsWith(root)("~")
+    then Ashes.Text.substring(root)(1)(Ashes.Text.length(root) - 1)
+    else root
+
+let recursive indexOfParameter (name: Str) (parameters: List(Str)) (index: Int) =
+    match parameters with
+        | [] -> -1
+        | candidate :: rest ->
+            if candidate == name
+            then index
+            else indexOfParameter(name)(rest)(index + 1)
+
+// Stage 0's `RecordTokenProven`: a value of the callee's own is held once and never a construction;
+// a parameter path whose type at this call can hold the record's type names an argument holding
+// nothing (an empty list); a binding's identity token rides beside the values it names.
+let recordTokenProven (entry: ParameterReachEntry) (parameters: List(Str)) (arguments: List((Int, Bool, SemanticType))) (target: SemanticType) (state: CoreLoweringState) =
+    match entry with
+        | ParameterReachEntry { parameterName = name, reachCount = count } ->
+            match Ashes.Text.split(name)("/") with
+                | [] -> false
+                | first :: segments ->
+                    let root = withoutExposedTag(first)
+                    in
+                        if Ashes.Text.startsWith(root)("#S")
+                        then count <= 1
+                        else
+                            if Ashes.Text.startsWith(root)("#B")
+                            then true
+                            else
+                                if Ashes.Text.startsWith(root)("#")
+                                then false
+                                else
+                                    match argumentFactAt(indexOfParameter(root)(parameters)(0))(arguments) with
+                                        | None -> false
+                                        | Some((true, _argumentType)) -> true
+                                        | Some((false, argumentType)) ->
+                                            !containsResolvedType(typeAtReachPath(argumentType)(segments)(state))(target)([])(state)
+
+let recursive allRecordTokensProven (entries: List(ParameterReachEntry)) (parameters: List(Str)) (arguments: List((Int, Bool, SemanticType))) (target: SemanticType) (state: CoreLoweringState) =
+    match entries with
+        | [] -> true
+        | entry :: rest -> recordTokenProven(entry)(parameters)(arguments)(target)(state) && allRecordTokensProven(rest)(parameters)(arguments)(target)(state)
+
+// Only an internal sharing the tokens account for leaves a record reach proven.
+let recursive recordCausesAllowed (causes: List(ResultReachCause)) =
+    match causes with
+        | [] -> true
+        | cause :: rest -> (cause == InternalSharing || cause == ReachCauseNone) && recordCausesAllowed(rest)
+
+// The record-mode reach of a function by name, with the calls at the cut spans as its own values.
+let recordReachNamed (name: Str) (cuts: List(TextSpan)) (state: CoreLoweringState) =
+    match (stateReachRegistry(state), calleeSummaryOf(name)(state)) with
+        | (Some(registry), Some(ReachSummary { function = ReachFunction { key = key, parameters = parameters } })) ->
+            match recordReachOf(registry)(stateReachTable(state))(key)(cuts) with
+                | Some(reach) -> Some((reach, parameters))
+                | None -> None
+        | _ -> None
+
+// Stage 0's `TakenOverRecordProven`, obligations 2 and 3 at the settling call: the callee handed a
+// record over, and in its record reach every parameter path that can hold the record's type at this
+// call names an argument holding nothing; any other value its result holds there declines.
+let takenOverRecordProven (callee: Str) (span: Maybe(TextSpan)) (element: SemanticType) (state: CoreLoweringState) =
+    match (state
+    |> stateTakenOverRecordNames
+    |> containsLabel(callee), span) with
+        | (true, Some(callSpan)) ->
+            match recordReachNamed(callee)(stateSpineFreedSpans(state))(state) with
+                | Some((ResultReachState { counts = counts, causes = causes }, parameters)) ->
+                    recordCausesAllowed(causes) && allRecordTokensProven(counts)(parameters)(callArgumentsAt(callSpan)(stateTakenOverCallArguments(state))([]))(resolveType(state)(element))(state)
+                | None -> false
+        | _ -> false
+
+let recursive holdsOwnValueOf (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> false
+        | ParameterReachEntry { parameterName = name } :: rest -> Ashes.Text.startsWith(name)("#S") || holdsOwnValueOf(rest)
+
+// Stage 0's `LetScopedSettleOutOfReach`: the enclosing function's record reach, with the let's value
+// call as a value of its own, names nothing of it.
+let letScopedSettleOutOfReach (span: Maybe(TextSpan)) (state: CoreLoweringState) =
+    match (stateActiveFunctionOrigin(state), span) with
+        | (Some(IrFunctionOrigin { sourceOrigin = Some(SourceFunctionOrigin { functionSourceName = enclosing }) }), Some(callSpan)) ->
+            match recordReachNamed(enclosing)([callSpan])(state) with
+                | Some((ResultReachState { counts = counts, causes = causes }, _parameters)) -> recordCausesAllowed(causes) && !holdsOwnValueOf(counts)
+                | None -> false
+        | _ -> false
+
+// A new settlement and its placeholder, kept out of the stream's meaning (it reads and defines
+// nothing) until the settlement round.
+let newTakenOverSettle (temp: Int) (callee: Str) (element: SemanticType) (state: CoreLoweringState) =
+    (let settles = statePendingTakenOverSettles(state)
+    in
+        let id = length(settles)
+        in (withStatePendingTakenOverSettles(CoreTakenOverSettle(settleId = id, settleTemp = temp, settleCallee = callee, settleElement = element) :: settles)(state), IrInstruction(instruction = TcoResetPending(takenOverSettleBase + id)([])([]), location = None)))
+
+// Stage 0's `TrySettleTakenOverBehindCopy`: behind a caller's copy of a call's arena result, the
+// references the arena cells took over are released from the original.
+let settleTakenOverBehindCopy (context: CoreCallContext) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (takenOverSettleCallee(context), takenOverSettleElement(semanticType)(state)) with
+        | (Some(callee), Some(element)) ->
+            let noted =
+                match context.siteSpan with
+                    | Some(span) -> withStateSettledBehindCopySpans(span :: stateSettledBehindCopySpans(state))(state)
+                    | None -> state
+            in
+                if takenOverRecordProven(callee)(context.siteSpan)(element)(noted)
+                then
+                    match newTakenOverSettle(temp)(callee)(element)(noted) with
+                        | (settled, placeholder) -> settled with reversedInstructions = placeholder :: settled.reversedInstructions
+                else noted
+        | _ -> state
+
+// The placeholder goes behind the newest call instruction, ahead of that call's window restore.
+let recursive insertBehindNewestCall (placeholder: IrInstruction) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> []
+        | (IrInstruction { instruction = CallClosure(_target, _closure, _argument, _flag) } as call) :: rest -> placeholder :: call :: rest
+        | (IrInstruction { instruction = CallKnown(_target, _label, _environment, _argument, _flag, _tail) } as call) :: rest -> placeholder :: call :: rest
+        | instruction :: rest -> instruction :: insertBehindNewestCall(placeholder)(rest)
+
+let recursive newestCallArgumentOf (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> None
+        | IrInstruction { instruction = CallClosure(_target, _closure, argument, _flag) } :: _rest -> Some(argument)
+        | IrInstruction { instruction = CallKnown(_target, _label, _environment, argument, _flag, _tail) } :: _rest -> Some(argument)
+        | _instruction :: rest -> newestCallArgumentOf(rest)
+
+// Stage 0's `SettleHeldTakenOverResultsConsumedBy`: a held call result whose last use is the argument
+// of a call with a scalar result is settled right after that call.
+let recursive settleHeldTakenOverResults (argument: Int) (held: List((Int, Str, SemanticType, Maybe(TextSpan)))) (kept: List((Int, Str, SemanticType, Maybe(TextSpan)))) (state: CoreLoweringState) =
+    match held with
+        | [] ->
+            withStateTakenOverHeldResults(reverse(kept))(state)
+        | (temp, callee, element, span) :: rest ->
+            if temp == argument
+            then
+                if takenOverRecordProven(callee)(span)(element)(state)
+                then
+                    match newTakenOverSettle(temp)(callee)(element)(state) with
+                        | (noted, placeholder) -> settleHeldTakenOverResults(argument)(rest)(kept)((noted with reversedInstructions = insertBehindNewestCall(placeholder)(noted.reversedInstructions)))
+                else settleHeldTakenOverResults(argument)(rest)(kept)(state)
+            else settleHeldTakenOverResults(argument)(rest)((temp, callee, element, span) :: kept)(state)
+
+// Stage 0's `NoteTakenOverCallResult`: a call settles the held results it consumes, and its own
+// result, when not settled behind a copy, is held.
+let noteTakenOverCallResult (context: CoreCallContext) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            let settled =
+                match (resultSurvivesReset(semanticType)(state), newestCallArgumentOf(state.reversedInstructions)) with
+                    | (true, Some(argument)) ->
+                        settleHeldTakenOverResults(argument)(stateTakenOverHeldResults(state))([])(state)
+                    | _ -> state
+            in
+                let behindCopy =
+                    match context.siteSpan with
+                        | Some(span) ->
+                            settled
+                            |> stateSettledBehindCopySpans
+                            |> spanListed(span)
+                        | None -> false
+                in
+                    match (behindCopy, takenOverSettleCallee(context), takenOverSettleElement(semanticType)(settled)) with
+                        | (false, Some(callee), Some(element)) -> lowered with state = withStateTakenOverHeldResults((temp, callee, element, context.siteSpan) :: stateTakenOverHeldResults(settled))(settled)
+                        | _ -> lowered with state = settled
+        | _ -> lowered
+
+let recursive takeHeldTakenOverResult (temp: Int) (held: List((Int, Str, SemanticType, Maybe(TextSpan)))) =
+    match held with
+        | [] -> None
+        | (candidate, callee, element, span) :: rest ->
+            if candidate == temp
+            then Some(((callee, element, span), rest))
+            else
+                match takeHeldTakenOverResult(temp)(rest) with
+                    | Some((found, remaining)) -> Some((found, (candidate, callee, element, span) :: remaining))
+                    | None -> None
+
+// Stage 0's `SettleLetScopedTakenOver`: at the end of a let scope whose value is a held call result,
+// the let is the holder, settled when nothing the enclosing function returns can reach the value.
+let settleLetScopedTakenOver (valueTemp: Int) (state: CoreLoweringState) =
+    match state
+    |> stateTakenOverHeldResults
+    |> takeHeldTakenOverResult(valueTemp) with
+        | None -> state
+        | Some(((callee, element, span), remaining)) ->
+            let taken = withStateTakenOverHeldResults(remaining)(state)
+            in
+                if takenOverRecordProven(callee)(span)(element)(taken) && letScopedSettleOutOfReach(span)(taken)
+                then
+                    match newTakenOverSettle(valueTemp)(callee)(element)(taken) with
+                        | (noted, placeholder) -> noted with reversedInstructions = placeholder :: noted.reversedInstructions
+                else taken
+
 // The normalizing copy of a call's contract result, with the mask and the parts the callee handed
 // over read before it and the parts the mask names released after it.
-let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe((List(Int), Int))) (ownedLabel: Str) (state: CoreLoweringState) =
+let emitCallResultCopyTakingParts (context: CoreCallContext) (temp: Int) (semanticType: SemanticType) (plan: ArgumentCopyPlan) (ownedSlot: Int) (handedParts: Maybe((List(Int), Int))) (ownedLabel: Str) (state: CoreLoweringState) =
     match handedParts with
         | None ->
             match emitGuardedDeepCopy(temp)(plan)(state) with
                 | (copied, copyTemp) ->
-                    emit(StoreLocal(ownedSlot)(copyTemp))(copied)
+                    copied
+                    |> emit(StoreLocal(ownedSlot)(copyTemp))
+                    |> settleTakenOverBehindCopy(context)(temp)(semanticType)
         | Some((parts, cell)) ->
             match loadHandedOverMaskAndParts(temp)(parts)(cell)(state) with
                 | (loaded, maskTemp, partTemps) ->
@@ -19113,6 +19869,7 @@ let emitCallResultCopyTakingParts (temp: Int) (semanticType: SemanticType) (plan
                             |> emit(StoreLocal(ownedSlot)(copyTemp))
                             |> releaseHandedOverTupleParts(semanticType)(parts)(maskTemp)(partTemps)
                             |> releaseHandedOverListHeads(semanticType)(maskTemp)(temp)
+                            |> settleTakenOverBehindCopy(context)(temp)(semanticType)
 
 // Stage 0's withdrawal in `LowerCallRestoreArenaFor`: a call result that is not copied out under
 // the contract takes no parts over.
@@ -19123,13 +19880,19 @@ let withdrawTuplePartsRequestOutsideContract (context: CoreCallContext) (temp: I
         match takeTupleResultPartsRequest(context)(temp)(semanticType)(true)(state) with
             | (withdrawn, _parts) -> withdrawn
 
+// Stage 0's `NoteTakenOverOwnedSlotSource`: the call an owned call-result slot holds the result of.
+let noteTakenOverSlotSource (context: CoreCallContext) (ownedSlot: Int) (state: CoreLoweringState) =
+    match context.siteSpan with
+        | Some(span) -> withStateTakenOverSlotSources((stateActiveFunctionOrigin(state), ownedSlot, span) :: stateTakenOverSlotSources(state))(state)
+        | None -> state
+
 // Stage 0's `LowerGeneralRcCallResult`: a call result of the contract's types is owned by the
 // caller once the call's window is reset. It is taken over as it is from a callee known to return
 // it owned; from a closure it cannot name it is taken over when the closure's header says its
 // function returns it owned; and it is normalized otherwise, since a generic callee's result may
 // borrow its arguments' parts. The value is kept in an owned slot and handed on without a
 // runtime-managed fact.
-let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe((List(Int), Int))) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let lowerGeneralRcCallResultTakingParts (context: CoreCallContext) (returnsOwned: Bool) (handedParts: Maybe((List(Int), Int))) (cursorSlot: Int) (endSlot: Int) (preRestoreSlot: Int) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match if returnsOwned
     then (state, -1)
     else
@@ -19153,13 +19916,14 @@ let lowerGeneralRcCallResultTakingParts (returnsOwned: Bool) (handedParts: Maybe
                                                 | FreshLabel { state = labelled, label = ownedLabel } ->
                                                     labelled
                                                     |> emitOwnedFlagTest(ownedFlagTemp)(ownedLabel)
-                                                    |> emitCallResultCopyTakingParts(temp)(semanticType)(plan)(ownedSlot)(handedParts)(ownedLabel)
+                                                    |> emitCallResultCopyTakingParts(context)(temp)(semanticType)(plan)(ownedSlot)(handedParts)(ownedLabel)
                                                     |> emit(Label(ownedLabel))
                                         | _ -> restored
                                 in
                                     match owned
                                     |> emitPostGuardedArenaReclaim(endSlot)(preRestoreSlot)
                                     |> registerGeneralRcOwnedSlot(ownedSlot)(semanticType)
+                                    |> noteTakenOverSlotSource(context)(ownedSlot)
                                     |> registerGeneralRcOwnedPredecessor(predecessorSlot)(ownedSlot)(semanticType)
                                     |> freshTemp with
                                         | FreshTemp { state = loaded, temp = resultTemp } ->
@@ -19171,7 +19935,7 @@ let lowerGeneralRcCallResultOwned (context: CoreCallContext) (cursorSlot: Int) (
     (let returnsOwned = calleeReturnsGeneralRcOwned(context)(state) && !siblingResultPinned(context)(semanticType)(state)
     in
         match takeTupleResultPartsRequest(context)(temp)(semanticType)(returnsOwned)(state) with
-            | (requestState, handedParts) -> lowerGeneralRcCallResultTakingParts(returnsOwned)(handedParts)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(requestState))
+            | (requestState, handedParts) -> lowerGeneralRcCallResultTakingParts(context)(returnsOwned)(handedParts)(cursorSlot)(endSlot)(preRestoreSlot)(temp)(semanticType)(requestState))
 
 // A result of the contract's types is owned by the caller once the call is lowered, so a request
 // for an arena result the call made while its type was unresolved (a phantom in it) is withdrawn
@@ -19668,7 +20432,8 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 |> closeCallWindow(context)(cursorSlot)(endSlot)
                                 |> ownResultBeforeArgumentRelease(context)
                                 |> releaseCallSpineArguments(context)(elementCopyingFlagOf(context)(stage))
-                                |> withCallResultType(applied))
+                                |> withCallResultType(applied)
+                                |> noteTakenOverCallResult(context))
 
 let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
     match lowered with
@@ -19686,11 +20451,6 @@ let noteDiscardedResultArgument (spine: CoreCallSpine) (state: CoreLoweringState
                     in state with programState = (group with discardedResultSpans = span :: group.discardedResultSpans)
                 | _ -> state
         | _ -> state
-
-let recursive spanListed (span: TextSpan) (spans: List(TextSpan)) =
-    match spans with
-        | [] -> false
-        | candidate :: rest -> candidate == span || spanListed(span)(rest)
 
 let recursive withoutSpan (span: TextSpan) (spans: List(TextSpan)) =
     match spans with
@@ -21652,7 +22412,9 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                             |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBody)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
+                                    match bodyState
+                                    |> settleLetScopedTakenOver(loweredValue.temp)
+                                    |> closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
                                         | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 let lowerArenaBracketedNestedLet name value body lower outerBindings state = lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lower)(outerBindings)(state)
@@ -23057,6 +23819,10 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> withStateTcoLoopFrame(None)
             |> withStatePendingTcoResets([])
             |> withStatePendingCallCopyOuts([])
+            |> withStatePendingTakenOverSettles([])
+            |> withStateTakenOverHeldResults([])
+            |> withStateTakenOverCallArguments([])
+            |> withStateSettledBehindCopySpans([])
             |> withStateWithdrawnTuplePartsRequests([])
             |> withStateListHeadCells([])
             |> withStateSelfCallResultUnifications([])
@@ -33932,6 +34698,7 @@ let recursive reachSummariesByName (summaries: List(ReachSummary)) (byName: MapT
 let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState) =
     state
     |> withStateReachSummaries(summaries)
+    |> withStateReachTable(summariesTable(summaries))
     |> withStateReachByIdentity(reachSummariesByIdentity(summaries)(Ashes.Collection.Map.empty))
     |> withStateReachByName(reachSummariesByName(summaries)(Ashes.Collection.Map.empty))
 
@@ -34206,7 +34973,12 @@ let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringS
         |> (given (seeded: CoreLoweringState) ->
             withStateUnderLiveHandlerPost(stateEntryRunsUnderLiveHandlerPost(seeded))(seeded))
         |> withStateMoveNullaryConstructors(programSoleNullaryConstructors(program.items))
-        |> withReachSummaries(programReachSummaries(program)))
+        |> (given (seeded: CoreLoweringState) ->
+            match buildReachRegistry(program) with
+                | registry ->
+                    seeded
+                    |> withReachSummaries(computeReachSummaries(registry))
+                    |> withStateReachRegistry(Some(registry))))
 
 // Seeds the state with the result-reach summaries of the functions a bare expression binds.
 let withExpressionReachSummaries (expression: Expr) (state: CoreLoweringState) =

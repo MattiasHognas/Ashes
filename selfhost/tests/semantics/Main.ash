@@ -50,6 +50,7 @@ import CoreExternalLoweringTests
 import CoreTraitDispatchLoweringTests
 import CoreCapabilityLoweringTests
 import CallWindowLoweringTests
+import TakenOverRecordLoweringTests
 import NestedClosureLoweringTests
 import QualifiedReceiverCaptureTests
 import DeferredCallCopyOutTests
@@ -127,6 +128,7 @@ let run unit =
     |> (given (_) -> CoreTraitDispatchLoweringTests.runCoreTraitDispatchLoweringTests(Unit))
     |> (given (_) -> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests(Unit))
     |> (given (_) -> CallWindowLoweringTests.runCallWindowLoweringTests(Unit))
+    |> (given (_) -> TakenOverRecordLoweringTests.runTakenOverRecordLoweringTests(Unit))
     |> (given (_) -> NestedClosureLoweringTests.runNestedClosureLoweringTests(Unit))
     |> (given (_) -> QualifiedReceiverCaptureTests.runQualifiedReceiverCaptureTests(Unit))
     |> (given (_) -> DeferredCallCopyOutTests.runDeferredCallCopyOutTests(Unit))
