@@ -23986,53 +23986,105 @@ let withStaticStringNormalization cases (plan: CoreMatchPlan) =
         | CoreMatchPlan { state = state, armRequest = ConsumerRequest { runtimeString = requested } } ->
             plan with normalizeStaticStrings = (ordinaryRcPlacementAllowed(state) || requested) && shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state) || retainedPatternOwnerTerminal(body)(state))(given (body: Expr) -> isSelfFunnelArm(body)(state))(given (body: Expr) -> isStaticConstructorArm(body)(state))(cases)
 
+// Whether no part of a pattern names a binder: a shape of wildcards and literals only.
+let recursive bindsNoName (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> bindsNoName(inner)
+        | PatternWildcard -> true
+        | PatternEmptyList -> true
+        | PatternInt(_value) -> true
+        | PatternString(_value) -> true
+        | PatternRune(_value) -> true
+        | PatternBool(_value) -> true
+        | PatternCons(head, tail) -> bindsNoName(head) && bindsNoName(tail)
+        | PatternTuple(elements) -> allBindNoName(elements)
+        | PatternConstructor(_name, patterns) -> allBindNoName(patterns)
+        | PatternRecord(_name, fields) -> allFieldsBindNoName(fields)
+        | PatternOr(alternatives) -> allBindNoName(alternatives)
+        | _ -> false
+and allBindNoName (patterns: List(Pattern)) =
+    match patterns with
+        | [] -> true
+        | pattern :: rest -> bindsNoName(pattern) && allBindNoName(rest)
+and allFieldsBindNoName (fields: List((Str, Pattern))) =
+    match fields with
+        | [] -> true
+        | (_field, pattern) :: rest -> bindsNoName(pattern) && allFieldsBindNoName(rest)
+
+// Stage 0's shape rule: a record, constructor, tuple, or cons shape matched against a value whose
+// type is still a variable (a loop generic in it) binds a heap value only when it names a binder.
+let isShapeAgainstVariable (pattern: Pattern) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match (pattern, resolveType(state)(semanticType)) with
+        | (PatternAt(_span, inner), resolved) ->
+            (match inner with
+                | PatternRecord(_name, _fields) -> true
+                | PatternConstructor(_name, _patterns) -> true
+                | PatternTuple(_elements) -> true
+                | PatternCons(_head, _tail) -> true
+                | _ -> false) && (match resolved with
+                | SemVariable(_id) -> true
+                | SemParameter(_id, _name) -> true
+                | _ -> false)
+        | (PatternRecord(_name, _fields), SemVariable(_id)) -> true
+        | (PatternConstructor(_name, _patterns), SemVariable(_id)) -> true
+        | (PatternTuple(_elements), SemVariable(_id)) -> true
+        | (PatternCons(_head, _tail), SemVariable(_id)) -> true
+        | (PatternRecord(_name, _fields), SemParameter(_id, _pname)) -> true
+        | (PatternConstructor(_name, _patterns), SemParameter(_id, _pname)) -> true
+        | (PatternTuple(_elements), SemParameter(_id, _pname)) -> true
+        | (PatternCons(_head, _tail), SemParameter(_id, _pname)) -> true
+        | _ -> false
+
 // Stage 0's `PatternBindsHeapValue`: whether `pattern`, matched against a value of
 // `semanticType`, may bind a value that is not a copy type; any shape it cannot see through counts
 // as one. A constructor's field types are instantiated on a copy of the state the answer leaves.
 let recursive patternBindsHeapValue (pattern: Pattern) (semanticType: SemanticType) (state: CoreLoweringState) =
-    match pattern with
-        | PatternAt(_span, inner) -> patternBindsHeapValue(inner)(semanticType)(state)
-        | PatternWildcard -> false
-        | PatternEmptyList -> false
-        | PatternInt(_value) -> false
-        | PatternString(_value) -> false
-        | PatternRune(_value) -> false
-        | PatternBool(_value) -> false
-        | PatternVar(_name) -> resultSurvivesReset(semanticType)(state) == false
-        | PatternAs(inner, _name) -> resultSurvivesReset(semanticType)(state) == false || patternBindsHeapValue(inner)(semanticType)(state)
-        | PatternOr(alternatives) -> patternsBindHeapValue(alternatives)(semanticType)(state)
-        | PatternTuple(elements) ->
-            match resolveType(state)(semanticType) with
-                | SemTuple(elementTypes) ->
-                    if length(elements) == length(elementTypes)
-                    then elementPatternsBindHeapValue(elements)(elementTypes)(state)
-                    else true
-                | _ -> true
-        | PatternCons(head, tail) ->
-            match resolveType(state)(semanticType) with
-                | SemList(element) -> patternBindsHeapValue(head)(element)(state) || patternBindsHeapValue(tail)(semanticType)(state)
-                | _ -> true
-        | PatternConstructor(name, patterns) ->
-            match constructorLayout(name)(state) with
-                | None -> true
-                | Some(layout) ->
-                    match instantiateConstructor(layout)(state) with
-                        | CoreConstructorShape { state = instantiated, parameterTypes = parameterTypes, resultType = resultType } ->
-                            match bindType(semanticType)(resultType)(instantiated) with
-                                | (typed, None) ->
-                                    if length(patterns) == length(parameterTypes)
-                                    then elementPatternsBindHeapValue(patterns)(parameterTypes)(typed)
-                                    else true
-                                | (_failed, Some(_error)) -> true
-        | PatternRecord(name, fields) ->
-            match constructorLayout(name)(state) with
-                | None -> true
-                | Some(layout) ->
-                    match instantiateConstructor(layout)(state) with
-                        | CoreConstructorShape { state = instantiated, layout = CoreConstructorLayout { fieldNames = fieldNames }, parameterTypes = parameterTypes, resultType = resultType } ->
-                            match bindType(semanticType)(resultType)(instantiated) with
-                                | (typed, None) -> fieldPatternsBindHeapValue(fields)(fieldNames)(parameterTypes)(typed)
-                                | (_failed, Some(_error)) -> true
+    if isShapeAgainstVariable(pattern)(semanticType)(state)
+    then !bindsNoName(pattern)
+    else
+        match pattern with
+            | PatternAt(_span, inner) -> patternBindsHeapValue(inner)(semanticType)(state)
+            | PatternWildcard -> false
+            | PatternEmptyList -> false
+            | PatternInt(_value) -> false
+            | PatternString(_value) -> false
+            | PatternRune(_value) -> false
+            | PatternBool(_value) -> false
+            | PatternVar(_name) -> resultSurvivesReset(semanticType)(state) == false
+            | PatternAs(inner, _name) -> resultSurvivesReset(semanticType)(state) == false || patternBindsHeapValue(inner)(semanticType)(state)
+            | PatternOr(alternatives) -> patternsBindHeapValue(alternatives)(semanticType)(state)
+            | PatternTuple(elements) ->
+                match resolveType(state)(semanticType) with
+                    | SemTuple(elementTypes) ->
+                        if length(elements) == length(elementTypes)
+                        then elementPatternsBindHeapValue(elements)(elementTypes)(state)
+                        else true
+                    | _ -> true
+            | PatternCons(head, tail) ->
+                match resolveType(state)(semanticType) with
+                    | SemList(element) -> patternBindsHeapValue(head)(element)(state) || patternBindsHeapValue(tail)(semanticType)(state)
+                    | _ -> true
+            | PatternConstructor(name, patterns) ->
+                match constructorLayout(name)(state) with
+                    | None -> true
+                    | Some(layout) ->
+                        match instantiateConstructor(layout)(state) with
+                            | CoreConstructorShape { state = instantiated, parameterTypes = parameterTypes, resultType = resultType } ->
+                                match bindType(semanticType)(resultType)(instantiated) with
+                                    | (typed, None) ->
+                                        if length(patterns) == length(parameterTypes)
+                                        then elementPatternsBindHeapValue(patterns)(parameterTypes)(typed)
+                                        else true
+                                    | (_failed, Some(_error)) -> true
+            | PatternRecord(name, fields) ->
+                match constructorLayout(name)(state) with
+                    | None -> true
+                    | Some(layout) ->
+                        match instantiateConstructor(layout)(state) with
+                            | CoreConstructorShape { state = instantiated, layout = CoreConstructorLayout { fieldNames = fieldNames }, parameterTypes = parameterTypes, resultType = resultType } ->
+                                match bindType(semanticType)(resultType)(instantiated) with
+                                    | (typed, None) -> fieldPatternsBindHeapValue(fields)(fieldNames)(parameterTypes)(typed)
+                                    | (_failed, Some(_error)) -> true
 and patternsBindHeapValue (patterns: List(Pattern)) (semanticType: SemanticType) (state: CoreLoweringState) =
     match patterns with
         | [] -> false
@@ -24054,6 +24106,40 @@ let recursive matchCasesBindHeapValue cases (semanticType: SemanticType) (state:
         | [] -> false
         | (pattern, _body, _guard) :: rest -> patternBindsHeapValue(pattern)(semanticType)(state) || matchCasesBindHeapValue(rest)(semanticType)(state)
 
+// The reversed instructions with the pattern-owner marker defining `temp` made a plain borrow, so
+// the loop's finalize never promotes it to a retain.
+let recursive borrowInsteadOfMarker (temp: Int) (reversed: List(IrInstruction)) =
+    match reversed with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, source, false, _mayBeEmpty) } as instruction) :: rest ->
+            if target == temp
+            then (instruction with instruction = Borrow(target)(source)) :: rest
+            else instruction :: borrowInsteadOfMarker(temp)(rest)
+        | instruction :: rest -> instruction :: borrowInsteadOfMarker(temp)(rest)
+
+let recursive isMarkerDefinition (temp: Int) (reversed: List(IrInstruction)) =
+    match reversed with
+        | [] -> false
+        | IrInstruction { instruction = RcDup(target, _source, false, _mayBeEmpty) } :: rest -> target == temp || isMarkerDefinition(temp)(rest)
+        | IrInstruction { instruction = kind } :: rest ->
+            if kind
+            |> getDefinedTemps
+            |> containsInt(temp)
+            then false
+            else isMarkerDefinition(temp)(rest)
+
+// Stage 0's withdrawal of a pattern-owner duplicate a borrowed scrutinee stores: the fresh cell is
+// matched only by its shape and dies in the arena, so the duplicate of an element it holds (the
+// cell its only reader) is a plain borrow rather than a marker the root's placement would promote.
+// A scrutinee built on the reference-counted heap owns its elements and keeps its markers.
+let recursive demoteScrutineeMarkers (values: List(Int)) (state: CoreLoweringState) =
+    match values with
+        | [] -> state
+        | value :: rest ->
+            if isMarkerDefinition(value)(state.reversedInstructions) && countTempUses(value)(state.reversedInstructions)(0) == 1
+            then demoteScrutineeMarkers(rest)((state with reversedInstructions = borrowInsteadOfMarker(value)(state.reversedInstructions)))
+            else demoteScrutineeMarkers(rest)(state)
+
 // Stage 0's `RecordBorrowedScrutinee`: a fresh aggregate a loop body builds only to match it, with
 // no arm binding a heap-typed part of it, keeps nothing past the match, so the retains of
 // loop-parameter reads its cell was built with are withdrawn once the loop's placements are final.
@@ -24063,7 +24149,10 @@ let recordBorrowedScrutinee (value: Expr) cases (lowered: LoweredCoreValue) =
             match stateTcoLoopFrame(state) with
                 | Some(_frame) ->
                     if isFreshAggregateLiteral(value)(state) && matchCasesBindHeapValue(cases)(semanticType)(state) == false
-                    then lowered with state = withStateBorrowedScrutineeCells(temp :: stateBorrowedScrutineeCells(state))(state)
+                    then
+                        lowered with state = state |> demoteScrutineeMarkers(if isArenaCell(temp)(state.reversedInstructions)
+                        then storedValuesOf(temp)(state.reversedInstructions)([])
+                        else []) |> withStateBorrowedScrutineeCells(temp :: stateBorrowedScrutineeCells(state))
                     else lowered
                 | None -> lowered
         | _ -> lowered

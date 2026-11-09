@@ -552,10 +552,29 @@ public sealed partial class Lowering
                     named,
                     named.Symbol.Constructors[0].Name,
                     record.Fields.Select(field => (fieldNames.FindIndex(name => string.Equals(name, field.Name, StringComparison.Ordinal)), field.Pattern)));
+            // A shape matched against a value whose type is still a variable (a loop generic in it)
+            // binds nothing when no part of it names a binder.
+            case Pattern.Record or Pattern.Constructor or Pattern.Tuple or Pattern.Cons when pruned is TypeRef.TVar && ShapeOnlyPatternsBindNothingEnabled:
+                return !BindsNoName(pattern);
             default:
                 return true;
         }
     }
+
+    private static bool ShapeOnlyPatternsBindNothingEnabled
+        => Environment.GetEnvironmentVariable("GRC_NO_SHAPEONLYPATTERN") is null;
+
+    private static bool BindsNoName(Pattern pattern)
+        => pattern switch
+        {
+            Pattern.Wildcard or Pattern.EmptyList or Pattern.IntLit or Pattern.StrLit or Pattern.RuneLit or Pattern.BoolLit => true,
+            Pattern.Record record => record.Fields.All(field => BindsNoName(field.Pattern)),
+            Pattern.Constructor constructor => constructor.Patterns.All(BindsNoName),
+            Pattern.Tuple tuple => tuple.Elements.All(BindsNoName),
+            Pattern.Cons cons => BindsNoName(cons.Head) && BindsNoName(cons.Tail),
+            Pattern.Or alternatives => alternatives.Alternatives.All(BindsNoName),
+            _ => false,
+        };
 
     private bool ConstructorPatternBindsHeapValue(TypeRef.TNamedType named, string constructorName, IEnumerable<(int Index, Pattern Pattern)> fields)
     {

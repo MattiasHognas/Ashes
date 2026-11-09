@@ -2725,8 +2725,16 @@ the pattern-owner duplicate of a binder that escapes elsewhere (into an accumula
 placement promotes to a real retain the arena tuple never releases: every round leaked each binder's
 graph. Such a duplicate is now withdrawn the same way when the tuple is its only reader and no promoted
 release was paired with it (`GRC_NO_SCRUTINEEOWNERDUPWITHDRAW`, stage 0). Stage 1 builds that tuple on
-the reference-counted heap and owns the binder there, so it has no arena tuple to withdraw from; a
-stage-1 port is owed only if stage 1 ever keeps such a scrutinee in the arena.
+the reference-counted heap when its element types are known and owns the binder there.
+
+In a loop still generic in its element type (an unread pass-through parameter keeps it so), the same
+shape was matched against a type variable and counted as binding a heap value, so the tuple was never
+taken for a borrowed scrutinee: a record, constructor, tuple, or cons shape that names no binder now
+binds nothing even against a variable (`GRC_NO_SHAPEONLYPATTERN`, both stages). Stage 1 keeps that
+generic tuple in the arena too, and settles it where it records the borrowed scrutinee: each
+pattern-owner marker the arena tuple stores, the tuple its only reader, becomes a plain borrow the
+root's placement never promotes; a tuple built on the reference-counted heap keeps its markers, whose
+retains it owns.
 
 ### One-shot resumptive arms: the pre/post split
 
