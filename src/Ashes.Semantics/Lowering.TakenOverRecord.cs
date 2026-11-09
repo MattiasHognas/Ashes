@@ -284,6 +284,7 @@ public sealed partial class Lowering
 
         (Expr.Call call, int temp, TypeRef heldType) = _takenOverHeldResults[index];
         _takenOverHeldResults.RemoveAt(index);
+        int settled = LetOwnerLoadForSettle(binding, temp);
         if (TryNewTakenOverSettle(call, heldType, out PendingTakenOverSettle? settle))
         {
             int id = _nextTakenOverSettleId++;
@@ -292,8 +293,24 @@ public sealed partial class Lowering
                 EnclosingLabels = [.. _loweringFunctionLabels],
                 LetScoped = true,
             };
-            AnchorTakenOverSettle(_inst.Count > 0 ? _inst[^1] : null, id, temp);
+            AnchorTakenOverSettle(_inst.Count > 0 ? _inst[^1] : null, id, settled);
         }
+    }
+
+    // The walk at a let's end reads the value through a load of the let's own slot: lifetime placement
+    // follows the owner's loads, so the owner's release lands after the walk instead of after the
+    // value's last use in the body, ahead of a walk over freed cells (`GRC_NO_SETTLEOWNERLOAD`).
+    private int LetOwnerLoadForSettle(Expr.Let binding, int temp)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_SETTLEOWNERLOAD") is not null
+            || Lookup(binding.Name) switch { Binding.Local local => local.Slot, Binding.Scheme scheme => scheme.Slot, _ => (int?)null } is not int slot)
+        {
+            return temp;
+        }
+
+        int ownerLoad = NewTemp();
+        Emit(new IrInst.LoadLocal(ownerLoad, slot));
+        return ownerLoad;
     }
 
     // The function being lowered: by its label, or by its source name when exactly one function has it.

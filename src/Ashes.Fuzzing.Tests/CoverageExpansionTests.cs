@@ -126,8 +126,9 @@ public sealed class CoverageExpansionTests
             }
 
             exercised.ShouldNotBeNull($"Template '{template.Id}' was not selected.");
-            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(exercised.Source);
-            compilation.Diagnostics.Errors.ShouldBeEmpty($"Template '{template.Id}':\n{exercised.Source}");
+            string source = exercised.SourceWithImports;
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(source);
+            compilation.Diagnostics.Errors.ShouldBeEmpty($"Template '{template.Id}':\n{source}");
             foreach (GeneratedFeature feature in template.AdvertisedFeatures)
             {
                 exercised.Features.Contains(feature).ShouldBeTrue($"Template '{template.Id}' omitted '{feature}'.");

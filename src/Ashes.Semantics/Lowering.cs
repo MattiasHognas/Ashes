@@ -2131,6 +2131,44 @@ public sealed partial class Lowering
         return index >= 0 && _inst[index] is IrInst.RcDup { RuntimeManaged: true };
     }
 
+    // True when temp is a field read of another value with no retain between, directly or through
+    // the one store of a binding's slot: what a pattern binder or a field access stores.
+    private bool IsBareFieldRead(int temp)
+    {
+        int index = FindLastInstruction(instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(temp));
+        if (index < 0)
+        {
+            return false;
+        }
+
+        if (_inst[index] is IrInst.Borrow { SourceTemp: var borrowed })
+        {
+            return IsBareFieldRead(borrowed);
+        }
+
+        if (_inst[index] is IrInst.LoadLocal { Slot: var slot })
+        {
+            List<int> stores = [];
+            for (int i = 0; i < index; i++)
+            {
+                if (_inst[i] is IrInst.StoreLocal store && store.Slot == slot)
+                {
+                    stores.Add(i);
+                }
+            }
+
+            if (stores.Count != 1 || _inst[stores[0]] is not IrInst.StoreLocal { Source: var source })
+            {
+                return false;
+            }
+
+            int sourceIndex = _inst.FindLastIndex(stores[0], instruction => StateMachineTransform.GetDefinedTemps(instruction).Contains(source));
+            return sourceIndex >= 0 && _inst[sourceIndex] is IrInst.GetAdtField or IrInst.LoadMemOffset;
+        }
+
+        return _inst[index] is IrInst.GetAdtField or IrInst.LoadMemOffset;
+    }
+
     // True when temp is a cell this function allocated in the arena.
     private bool IsArenaCellConstruction(int temp)
     {
@@ -2746,6 +2784,17 @@ public sealed partial class Lowering
         if (storedTemp is int stored
             && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDCHILDKEEP") is null
             && IsUnrealizedConstructionRetain(stored))
+        {
+            return;
+        }
+
+        // A child the construction stored as a bare read of another value's field (a binder matched
+        // out of a call's arena result, `Known(label) -> group(tail)(Some(label))`) is only borrowed
+        // by the cell: the construction took no reference, so the copy's own retain is the only one
+        // the cell's child gained.
+        if (storedTemp is int read
+            && Environment.GetEnvironmentVariable("GRC_NO_BORROWEDFIELDCHILDKEEP") is null
+            && IsBareFieldRead(read))
         {
             return;
         }
@@ -4615,6 +4664,8 @@ public sealed partial class Lowering
             _arenaSuccessorLetLoop = _tcoCtx;
         }
 
+        Expr? outerSuccessorJoin = EnterArenaSuccessorLetJoin(let);
+
         try
         {
             return TryLowerRuntimeManagedLetValue(let, request, out (int Temp, TypeRef Type) lowered)
@@ -4624,6 +4675,7 @@ public sealed partial class Lowering
         finally
         {
             _arenaSuccessorLetLoop = outerSuccessorLetLoop;
+            _arenaSuccessorJoin = outerSuccessorJoin;
         }
     }
 
@@ -6968,8 +7020,14 @@ public sealed partial class Lowering
         Expr.LetRecursive binding,
         List<string> parameterNames,
         int parameterCount)
+        => CreateRecursiveTcoContext(binding.Name, GetRegisteredFunctionKey(binding), parameterNames, parameterCount);
+
+    private TcoContext CreateRecursiveTcoContext(
+        string selfName,
+        FuncKey? ownershipFunction,
+        List<string> parameterNames,
+        int parameterCount)
     {
-        FuncKey? ownershipFunction = GetRegisteredFunctionKey(binding);
         var facts = GetTcoParameterOrdinalFacts(ownershipFunction);
         int evidenceCount = parameterNames.TakeWhile(parameter =>
             _traitDictionaryParameterMetadata.ContainsKey(parameter)
@@ -6986,7 +7044,7 @@ public sealed partial class Lowering
                 : fact with { RootParameterOrdinal = fact.RootParameterOrdinal + evidenceCount })
             .ToArray();
         return new TcoContext(
-            binding.Name, parameterCount, parameterNames, loopInvariant,
+            selfName, parameterCount, parameterNames, loopInvariant,
             Shift(facts.ArenaSelfContainedListRebuild),
             Shift(facts.FreshClosureRebuild),
             Shift(facts.BytesProvenanceSafeListRebuild),
@@ -7649,7 +7707,7 @@ public sealed partial class Lowering
         _bodyRuntimeManagedByLabel[label] = bodyRuntimeManaged;
         BackfillSelfClosureResultOwnership(label, bodyRuntimeManaged);
         RecordTrivialParameterFieldAccessorLabel(label, argSlot, bodyTemp, bodyType);
-        LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(lam, savedTcoCtx, bodyTemp);
+        LowerLambdaCoreEmitTcoExitReleases(lam, savedTcoCtx, bodyTemp, bodyType, bodyRuntimeManaged);
         Emit(new IrInst.Return(LowerLambdaCoreNormalizeRequestedArenaResult(bodyTemp, bodyType, bodyRuntimeManaged)));
 
         IrFunction loweredFunction = LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
@@ -10003,6 +10061,7 @@ public sealed partial class Lowering
             reuseEntryCopies,
             specElidedAccs);
         RecomputeTcoParameterFlow(tco, routed: true);
+        PrepareExitParameterOwnFields(lam, tco);
         LowerLambdaCoreEmitTcoLoopEntry(label, tco);
 
         tco.InTailPosition = true;
@@ -11744,6 +11803,14 @@ public sealed partial class Lowering
                 missingCapabilityOperation,
                 arguments);
         }
+        if (IsConstrainedSpecializationSelfCall(rootExpression))
+        {
+            return null;
+        }
+        if (TryLowerConstrainedSpecializedCall(call, rootExpression, arguments, request) is { } constrained)
+        {
+            return constrained;
+        }
         if (TryLowerTraitDictionaryReuseSpecialization(call, rootExpression, arguments) is { } reuse)
         {
             return reuse;
@@ -12946,13 +13013,18 @@ public sealed partial class Lowering
     {
         (TcoContext Loop, int Slot)? savedDestination = _tcoArgumentDestination;
         _tcoArgumentDestination = index < tco.ParamSlots.Count ? (tco, tco.ParamSlots[index]) : null;
+        Expr? outerSuccessorJoin = _arenaSuccessorJoin;
+        _arenaSuccessorJoin = index < tco.ParamSlots.Count && !tco.IsRuntimeManagedSlot(tco.ParamSlots[index]) ? SuccessorJoinOf(argument) : null;
         try
         {
-            return LowerExpr(argument, request).AsPair();
+            (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
+            NoteExitParameterSuccessor(tco, index, argument, lowered.Temp);
+            return lowered;
         }
         finally
         {
             _tcoArgumentDestination = savedDestination;
+            _arenaSuccessorJoin = outerSuccessorJoin;
         }
     }
 
@@ -14725,6 +14797,7 @@ public sealed partial class Lowering
     {
         runtimeManagedResultFlagTemp = -1;
         PreconstrainKnownCallArgumentTypes(collectedArgs, currentType);
+        RecordConstrainedCallTypes(rootExpr, collectedArgs.Count, currentType);
         ElementSpecializationCandidate? elementCandidate =
             _configuration.EnableElementSpecialization
                 ? ResolveElementSpecializationCandidate(rootExpr, collectedArgs.Count)

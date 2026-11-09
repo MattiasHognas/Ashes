@@ -1158,6 +1158,22 @@ absorb — the call stays generic and the rejection is cached against the same k
 concrete `filter` whose recursion survives specialization goes quadratic, which is worse than the
 generic call it replaced.
 
+**Constrained specialization** extends this to dictionary-passing generic functions
+(`GRC_NO_CONSTRAINEDSPECIALIZATION`). Lowered generically, such a function cannot tell what its
+values hold: a lookup's `Some`, an association list's replaced entry, or a cons at the abstract
+element stays an arena value holding a reference handed over by the caller, and nothing releases it.
+A top-level constrained function is a candidate when it recurses, or when its body declined a cons at
+an abstract element or called another candidate at its own abstract types. A generic loop that
+captures a candidate (so it has no label of its own) is a candidate on the same evidence. A call
+whose parameter types all settle is routed to a copy lowered from the function's own source at those
+types: every trait goal there resolves to its instance, no dictionary is passed, and the call is
+lowered as an ordinary call to the copy. Types settle from the arguments that are variables of a
+concrete type, or from what the discovery pass's whole-program substitution settled at the same call
+site, since a loop parameter's type is often fixed only by the call that would route. Inside a copy,
+a candidate's name resolves to the top-level function (the copy's scope holds only its own
+parameters), and the copy's call to itself is a plain self call. A copy that reports a diagnostic is
+abandoned with its reports, and the call stays a dictionary call.
+
 `TcoParamReuseAffinity.SelfAppendOnly` independently records the affine ownership discipline used
 by string reservation reuse. Along every loop-continuing path, the parameter may occur only as the
 leftmost leaf of the addition chain producing its own exact self-call argument, or pass through
@@ -1211,7 +1227,7 @@ that sibling's predecessor is released at the same back edge. A self-call that s
 afresh (`[first]`, or `first :: []`) with elements reading no loop parameter holds nothing of the
 predecessor, so beside self-calls that hand the parameter on it keeps the list a choice accumulator
 (`GRC_NO_RESETACCUMULATOR`): left in the arena, each fresh start stored a reference-counted element
-built from a call's parts in an arena cell that nothing released. Such a fresh start places a string
+built from a call's parts in an arena cell that nothing released. An arm of a match over a named function's result that hands on a value its own pattern bound (`match lookup(name)(saved) with Some(si) -> si | None -> []`, the saved table of a jump target taken at its label) counts as an accumulator arm too (`GRC_NO_CALLPARTACCUMULATOR`; both stages): the join takes a reference of its own to the part, a retain when it is reference-counted and a copy when it is not, so nothing is assumed about where the callee placed its result. A guarded arm, a callee that is a loop parameter, or an arm handing on anything but the pattern's own binding is not admitted. Left in the arena, the known and saved tables of the optimizer's branch-folding loop took each helper's owned result and never released it. When such an arena parameter remains, a join that becomes the parameter (the value of a `let` the self-call passes on, or the self-call's argument written in place) and mixes a reference-counted arm with an arena one copies the reference-counted arm into the arena, releasing it when the arm owned it, instead of copying the arena arm onto the reference-counted heap: the parameter releases nothing it is given (`GRC_NO_ARENASUCCESSORJOIN`; both stages). Such a fresh start places a string
 accumulator beside it on the reference-counted heap as well, so the loop's string promotion leaves
 alone a concatenation that the exit's join normalization already retained or copied
 (`acc + fromInt(length(table))`; `GRC_NO_NORMALIZEDARMCONCAT`): promoted, it became a fresh
@@ -2359,6 +2375,12 @@ reach is unproven. A complete reach account settles it without types: a callee t
 holds the argument whole takes the ordinary consumed-argument release instead, giving up the spine it
 handed over while preserving the elements the result may still hold.
 
+A `let recursive ... and ...` group whose members tail-call each other is lowered into one dispatch
+loop. That loop is synthesized while the group is lowered, after the move analysis has run, so it is
+summarized on its own: its parameters get the structural facts an ordinary recursive loop gets, and a
+fresh reference-counted value one member hands its sibling (`withdrawStoredRetains(storedValuesOf(cell)(instructions)([]))`)
+is placed and released like an ordinary loop's successor (`GRC_NO_DISPATCHFACTS` turns this off).
+
 ### Stacks
 
 Heap allocators serve values; call frames use the ordinary machine stack, and
@@ -2661,7 +2683,8 @@ produced, whatever its type allows. Kept by type, the record `retargetKnownCallE
 in stage 1's currying-stage inlining, which holds a `List(Int)` by its type, stayed in its slot until
 the next iteration overwrote it. A head that is not a scalar (`record.positions :: removed`, a field
 of the released value) is a part the successor really holds, and the rule does not apply to it
-(`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 keeps such a slot for a different reason, still open).
+(`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 mirrors it in the fresh-slot release of a value
+this iteration produced, the only place stage 0 reads these parts).
 A function returning its parameter on some arms and a fresh value on the others copies the
 parameter's arm into an owned reference-counted value and promises its result reference-counted. A
 tuple of scalars only is otherwise placed in the arena like any scalar, so a join of such tuples was
@@ -2725,8 +2748,22 @@ the pattern-owner duplicate of a binder that escapes elsewhere (into an accumula
 placement promotes to a real retain the arena tuple never releases: every round leaked each binder's
 graph. Such a duplicate is now withdrawn the same way when the tuple is its only reader and no promoted
 release was paired with it (`GRC_NO_SCRUTINEEOWNERDUPWITHDRAW`, stage 0). Stage 1 builds that tuple on
-the reference-counted heap and owns the binder there, so it has no arena tuple to withdraw from; a
-stage-1 port is owed only if stage 1 ever keeps such a scrutinee in the arena.
+the reference-counted heap when its element types are known and owns the binder there.
+
+In a loop still generic in its element type (an unread pass-through parameter keeps it so), the same
+shape was matched against a type variable and counted as binding a heap value, so the tuple was never
+taken for a borrowed scrutinee: a record, constructor, tuple, or cons shape that names no binder now
+binds nothing even against a variable (`GRC_NO_SHAPEONLYPATTERN`, both stages). Stage 1 keeps that
+generic tuple in the arena too, and settles it where it records the borrowed scrutinee: each
+pattern-owner marker the arena tuple stores, the tuple its only reader, becomes a plain borrow the
+root's placement never promotes; a tuple built on the reference-counted heap keeps its markers, whose
+retains it owns.
+
+An arm that names a part of such a tuple and never reads it (`(IrInstruction { location = loc }, _)` with
+`loc` unused) keeps nothing of the tuple either, yet its binder counted as binding a heap value: binders
+the arm's body and guard never mention now leave the tuple a borrowed scrutinee
+(`GRC_NO_UNUSEDSCRUTINEEBINDER`, stage 0). Stage 1 is flat on that loop, generic or not, and is owed a
+port only if it ever shows the leak.
 
 ### One-shot resumptive arms: the pre/post split
 

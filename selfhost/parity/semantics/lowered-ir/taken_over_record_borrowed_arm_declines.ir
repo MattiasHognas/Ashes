@@ -1132,7 +1132,7 @@ function __rcdrop_general_20  [RuntimeManagedAdtDropper]
     Return                Source=3   (taken_over_record_borrowed_arm_declines.ash:44:1)
 
 function lambda_19  [SourceFunction from probe]
-  locals=31 temps=118
+  locals=31 temps=119
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (taken_over_record_borrowed_arm_declines.ash:45:17)
@@ -1318,82 +1318,83 @@ function lambda_19  [SourceFunction from probe]
     CallClosure           Target=81 ClosureTemp=5 ArgTemp=74   (taken_over_record_borrowed_arm_declines.ash:46:8)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=26
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=26
+    LoadLocal             Target=82 Slot=8   (taken_over_record_borrowed_arm_declines.ash:45:5)
     StoreLocal            Slot=27 Source=81   (taken_over_record_borrowed_arm_declines.ash:45:5)
     RcDrop                SourceTemp=4 TypeName=List OwnerSlot=8
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=28
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=28
-    LoadLocal             Target=83 Slot=27   (taken_over_record_borrowed_arm_declines.ash:45:5)
-    LoadLocal             Target=84 Slot=7   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=85 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CmpIntNe              Target=86 Left=84 Right=85   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    JumpIfFalse           CondTemp=86 Target=general_rc_owned_absent_123   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    IsReferenceCounted    Target=87 SourceTemp=84
+    LoadLocal             Target=84 Slot=27   (taken_over_record_borrowed_arm_declines.ash:45:5)
+    LoadLocal             Target=85 Slot=7   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=86 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=87 Left=85 Right=86   (taken_over_record_borrowed_arm_declines.ash:44:1)
     JumpIfFalse           CondTemp=87 Target=general_rc_owned_absent_123   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    StoreLocal            Slot=29 Source=84   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    IsReferenceCounted    Target=88 SourceTemp=85
+    JumpIfFalse           CondTemp=88 Target=general_rc_owned_absent_123   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=29 Source=85   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rcdrop_list_124:
-    LoadLocal             Target=88 Slot=29   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=89 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CmpIntNe              Target=90 Left=88 Right=89   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    JumpIfFalse           CondTemp=90 Target=rcdrop_list_end_126   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    RcIsUnique            Target=91 SourceTemp=88
-    JumpIfFalse           CondTemp=91 Target=rcdrop_list_shared_125   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadMemOffset         Target=92 BasePtr=88 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    RcIsUnique            Target=93 SourceTemp=92
-    JumpIfFalse           CondTemp=93 Target=rc_drop_tuple_shared_127   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadMemOffset         Target=94 BasePtr=92 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=95 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CallKnown             Target=96 FuncLabel=__rcdrop_general_7 EnvTemp=95 ArgTemp=94   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadMemOffset         Target=97 BasePtr=92 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=98 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CallKnown             Target=99 FuncLabel=__rcdrop_general_20 EnvTemp=98 ArgTemp=97   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadLocal             Target=89 Slot=29   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=90 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=91 Left=89 Right=90   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    JumpIfFalse           CondTemp=91 Target=rcdrop_list_end_126   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=92 SourceTemp=89
+    JumpIfFalse           CondTemp=92 Target=rcdrop_list_shared_125   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=93 BasePtr=89 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=94 SourceTemp=93
+    JumpIfFalse           CondTemp=94 Target=rc_drop_tuple_shared_127   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=95 BasePtr=93 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=96 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=97 FuncLabel=__rcdrop_general_7 EnvTemp=96 ArgTemp=95   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=98 BasePtr=93 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=99 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=100 FuncLabel=__rcdrop_general_20 EnvTemp=99 ArgTemp=98   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rc_drop_tuple_shared_127:
-    RcDrop                SourceTemp=92 TypeName=Tuple RuntimeManaged=true
-    LoadMemOffset         Target=100 BasePtr=88 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=29 Source=100   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcDrop                SourceTemp=93 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=101 BasePtr=89 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=29 Source=101   (taken_over_record_borrowed_arm_declines.ash:44:1)
     Jump                  Target=rcdrop_list_124   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rcdrop_list_shared_125:
-    RcDrop                SourceTemp=88 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=89 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_126   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rcdrop_list_end_126:
-    StoreLocal            Slot=7 Source=85   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=7 Source=86   (taken_over_record_borrowed_arm_declines.ash:44:1)
   general_rc_owned_absent_123:
-    LoadLocal             Target=101 Slot=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=102 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CmpIntNe              Target=103 Left=101 Right=102   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    JumpIfFalse           CondTemp=103 Target=general_rc_owned_absent_131   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    IsReferenceCounted    Target=104 SourceTemp=101
+    LoadLocal             Target=102 Slot=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=103 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=104 Left=102 Right=103   (taken_over_record_borrowed_arm_declines.ash:44:1)
     JumpIfFalse           CondTemp=104 Target=general_rc_owned_absent_131   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    StoreLocal            Slot=30 Source=101   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    IsReferenceCounted    Target=105 SourceTemp=102
+    JumpIfFalse           CondTemp=105 Target=general_rc_owned_absent_131   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=30 Source=102   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rcdrop_list_132:
-    LoadLocal             Target=105 Slot=30   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=106 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CmpIntNe              Target=107 Left=105 Right=106   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    JumpIfFalse           CondTemp=107 Target=rcdrop_list_end_134   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    RcIsUnique            Target=108 SourceTemp=105
-    JumpIfFalse           CondTemp=108 Target=rcdrop_list_shared_133   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadMemOffset         Target=109 BasePtr=105 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    RcIsUnique            Target=110 SourceTemp=109
-    JumpIfFalse           CondTemp=110 Target=rc_drop_tuple_shared_135   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadMemOffset         Target=111 BasePtr=109 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=112 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CallKnown             Target=113 FuncLabel=__rcdrop_general_7 EnvTemp=112 ArgTemp=111   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadMemOffset         Target=114 BasePtr=109 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    LoadConstInt          Target=115 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    CallKnown             Target=116 FuncLabel=__rcdrop_general_20 EnvTemp=115 ArgTemp=114   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadLocal             Target=106 Slot=30   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=107 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CmpIntNe              Target=108 Left=106 Right=107   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    JumpIfFalse           CondTemp=108 Target=rcdrop_list_end_134   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=109 SourceTemp=106
+    JumpIfFalse           CondTemp=109 Target=rcdrop_list_shared_133   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=110 BasePtr=106 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcIsUnique            Target=111 SourceTemp=110
+    JumpIfFalse           CondTemp=111 Target=rc_drop_tuple_shared_135   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=112 BasePtr=110 OffsetBytes=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=113 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=114 FuncLabel=__rcdrop_general_7 EnvTemp=113 ArgTemp=112   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadMemOffset         Target=115 BasePtr=110 OffsetBytes=16   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    LoadConstInt          Target=116 Value=0   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    CallKnown             Target=117 FuncLabel=__rcdrop_general_20 EnvTemp=116 ArgTemp=115   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rc_drop_tuple_shared_135:
-    RcDrop                SourceTemp=109 TypeName=Tuple RuntimeManaged=true
-    LoadMemOffset         Target=117 BasePtr=105 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
-    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
-    StoreLocal            Slot=30 Source=117   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcDrop                SourceTemp=110 TypeName=Tuple RuntimeManaged=true
+    LoadMemOffset         Target=118 BasePtr=106 OffsetBytes=8   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    RcDrop                SourceTemp=106 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=30 Source=118   (taken_over_record_borrowed_arm_declines.ash:44:1)
     Jump                  Target=rcdrop_list_132   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rcdrop_list_shared_133:
-    RcDrop                SourceTemp=105 TypeName=List RuntimeManaged=true
+    RcDrop                SourceTemp=106 TypeName=List RuntimeManaged=true
     Jump                  Target=rcdrop_list_end_134   (taken_over_record_borrowed_arm_declines.ash:44:1)
   rcdrop_list_end_134:
-    StoreLocal            Slot=16 Source=102   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    StoreLocal            Slot=16 Source=103   (taken_over_record_borrowed_arm_declines.ash:44:1)
   general_rc_owned_absent_131:
-    Return                Source=83   (taken_over_record_borrowed_arm_declines.ash:44:1)
+    Return                Source=84   (taken_over_record_borrowed_arm_declines.ash:44:1)
 
 function lambda_22  [ClosureHelper from loop]
   locals=16 temps=24

@@ -1,0 +1,28 @@
+type Resolution =
+    | Known(Str)
+    | Pending
+
+let wrap (label: Str) (flag: Bool) = Known(label)
+
+let recursive group (labels: List(Str)) (agreed: Maybe(Str)) =
+    match labels with
+        | [] ->
+            match agreed with
+                | Some(found) ->
+                    if found == "lambda_1"
+                    then 1
+                    else 2
+                | None -> 0
+        | raw :: tail ->
+            match wrap(raw)(false) with
+                | Pending -> group(tail)(agreed)
+                | Known(label) -> group(tail)(Some(label))
+
+let probe (label: Str) = group([label, label])(None)
+
+let recursive loop (n: Int) (acc: Int) =
+    if n == 0
+    then acc
+    else loop(n - 1)(acc + probe("lambda_1"))
+
+Ashes.IO.print(loop(2)(0))

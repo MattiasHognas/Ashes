@@ -99,6 +99,17 @@ public sealed partial class Lowering
         TypeScheme scheme,
         int declinesBeforeValue)
     {
+        if (binder is Expr.Let let)
+        {
+            RegisterConstrainedSpecializationCandidate(
+                name,
+                binder,
+                value,
+                scheme,
+                _traitDictionaryFunctionsByBinding.ContainsKey(TraitBindingKey(let)),
+                declinesBeforeValue);
+        }
+
         if (!_configuration.EnableElementSpecialization
             || _lambdaDepth != 0
             || _abstractElementTmcDeclines == declinesBeforeValue
@@ -125,6 +136,20 @@ public sealed partial class Lowering
         bool usesTraitDictionary,
         int declinesBeforeValue)
     {
+        RegisterConstrainedSpecializationCandidate(
+            binder.Name,
+            binder,
+            binder.Value,
+            _topLevelFunctionRefs.TryGetValue(binder.Name, out var recursiveReference)
+                ? recursiveReference.Scheme
+                : Lookup(binder.Name) switch
+                {
+                    Binding.Scheme bound => bound.S,
+                    Binding.EnvScheme captured => captured.S,
+                    _ => null,
+                },
+            usesTraitDictionary,
+            declinesBeforeValue);
         if (!usesTraitDictionary && _topLevelFunctionRefs.TryGetValue(binder.Name, out var reference))
         {
             RegisterElementSpecializationCandidate(
@@ -272,19 +297,26 @@ public sealed partial class Lowering
 
     private string? GetOrCreateElementSpecialization(
         ElementSpecializationCandidate candidate,
-        IReadOnlyList<TypeRef> parameterTypes)
+        IReadOnlyList<TypeRef> parameterTypes,
+        bool constrained = false)
     {
         string cacheKey = candidate.Name + "|" + string.Join(",", parameterTypes.Select(ElementSpecializationTypeKey));
         if (_elementSpecializations.TryGetValue(cacheKey, out string? cached))
         {
             return cached;
         }
+        if (Environment.GetEnvironmentVariable("ASHES_COUNT_COPIES") is not null) { Console.Error.WriteLine($"ASHES_COPY {(constrained ? "constrained" : "plain")} {candidate.Name} depth={_elementSpecializationDepth}"); }
 
         string label = _elementSpecializations.Count == 0
             ? $"{candidate.GenericLabel}__element"
             : $"{candidate.GenericLabel}__element${_elementSpecializations.Count}";
         _elementSpecializations[cacheKey] = label;
         _functionNameByLabel[label] = candidate.Name;
+        if (constrained)
+        {
+            _constrainedSpecializationLabels.Add(label);
+        }
+
         RegisterOwnershipFunctionLabel(label, candidate.Binder);
 
         if (!LowerElementSpecializationBody(candidate, FreshenTypeVariables(parameterTypes), label, cacheKey))
@@ -319,7 +351,10 @@ public sealed partial class Lowering
         int InstructionCount,
         int NextTempSlot,
         Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
-        SpecializationOwnershipSnapshot? Ownership);
+        SpecializationOwnershipSnapshot? Ownership,
+        (TcoContext Loop, int Slot)? TcoArgumentDestination,
+        Expr.Cons? CallArgumentCell,
+        Expr? ArenaSuccessorJoin);
 
     /// <summary>
     /// Lowers the candidate's own source again with its curried parameters pinned to the call's concrete
@@ -333,6 +368,7 @@ public sealed partial class Lowering
         string label,
         string cacheKey)
     {
+        int diagnosticsBefore = _diag.StructuredErrors.Count;
         ElementSpecializationSavedContext saved = EnterElementSpecializationContext(parameterTypes);
         try
         {
@@ -366,6 +402,14 @@ public sealed partial class Lowering
 
             // Evidence that the copy actually bought something: a cons the cell gate still declined, or a
             // recursion the loop did not absorb, means the generic call was the better shape after all.
+            // A copy that reported anything (a function its isolated scope cannot resolve) is abandoned with its
+            // reports: the generic call it would have replaced compiles.
+            if (_diag.StructuredErrors.Count > diagnosticsBefore)
+            {
+                _diag.TruncateTo(diagnosticsBefore);
+                return false;
+            }
+
             return _elementSpecializationTmcDeclines == 0 && _elementSpecializationSelfReferences == 0;
         }
         finally
@@ -455,7 +499,10 @@ public sealed partial class Lowering
             _inst.Count,
             _nextTempSlot,
             SnapshotTempOwnershipFacts(),
-            EnterSpecializationOwnershipScope());
+            EnterSpecializationOwnershipScope(),
+            _tcoArgumentDestination,
+            _callArgumentCell,
+            _arenaSuccessorJoin);
 
         _scopes.Clear();
         _scopes.Push(ImmutableSortedDictionary.Create<string, Binding>(StringComparer.Ordinal));
@@ -472,6 +519,9 @@ public sealed partial class Lowering
         _annotationParamTypes = null;
         _annotationParamCursor = 0;
         _annotationTargetLambda = null;
+        _tcoArgumentDestination = null;
+        _callArgumentCell = null;
+        _arenaSuccessorJoin = null;
         _loweringTcoBackEdgeArguments = false;
         _suppressHoverRecording = true;
         _currentSourceExpr = null;
@@ -515,6 +565,9 @@ public sealed partial class Lowering
         _annotationParamCursor = saved.AnnotationCursor;
         _annotationTargetLambda = saved.AnnotationTarget;
         _loweringTcoBackEdgeArguments = saved.BackEdgeArguments;
+        _tcoArgumentDestination = saved.TcoArgumentDestination;
+        _callArgumentCell = saved.CallArgumentCell;
+        _arenaSuccessorJoin = saved.ArenaSuccessorJoin;
         _suppressHoverRecording = saved.SuppressHover;
         _currentSourceExpr = saved.SourceExpression;
         _elementSpecializationTmcDeclines = saved.TmcDeclines;

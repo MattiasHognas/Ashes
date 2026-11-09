@@ -223,4 +223,11 @@ internal sealed record GeneratedFuzzCase(
     /// <c>Ashes.Collection.Map</c>), imported ahead of the program the census renders.
     /// </summary>
     internal IReadOnlyList<string> Imports { get; init; } = [];
+
+    /// <summary>
+    /// The source with its <see cref="Imports"/> ahead of it, as semantic compilation needs it.
+    /// </summary>
+    internal string SourceWithImports => Imports.Count == 0
+        ? Source
+        : string.Concat(Imports.Select(module => "import " + module + "\n")) + "\n" + Source;
 }

@@ -1426,6 +1426,7 @@ public sealed partial class Lowering
         }
         ((int functionTemp, TypeRef functionType) function, IReadOnlyList<TraitConstraint> instantiatedConstraints) =
             LowerTraitDictionaryCallRoot(rootExpression);
+        RecordConstrainedCallTypes(rootExpression, arguments.Count, function.functionType);
         bool evidenceNeedsLaterArgumentTypes = TraitEvidenceNeedsLaterArgumentTypes(instantiatedConstraints);
         (List<int> Temps, TypeRef Result, List<HandedOverDictionaryArgument> HandedOver)? loweredArguments = LowerTraitDictionaryRealArguments(
             arguments,

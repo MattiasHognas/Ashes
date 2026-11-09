@@ -4,10 +4,18 @@ namespace Ashes.Fuzzing.Generation;
 
 internal sealed class AstInvariantValidator
 {
-    internal IReadOnlyList<string> ValidateScope(Ashes.Frontend.Program program)
+    /// <summary>
+    /// Checks that every name the program reads is in scope. A selector import such as
+    /// <c>Ashes.Collection.List.reverse</c> in <paramref name="imports"/> brings its last segment in.
+    /// </summary>
+    internal IReadOnlyList<string> ValidateScope(Ashes.Frontend.Program program, IReadOnlyList<string>? imports = null)
     {
         List<string> errors = [];
         HashSet<string> topLevel = new(StringComparer.Ordinal) { "Ok", "Error", "Some", "None", "Unit", "resume", "async" };
+        foreach (string import in imports ?? [])
+        {
+            topLevel.Add(import[(import.LastIndexOf('.') + 1)..]);
+        }
         foreach (TopLevelItem.Trait trait in program.Items.OfType<TopLevelItem.Trait>())
         {
             foreach (TraitMethodDecl method in trait.Decl.Methods)

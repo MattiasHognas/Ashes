@@ -234,6 +234,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new ArenaRecordUpdateReplacingFieldTemplate());
         registry.Register(new NestedListAccumulatorTemplate());
         registry.Register(new SiblingReceivesAccumulatorPartTemplate());
+        registry.Register(new DispatchLoopFreshArgumentTemplate());
+        registry.Register(new DispatchLoopBorrowedArgumentTemplate());
         registry.Register(new SpecializationOwnershipScopeTemplate());
         registry.Register(new ScalarFieldAccumulatorTemplate());
         registry.Register(new OwnedResultSuccessorPartsTemplate());
@@ -243,10 +245,16 @@ internal static class LeakCombinationTemplates
         registry.Register(new OwnFieldRecordTemplate());
         registry.Register(new ArenaRecordDerivedJoinTemplate());
         registry.Register(new TakenOverRecordTemplate());
+        registry.Register(new ExitParameterOwnFieldsTemplate());
         registry.Register(new ArenaSuccessorChildTemplate());
         registry.Register(new ArenaRequestedResultPartTemplate());
         registry.Register(new SelectorImportAliasTemplate());
         registry.Register(new ScrutineeOwnerDuplicateTemplate());
+        registry.Register(new GenericShapeScrutineeTemplate());
+        registry.Register(new UnusedScrutineeBinderTemplate());
+        registry.Register(new ConstrainedLoopAtCallerTypesTemplate());
+        registry.Register(new ArenaSuccessorJoinTemplate());
+        registry.Register(new CallPartAccumulatorTemplate());
     }
 }
 

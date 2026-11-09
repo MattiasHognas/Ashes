@@ -286,6 +286,7 @@ public sealed partial class Lowering
     {
         _maFuncs.Clear();
         _maAppliedLambdaKeys.Clear();
+        _maSynthesizedLoopKeys.Clear();
         _maValueRhs.Clear();
         _maNameIndex.Clear();
         _maKeyName.Clear();
@@ -469,6 +470,13 @@ public sealed partial class Lowering
 
     private bool IsAppliedLambdaFunction(FuncKey key)
         => _maAppliedLambdaKeys.ContainsValue(key);
+
+    // A dispatch loop the lowering synthesized for a recursive group is summarized for its own placement
+    // only: the reports describe the functions the program declares.
+    private readonly HashSet<FuncKey> _maSynthesizedLoopKeys = [];
+
+    private bool IsSurfacedFunction(FuncKey key)
+        => !IsAppliedLambdaFunction(key) && !_maSynthesizedLoopKeys.Contains(key);
 
     private void RegisterBindings(Expr.Let let, SourceFunctionOrigin? enclosingSource)
     {
@@ -844,7 +852,7 @@ public sealed partial class Lowering
     internal IReadOnlyCollection<string> AnalyzedFunctionNames =>
         _maAnalyzed
             ? _ownershipSummaries.Keys
-                .Where(key => !IsAppliedLambdaFunction(key))
+                .Where(IsSurfacedFunction)
                 .Select(key => _maKeyName[key])
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToList()
@@ -858,7 +866,7 @@ public sealed partial class Lowering
     internal IReadOnlyList<FunctionOwnershipSummary> OwnershipSummaries =>
         _maAnalyzed
             ? OrderOwnershipSummaries(_ownershipSummaries
-                .Where(entry => !IsAppliedLambdaFunction(entry.Key))
+                .Where(entry => IsSurfacedFunction(entry.Key))
                 .Select(entry => entry.Value))
                 .ToList()
             : [];
@@ -909,6 +917,31 @@ public sealed partial class Lowering
             && _ownershipSummaries.TryGetValue(function, out FunctionOwnershipSummary? summary)
                 ? summary
                 : null;
+    }
+
+    // A recursive group's dispatch is synthesized while the group is lowered, after the move analysis
+    // ran, so it is registered and summarized on its own: its loop then gets the structural
+    // parameter facts an ordinary recursive loop gets from the analysis. Facts that come from the
+    // whole-program passes (result reach, call census) are the conservative defaults.
+    private FuncKey? RegisterSynthesizedLoopFunction(Expr.Lambda lambda, string name, SourceFunctionOrigin origin, FuncKey enclosingMember)
+    {
+        if (!_maAnalyzed || _collectInferredTraitElaboration)
+        {
+            return null;
+        }
+
+        var key = new FuncKey(lambda);
+        _maFuncs[key] = (CollectLambdaParams(lambda), GetInnermostBody(lambda));
+        _maFunctionOrigins[key] = origin;
+        _maSynthesizedLoopKeys.Add(key);
+        _maKeyName[key] = name;
+        var scope = new Dictionary<string, FuncKey>(_maFunctionScopes.GetValueOrDefault(enclosingMember) ?? new Dictionary<string, FuncKey>(), StringComparer.Ordinal)
+        {
+            [name] = key,
+        };
+        _maFunctionScopes[key] = scope;
+        _ownershipSummaries[key] = CreateOwnershipSummary(key, name, _maFuncs[key]);
+        return key;
     }
 
     private FuncKey? GetRegisteredFunctionKey(Expr binder)
@@ -3137,7 +3170,8 @@ public sealed partial class Lowering
                 Expr.If conditional => IsAccumulatorEdgeArm(conditional.Then, parameterName, ordinal, parameterScope)
                     && IsAccumulatorEdgeArm(conditional.Else, parameterName, ordinal, parameterScope),
                 Expr.Match match => match.Cases.All(arm => !PatternBinds(arm.Pattern, parameterName)
-                    && IsAccumulatorEdgeArm(arm.Body, parameterName, ordinal, parameterScope)),
+                    && (IsAccumulatorEdgeArm(arm.Body, parameterName, ordinal, parameterScope)
+                        || IsCallResultPartArm(match, arm, parameterScope))),
                 _ => false,
             };
 
