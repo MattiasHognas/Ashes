@@ -148,7 +148,7 @@ public sealed partial class Lowering
                     Binding.EnvScheme captured => captured.S,
                     _ => null,
                 },
-            usesTraitDictionary || !_topLevelFunctionRefs.ContainsKey(binder.Name),
+            usesTraitDictionary,
             declinesBeforeValue);
         if (!usesTraitDictionary && _topLevelFunctionRefs.TryGetValue(binder.Name, out var reference))
         {

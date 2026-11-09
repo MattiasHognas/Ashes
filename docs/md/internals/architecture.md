@@ -1158,6 +1158,22 @@ absorb — the call stays generic and the rejection is cached against the same k
 concrete `filter` whose recursion survives specialization goes quadratic, which is worse than the
 generic call it replaced.
 
+**Constrained specialization** extends this to dictionary-passing generic functions
+(`GRC_NO_CONSTRAINEDSPECIALIZATION`). Lowered generically, such a function cannot tell what its
+values hold: a lookup's `Some`, an association list's replaced entry, or a cons at the abstract
+element stays an arena value holding a reference handed over by the caller, and nothing releases it.
+A top-level constrained function is a candidate when it recurses, or when its body declined a cons at
+an abstract element or called another candidate at its own abstract types. A generic loop that
+captures a candidate (so it has no label of its own) is a candidate on the same evidence. A call
+whose parameter types all settle is routed to a copy lowered from the function's own source at those
+types: every trait goal there resolves to its instance, no dictionary is passed, and the call is
+lowered as an ordinary call to the copy. Types settle from the arguments that are variables of a
+concrete type, or from what the discovery pass's whole-program substitution settled at the same call
+site, since a loop parameter's type is often fixed only by the call that would route. Inside a copy,
+a candidate's name resolves to the top-level function (the copy's scope holds only its own
+parameters), and the copy's call to itself is a plain self call. A copy that reports a diagnostic is
+abandoned with its reports, and the call stays a dictionary call.
+
 `TcoParamReuseAffinity.SelfAppendOnly` independently records the affine ownership discipline used
 by string reservation reuse. Along every loop-continuing path, the parameter may occur only as the
 leftmost leaf of the addition chain producing its own exact self-call argument, or pass through
