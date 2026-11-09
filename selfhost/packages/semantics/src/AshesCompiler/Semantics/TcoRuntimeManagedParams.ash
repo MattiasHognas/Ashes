@@ -526,6 +526,24 @@ let shapeIsCallConsumingParameter (function: Expr) (argument: Expr) (index: Int)
         | ExprVar(passed) -> shapeResolveParameter(passed)(shadowed)(parameters) == Some(index) && shapeCallFunctionReadsNoLoopParameter(function)(shadowed)(parameters)
         | _ -> false
 
+// The root of a call chain: the function the arguments are applied to.
+let recursive shapeCallRoot (expression: Expr) =
+    match shapeUnspan(expression) with
+        | ExprCall(function, _argument, _isSugar, _layout) -> shapeCallRoot(function)
+        | other -> other
+
+// Stage 0's `IsCallResultPartArm`: an arm of a match over a named function's result that hands on a
+// value its own pattern bound, a part of the call's result. The join takes a reference of its own to
+// the part before the scrutinee is released, so nothing is assumed about where the callee placed
+// its result. A callee that is a loop parameter or any other computed function is not admitted.
+let shapeIsCallResultPartArm (value: Expr) (pattern: Pattern) (body: Expr) (guard: Maybe(Expr)) (shadowed: List(Str)) (parameters: List(Str)) =
+    match (shapeUnspan(value), shapeUnspan(body), guard) with
+        | (ExprCall(function, _argument, _isSugar, _layout), ExprVar(part), None) ->
+            match shapeCallRoot(function) with
+                | ExprVar(callee) -> shapeResolveParameter(callee)(shadowed)(parameters) == None && patternBindsName(part)(pattern)
+                | _ -> false
+        | _ -> false
+
 // Stage 0's `IsAccumulatorEdgeArm` and `IsBranchingAccumulatorEdge`: an arm hands the parameter at
 // `index` on, conses onto it a head that reads no loop parameter, or replaces it with a fresh list,
 // a literal or cells consed onto nil, none of whose elements reads one (nil resets the
@@ -545,12 +563,12 @@ let recursive shapeIsAccumulatorArm (arm: Expr) (index: Int) (name: Str) (shadow
 and shapeIsChoiceEdge (expression: Expr) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
     match shapeUnspan(expression) with
         | ExprIf(_condition, thenBranch, elseBranch) -> shapeIsAccumulatorArm(thenBranch)(index)(name)(shadowed)(parameters) && shapeIsAccumulatorArm(elseBranch)(index)(name)(shadowed)(parameters)
-        | ExprMatch(_value, cases, _position) -> shapeCasesAccumulate(cases)(index)(name)(shadowed)(parameters)
+        | ExprMatch(value, cases, _position) -> shapeCasesAccumulate(value)(cases)(index)(name)(shadowed)(parameters)
         | _ -> false
-and shapeCasesAccumulate (cases: List((Pattern, Expr, Maybe(Expr)))) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
+and shapeCasesAccumulate (value: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (index: Int) (name: Str) (shadowed: List(Str)) (parameters: List(Str)) =
     match cases with
         | [] -> true
-        | (pattern, body, _guard) :: rest -> !patternBindsName(name)(pattern) && shapeIsAccumulatorArm(body)(index)(name)(shadowed)(parameters) && shapeCasesAccumulate(rest)(index)(name)(shadowed)(parameters)
+        | (pattern, body, guard) :: rest -> !patternBindsName(name)(pattern) && (shapeIsAccumulatorArm(body)(index)(name)(shadowed)(parameters) || shapeIsCallResultPartArm(value)(pattern)(body)(guard)(shadowed)(parameters)) && shapeCasesAccumulate(value)(rest)(index)(name)(shadowed)(parameters)
 
 let recursive shapeLookupLetValue (name: Str) (letValues: List((Str, Expr))) =
     match letValues with

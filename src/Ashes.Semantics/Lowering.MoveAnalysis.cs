@@ -3122,7 +3122,8 @@ public sealed partial class Lowering
                 Expr.If conditional => IsAccumulatorEdgeArm(conditional.Then, parameterName, ordinal, parameterScope)
                     && IsAccumulatorEdgeArm(conditional.Else, parameterName, ordinal, parameterScope),
                 Expr.Match match => match.Cases.All(arm => !PatternBinds(arm.Pattern, parameterName)
-                    && IsAccumulatorEdgeArm(arm.Body, parameterName, ordinal, parameterScope)),
+                    && (IsAccumulatorEdgeArm(arm.Body, parameterName, ordinal, parameterScope)
+                        || IsCallResultPartArm(match, arm, parameterScope))),
                 _ => false,
             };
 

@@ -1004,6 +1004,12 @@ public sealed partial class Lowering
             return;
         }
 
+        if (DemoteArenaSuccessorJoinArms(IsArenaSuccessorJoin(iff), arms, resultType))
+        {
+            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: false);
+            return;
+        }
+
         if (NormalizeMixedJoinArms(arms, resultType))
         {
             RecordNormalizedJoinTemp(resultTemp);
@@ -1026,7 +1032,7 @@ public sealed partial class Lowering
             ? EmitOwnedResultOrCopy(source, type)
             : EmitRuntimeManagedTcoDeepCopy(source, type));
 
-    private void ReplaceJoinArmStore(IrInst.StoreLocal store, Func<int, int> normalize)
+    private void ReplaceJoinArmStore(IrInst.StoreLocal store, Func<int, int> normalize, bool runtimeManaged = true)
     {
         int index = _inst.FindLastIndex(instruction => ReferenceEquals(instruction, store));
         if (index < 0)
@@ -1040,7 +1046,11 @@ public sealed partial class Lowering
         try
         {
             int normalizedTemp = normalize(store.Source);
-            MarkRuntimeManagedTemp(normalizedTemp);
+            if (runtimeManaged)
+            {
+                MarkRuntimeManagedTemp(normalizedTemp);
+            }
+
             Emit(new IrInst.StoreLocal(store.Slot, normalizedTemp));
         }
         finally

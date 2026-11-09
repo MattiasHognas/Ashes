@@ -4615,6 +4615,8 @@ public sealed partial class Lowering
             _arenaSuccessorLetLoop = _tcoCtx;
         }
 
+        Expr? outerSuccessorJoin = EnterArenaSuccessorLetJoin(let);
+
         try
         {
             return TryLowerRuntimeManagedLetValue(let, request, out (int Temp, TypeRef Type) lowered)
@@ -4624,6 +4626,7 @@ public sealed partial class Lowering
         finally
         {
             _arenaSuccessorLetLoop = outerSuccessorLetLoop;
+            _arenaSuccessorJoin = outerSuccessorJoin;
         }
     }
 
@@ -12954,6 +12957,8 @@ public sealed partial class Lowering
     {
         (TcoContext Loop, int Slot)? savedDestination = _tcoArgumentDestination;
         _tcoArgumentDestination = index < tco.ParamSlots.Count ? (tco, tco.ParamSlots[index]) : null;
+        Expr? outerSuccessorJoin = _arenaSuccessorJoin;
+        _arenaSuccessorJoin = index < tco.ParamSlots.Count && !tco.IsRuntimeManagedSlot(tco.ParamSlots[index]) ? SuccessorJoinOf(argument) : null;
         try
         {
             return LowerExpr(argument, request).AsPair();
@@ -12961,6 +12966,7 @@ public sealed partial class Lowering
         finally
         {
             _tcoArgumentDestination = savedDestination;
+            _arenaSuccessorJoin = outerSuccessorJoin;
         }
     }
 

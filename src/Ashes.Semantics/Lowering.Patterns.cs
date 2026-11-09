@@ -127,6 +127,12 @@ public sealed partial class Lowering
             uniform |= ReachingArmsAllReferenceCounted(joinArms);
         }
 
+        if (!uniform && joinArms is not null && DemoteArenaSuccessorJoinArms(IsArenaSuccessorMatch(cases), joinArms, resultType))
+        {
+            RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged: false);
+            return;
+        }
+
         bool normalized = !uniform && joinArms is not null && NormalizeMixedJoinArms(joinArms, resultType);
         if (normalized)
         {

@@ -353,7 +353,8 @@ public sealed partial class Lowering
         Dictionary<int, LoweredTempOwnershipFact> TempOwnershipFacts,
         SpecializationOwnershipSnapshot? Ownership,
         (TcoContext Loop, int Slot)? TcoArgumentDestination,
-        Expr.Cons? CallArgumentCell);
+        Expr.Cons? CallArgumentCell,
+        Expr? ArenaSuccessorJoin);
 
     /// <summary>
     /// Lowers the candidate's own source again with its curried parameters pinned to the call's concrete
@@ -500,7 +501,8 @@ public sealed partial class Lowering
             SnapshotTempOwnershipFacts(),
             EnterSpecializationOwnershipScope(),
             _tcoArgumentDestination,
-            _callArgumentCell);
+            _callArgumentCell,
+            _arenaSuccessorJoin);
 
         _scopes.Clear();
         _scopes.Push(ImmutableSortedDictionary.Create<string, Binding>(StringComparer.Ordinal));
@@ -519,6 +521,7 @@ public sealed partial class Lowering
         _annotationTargetLambda = null;
         _tcoArgumentDestination = null;
         _callArgumentCell = null;
+        _arenaSuccessorJoin = null;
         _loweringTcoBackEdgeArguments = false;
         _suppressHoverRecording = true;
         _currentSourceExpr = null;
@@ -564,6 +567,7 @@ public sealed partial class Lowering
         _loweringTcoBackEdgeArguments = saved.BackEdgeArguments;
         _tcoArgumentDestination = saved.TcoArgumentDestination;
         _callArgumentCell = saved.CallArgumentCell;
+        _arenaSuccessorJoin = saved.ArenaSuccessorJoin;
         _suppressHoverRecording = saved.SuppressHover;
         _currentSourceExpr = saved.SourceExpression;
         _elementSpecializationTmcDeclines = saved.TmcDeclines;
