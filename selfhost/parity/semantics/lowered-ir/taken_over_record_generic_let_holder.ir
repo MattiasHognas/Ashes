@@ -1049,7 +1049,7 @@ function lambda_17  [SourceFunction from makeCases]
     Return                Source=68   (taken_over_record_generic_let_holder.ash:39:1)
 
 function lambda_20  [ClosureHelper from check]
-  locals=18 temps=34
+  locals=18 temps=36
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (taken_over_record_generic_let_holder.ash:42:21)
@@ -1065,7 +1065,7 @@ function lambda_20  [ClosureHelper from check]
     LoadEnv               Target=9 Index=2   (taken_over_record_generic_let_holder.ash:43:8)
     LoadLocal             Target=10 Slot=8   (taken_over_record_generic_let_holder.ash:43:14)
     Borrow                Target=11 SourceTemp=10
-    RcDup                 Target=33 SourceTemp=11   (taken_over_record_generic_let_holder.ash:43:8)
+    RcDup                 Target=34 SourceTemp=11   (taken_over_record_generic_let_holder.ash:43:8)
     CallClosure           Target=12 ClosureTemp=9 ArgTemp=11   (taken_over_record_generic_let_holder.ash:43:8)
     RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
     ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
@@ -1073,44 +1073,49 @@ function lambda_20  [ClosureHelper from check]
     LoadEnv               Target=13 Index=2   (taken_over_record_generic_let_holder.ash:43:26)
     LoadLocal             Target=14 Slot=8   (taken_over_record_generic_let_holder.ash:43:32)
     Borrow                Target=15 SourceTemp=14
+    RcDup                 Target=35 SourceTemp=15   (taken_over_record_generic_let_holder.ash:43:26)
     CallClosure           Target=16 ClosureTemp=13 ArgTemp=15   (taken_over_record_generic_let_holder.ash:43:26)
     RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
     ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
     AddInt                Target=17 Left=12 Right=16   (taken_over_record_generic_let_holder.ash:43:8)
-    RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
-    StoreLocal            Slot=17 Source=6
+    LoadLocal             Target=18 Slot=8   (taken_over_record_generic_let_holder.ash:42:6)
+    StoreLocal            Slot=17 Source=18
   taken_over_cell_115:
-    LoadLocal             Target=20 Slot=17
-    LoadConstInt          Target=21 Value=0
-    CmpIntNe              Target=22 Left=20 Right=21
-    JumpIfFalse           CondTemp=22 Target=taken_over_done_114
-    IsReferenceCounted    Target=23 SourceTemp=20
-    JumpIfFalse           CondTemp=23 Target=taken_over_arena_cell_116
+    LoadLocal             Target=21 Slot=17
+    LoadConstInt          Target=22 Value=0
+    CmpIntNe              Target=23 Left=21 Right=22
+    JumpIfFalse           CondTemp=23 Target=lambda_20_rc_edge_8_1
+    IsReferenceCounted    Target=24 SourceTemp=21
+    JumpIfFalse           CondTemp=24 Target=taken_over_arena_cell_116
+    RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
     Jump                  Target=taken_over_done_114
   taken_over_arena_cell_116:
-    LoadMemOffset         Target=24 BasePtr=20 OffsetBytes=0
-    IsReferenceCounted    Target=25 SourceTemp=24
-    JumpIfFalse           CondTemp=25 Target=taken_over_arena_head_118
+    LoadMemOffset         Target=25 BasePtr=21 OffsetBytes=0
+    IsReferenceCounted    Target=26 SourceTemp=25
+    JumpIfFalse           CondTemp=26 Target=taken_over_arena_head_118
     Jump                  Target=taken_over_next_117
   taken_over_arena_head_118:
-    LoadMemOffset         Target=26 BasePtr=24 OffsetBytes=0
-    LoadConstInt          Target=27 Value=0
-    CmpIntNe              Target=28 Left=26 Right=27
-    JumpIfFalse           CondTemp=28 Target=taken_over_next_117
-    IsReferenceCounted    Target=29 SourceTemp=26
+    LoadMemOffset         Target=27 BasePtr=25 OffsetBytes=0
+    LoadConstInt          Target=28 Value=0
+    CmpIntNe              Target=29 Left=27 Right=28
     JumpIfFalse           CondTemp=29 Target=taken_over_next_117
-    LoadConstInt          Target=30 Value=0
-    CallKnown             Target=31 FuncLabel=__rcdrop_general_7 EnvTemp=30 ArgTemp=26
+    IsReferenceCounted    Target=30 SourceTemp=27
+    JumpIfFalse           CondTemp=30 Target=taken_over_next_117
+    LoadConstInt          Target=31 Value=0
+    CallKnown             Target=32 FuncLabel=__rcdrop_general_7 EnvTemp=31 ArgTemp=27
   taken_over_next_117:
-    LoadMemOffset         Target=32 BasePtr=20 OffsetBytes=8
-    StoreLocal            Slot=17 Source=32
+    LoadMemOffset         Target=33 BasePtr=21 OffsetBytes=8
+    StoreLocal            Slot=17 Source=33
     Jump                  Target=taken_over_cell_115
   taken_over_done_114:
     StoreLocal            Slot=15 Source=17   (taken_over_record_generic_let_holder.ash:42:6)
     RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=16
     ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=16
-    LoadLocal             Target=19 Slot=15   (taken_over_record_generic_let_holder.ash:42:6)
-    Return                Source=19   (taken_over_record_generic_let_holder.ash:41:1)
+    LoadLocal             Target=20 Slot=15   (taken_over_record_generic_let_holder.ash:42:6)
+    Return                Source=20   (taken_over_record_generic_let_holder.ash:41:1)
+  lambda_20_rc_edge_8_1:
+    RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
+    Jump                  Target=taken_over_done_114
 
 function lambda_19  [SourceFunction from check]
   locals=2 temps=5

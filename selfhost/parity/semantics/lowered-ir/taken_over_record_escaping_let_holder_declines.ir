@@ -1088,7 +1088,7 @@ function __rcnorm_21  [RuntimeManagedAdtNormalizer]
     Return                Source=14   (taken_over_record_escaping_let_holder_declines.ash:41:1)
 
 function lambda_20  [ClosureHelper from firstPattern]
-  locals=22 temps=44
+  locals=22 temps=45
     SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
     SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
     LoadEnv               Target=0 Index=0   (taken_over_record_escaping_let_holder_declines.ash:42:21)
@@ -1108,7 +1108,6 @@ function lambda_20  [ClosureHelper from firstPattern]
     JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_94   (taken_over_record_escaping_let_holder_declines.ash:44:9)
     LoadMemOffset         Target=13 BasePtr=10 OffsetBytes=0   (taken_over_record_escaping_let_holder_declines.ash:44:9)
     LoadMemOffset         Target=14 BasePtr=10 OffsetBytes=8   (taken_over_record_escaping_let_holder_declines.ash:44:9)
-    RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
     LoadMemOffset         Target=15 BasePtr=13 OffsetBytes=0   (taken_over_record_escaping_let_holder_declines.ash:44:9)
     StoreLocal            Slot=12 Source=15   (taken_over_record_escaping_let_holder_declines.ash:44:9)
     LoadMemOffset         Target=16 BasePtr=13 OffsetBytes=8   (taken_over_record_escaping_let_holder_declines.ash:44:9)
@@ -1128,7 +1127,6 @@ function lambda_20  [ClosureHelper from firstPattern]
     SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
     LoadConstInt          Target=22 Value=0   (taken_over_record_escaping_let_holder_declines.ash:44:9)
     CmpIntEq              Target=23 Left=10 Right=22   (taken_over_record_escaping_let_holder_declines.ash:44:9)
-    RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
     JumpIfFalse           CondTemp=23 Target=match_arm_cleanup_95   (taken_over_record_escaping_let_holder_declines.ash:44:9)
     AllocAdt              Target=24 Tag=0 FieldCount=0   (taken_over_record_escaping_let_holder_declines.ash:46:21)
     StoreLocal            Slot=9 Source=24   (taken_over_record_escaping_let_holder_declines.ash:44:9)
@@ -1142,32 +1140,34 @@ function lambda_20  [ClosureHelper from firstPattern]
     StoreLocal            Slot=9 Source=25   (taken_over_record_escaping_let_holder_declines.ash:44:9)
   match_end_91:
     LoadLocal             Target=26 Slot=9   (taken_over_record_escaping_let_holder_declines.ash:44:9)
+    LoadLocal             Target=27 Slot=8   (taken_over_record_escaping_let_holder_declines.ash:42:6)
+    RcDrop                SourceTemp=6 TypeName=List OwnerSlot=8
     StoreLocal            Slot=19 Source=26   (taken_over_record_escaping_let_holder_declines.ash:42:6)
-    LoadLocal             Target=28 Slot=19   (taken_over_record_escaping_let_holder_declines.ash:42:6)
-    IsReferenceCounted    Target=29 SourceTemp=28
-    JumpIfFalse           CondTemp=29 Target=rc_representation_copy_96   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    RcDup                 Target=30 SourceTemp=28 RuntimeManaged=true
-    StoreLocal            Slot=21 Source=30   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadLocal             Target=29 Slot=19   (taken_over_record_escaping_let_holder_declines.ash:42:6)
+    IsReferenceCounted    Target=30 SourceTemp=29
+    JumpIfFalse           CondTemp=30 Target=rc_representation_copy_96   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    RcDup                 Target=31 SourceTemp=29 RuntimeManaged=true
+    StoreLocal            Slot=21 Source=31   (taken_over_record_escaping_let_holder_declines.ash:41:1)
     Jump                  Target=rc_representation_done_97   (taken_over_record_escaping_let_holder_declines.ash:41:1)
   rc_representation_copy_96:
-    LoadConstInt          Target=32 Value=0   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    CallKnown             Target=33 FuncLabel=__rcnorm_21 EnvTemp=32 ArgTemp=28   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    StoreLocal            Slot=21 Source=33   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadConstInt          Target=33 Value=0   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    CallKnown             Target=34 FuncLabel=__rcnorm_21 EnvTemp=33 ArgTemp=29   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    StoreLocal            Slot=21 Source=34   (taken_over_record_escaping_let_holder_declines.ash:41:1)
   rc_representation_done_97:
-    LoadLocal             Target=34 Slot=21   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    LoadArgumentOwnership Target=35   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    LoadConstInt          Target=36 Value=2   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    ShrInt                Target=37 Left=35 Right=36   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    LoadConstInt          Target=38 Value=1   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    AndInt                Target=39 Left=37 Right=38   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    JumpIfFalse           CondTemp=39 Target=independent_result_not_requested_105   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    LoadArgumentOwnership Target=40   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    LoadConstInt          Target=41 Value=-8   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    AndInt                Target=42 Left=40 Right=41   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    LoadConstInt          Target=43 Value=2305843009213693952   (taken_over_record_escaping_let_holder_declines.ash:41:1)
-    StoreMemOffset        BasePtr=42 OffsetBytes=0 Source=43   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadLocal             Target=35 Slot=21   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadArgumentOwnership Target=36   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadConstInt          Target=37 Value=2   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    ShrInt                Target=38 Left=36 Right=37   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadConstInt          Target=39 Value=1   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    AndInt                Target=40 Left=38 Right=39   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    JumpIfFalse           CondTemp=40 Target=independent_result_not_requested_105   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadArgumentOwnership Target=41   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadConstInt          Target=42 Value=-8   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    AndInt                Target=43 Left=41 Right=42   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    LoadConstInt          Target=44 Value=2305843009213693952   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    StoreMemOffset        BasePtr=43 OffsetBytes=0 Source=44   (taken_over_record_escaping_let_holder_declines.ash:41:1)
   independent_result_not_requested_105:
-    Return                Source=34   (taken_over_record_escaping_let_holder_declines.ash:41:1)
+    Return                Source=35   (taken_over_record_escaping_let_holder_declines.ash:41:1)
 
 function lambda_19  [SourceFunction from firstPattern]
   locals=2 temps=4

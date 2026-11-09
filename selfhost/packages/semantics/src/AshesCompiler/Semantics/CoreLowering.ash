@@ -20181,25 +20181,27 @@ let recursive takeHeldTakenOverResult (temp: Int) (held: List((Int, Str, CoreSet
 
 // Stage 0's `SettleLetScopedTakenOver`: at the end of a let scope whose value is a held call result,
 // the let is the holder, settled when nothing the enclosing function returns can reach the value. The
-// walk reads the value through a load of the let's own slot (stage 0's `LetOwnerLoadForSettle`):
-// lifetime placement follows the owner's loads, so the owner's release lands after the walk.
+// walk reads the value through a load of the let's own slot (stage 0's `LetOwnerLoadForSettle`),
+// emitted for every held value as stage 0 does before its proof: lifetime placement follows the
+// owner's loads, so the owner's release lands after the walk.
 let settleLetScopedTakenOver (ownerSlot: Int) (valueTemp: Int) (state: CoreLoweringState) =
     match state
     |> stateTakenOverHeldResults
     |> takeHeldTakenOverResult(valueTemp) with
         | None -> state
         | Some(((callee, kind, span), remaining)) ->
-            let taken = withStateTakenOverHeldResults(remaining)(state)
-            in
-                if settleKindProven(callee)(span)(kind)(taken) && letScopedSettleOutOfReach(span)(taken)
-                then
-                    match freshTemp(taken) with
-                        | FreshTemp { state = loadState, temp = ownerLoad } ->
-                            match loadState
-                            |> emit(LoadLocal(ownerLoad)(ownerSlot))
-                            |> newTakenOverSettle(ownerLoad)(callee)(kind) with
+            match state
+            |> withStateTakenOverHeldResults(remaining)
+            |> freshTemp with
+                | FreshTemp { state = loadState, temp = ownerLoad } ->
+                    let taken =
+                        emit(LoadLocal(ownerLoad)(ownerSlot))(loadState)
+                    in
+                        if settleKindProven(callee)(span)(kind)(taken) && letScopedSettleOutOfReach(span)(taken)
+                        then
+                            match newTakenOverSettle(ownerLoad)(callee)(kind)(taken) with
                                 | (noted, placeholder) -> noted with reversedInstructions = placeholder :: noted.reversedInstructions
-                else taken
+                        else taken
 
 let recursive fieldTypeHeldBy (resultType: SemanticType) (fields: List((Int, SemanticType))) (state: CoreLoweringState) =
     match fields with

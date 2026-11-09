@@ -284,6 +284,7 @@ public sealed partial class Lowering
 
         (Expr.Call call, int temp, TypeRef heldType) = _takenOverHeldResults[index];
         _takenOverHeldResults.RemoveAt(index);
+        int settled = LetOwnerLoadForSettle(binding, temp);
         if (TryNewTakenOverSettle(call, heldType, out PendingTakenOverSettle? settle))
         {
             int id = _nextTakenOverSettleId++;
@@ -292,7 +293,6 @@ public sealed partial class Lowering
                 EnclosingLabels = [.. _loweringFunctionLabels],
                 LetScoped = true,
             };
-            int settled = LetOwnerLoadForSettle(binding, temp);
             AnchorTakenOverSettle(_inst.Count > 0 ? _inst[^1] : null, id, settled);
         }
     }
