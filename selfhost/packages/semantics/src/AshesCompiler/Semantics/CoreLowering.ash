@@ -22941,6 +22941,20 @@ let recursive openSiblingResultNames (selfName: Str) (bindings: List(CoreBinding
             then name :: openSiblingResultNames(selfName)(rest)(state)
             else openSiblingResultNames(selfName)(rest)(state)
 
+// The members whose result is open at the body's entry, the body's own binding among them when a
+// sibling's is too: stage 0 lowers the body once, with every member's result still open at every
+// call, so a self call asks for an arena result also when a sibling's resolved result has this body
+// lowered again.
+let openGroupResultNames (selfName: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match openSiblingResultNames(selfName)(bindings)(state) with
+        | [] -> []
+        | siblings ->
+            if state
+            |> deferredResultNames(selfName)(bindings)
+            |> containsLabel(selfName)
+            then selfName :: siblings
+            else siblings
+
 let recursive withoutFirstName (name: Str) (names: List(Str)) =
     match names with
         | [] -> []
@@ -22981,7 +22995,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             |> stateSelfResultDeferredNames
             |> append(deferredResultNames(selfName)(selfBindings)(current)))(current))
         |> (given (current: CoreLoweringState) ->
-            withStateSiblingResultOpenNames(openSiblingResultNames(selfName)(selfBindings)(current))(current))
+            withStateSiblingResultOpenNames(openGroupResultNames(selfName)(selfBindings)(current))(current))
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> withStatePendingOperatorDefaults([])(current))
         |> (given (current: CoreLoweringState) -> withStateResourceStates([])(current))
