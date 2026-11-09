@@ -3655,11 +3655,15 @@ let recursive tailPositionForwards expression =
 // the cons ITSELF still stands where the function's result does, and that fact is what decides
 // whether its children are transferred out of the loop and whether it is the tail-modulo-constructor
 // shape. Stage 0 reads its ambient flag before the cons clears it; the same value is kept here by
-// forwarding tail position (and only tail position, never `tailCall`) into the cons.
+// forwarding tail position (and only tail position, never `tailCall`) into the cons. A record or a
+// record update standing there is the loop's result the same way (stage 0's ambient flag at its
+// construction), which the duplicates its cells keep for the result's copy are owned against.
 let recursive tailPositionOrConsForwards expression =
     match expression with
         | ExprAt(_span, inner) -> tailPositionOrConsForwards(inner)
         | ExprCons(_, _) -> true
+        | ExprRecord(_, _, _) -> true
+        | ExprRecordUpdate(_, _) -> true
         | _ -> tailPositionForwards(expression)
 
 // The transfer of an aggregate's children reaches the forms that forward their result and the
@@ -25717,16 +25721,18 @@ let recursive cellWordSource (cell: Int) (offset: Int) (instructions: List(IrIns
 // argument at a loop function's result (`Spine(root = root, arguments = argument :: arguments)`
 // over a part of the loop parameter) holds the pattern-owner duplicate of its head; the return
 // normalizes the result into a copy that retains the head itself and the arena cell releases
-// nothing, so the duplicate goes to an owned slot released behind the result.
+// nothing, so the duplicate goes to an owned slot released behind the result. The duplicate is a
+// marker or already a real retain, as when the head's pattern owner is runtime-managed
+// (`fn with calls = target :: fn.calls`, `target` matched out of a list parameter).
 let keepLoopResultFieldCellHeadDuplicateOwned (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
     match (lowered, unspanArgument(argument)) with
         | (LoweredCoreValue { state = state, temp = cellTemp, semanticType = listType, error = None }, ExprCons(headExpression, _tail)) ->
             match (cellWordSource(cellTemp)(0)(state.reversedInstructions), unspanArgument(headExpression), resolveType(state)(listType)) with
                 | (Some(headTemp), ExprVar(name), SemList(headType)) ->
-                    if !runtimeManaged && request.tailPosition && generalRcEnabled(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot, patternOwnerBinding(name)(state)) with
+                    if !runtimeManaged && (request.tailPosition || request.consTailPosition) && generalRcEnabled(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot, patternOwnerBinding(name)(state)) with
                         | (Some(_frame), None, None, Some(_fact)) -> true
                         | _ -> false) && (match (definitionOfTemp(headTemp)(state.reversedInstructions), definitionOfTemp(cellTemp)(state.reversedInstructions)) with
-                        | (Some(RcDup(_target, _source, false, _mayBeEmpty)), Some(Alloc(_cell, 16, false))) -> true
+                        | (Some(RcDup(_target, _source, _runtimeManagedRetain, _mayBeEmpty)), Some(Alloc(_cell, 16, false))) -> true
                         | _ -> false)
                     then
                         match freshLocal(state) with
@@ -26923,7 +26929,7 @@ let recordCallArgumentRetain (duplicate: Int) (slot: Int) (fieldType: SemanticTy
 // return copies the record onto the reference-counted heap and the arena record releases nothing.
 let keepLoopResultUpdateFieldDuplicateOwned (duplicate: Int) (fieldType: SemanticType) (state: CoreLoweringState) =
     if generalRcEnabled(state) && (match consumerRequestOf(state) with
-        | ConsumerRequest { tailPosition = tailPosition } -> tailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match stateTcoLoopFrame(state) with
+        | ConsumerRequest { tailPosition = tailPosition, consTailPosition = consTailPosition } -> tailPosition || consTailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match stateTcoLoopFrame(state) with
         | Some(_frame) -> true
         | None -> false)
     then
@@ -26989,7 +26995,7 @@ let lowerUpdatedFieldValue (fieldCells: Bool) (expression: Expr) lower (state: C
         |> lower(expression)
     else lower(expression)(state)
 
-let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless handsOver (fieldCells: Bool) lower reversedTemps reversedTypes state =
+let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp targetSlot index tagless handsOver (runtimeManaged: Bool) (updateRequest: ConsumerRequest) lower reversedTemps reversedTypes state =
     match (fieldNames, fieldTypes) with
         | ([], []) -> finishCoreValues(state)(reversedTemps)(reversedTypes)
         | (fieldName :: fieldRest, fieldType :: typeRest) ->
@@ -27008,7 +27014,8 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         )
                     | Some(expression) ->
                         state
-                        |> lowerUpdatedFieldValue(fieldCells)(expression)(lower)
+                        |> lowerUpdatedFieldValue(updateRequest.recordFieldCells)(expression)(lower)
+                        |> keepLoopResultFieldCellHeadDuplicateOwned(updateRequest)(runtimeManaged)(expression)
                         |> finishUpdatedRecordField(fieldType)(reversedTemps)(reversedTypes)
                         |> handUpdatedFieldToOwnedSlot(expression)(fieldType)(handsOver)
             in
@@ -27024,7 +27031,8 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                             index + 1,
                             tagless,
                             handsOver,
-                            fieldCells,
+                            runtimeManaged,
+                            updateRequest,
                             lower,
                             nextTemps,
                             nextTypes,
@@ -27032,30 +27040,30 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp t
                         )
         | _ -> failedCoreValues(state)(UnsupportedCoreLoweringExpression("record layout arity"))
 
-let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp targetSlot (fieldCells: Bool) lower typed =
+let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp targetSlot (updateRequest: ConsumerRequest) lower typed =
     match (layout, typed) with
         | (_layout, (failedState, Some(error))) -> failure(failedState)(error)
         | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
-            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(runtimeManaged == false && handsFreshChildrenToOwnedSlots(resultType)(typedState))(fieldCells)(lower)([])([])
+            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(0)(tagless)(runtimeManaged == false && handsFreshChildrenToOwnedSlots(resultType)(typedState))(runtimeManaged)(updateRequest)(lower)([])([])
             |> finishConstructorAllocation([])(false)(layout)(resultType)(runtimeManaged)
 
-let finishRecordUpdateShape layout fieldNames fields targetTemp targetSlot targetType (fieldCells: Bool) lower shape =
+let finishRecordUpdateShape layout fieldNames fields targetTemp targetSlot targetType (updateRequest: ConsumerRequest) lower shape =
     match shape with
         | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
             state
             |> bindType(targetType)(resultType)
-            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(fieldCells)(lower)
+            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(targetSlot)(updateRequest)(lower)
 
-let finishRecordUpdateLayout fields targetTemp targetSlot targetType (fieldCells: Bool) lower state layout =
+let finishRecordUpdateLayout fields targetTemp targetSlot targetType (updateRequest: ConsumerRequest) lower state layout =
     match layout with
         | None -> failure(state)(CoreRecordUpdateRequiresRecord(targetType))
         | Some(CoreConstructorLayout { fieldNames = fieldNames } as constructor) ->
             state
             |> instantiateConstructor(constructor)
-            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetSlot)(targetType)(fieldCells)(lower)
+            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetSlot)(targetType)(updateRequest)(lower)
 
-let finishRecordUpdate fields targetSlot (fieldCells: Bool) lower loweredTarget =
+let finishRecordUpdate fields targetSlot (updateRequest: ConsumerRequest) lower loweredTarget =
     match loweredTarget with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = state, temp = targetTemp, semanticType = targetType, error = None } ->
@@ -27063,17 +27071,15 @@ let finishRecordUpdate fields targetSlot (fieldCells: Bool) lower loweredTarget 
                 | SemNamed(_symbolId, typeName, _arguments) ->
                     state
                     |> recordLayout(typeName)
-                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetSlot)(targetType)(fieldCells)(lower)(state)
+                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetSlot)(targetType)(updateRequest)(lower)(state)
                 | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
 
 // A record update whose target reads a loop parameter (or a record field of one) inside the
 // loop body retains the unchanged fields it copies out of that parameter.
 let lowerRecordUpdate target fields lower state =
-    match consumerRequestOf(state) with
-        | ConsumerRequest { recordFieldCells = fieldCells } ->
-            state
-            |> lower(target)
-            |> finishRecordUpdate(fields)(loopParameterReadSlot(target)(state))(fieldCells)(lower)
+    state
+    |> lower(target)
+    |> finishRecordUpdate(fields)(loopParameterReadSlot(target)(state))(consumerRequestOf(state))(lower)
 
 let failedCoreBinary state error =
     LoweredCoreBinary(
