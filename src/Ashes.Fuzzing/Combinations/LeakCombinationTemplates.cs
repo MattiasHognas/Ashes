@@ -235,6 +235,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ScalarFieldAccumulatorTemplate());
         registry.Register(new OwnedResultSuccessorPartsTemplate());
         registry.Register(new LoopResultUpdateFieldTemplate());
+        registry.Register(new LoopResultConstructorOfParameterFieldsTemplate());
     }
 }
 

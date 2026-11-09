@@ -1891,7 +1891,10 @@ in the arena, retaining the list field it reads out of the parameter, and the jo
 parameter's arm, normalizes the update's arm by copying the cell; the copy takes its own reference
 to the list, so the cell's retain is withdrawn once the loop's placements are final, as a borrowed
 scrutinee's is. Left alone, the list stayed one count too high and its cells outlived the loop
-(`GRC_NO_JOINCOPYWITHDRAW`).
+(`GRC_NO_JOINCOPYWITHDRAW`). An arm whose value is itself a join carrying such a cell hands over
+the cells it carries the same way, in both stages: `if label == fn.label then Fn(label =
+fn.label, ...) else retarget(rest)(fn)` builds the constructor on one arm of the `if` that is the
+outer match arm's value (`GRC_NO_NESTEDJOINCOPYWITHDRAW`).
 
 A record update written as a child of such a literal (`Step(state = (state with items = n ::
 state.items), error = None)`) is an arena cell like the literal, and the copy of the literal copies

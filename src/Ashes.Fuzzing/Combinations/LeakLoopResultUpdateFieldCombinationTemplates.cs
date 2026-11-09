@@ -12,7 +12,9 @@ namespace Ashes.Fuzzing.Combinations;
 internal sealed class LoopResultUpdateFieldTemplate() : LeakCombinationTemplate(
     "leak.loop-result-update-field", "loopResultUpdateField", GeneratedFeature.RecursiveFunction, GeneratedFeature.TailCall, GeneratedFeature.Record, GeneratedFeature.Adt)
 {
-    protected override string Declarations(LeakNames names)
+    protected override string Declarations(LeakNames names) => Render(names, explicitConstructor: false);
+
+    internal static string Render(LeakNames names, bool explicitConstructor)
     {
         string tree = names.Of("Tree");
         string fn = names.Of("Fn");
@@ -22,6 +24,13 @@ internal sealed class LoopResultUpdateFieldTemplate() : LeakCombinationTemplate(
         string sum = names.Of("sumCalls");
         string build = names.Of("build");
         string update = names.Pick("calls = target :: fn.calls", "calls = [target]", "label = target");
+        string rebuilt = explicitConstructor
+            ? update switch
+            {
+                "label = target" => $"{fn}(label = target, calls = fn.calls, tree = fn.tree)",
+                _ => $"{fn}(label = fn.label, {update}, tree = fn.tree)",
+            }
+            : $"fn with {update}";
         int count = names.Between(1, 4);
         return $$"""
             type {{tree}} =
@@ -38,7 +47,7 @@ internal sealed class LoopResultUpdateFieldTemplate() : LeakCombinationTemplate(
                     | [] -> fn
                     | (label, target) :: rest ->
                         if label == fn.label
-                        then fn with {{update}}
+                        then {{rebuilt}}
                         else {{retarget}}(rest)(fn)
 
             let recursive {{collect}} (functions: List({{fn}})) (known: List((Str, Str))) =
@@ -64,4 +73,16 @@ internal sealed class LoopResultUpdateFieldTemplate() : LeakCombinationTemplate(
             let {{names.Entry}} (seed: Int) = {{sum}}({{run}}({{build}}({{count}} + seed % 2)([])))(0)
             """;
     }
+}
+
+/// <summary>
+/// The same loop rebuilds its record parameter with an explicit constructor of the parameter's
+/// fields (`Fn(label = fn.label, calls = target :: fn.calls, tree = fn.tree)`) inside the match
+/// arm whose join is copied onto the reference-counted heap. The copy retains the fields itself, so
+/// the arena cell's retains of the parameter reads are withdrawn; before, they leaked.
+/// </summary>
+internal sealed class LoopResultConstructorOfParameterFieldsTemplate() : LeakCombinationTemplate(
+    "leak.loop-result-constructor-of-parameter-fields", "loopResultConstructorOfParameterFields", GeneratedFeature.RecursiveFunction, GeneratedFeature.TailCall, GeneratedFeature.Record, GeneratedFeature.Adt)
+{
+    protected override string Declarations(LeakNames names) => LoopResultUpdateFieldTemplate.Render(names, explicitConstructor: true);
 }

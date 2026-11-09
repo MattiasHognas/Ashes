@@ -6455,7 +6455,7 @@ public sealed class LinuxBackendCoverageTests
         // A loop's list of integers handed on in one arm and replaced by a tail-modulo-cons helper's
         // reference-counted result in the other lives on the reference-counted heap, so each
         // iteration's predecessor is released at the back edge instead of left behind.
-        int[] roundCounts = [5000, 20000, 80000];
+        int[] roundCounts = [20000, 80000, 320000];
         List<MemoryExecutionResult> samples = new(roundCounts.Length);
         foreach (int rounds in roundCounts)
         {
@@ -6478,7 +6478,7 @@ public sealed class LinuxBackendCoverageTests
 
         // A fixpoint loop compares the list it rebuilt with its parameter: the comparison borrows
         // both operands, so the rebuilt list, live after it, takes no duplicate nothing releases.
-        int[] roundCounts = [5000, 20000, 80000];
+        int[] roundCounts = [20000, 80000, 320000];
         List<MemoryExecutionResult> samples = new(roundCounts.Length);
         foreach (int rounds in roundCounts)
         {
@@ -20853,7 +20853,7 @@ public sealed class LinuxBackendCoverageTests
         // A loop that stays in the arena (one arm conses a wrapped item back onto its list) inserts
         // into a tree through a call and hands the result on as its tree. The earlier iteration's
         // tree, never bound to a name, is released at the back edge, since no successor names it.
-        int[] roundCounts = [5000, 20000, 80000];
+        int[] roundCounts = [20000, 80000, 320000];
         List<MemoryExecutionResult> samples = new(roundCounts.Length);
         foreach (int rounds in roundCounts)
         {
@@ -24905,7 +24905,7 @@ public sealed class LinuxBackendCoverageTests
         // A loop rebuilds its record parameter with a record update as its result. The update built the
         // record in the arena with retained copies of the unchanged fields, the return copied it onto
         // the reference-counted heap, which retained them again, and the arena record's retains leaked.
-        int[] roundCounts = [5000, 20000, 80000];
+        int[] roundCounts = [20000, 80000, 320000];
         List<MemoryExecutionResult> samples = new(roundCounts.Length);
         foreach (int rounds in roundCounts)
         {
@@ -24952,5 +24952,76 @@ public sealed class LinuxBackendCoverageTests
         }
 
         AssertMemoryPlateaus("arena record read before return", samples, maxRssKb: 16_000);
+    }
+
+    private static string BuildLoopResultConstructorOfParameterFieldsProgram(int rounds)
+        => $$"""
+            type Tree =
+                | Leaf(Str)
+                | Node(Tree, Tree)
+
+            type Fn =
+                | label: Str
+                | calls: List(Str)
+                | tree: Tree
+
+            let recursive retarget (known: List((Str, Str))) (fn: Fn) =
+                match known with
+                    | [] -> fn
+                    | (label, target) :: rest ->
+                        if label == fn.label
+                        then Fn(label = fn.label, calls = target :: fn.calls, tree = fn.tree)
+                        else retarget(rest)(fn)
+
+            let recursive collect (functions: List(Fn)) (known: List((Str, Str))) =
+                match functions with
+                    | [] -> known
+                    | fn :: rest -> collect(rest)((fn.label, fn.label + "_r") :: known)
+
+            let run (functions: List(Fn)) =
+                match collect(functions)([]) with
+                    | [] -> functions
+                    | known -> Ashes.Collection.List.map(retarget(known))(functions)
+
+            let recursive sumCalls (functions: List(Fn)) (acc: Int) =
+                match functions with
+                    | [] -> acc
+                    | fn :: rest -> sumCalls(rest)(acc + Ashes.Collection.List.length(fn.calls))
+
+            let recursive build (n: Int) (acc: List(Fn)) =
+                if n == 0
+                then acc
+                else build(n - 1)(Fn(label = "lambda_" + Ashes.Text.fromInt(n), calls = ["f"], tree = Leaf("t")) :: acc)
+
+            let recursive loop (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else loop(n - 1)(acc + sumCalls(run(build(3)([])))(0))
+
+            Ashes.IO.print(loop({{rounds}})(0))
+            """;
+
+    [Test]
+    public async Task Linux_backend_loop_result_constructor_of_parameter_fields_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // retarget rebuilds its record parameter with an explicit constructor of the parameter's
+        // fields inside a match arm whose join is copied onto the reference-counted heap. The copy
+        // retains the fields itself; the arena cell's retains of the parameter reads leaked.
+        int[] roundCounts = [20000, 80000, 320000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgramWithStandardTraits(BuildLoopResultConstructorOfParameterFieldsProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldNotBeNullOrEmpty();
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("loop result constructor of parameter fields", samples, maxRssKb: 16_000);
     }
 }

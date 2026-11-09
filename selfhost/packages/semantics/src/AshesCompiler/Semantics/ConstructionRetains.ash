@@ -10,6 +10,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 export (
+    value arenaCellsCarrying,
     value constructionFieldSource,
     value constructionWordSource,
     value countTempUses,

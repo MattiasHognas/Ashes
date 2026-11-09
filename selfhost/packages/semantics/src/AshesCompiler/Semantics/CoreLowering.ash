@@ -19789,13 +19789,21 @@ let normalizeJoinArmStore (slot: Int) (consedElementPlan: Maybe(ArgumentCopyPlan
 // Stage 0's `RecordJoinCopiedArenaCell`: a fresh arena cell a loop body hands to a join whose
 // normalization copies it. The copy takes its own reference to every reference-counted child, and
 // the arena cell never releases the retains its construction took of loop-parameter reads, so they
-// are withdrawn like a borrowed scrutinee's once the loop's placements are final.
+// are withdrawn like a borrowed scrutinee's once the loop's placements are final. An arm whose
+// value is itself a join (an `if` whose one arm builds the cell) hands over the cells that join
+// carries.
+let carriesJoinedArenaCell (temp: Int) (frame: CoreTcoLoopFrame) (state: CoreLoweringState) =
+    match definitionOfTemp(temp)(state.reversedInstructions) with
+        | Some(LoadLocal(_target, _slot)) ->
+            length(arenaCellsCarrying([temp])([])(frame.parameterSlots)(state.reversedInstructions)([])) > 0
+        | _ -> false
+
 let recordJoinCopiedArenaCell (consedElementPlan: Maybe(ArgumentCopyPlan)) (arm: MatchArmResult) (state: CoreLoweringState) =
     match (stateTcoLoopFrame(state), arm.armConsesOntoSelfResult, consedElementPlan) with
         | (None, _, _) -> state
         | (Some(_frame), true, Some(_elementPlan)) -> state
-        | (Some(_frame), _, _) ->
-            if isArenaCell(arm.armStoreTemp)(state.reversedInstructions)
+        | (Some(frame), _, _) ->
+            if isArenaCell(arm.armStoreTemp)(state.reversedInstructions) || carriesJoinedArenaCell(arm.armStoreTemp)(frame)(state)
             then withStateBorrowedScrutineeCells(arm.armStoreTemp :: stateBorrowedScrutineeCells(state))(state)
             else state
 
