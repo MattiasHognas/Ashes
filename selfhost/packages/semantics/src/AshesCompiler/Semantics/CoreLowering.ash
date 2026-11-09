@@ -13370,9 +13370,12 @@ let producesFreshValue (expression: Expr) (state: CoreLoweringState) =
                 | _ -> false
         | _ -> false
 
+// A member of a recursive group whose siblings it reaches through its closure emits no loop: stage 0
+// lowers the group bodies with no tail-call context at all, so such a body is a plain one too.
 let isPlainFunctionBody (state: CoreLoweringState) =
     match (stateTcoLoop(state), stateTcoLoopFrame(state), stateNormalizedAlwaysReturnedParameter(state)) with
         | (None, None, None) -> true
+        | (Some(CoreTcoLoop { emitsLoop = false }), None, None) -> true
         | _ -> false
 
 // Stage 0's `ResolvePassthroughParameter`: the parameter of a plain function whose body returns
