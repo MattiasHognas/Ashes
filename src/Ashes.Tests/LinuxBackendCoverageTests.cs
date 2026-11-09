@@ -23797,8 +23797,9 @@ public sealed class LinuxBackendCoverageTests
         // call's result was kept in an owned slot, and that result is a partial application, so the
         // loop kept every escape body until its exit: one release fewer at the back edge. (The
         // program's own arena grows with the rounds for another reason, so this checks the release
-        // rather than the memory.)
-        DropperCallsInLoop(BuildCurriedChainPredecessorProgram(2), "lowerItems", "__rcdrop_general").ShouldBe(18);
+        // rather than the memory.) The count pins that rule (one fewer without it); the leak-check
+        // property of the same shape is CurriedChainPredecessorLeakTests in Ashes.Fuzzing.Tests.
+        DropperCallsInLoop(BuildCurriedChainPredecessorProgram(2), "lowerItems", "__rcdrop_general").ShouldBe(22);
     }
 
     private static string BuildArenaHeadTupleOwnerDuplicateProgram(int rounds)
