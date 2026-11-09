@@ -55,7 +55,7 @@ internal sealed class ArenaRequestedResultPartTemplate() : LeakCombinationTempla
                     | item :: rest -> {{index}}(rest)(n + 1)((n, item) :: acc)
 
             let {{names.Entry}} (seed: Int) =
-                (let items = [{{instruction}}(kind = {{call}}(1, "{{word}}" + Ashes.Text.fromInt(seed), 2), note = Some("a" + Ashes.Text.fromInt(seed))), {{instruction}}(kind = {{call}}(5, "t", 6), note = None), {{instruction}}(kind = {{other}}(seed), note = None)]
+                (let items = [{{instruction}}(kind = {{call}}(1, {{word}} + Ashes.Text.fromInt(seed), 2), note = Some("a" + Ashes.Text.fromInt(seed))), {{instruction}}(kind = {{call}}(5, "t", 6), note = None), {{instruction}}(kind = {{other}}(seed), note = None)]
                 in
                     match {{collect}}({{index}}(items)(0)([]))(0)([])([]) with
                         | (expansions, _carried, count) -> Ashes.Collection.List.length(expansions) + count)

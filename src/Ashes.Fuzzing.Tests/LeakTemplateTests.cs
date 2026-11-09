@@ -35,7 +35,7 @@ public sealed class LeakTemplateTests
             generated.ReplayNodes.ShouldBe(maximumNodes);
             generated.NodeCount.ShouldBe(AstCoverageMetrics.Measure(generated.Program).Nodes);
             GenerationBudgetValidator.Validate(generated.Program, generated.Trace, generated.Source.Length, generated.Budget).ShouldBeEmpty(generated.Source);
-            new AstInvariantValidator().ValidateScope(generated.Program).ShouldBeEmpty(generated.Source);
+            new AstInvariantValidator().ValidateScope(generated.Program, generated.Imports).ShouldBeEmpty(generated.Source);
             // A map threaded through Ashes.Collection.Map.setStr in a recursive loop fails IR
             // verification on its own (a reuse token with three consumers in the inlined map code),
             // so the map templates are held to the frontend and semantic oracles only.

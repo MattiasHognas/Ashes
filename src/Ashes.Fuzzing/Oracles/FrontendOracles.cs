@@ -73,7 +73,7 @@ internal sealed class SemanticOracle : IFuzzOracle
     {
         try
         {
-            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.Source);
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.SourceWithImports);
             compilation.Diagnostics.ThrowIfAny();
             return ValueTask.FromResult(FuzzOracleResult.Passed(Id));
         }
@@ -91,7 +91,7 @@ internal sealed class IrVerificationOracle : IFuzzOracle
     {
         try
         {
-            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.Source);
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.SourceWithImports);
             compilation.Diagnostics.ThrowIfAny();
             IrProgram ir = compilation.Ir;
             IrInvariantVerifier verifier = new();
@@ -132,7 +132,7 @@ internal sealed class InvalidSemanticOracle : IFuzzOracle
                     Id,
                     "Invalid-semantic case did not declare an expected diagnostic code."));
             }
-            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.Source);
+            FuzzSemanticCompilation compilation = FuzzSemanticCompiler.Lower(testCase.SourceWithImports);
             IReadOnlyList<DiagnosticEntry> errors = compilation.Diagnostics.StructuredErrors;
             if (errors.Count == 0)
             {
