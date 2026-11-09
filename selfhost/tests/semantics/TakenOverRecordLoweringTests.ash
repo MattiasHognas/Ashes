@@ -96,8 +96,7 @@ let expectEscapingLetHolderDeclines unit = expectFunctionMatchesStageZero("taken
 // The own-field record: the caller of a loop returning `Some` of its own retained parameter
 // releases the arena `Some`'s field at the end of the match on it.
 let expectOwnFieldSettledAtMatchEnd unit =
-    Unit
-    |> (given (_) -> expectFunctionMatchesStageZero("loop_result_some_holding_the_loop_parameter")("[ClosureHelper from stageLength]"))
+    Unit |> (given (_) -> expectFunctionMatchesStageZero("loop_result_some_holding_the_loop_parameter")("[ClosureHelper from stageLength]"))
 
 let runTakenOverRecordLoweringTests unit =
     Unit
