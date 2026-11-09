@@ -25941,11 +25941,14 @@ let borrowedConsParts (headExpression: Expr) (head: LoweredCoreValue) (tail: Low
 // reference-counted heap has its successor copied at the back edge with references of its own,
 // before the iteration's owners are released, so an arena cell built for it borrows its children;
 // a retain stored in that cell would never be released.
+// An accumulator-rebuild list refilled with a call's result (`ds |> applied(root)(arguments)`) beside
+// arms that cons onto it is one too: stage 0 asks only that the list is not grown in place nor walked
+// by its consumed tail.
 let backEdgeCopiesListSuccessor (slot: Maybe(Int)) (shape: TcoArgumentShape) (loop: CoreTcoLoop) (state: CoreLoweringState) =
     match (shape, slot, stateTcoLoopFrame(state)) with
         | (TcoChoiceAccumulatorShape, Some(parameterSlot), Some(frame)) -> loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
         | (_shape, Some(parameterSlot), Some(frame)) ->
-            if accumulatorRouteShape(shape)
+            if accumulatorRouteShape(shape) || shape == TcoWalkedOrRefilledShape
             then
                 match ordinalOfSlot(parameterSlot)(frame.parameterSlots)(0) with
                     | Some(ordinal) -> isAccumulatorRebuildListSlot(ordinal)(parameterSlot)(loop)(state) && loopSlotIsRuntimeManaged(parameterSlot)(frame)(loop)(state)
