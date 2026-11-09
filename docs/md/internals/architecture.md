@@ -2593,6 +2593,14 @@ the tuple and the appended list from two iterations back, where they were overwr
 before. A successor that conses the head it matched onto an arena accumulator (`call :: nodes`) still
 keeps them, since that head may be a part the earlier tuple borrowed
 (`GRC_NO_OWNEDRESULTSUCCESSORPARTS`, both stages).
+A pattern owner's duplicate is an identity marker until the loop's placement is settled, and only the
+owners of a root parameter placed on the reference-counted heap have their markers promoted to
+retains. A root left in the arena keeps them as identities, yet a reference-counted aggregate that
+stores one (a fresh match scrutinee `(irInst, 0)`), or a join whose owner releases a branch handing one
+on as its result, releases that child with itself: the release freed a value the loop's input still
+held, and stage 1 compiled such loops into crashing code. Stage 1 now follows each such marker of an
+unplaced owner with a guarded retain (`IsReferenceCounted`, then `RcDup`), so the aggregate or join
+owns its child whatever the root's placement (stage 1; stage 0 placed these roots and never hit it).
 
 ### One-shot resumptive arms: the pre/post split
 

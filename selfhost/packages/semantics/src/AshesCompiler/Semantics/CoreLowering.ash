@@ -14879,6 +14879,104 @@ let recursive settleCellMarkerSlots (slots: List((Int, Int, Int))) (state: CoreL
             then settleCellMarkerSlots(rest)((state with reversedInstructions = storeMarkerIntoSlot(slot)(marker)(zeroTemp)(state.reversedInstructions)))
             else settleCellMarkerSlots(rest)(state)
 
+// The temps of the reference-counted allocations the function makes.
+let recursive countedAllocations (instructions: List(IrInstruction)) (allocations: List(Int)) =
+    match instructions with
+        | [] -> allocations
+        | IrInstruction { instruction = Alloc(target, _size, true) } :: rest -> countedAllocations(rest)(target :: allocations)
+        | IrInstruction { instruction = AllocAdt(target, _tag, _fieldCount, true, _tagless) } :: rest -> countedAllocations(rest)(target :: allocations)
+        | _instruction :: rest -> countedAllocations(rest)(allocations)
+
+// The values stored into those allocations' fields.
+let recursive storedIntoCounted (instructions: List(IrInstruction)) (allocations: List(Int)) (stored: List(Int)) =
+    match instructions with
+        | [] -> stored
+        | IrInstruction { instruction = StoreMemOffset(base, _offset, source) } :: rest ->
+            storedIntoCounted(rest)(allocations)(if containsInt(base)(allocations)
+            then source :: stored
+            else stored)
+        | IrInstruction { instruction = SetAdtField(base, _field, source, _tagless) } :: rest ->
+            storedIntoCounted(rest)(allocations)(if containsInt(base)(allocations)
+            then source :: stored
+            else stored)
+        | _instruction :: rest -> storedIntoCounted(rest)(allocations)(stored)
+
+// The identity duplicates of a pattern owner's aliases a reference-counted aggregate stores.
+let recursive aggregateMarkersOf (instructions: List(IrInstruction)) (aliases: List(Int)) (stored: List(Int)) (markers: List((Int, Int))) =
+    match instructions with
+        | [] -> markers
+        | IrInstruction { instruction = RcDup(target, source, false, _mayBeEmpty) } :: rest ->
+            aggregateMarkersOf(rest)(aliases)(stored)(if containsInt(source)(aliases) && containsInt(target)(stored)
+            then (target, source) :: markers
+            else markers)
+        | _instruction :: rest -> aggregateMarkersOf(rest)(aliases)(stored)(markers)
+
+let recursive lookupMarkerRetain (target: Int) (retains: List((Int, Int, Int, Int, Str))) =
+    match retains with
+        | [] -> None
+        | ((marker, _source, _countedTemp, _retainTemp, _skipLabel) as retain) :: rest ->
+            if marker == target
+            then Some(retain)
+            else lookupMarkerRetain(target)(rest)
+
+// Each marker is followed by its guarded retain: a reference-counted value is retained, an arena
+// one (which a runtime retain would corrupt) is left as it is.
+let recursive insertMarkerRetains (instructions: List(IrInstruction)) (retains: List((Int, Int, Int, Int, Str))) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = RcDup(target, _source, false, _mayBeEmpty), location = location } as instruction) :: rest ->
+            match lookupMarkerRetain(target)(retains) with
+                | Some((_marker, source, countedTemp, retainTemp, skipLabel)) -> instruction :: IrInstruction(instruction = IsReferenceCounted(countedTemp)(source), location = location) :: IrInstruction(instruction = JumpIfFalse(countedTemp)(skipLabel), location = location) :: IrInstruction(instruction = RcDup(retainTemp)(source)(true)(false), location = location) :: IrInstruction(instruction = Label(skipLabel), location = location) :: insertMarkerRetains(rest)(retains)
+                | None -> instruction :: insertMarkerRetains(rest)(retains)
+        | instruction :: rest -> instruction :: insertMarkerRetains(rest)(retains)
+
+let recursive plannedMarkerRetains (markers: List((Int, Int))) (state: CoreLoweringState) (retains: List((Int, Int, Int, Int, Str))) =
+    match markers with
+        | [] -> (state, retains)
+        | (marker, source) :: rest ->
+            match freshTempRun(2)(state) with
+                | FreshTemp { state = allocated, temp = countedTemp } ->
+                    match freshLabel("pattern_owner_aggregate_retain_skip")(allocated) with
+                        | FreshLabel { state = labelled, label = skipLabel } -> plannedMarkerRetains(rest)(labelled)((marker, source, countedTemp, countedTemp + 1, skipLabel) :: retains)
+
+// A pattern owner whose root parameter stays in the arena keeps its identity markers, but a
+// reference-counted aggregate that stores one of them releases it with itself, and a branch that
+// hands one on as its result (a join the result's owner releases) releases it with that owner: such a marker is
+// followed by a real retain of a reference-counted value, so the aggregate owns its child whatever
+// the root's placement.
+let retainUnplacedAggregateMarkers (site: PatternOwnerSite) (state: CoreLoweringState) =
+    (let instructions = reverse(state.reversedInstructions)
+    in
+        let aliases = patternOwnerAliases(instructions)(site.siteSlot)([])
+        in
+            let stored =
+                storedIntoCounted(instructions)(countedAllocations(instructions)([]))([])
+            in
+                match aggregateMarkersOf(instructions)(aliases)(state
+                |> statePatternOwnerResultTemps
+                |> append(stored))([]) with
+                    | [] -> state
+                    | markers ->
+                        match plannedMarkerRetains(markers)(state)([]) with
+                            | (planned, retains) ->
+                                planned with reversedInstructions = reverse(insertMarkerRetains(instructions)(retains)))
+
+let recursive patternOwnerSiteIn (site: PatternOwnerSite) (sites: List(PatternOwnerSite)) =
+    match sites with
+        | [] -> false
+        | candidate :: rest -> candidate.siteSlot == site.siteSlot && candidate.siteInsertCount == site.siteInsertCount || patternOwnerSiteIn(site)(rest)
+
+let recursive retainUnplacedAggregateMarkersOf (sites: List(PatternOwnerSite)) (placed: List(PatternOwnerSite)) (state: CoreLoweringState) =
+    match sites with
+        | [] -> state
+        | site :: rest ->
+            if patternOwnerSiteIn(site)(placed)
+            then retainUnplacedAggregateMarkersOf(rest)(placed)(state)
+            else
+                state
+                |> retainUnplacedAggregateMarkers(site)
+                |> retainUnplacedAggregateMarkersOf(rest)(placed)
+
 // Stage 0's `FinalizePerceusPatternBindingOwners`, run once the loop's parameter placements are
 // known and before the entry normalization is spliced in below every site.
 let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (candidates: List(TcoManagedCandidate)) (state: CoreLoweringState) =
@@ -14890,6 +14988,7 @@ let finalizePatternOwnerSites (managedLists: List((Int, Int, SemanticType))) (ma
         |> (given (promoted: CoreLoweringState) ->
             settleCellMarkerSlots(stateCellMarkerSlots(promoted))(promoted))
         |> splicePatternOwnerDups(placed)
+        |> retainUnplacedAggregateMarkersOf(statePatternOwnerSites(state))(placed)
         |> (given (finalized: CoreLoweringState) -> withStatePatternOwnerSites([])(finalized)))
 
 // A loop parameter placed on the reference-counted heap: a runtime-managed list or ADT slot, or
