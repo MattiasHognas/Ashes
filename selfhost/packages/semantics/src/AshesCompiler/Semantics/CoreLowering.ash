@@ -489,6 +489,9 @@ type CoreTcoReset =
     | generalRcFreshSlotBlockers: List((Int, List(Int)))
     | argumentOwnedSlots: List(Int)
     | argumentParameterParts: List(Bool)
+    // Per successor, whether it is a loop parameter, a part of one, or inline heads consed onto one:
+    // what a value this iteration produced is judged against (stage 0's strict parameter parts).
+    | argumentStrictParameterParts: List(Bool)
     | arenaCursorSlot: Int
     | arenaEndSlot: Int
     | fixedCursorSlot: Int
@@ -9999,9 +10002,9 @@ let recursive emitFreshGeneralRcSlots (facts: List((Int, SemanticType, Int, List
                     |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
                 else
                     state
-                    |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(freshSlotBlockersOf(slot)(blockers)(reset.generalRcFreshSlotBlockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
+                    |> emitFreshGeneralRcSlotRelease(slot)(semanticType)(freshSlot)(typeBlockersExempt(freshSlotBlockersOf(slot)(blockers)(reset.generalRcFreshSlotBlockers))(arguments)(reset.argumentStrictParameterParts)(tmc)(true)(normalized) || typeBlockersExempt(reset.generalRcSlotUnnamed
                     |> slotUnnamedSuccessors(slot)(normalized)
-                    |> blockersNamingTheValue(blockers))(arguments)(reset.argumentParameterParts)(tmc)(true)(normalized))
+                    |> blockersNamingTheValue(blockers))(arguments)(reset.argumentStrictParameterParts)(tmc)(true)(normalized))
                     |> emitFreshGeneralRcSlots(rest)(released)(reset)(arguments)(tmc)(normalized)
 
 // Stage 0's `EmitGeneralRcBackEdgeDrops`: the earlier iterations' values first, then the owned
@@ -31907,6 +31910,37 @@ let recursive argumentParameterPartsOf (arguments: List(Expr)) (state: CoreLower
         | [] -> []
         | argument :: rest -> (argumentRootSlotOf(argument)(state) != None) :: argumentParameterPartsOf(rest)(state)
 
+let recursive innermostConsTail (expression: Expr) =
+    match unspanArgument(expression) with
+        | ExprCons(_head, tail) -> innermostConsTail(tail)
+        | other -> other
+
+// Stage 0's `IsInlineConsOverLoopParameterPart`: inline heads consed onto a loop parameter or a
+// part of one (`position :: removed` over a `List(Int)`). The new cells hold only scalars and the
+// tail is the parameter's value from before this iteration, so the successor holds no part of a
+// value this iteration produced, whatever its type allows.
+let isInlineConsOverLoopParameterPart (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprCons(_head, tail) ->
+            match innermostConsTail(tail) with
+                | ExprVar(name) ->
+                    match lookupBinding(name)(state.bindings) with
+                        | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+                            match resolveType(state)(body) with
+                                | SemList(element) ->
+                                    (element |> resolveType(state) |> canArenaResetLayout) && argumentRootSlotOf(ExprVar(name))(state) != None
+                                | _ -> false
+                        | None -> false
+                | _ -> false
+        | _ -> false
+
+// Per successor, stage 0's `IsLoopParameterPart` widened by `IsInlineConsOverLoopParameterPart`:
+// what a value this iteration produced is judged against.
+let recursive argumentStrictParameterPartsOf (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> []
+        | argument :: rest -> (argumentRootSlotOf(argument)(state) != None || isInlineConsOverLoopParameterPart(argument)(state)) :: argumentStrictParameterPartsOf(rest)(state)
+
 let recursive transferRetainedFlags (temps: List(Int)) (state: CoreLoweringState) =
     match temps with
         | [] -> []
@@ -31989,6 +32023,7 @@ let scheduleTcoReset (frame: CoreTcoLoopFrame) (arguments: List(Expr)) (temps: L
                     generalRcFreshSlotBlockers = generalRcFreshSlotBlockersOf(generalRcSlotFactsOf(loopSlots)(predecessorDrops)(argumentTypes)(state))(argumentTypes)(state),
                     argumentOwnedSlots = argumentOwnedSlotsOf(temps)(loopSlots)(state),
                     argumentParameterParts = argumentParameterPartsOf(arguments)(state),
+                    argumentStrictParameterParts = argumentStrictParameterPartsOf(arguments)(state),
                     arenaCursorSlot = frame.arenaCursorSlot,
                     arenaEndSlot = frame.arenaEndSlot,
                     fixedCursorSlot = frame.fixedCursorSlot,

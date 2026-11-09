@@ -2661,7 +2661,8 @@ produced, whatever its type allows. Kept by type, the record `retargetKnownCallE
 in stage 1's currying-stage inlining, which holds a `List(Int)` by its type, stayed in its slot until
 the next iteration overwrote it. A head that is not a scalar (`record.positions :: removed`, a field
 of the released value) is a part the successor really holds, and the rule does not apply to it
-(`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 keeps such a slot for a different reason, still open).
+(`GRC_NO_INLINECONSPARAMETERPART`, stage 0; stage 1 mirrors it in the fresh-slot release of a value
+this iteration produced, the only place stage 0 reads these parts).
 A function returning its parameter on some arms and a fresh value on the others copies the
 parameter's arm into an owned reference-counted value and promises its result reference-counted. A
 tuple of scalars only is otherwise placed in the arena like any scalar, so a join of such tuples was
