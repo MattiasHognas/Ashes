@@ -248,6 +248,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new SelectorImportAliasTemplate());
         registry.Register(new ScrutineeOwnerDuplicateTemplate());
         registry.Register(new GenericShapeScrutineeTemplate());
+        registry.Register(new UnusedScrutineeBinderTemplate());
     }
 }
 

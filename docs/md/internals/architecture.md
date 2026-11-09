@@ -2736,6 +2736,12 @@ pattern-owner marker the arena tuple stores, the tuple its only reader, becomes 
 root's placement never promotes; a tuple built on the reference-counted heap keeps its markers, whose
 retains it owns.
 
+An arm that names a part of such a tuple and never reads it (`(IrInstruction { location = loc }, _)` with
+`loc` unused) keeps nothing of the tuple either, yet its binder counted as binding a heap value: binders
+the arm's body and guard never mention now leave the tuple a borrowed scrutinee
+(`GRC_NO_UNUSEDSCRUTINEEBINDER`, stage 0). Stage 1 is flat on that loop, generic or not, and is owed a
+port only if it ever shows the leak.
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the

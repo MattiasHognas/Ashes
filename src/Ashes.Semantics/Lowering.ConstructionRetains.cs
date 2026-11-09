@@ -482,7 +482,7 @@ public sealed partial class Lowering
     {
         if (_tcoCtx is TcoContext tco
             && IsFreshAggregateLiteral(match.Value)
-            && !match.Cases.Any(matchCase => PatternBindsHeapValue(matchCase.Pattern, valueType)))
+            && !match.Cases.Any(matchCase => PatternBindsHeapValue(matchCase.Pattern, valueType) && !BindsOnlyUnusedNames(matchCase)))
         {
             _borrowedScrutinees.Add(new BorrowedScrutinee(tco, valueTemp));
         }
@@ -560,6 +560,14 @@ public sealed partial class Lowering
                 return true;
         }
     }
+
+    // An arm whose every binder is left unread (`(Shape { location = loc }, _)` with `loc` unused)
+    // keeps nothing of the scrutinee past the match.
+    private static bool BindsOnlyUnusedNames(MatchCase matchCase)
+        => Environment.GetEnvironmentVariable("GRC_NO_UNUSEDSCRUTINEEBINDER") is null
+            && PatternBindings(matchCase.Pattern).All(name =>
+                !ExprMentionsName(matchCase.Body, name, 0)
+                && (matchCase.Guard is null || !ExprMentionsName(matchCase.Guard, name, 0)));
 
     private static bool ShapeOnlyPatternsBindNothingEnabled
         => Environment.GetEnvironmentVariable("GRC_NO_SHAPEONLYPATTERN") is null;
