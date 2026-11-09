@@ -846,6 +846,10 @@ type CoreTcoState =
     // The span of the `if` or `match` whose value becomes a loop parameter left in the arena (stage 0's
     // `_arenaSuccessorJoin`): a mixed join there copies its reference-counted arms into the arena.
     | arenaSuccessorJoin: Maybe(TextSpan)
+    // While the head of a successor cell the back edge copies (1) or may still copy (2) is lowered and
+    // that head is a constructor or record written in place (stage 0's
+    // `_lowersCopiedCellHeadConstructor`); 0 otherwise.
+    | copiedCellHead: Int
     // The affine accumulator whose own tail self-call argument is being lowered, stage 0's
     // `_affineAppendCtx`: its name, its parameter slot, and the loop's reservation start and end
     // slots. A `+` chain rooted at that parameter grows the reservation in place.
@@ -2221,6 +2225,18 @@ let withStateArenaSuccessorJoin value (state: CoreLoweringState) =
     (let group = state.tcoState
     in state with tcoState = (group with arenaSuccessorJoin = value))
 
+let stateCopiedCellHead (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.copiedCellHead)
+
+let withStateCopiedCellHead value (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in state with tcoState = (group with copiedCellHead = value))
+
+let clearCopiedCellHeadOf (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = loweredState } -> lowered with state = withStateCopiedCellHead(0)(loweredState)
+
 // Whether the `if` or `match` being lowered at the current span is the arena successor join.
 let isArenaSuccessorJoin (state: CoreLoweringState) =
     match (stateArenaSuccessorJoin(state), state.currentSpan) with
@@ -2865,6 +2881,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             lateCopiedCellHeads = [],
             arenaSuccessorLetLoop = None,
             arenaSuccessorJoin = None,
+            copiedCellHead = 0,
             affineAppendContext = None,
             affineAppendReservation = None,
             recursiveProducerResultSlots = [],
@@ -5793,6 +5810,16 @@ let isRecordLiteral (expression: Expr) =
     match unspanArgument(expression) with
         | ExprRecord(_name, _fields, _isMultiline) -> true
         | _ -> false
+
+// Stage 0's `IsHeadConstructorShape`: a constructor or record literal written in place, copied with
+// the cell it heads, as one written as its own argument is.
+let isHeadConstructorShape (expression: Expr) (state: CoreLoweringState) = isRecordLiteral(expression) || isConstructorExpression(expression)(state)
+
+// Stage 0's `CopiedCellHeadForArgument`.
+let copiedCellHeadForArgument (head: Int) (argument: Expr) (state: CoreLoweringState) =
+    if head != 0 && isHeadConstructorShape(argument)(state)
+    then head
+    else 0
 
 let isTupleLiteral (expression: Expr) =
     match unspanArgument(expression) with
@@ -26301,6 +26328,19 @@ let consHeadRequest (request: ConsumerRequest) (elementType: Maybe(SemanticType)
         then headRequest with borrowsCellParts = true, copiedInnerCell = true
         else headRequest)
 
+// Stage 0's `CopiedCellHeadOf`: whether the cell's head is a constructor or record written in place,
+// the cell being a successor cell the back edge copies (1) or may still copy (2).
+let copiedCellHeadOf (request: ConsumerRequest) (head: Expr) (state: CoreLoweringState) =
+    if generalRcEnabled(state) == false || isHeadConstructorShape(head)(state) == false
+    then 0
+    else
+        if request.borrowsCellParts
+        then 1
+        else
+            match (request.lateCopiedCellParts, stateBackEdgeArgumentSlot(state)) with
+                | (true, Some(_slot)) -> 2
+                | _ -> 0
+
 let lowerCons head tail lower state =
     match consumerRequestOf(state) with
         | outerRequest ->
@@ -26311,8 +26351,10 @@ let lowerCons head tail lower state =
             in
                 state
                 |> markResourceArgumentsMoved([head, tail])
+                |> withStateCopiedCellHead(copiedCellHeadOf(request)(head)(state))
                 |> withConsumerRequest(consHeadRequest(request)(expectedListElementType(state))(listTransfers(request)(state))(head)(state))
                 |> lower(head)
+                |> clearCopiedCellHeadOf
                 |> normalizeRuntimeManagedBytesHead(request)(head)
                 |> normalizeRuntimeManagedConsHead(request)(head)(tail)
                 |> normalizePatternOwnerHead(request)(head)
@@ -27060,6 +27102,53 @@ let retainEscapingConstructorArgument (request: ConsumerRequest) (runtimeManaged
             |> retainTransferredChild(argument)(runtimeManaged == false && transfers)
             |> keepLoopResultFieldCellHeadDuplicateOwned(request)(runtimeManaged)(argument)
 
+// Stage 0's `TakeCopiedCellHeadConstructor`: the copied-cell head state of the constructor whose
+// arguments are about to be lowered, kept in the arena.
+let takenCopiedCellHead (runtimeManaged: Bool) (state: CoreLoweringState) =
+    if runtimeManaged
+    then 0
+    else stateCopiedCellHead(state)
+
+// Stage 0's `RecordLateCopiedCellHeadConstructorRetains`: the retains an argument of a late-copied
+// cell's head constructor took, among the instructions emitted after the first `skip` ones, noted as
+// the cell's head duplicates for the back edge to release once it copies the successor.
+let recursive lateCopiedCellHeadRetainsOf (instructions: List(IrInstruction)) (count: Int) (slot: Int) (semanticType: SemanticType) (heads: List((Int, Int, SemanticType))) =
+    if count <= 0
+    then heads
+    else
+        match instructions with
+            | [] -> heads
+            | IrInstruction { instruction = RcDup(target, _source, _runtimeManaged, _mayBeEmpty) } :: rest -> lateCopiedCellHeadRetainsOf(rest)(count - 1)(slot)(semanticType)((slot, target, semanticType) :: heads)
+            | _ :: rest -> lateCopiedCellHeadRetainsOf(rest)(count - 1)(slot)(semanticType)(heads)
+
+let recordLateCopiedCellHeadRetains (before: Int) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
+            match stateBackEdgeArgumentSlot(state) with
+                | Some(slot) ->
+                    lowered with state = withStateLateCopiedCellHeads(state
+                    |> stateLateCopiedCellHeads
+                    |> lateCopiedCellHeadRetainsOf(state.reversedInstructions)(length(state.reversedInstructions) - before)(slot)(semanticType))(state)
+                | None -> lowered
+        | _ -> lowered
+
+// Stage 0's `BorrowCopiedCellHeadConstructorArgument`: an argument of a constructor written as the
+// head of a successor cell the back edge copies borrows, a fresh one keeping an owner of its own;
+// one of a cell it may still copy takes its retains, noted for release after the copy.
+let retainCopiedCellHeadArgument (copiedHead: Int) (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            if copiedHead == 1
+            then lowered with state = keepCopiedCellFreshHeadOwned(argument)(temp)(semanticType)(state)
+            else
+                if copiedHead == 2
+                then
+                    lowered
+                    |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument)
+                    |> recordLateCopiedCellHeadRetains(length(state.reversedInstructions))
+                else retainEscapingConstructorArgument(request)(runtimeManaged)(argument)(lowered)
+        | _ -> retainEscapingConstructorArgument(request)(runtimeManaged)(argument)(lowered)
+
 // Stage 0's `RetainRuntimeManagedTcoConstructorArguments`: after every argument is lowered, a
 // loop-parameter read (or a heap-typed field read out of one) stored into the cell takes the
 // retain marker, ahead of the owned-child retains of a runtime cell.
@@ -27433,19 +27522,22 @@ let placeConstructorOwningFreshChild (layout: CoreConstructorLayout) arguments (
                     | (normalized, normalizedTemps) -> ((lowered with state = normalized, temps = normalizedTemps), true)
         | _ -> (lowered, runtimeManaged)
 
-let recursive lowerConstructorArgumentsInto (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
+let recursive lowerConstructorArgumentsInto (copiedHead: Int) (request: ConsumerRequest) (runtimeManaged: Bool) arguments fieldTypes lower state reversedTemps reversedTypes =
     match (arguments, fieldTypes) with
         | (argument :: restArguments, fieldType :: restTypes) ->
             match state
             |> withConsumerRequest(constructorArgumentRequest(request)(runtimeManaged)(argument)(fieldType)(state))
+            |> withStateCopiedCellHead(copiedCellHeadForArgument(copiedHead)(argument)(state))
             |> lower(argument)
+            |> clearCopiedCellHeadOf
             |> materializeStringChildArgument(runtimeManaged)(argument)(fieldType)
             |> ownPatternBoundStringChild(runtimeManaged)(argument)(fieldType)
             |> normalizeConstructorChildArgument(runtimeManaged)(fieldType)
-            |> retainEscapingConstructorArgument(request)(runtimeManaged)(argument) with
+            |> retainCopiedCellHeadArgument(copiedHead)(request)(runtimeManaged)(argument) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
                 | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
                     lowerConstructorArgumentsInto(
+                        copiedHead,
                         request,
                         runtimeManaged,
                         restArguments,
@@ -27510,7 +27602,9 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                     else
                         match requested || isRuntimeManagedConstructorCandidate(layout)(arguments)(request)(state) with
                             | runtimeManaged ->
-                                match lowerConstructorArgumentsInto(request)(runtimeManaged)(arguments)(parameterTypes)(lower)(withStateLoopResultPartDuplicates([])(state))([])([]) with
+                                match lowerConstructorArgumentsInto(takenCopiedCellHead(runtimeManaged)(state))(request)(runtimeManaged)(arguments)(parameterTypes)(lower)(state
+                                |> withStateLoopResultPartDuplicates([])
+                                |> withStateCopiedCellHead(0))([])([]) with
                                     | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                     | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
                                         match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with

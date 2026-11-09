@@ -18334,10 +18334,8 @@ public sealed partial class Lowering
         LoweredValueRequest cellRequest = transfersChildren
             ? request with { TransfersRuntimeManagedChildren = true }
             : request;
-        LoweredValue head = LowerRuntimeManagedListElement(
-            cons.Head,
-            cellRequest,
-            expectedElementType);
+        LoweredValue head = LowerConsHead(cons, cellRequest, expectedElementType);
+
         TypeRef listType = new TypeRef.TList(head.Type);
         head = OwnContractHeadForTmcCell(tmcCandidate && cons.Head is Expr.Call, request, head);
         head = OwnBorrowedHeadForProducerCell(tmcCandidate || IsRecursiveProducerTail(cons.Tail), request, head);
@@ -18511,6 +18509,7 @@ public sealed partial class Lowering
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
+        RecordLateCopiedCellHeadConstructorRetains(cons);
         KeepLoopResultFieldCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);

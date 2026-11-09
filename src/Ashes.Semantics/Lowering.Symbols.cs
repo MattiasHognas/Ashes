@@ -1442,11 +1442,14 @@ public sealed partial class Lowering
 
         (List<int> argTemps, List<TypeRef> argTypes, List<(int Temp, TypeRef Type)> partDuplicates) =
             LowerConstructorArgumentsKeepingPartDuplicates(ctor, args, resultType, runtimeManagedCandidate, request);
+        List<(int Temp, TypeRef Type)>? headRetains = _loweredConstructorHeadRetains;
+        _loweredConstructorHeadRetains = null;
         if (ctor.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
         {
             return (argTemps[0], resultType);
         }
         runtimeManagedCandidate = runtimeManagedCandidate || (!stackAllocate && resultType is TypeRef.TNamedType placedType && PlaceConstructorOwningFreshChild(args, argTemps, argTypes, placedType));
+        KeepArenaHeadConstructorRetains(headRetains, runtimeManagedCandidate);
         KeepLoopResultPartDuplicatesOfArenaCell(partDuplicates, runtimeManagedCandidate);
         PrepareConstructorArgumentOwnership(
             args,
@@ -1893,30 +1896,29 @@ public sealed partial class Lowering
             RuntimeRepresentation = childRepresentations,
         };
 
+        CopiedCellHead copiedCellHead = TakeCopiedCellHeadConstructor(runtimeManagedCandidate);
+        List<(int Temp, TypeRef Type)>? headRetains = copiedCellHead == CopiedCellHead.LateCopied ? [] : null;
         var argumentTemps = new List<int>(arguments.Count);
         var argumentTypes = new List<TypeRef>(arguments.Count);
         _constructorArgumentDepth++;
         for (int i = 0; i < arguments.Count; i++)
         {
             TypeRef fieldType = Prune(InstantiateConstructorParameterType(constructor, i, resultType));
+            _lowersCopiedCellHeadConstructor = CopiedCellHeadForArgument(copiedCellHead, arguments[i]);
             (int argumentTemp, TypeRef argumentType) = LowerRuntimeManagedConstructorArgument(
                 arguments[i],
                 fieldType,
                 runtimeManagedCandidate,
                 childRequest);
-            argumentTemp = RetainEscapingConstructorArgument(
-                arguments[i],
-                argumentTemp,
-                argumentType,
-                runtimeManagedCandidate,
-                request,
-                fieldIndex: i);
+            _lowersCopiedCellHeadConstructor = CopiedCellHead.None;
+            argumentTemp = RetainHeadConstructorArgument(copiedCellHead, headRetains, arguments[i], argumentTemp, argumentType, runtimeManagedCandidate, request, i);
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
             Unify(parameterType, argumentType);
             argumentTypes.Add(Prune(argumentType));
             MarkResourceArgMoved(arguments[i]);
         }
+        _loweredConstructorHeadRetains = headRetains;
         _constructorArgumentDepth--;
 
         return (argumentTemps, argumentTypes);

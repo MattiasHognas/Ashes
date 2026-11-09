@@ -1823,7 +1823,7 @@ A tuple written inside the head tuple of a successor cell the back edge copies
 (`((label, index), 0) :: known`, built in the arena because another arm passes `known` through
 unchanged) is copied with it, so it borrows its parts like the head tuple does: the duplicate of
 the pattern-bound `label` it took was never released, one per consed entry
-(`GRC_NO_NESTEDHEADTUPLE`).
+(`GRC_NO_NESTEDHEADTUPLE`). A constructor or record written as the head of such a cell (`Known(label) :: acc`, or an instruction record holding `CallKnown(dest, label)`) is copied with the cell too, as is a constructor or record written in place as one of its arguments: when the back edge already copies the successor, its fields borrow, a field the iteration produced right there keeping an owner of its own; when the copy is decided only once the loop's placements are final, the retains its fields took are noted like the cell's own head duplicate and released after the copy (`GRC_NO_COPIEDCELLHEADCONSTRUCTOR`; both stages). The optimizer's devirtualizing rewrite kept one returned-closure label per rewritten call this way.
 
 When such a tuple is a function's result, its contract elements (an owned call result, a borrowed
 parameter, a part of an owned value) point into values the function would otherwise have to leave
