@@ -2718,6 +2718,16 @@ holds is now copied into the arena in the tuple's field and the slot is released
 (`GRC_NO_ARENAREQUESTEDPARTCOPY`; stage 1 had the rule already). Stage 1 places such an accumulator
 only once its element type is resolved, as stage 0's `IsGeneralRcValueType` requires.
 
+A fresh tuple a loop builds only to match it by its shape (`match (irInst, 0) with (Shape { .. }, _)`,
+no arm binding a heap-typed part) stays in the arena, and its construction's retains are withdrawn once
+the loop's placements are final. Only the retains of loop-parameter reads were, yet the tuple also holds
+the pattern-owner duplicate of a binder that escapes elsewhere (into an accumulator), which the root's
+placement promotes to a real retain the arena tuple never releases: every round leaked each binder's
+graph. Such a duplicate is now withdrawn the same way when the tuple is its only reader and no promoted
+release was paired with it (`GRC_NO_SCRUTINEEOWNERDUPWITHDRAW`, stage 0). Stage 1 builds that tuple on
+the reference-counted heap and owns the binder there, so it has no arena tuple to withdraw from; a
+stage-1 port is owed only if stage 1 ever keeps such a scrutinee in the arena.
+
 ### One-shot resumptive arms: the pre/post split
 
 An arm that does work after `resume` returns needs no continuation capture either, because the

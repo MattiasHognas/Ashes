@@ -369,6 +369,14 @@ public sealed partial class Lowering
         return count;
     }
 
+    // A pattern owner's duplicate an arena cell stores (`(irInst, 0)` matched only by its shape) is
+    // promoted to a retain like a loop-parameter read's, and the arena cell releases it just as
+    // little; it is withdrawn the same way unless a promoted release was paired with it.
+    private bool IsWithdrawablePatternOwnerDuplicate(int storedTemp)
+        => Environment.GetEnvironmentVariable("GRC_NO_SCRUTINEEOWNERDUPWITHDRAW") is null
+            && PatternOwnerAggregateDuplicates.Contains(storedTemp)
+            && !ReleasedPatternOwnerDuplicates.Contains(storedTemp);
+
     /// <summary>
     /// Withdraws the retain <paramref name="storedTemp"/> names when it reads a parameter of
     /// <paramref name="heldSlots"/> and the cell storing it is its only reader: a real retain becomes
@@ -390,7 +398,7 @@ public sealed partial class Lowering
 
         if (_inst[index] is IrInst.RcDup duplicate)
         {
-            if (duplicate.RuntimeManaged && !(keepPendingRetains && duplicate.MayBeEmpty) && ReadsLoopParameter(duplicate.SourceTemp, heldSlots) && TempUseCount(storedTemp, index) == 1)
+            if (duplicate.RuntimeManaged && !(keepPendingRetains && duplicate.MayBeEmpty) && (ReadsLoopParameter(duplicate.SourceTemp, heldSlots) || IsWithdrawablePatternOwnerDuplicate(storedTemp)) && TempUseCount(storedTemp, index) == 1)
             {
                 _inst[index] = duplicate with { RuntimeManaged = false, MayBeEmpty = false };
             }

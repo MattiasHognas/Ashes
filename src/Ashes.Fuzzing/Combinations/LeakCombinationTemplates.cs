@@ -246,6 +246,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ArenaSuccessorChildTemplate());
         registry.Register(new ArenaRequestedResultPartTemplate());
         registry.Register(new SelectorImportAliasTemplate());
+        registry.Register(new ScrutineeOwnerDuplicateTemplate());
     }
 }
 
