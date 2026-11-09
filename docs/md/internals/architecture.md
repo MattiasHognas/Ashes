@@ -1365,6 +1365,8 @@ allocates a target-pointer-width contiguous array in the current stack frame, wa
 copy each opaque handle, and passes the array address. Empty lists pass null. The address never exists
 as an Ashes value and the declaration cannot be called indirectly, returned, pointer-nested, or used
 with affine resource elements, so its storage cannot escape the call boundary.
+The self-hosted emitter mirrors this count/allocation/fill sequence in `IrCodegen.External.ash`;
+its temporary native array neither retains nor releases the borrowed handles.
 An external `out T` parameter is likewise a declaration-only call shape and consumes no Ashes
 argument. The compiler creates a naturally aligned, pointer-sized stack slot initialized to null,
 passes its address to the native call, and loads it exactly once after the call. Null materializes as

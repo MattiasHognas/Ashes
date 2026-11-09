@@ -141,8 +141,10 @@ export (
     value buildUnreachable,
     value getInlineAsm,
     value buildAlloca,
+    value buildArrayAlloca,
     value buildEntryAlloca,
     value builderModule,
+    value builderFunction,
     value buildStore,
     value buildLoad,
     value setVolatile,
@@ -266,6 +268,7 @@ external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMB
 external LLVMBuildUnreachable(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildUnreachable@libLLVM.so"
 external LLVMGetInlineAsm(LLVMTypeRef, Str, u64, Str, u64, Bool, Bool, u32, Bool) -> LLVMValueRef = "LLVMGetInlineAsm@libLLVM.so"
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
+external LLVMBuildArrayAlloca(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildArrayAlloca@libLLVM.so"
 external LLVMGetInsertBlock(LLVMBuilderRef) -> LLVMBasicBlockRef = "LLVMGetInsertBlock@libLLVM.so"
 external LLVMGetBasicBlockParent(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetBasicBlockParent@libLLVM.so"
 external LLVMGetGlobalParent(LLVMValueRef) -> LLVMModuleRef = "LLVMGetGlobalParent@libLLVM.so"
@@ -571,9 +574,16 @@ let getInlineAsm functionType asmString constraints hasSideEffects isAlignStack 
 // with `buildLoad` after the arms rejoin.
 let buildAlloca builder type_ name = LLVMBuildAlloca(builder)(type_)(name)
 
+let buildArrayAlloca builder type_ count name = LLVMBuildArrayAlloca(builder)(type_)(count)(name)
+
 let getInsertBlock builder = LLVMGetInsertBlock(builder)
 
 let getBasicBlockParent block = LLVMGetBasicBlockParent(block)
+
+let builderFunction builder =
+    builder
+    |> getInsertBlock
+    |> getBasicBlockParent
 
 // The module owning the function the builder is positioned in.
 let builderModule builder =

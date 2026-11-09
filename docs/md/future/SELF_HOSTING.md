@@ -714,6 +714,18 @@ F. **Clear the blockers the probe reports.** This is the next active step under 
    containing the landed round-11 work. Record the source commit, stage-1 binary, census inputs,
    NET/GROWTH, per-class deltas and peak memory. Historical round-11 counts are not this baseline.
 
+   Fresh baseline (2026-11-09, source `a51ede27`, after merged #1153): stage 1 built in 557.61 s,
+   peaking at 16,564,336 KiB, and passed all six smoke guards. The unchanged round-11 loops10/11
+   census measured **NET +20 / GROWTH +33** (6,032 -> 6,052 live cells). Binary SHA-256:
+   `41bb083063cfa5ec15bc6fc3a5620a40aa9c98ca805e29123b0087d149a04156`.
+   Largest positive classes: `32_ptr` +5; `40_9`, `32_3`, `32_29`, `32_28` +2 each.
+   All 20 backend module probes were attempted: 15 stopped on missing `Show` evidence, four on
+   unsupported FFI buffer marshalling, and `ElfLinker` compiled and ran. `FloatText` reached the
+   buffer stop without the historical `u64` mismatch. The semantics sweep is incomplete:
+   `AggregateOwnership` passed; `CallOwnership` exhausted memory. A reduced-budget trace showed
+   rapid 4 MiB anonymous mappings, but neither repeated work nor a missing release is established.
+   These are baseline findings, not evidence that F or E is complete.
+
    During F, crashes, use-after-free and over-releases remain blockers. Fix leaks only when they
    block F within the existing memory budgets; leave the other leak classes tracked under E.
    Ownership fixes still require the stage-0/stage-1 mirror (or a measured exemption), regression
@@ -2824,8 +2836,11 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   declared once from a scan of the whole program, reusing the runtime's own declaration where the
   name matches so LLVM does not rename the second one to `strlen.1`; each argument word converted
   to what its ABI position declares and the result normalized back to a word, with `ToCString` for
-  a `Str` argument. A `Buffer`, `Out` or `NativeString` position panics rather than emitting
-  something silently wrong: those need `AllocFfiOut`/`LoadFfiOut`/`CopyFfiString`, still open, and
+  a `Str` argument. Added during step F (2026-11-10): `Buffer` arguments count the immutable list,
+  allocate a contiguous stack array, copy the borrowed opaque handles in order, and pass null for
+  an empty list. The self-hosted backend suite generates and runs empty, single-element and
+  multi-element buffer comparisons. `Out` and `NativeString` positions still panic rather than
+  emitting something silently wrong: those need `AllocFfiOut`/`LoadFfiOut`/`CopyFfiString`, still open, and
   the self-hosted linker still resolves an imported symbol against its own fixed table rather than
   the `symbol@library` the declaration carries). Open: the buffered stdout ring (writes are
   immediate), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per

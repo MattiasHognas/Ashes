@@ -393,7 +393,7 @@ let switchTagCaseCapacity = 8u32
 let recursive resolveSwitchCases cases labelBlocks =
     match cases with
         | [] -> []
-        | IrSwitchCase { tag = tag, label = label } :: rest -> (tag, lookupIndexed(label)(labelBlocks)) :: resolveSwitchCases(rest)(labelBlocks)
+        | IrSwitchCase { tag = tag, label = label } :: rest -> (tag, lookupIndexedStr(label)(labelBlocks)) :: resolveSwitchCases(rest)(labelBlocks)
 
 let recursive addResolvedSwitchCases switchInst i64 resolved =
     match resolved with
@@ -430,7 +430,7 @@ let codegenInstructionKind cx builder kind state =
                         // `+16` byte GEP off it directly — no `buildIntToPtr` round-trip needed
                         // first, unlike a temp-held pointer that already went through `i64`.
                                         | LoadConstStr(target, label) ->
-                                            let global = lookupIndexed(label)(stringLiteralGlobals)
+                                            let global = lookupIndexedStr(label)(stringLiteralGlobals)
                                             in
                                                 let valuePtr = gepBytes(builder)(i64)(i8)(global)(16)("str_lit_value_ptr")
                                                 in ((target, buildPtrToInt(builder)(valuePtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
@@ -516,7 +516,7 @@ let codegenInstructionKind cx builder kind state =
                         // two-element part list rather than a separate pairwise implementation.
                         // `parts`/`[left, right]` are resolved to LLVM values here, at the
                         // `codegenInstructionKind` call site — where every other case in this match
-                        // resolves its temps via `lookupIndexed` — so `emitStringConcatN` and its
+                        // resolves its temps via `lookupIndexedInt` — so `emitStringConcatN` and its
                         // helpers take plain `List(LLVMValueRef)` and never touch `tempEnv`.
                                         | BytesGet(target, bytes, index) ->
                                             ((target, tempEnv
@@ -706,8 +706,8 @@ let codegenInstructionKind cx builder kind state =
                                         | ConcatStrTip(target, left, right, resvStartSlot, resvEndSlot, managed) ->
                                             let result =
                                                 localSlots
-                                                |> lookupIndexed(resvEndSlot)
-                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexed(resvStartSlot)(localSlots))
+                                                |> lookupIndexedInt(resvEndSlot)
+                                                |> emitConcatStrTip(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(managed)(lookupTemp(cx)(left)(tempEnv))(lookupTemp(cx)(right)(tempEnv))(lookupIndexedInt(resvStartSlot)(localSlots))
                                             in ((target, result) :: tempEnv, terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
@@ -820,21 +820,21 @@ let codegenInstructionKind cx builder kind state =
                                         | StoreLocal(slot, source) ->
                                             let _ =
                                                 localSlots
-                                                |> lookupIndexed(slot)
+                                                |> lookupIndexedInt(slot)
                                                 |> buildStore(builder)(lookupTemp(cx)(source)(tempEnv))
                                             in (tempEnv, terminated)
                                         | LoadLocal(target, slot) ->
-                                            ((target, buildLoad(builder)(i64)(lookupIndexed(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            ((target, buildLoad(builder)(i64)(lookupIndexedInt(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | LoadCapabilityHandler(target, capabilityIndex) ->
-                                            ((target, buildLoad(builder)(i64)(lookupIndexed(capabilityIndex)(cx.capabilityHandlerGlobals))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            ((target, buildLoad(builder)(i64)(lookupIndexedInt(capabilityIndex)(cx.capabilityHandlerGlobals))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | StoreCapabilityHandler(capabilityIndex, source) ->
                                             let _ =
                                                 cx.capabilityHandlerGlobals
-                                                |> lookupIndexed(capabilityIndex)
+                                                |> lookupIndexedInt(capabilityIndex)
                                                 |> buildStore(builder)(lookupTemp(cx)(source)(tempEnv))
                                             in (tempEnv, terminated)
                                         | Label(name) ->
-                                            let labelBlock = lookupIndexed(name)(labelBlocks)
+                                            let labelBlock = lookupIndexedStr(name)(labelBlocks)
                                             in
                                                 let _ =
                                                     if terminated
@@ -848,7 +848,7 @@ let codegenInstructionKind cx builder kind state =
                                         | Jump(target) ->
                                             let _ =
                                                 labelBlocks
-                                                |> lookupIndexed(target)
+                                                |> lookupIndexedStr(target)
                                                 |> buildBr(builder)
                                             in (tempEnv, true)
                                         | JumpIfFalse(cond, target) ->
@@ -863,7 +863,7 @@ let codegenInstructionKind cx builder kind state =
                                                 in
                                                     let _ =
                                                         labelBlocks
-                                                        |> lookupIndexed(target)
+                                                        |> lookupIndexedStr(target)
                                                         |> buildCondBr(builder)(condI1)(fallthroughBlock)
                                                     in
                                                         let _ = positionBuilderAtEnd(builder)(fallthroughBlock)
@@ -872,7 +872,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resolved = resolveSwitchCases(cases)(labelBlocks)
                                             in
                                                 let switchInst =
-                                                    buildSwitch(builder)(lookupTemp(cx)(tagTemp)(tempEnv))(lookupIndexed(defaultLabel)(labelBlocks))(switchTagCaseCapacity)
+                                                    buildSwitch(builder)(lookupTemp(cx)(tagTemp)(tempEnv))(lookupIndexedStr(defaultLabel)(labelBlocks))(switchTagCaseCapacity)
                                                 in
                                                     let _ = addResolvedSwitchCases(switchInst)(i64)(resolved)
                                                     in (tempEnv, true)
@@ -880,13 +880,13 @@ let codegenInstructionKind cx builder kind state =
                                         | SaveStackPointer(slot) ->
                                             let _ =
                                                 localSlots
-                                                |> lookupIndexed(slot)
+                                                |> lookupIndexedInt(slot)
                                                 |> emitSaveStackPointer(builder)(i64)(arena)
                                             in (tempEnv, terminated)
                                         | RestoreStackPointer(slot) ->
                                             let _ =
                                                 localSlots
-                                                |> lookupIndexed(slot)
+                                                |> lookupIndexedInt(slot)
                                                 |> emitRestoreStackPointer(builder)(i64)(ptrType)(arena)
                                             in (tempEnv, terminated)
                         // The scoped-arena brackets — see `IrCodegen.Arena`. The coroutine-loop
@@ -897,8 +897,8 @@ let codegenInstructionKind cx builder kind state =
                                             else
                                                 let _ =
                                                     localSlots
-                                                    |> lookupIndexed(endSlot)
-                                                    |> emitSaveArenaState(builder)(i64)(arena)(lookupIndexed(cursorSlot)(localSlots))
+                                                    |> lookupIndexedInt(endSlot)
+                                                    |> emitSaveArenaState(builder)(i64)(arena)(lookupIndexedInt(cursorSlot)(localSlots))
                                                 in (tempEnv, terminated)
                                         | RestoreArenaState(cursorSlot, endSlot, preRestoreSlot, coroutineLoop) ->
                                             if coroutineLoop
@@ -906,8 +906,8 @@ let codegenInstructionKind cx builder kind state =
                                             else
                                                 let _ =
                                                     localSlots
-                                                    |> lookupIndexed(preRestoreSlot)
-                                                    |> emitRestoreArenaState(builder)(i64)(arena)(lookupIndexed(cursorSlot)(localSlots))(lookupIndexed(endSlot)(localSlots))
+                                                    |> lookupIndexedInt(preRestoreSlot)
+                                                    |> emitRestoreArenaState(builder)(i64)(arena)(lookupIndexedInt(cursorSlot)(localSlots))(lookupIndexedInt(endSlot)(localSlots))
                                                 in (tempEnv, terminated)
                                         | ReclaimArenaChunks(savedEndSlot, preRestoreSlot, coroutineLoop) ->
                                             if coroutineLoop
@@ -915,8 +915,8 @@ let codegenInstructionKind cx builder kind state =
                                             else
                                                 let _ =
                                                     localSlots
-                                                    |> lookupIndexed(preRestoreSlot)
-                                                    |> emitReclaimArenaChunks(context)(function_)(builder)(i64)(arena)(lookupIndexed(savedEndSlot)(localSlots))
+                                                    |> lookupIndexedInt(preRestoreSlot)
+                                                    |> emitReclaimArenaChunks(context)(function_)(builder)(i64)(arena)(lookupIndexedInt(savedEndSlot)(localSlots))
                                                 in (tempEnv, terminated)
                                         | PrintInt(source) ->
                                             let _ =
@@ -958,7 +958,7 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 if isImmortalNullaryAlloc(fieldCount)(runtimeManaged)(tagless)
                                                 then
-                                                    ((target, emitImmortalNullaryAdt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(tag)(lookupIndexed(tag)(cx.nullaryCellGlobals))(resultName)) :: tempEnv, terminated)
+                                                    ((target, emitImmortalNullaryAdt(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(tag)(lookupIndexedInt(tag)(cx.nullaryCellGlobals))(resultName)) :: tempEnv, terminated)
                                                 else
                                                     if runtimeManaged
                                                     then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
@@ -1030,7 +1030,7 @@ let codegenInstructionKind cx builder kind state =
                                                     match structuralDropperLabel with
                                                         | Some(label) ->
                                                             liftedFunctions
-                                                            |> lookupIndexed(label)
+                                                            |> lookupIndexedStr(label)
                                                             |> Some
                                                         | None -> None
                                                 in
@@ -1052,7 +1052,7 @@ let codegenInstructionKind cx builder kind state =
                                                     buildIntToPtr(builder)(emitArenaAlloc(context)(function_)(builder)(i64)(arena)(closureSizeBytes)("closure"))(ptrType)("closure_ptr")
                                             in
                                                 let result =
-                                                    emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupTemp(cx)(envPtrTemp)(tempEnv))(
+                                                    emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexedStr(funcLabel)(liftedFunctions))(lookupTemp(cx)(envPtrTemp)(tempEnv))(
                                                         packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(runtimeManaged)(returnsGeneralRcOwned)
                                                     )("t" + Ashes.Text.fromInt(target))
                                                 in ((target, result) :: tempEnv, terminated)
@@ -1060,12 +1060,12 @@ let codegenInstructionKind cx builder kind state =
                                             let closurePtr = emitStackAlloc(builder)(i64)(closureSizeBytes)("closure_stack")
                                             in
                                                 let result =
-                                                    emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupTemp(cx)(envPtrTemp)(tempEnv))(
+                                                    emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexedStr(funcLabel)(liftedFunctions))(lookupTemp(cx)(envPtrTemp)(tempEnv))(
                                                         packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)(false)(returnsGeneralRcOwned)
                                                     )("t" + Ashes.Text.fromInt(target))
                                                 in ((target, result) :: tempEnv, terminated)
                                         | LoadFuncAddr(target, funcLabel) ->
-                                            ((target, buildPtrToInt(builder)(lookupIndexed(funcLabel)(liftedFunctions))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            ((target, buildPtrToInt(builder)(lookupIndexedStr(funcLabel)(liftedFunctions))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // The runtime-managed-argument flag temp is `-1` when the call site has
                         // none (`IrText.ash`'s own `optionalIntOperand` convention, and what
                         // `LlvmCodegen.cs`'s `LoadRuntimeManagedArgumentFlag` checks for), in which
@@ -1093,12 +1093,12 @@ let codegenInstructionKind cx builder kind state =
                                                 else lookupTemp(cx)(flagTemp)(tempEnv)
                                             in
                                                 let result =
-                                                    buildCall(builder)(closureFunctionType)(lookupIndexed(funcLabel)(liftedFunctions))([lookupTemp(cx)(envTemp)(tempEnv), lookupTemp(cx)(argTemp)(tempEnv), flagRef])(3u32)(
+                                                    buildCall(builder)(closureFunctionType)(lookupIndexedStr(funcLabel)(liftedFunctions))([lookupTemp(cx)(envTemp)(tempEnv), lookupTemp(cx)(argTemp)(tempEnv), flagRef])(3u32)(
                                                         "t" + Ashes.Text.fromInt(target)
                                                     )
                                                 in ((target, result) :: tempEnv, terminated)
                                         | LoadEnv(target, index) ->
-                                            ((target, emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexed(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            ((target, emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexedInt(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | LoadArgumentOwnership(target) -> ((target, getParam(function_)(2u32)) :: tempEnv, terminated)
                         // See `emitRcAllocPayloadPtr` for the RC form; the ordinary form is an
                         // arena bump allocation (`IrCodegen.Arena`).
@@ -1556,7 +1556,7 @@ let emitKnownCallValue cx builder tempEnv funcLabel envTemp argTemp flagTemp tar
                 then constInt(i64)(0u64)(false)
                 else lookupTemp(cx)(flagTemp)(tempEnv)
             in
-                buildCall(builder)(closureFunctionType)(lookupIndexed(funcLabel)(liftedFunctions))([lookupTemp(cx)(envTemp)(tempEnv), lookupTemp(cx)(argTemp)(tempEnv), flagRef])(3u32)(
+                buildCall(builder)(closureFunctionType)(lookupIndexedStr(funcLabel)(liftedFunctions))([lookupTemp(cx)(envTemp)(tempEnv), lookupTemp(cx)(argTemp)(tempEnv), flagRef])(3u32)(
                     "t" + Ashes.Text.fromInt(target)
                 )
 
@@ -1677,12 +1677,12 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                     // instruction can allocate.
                                         let _ =
                                             localSlots
-                                            |> lookupIndexed(0)
+                                            |> lookupIndexedInt(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
                                             let _ =
                                                 localSlots
-                                                |> lookupIndexed(1)
+                                                |> lookupIndexedInt(1)
                                                 |> buildStore(builder)(getParam(functionValue)(1u32))
                                             in Unit
                                     else Unit
@@ -1795,7 +1795,7 @@ let recursive codegenLiftedFunctions mc functions =
             match function_ with
                 | IrFunction { label = label } ->
                     let _ =
-                        codegenFunctionBody(mc)(lookupIndexed(label)(mc.moduleLiftedFunctions))(false)(function_)
+                        codegenFunctionBody(mc)(lookupIndexedStr(label)(mc.moduleLiftedFunctions))(false)(function_)
                     in codegenLiftedFunctions(mc)(rest)
 
 // Whether any instruction is one of the copy family: only then does the module get the copy-out

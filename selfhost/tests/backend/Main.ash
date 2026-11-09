@@ -2140,7 +2140,7 @@ let buildAdtFieldTagReadModule name context =
 // end by `buildRealIrMatchSomeModule` below).
 //
 // A first attempt at this instruction crashed/corrupted memory: `IrCodegen.ash`'s own
-// `addSwitchCases` interleaved a `labelBlocks` lookup (`lookupIndexed`) with the `LLVMAddCase` FFI
+// `addSwitchCases` interleaved a `labelBlocks` lookup (`lookupIndexedStr`) with the `LLVMAddCase` FFI
 // call for each case, in a single recursive pass. Direct experiment confirmed a `labelBlocks`
 // lookup performed AFTER an `addCase` FFI call reads back wrong data for later entries in the
 // same list — reproduced with static string literals, no real lowering involved. The actual fix
@@ -3649,6 +3649,12 @@ let externalCallSource = "external strlen(Str) -> Int = \"strlen\"\nexternal str
 let buildOptimizedIrExternalCallModule name context = codegenOptimizedRealSource(externalCallSource)(name)(context)
 
 let testRunStaticExecutableForExternalCallModule unit = assertProgramPrints(buildOptimizedIrExternalCallModule)("selfhostBackendRunExternalCall")("selfhost_backend_external_call_e2e")("5 0 0")
+
+let externalBufferSource = "external type Cell\nexternal malloc(Int) -> Cell\nexternal free(Cell) -> void\nexternal compareCells(FfiBuffer(Cell), FfiBuffer(Cell), Int) -> Int = \"memcmp\"\n\nlet first = malloc(1)\nlet second = malloc(1)\nlet empty = compareCells([])([])(0) == 0\nlet single = compareCells([first])([first])(8) == 0\nlet ordered = compareCells([first, second, first])([first, second, first])(24) == 0\nlet different = compareCells([first, second])([second, first])(16) != 0\nlet _ = free(first) |> (given (_) -> free(second))\n\nAshes.IO.print((if empty then \"1\" else \"0\") + \" \" + (if single then \"1\" else \"0\") + \" \" + (if ordered then \"1\" else \"0\") + \" \" + (if different then \"1\" else \"0\"))\n"
+
+let buildOptimizedIrExternalBufferModule name context = codegenOptimizedRealSource(externalBufferSource)(name)(context)
+
+let testRunStaticExecutableForExternalBufferModule unit = assertProgramPrints(buildOptimizedIrExternalBufferModule)("selfhostBackendRunExternalBuffer")("selfhost_backend_external_buffer_e2e")("1 1 1 1")
 
 // A file mapped once per iteration of a loop and read through the view, which is an arena block
 // over the program-lifetime mapping as stage 0 builds it (`emitArenaStringView`), not a
@@ -5940,6 +5946,7 @@ let run shipped =
     |> testRunStaticExecutableForProgramArgsModule
     |> testRunStaticExecutableForProgramArgsEmptyModule
     |> testRunStaticExecutableForExternalCallModule
+    |> testRunStaticExecutableForExternalBufferModule
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
