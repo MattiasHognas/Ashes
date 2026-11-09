@@ -2765,6 +2765,10 @@ public sealed partial class Lowering
         {
             next[name] = key;
         }
+        else if (ImportedFunctionAliasKey(binder) is { } aliased)
+        {
+            next[name] = aliased;
+        }
         else
         {
             next.Remove(name);
@@ -2772,6 +2776,17 @@ public sealed partial class Lowering
 
         return next;
     }
+
+    // A selector import (`import M.f`) arrives as `let f = M.f`: the name is the stitched function itself,
+    // so a call through it is that function's call, not an unknown callee.
+    private FuncKey? ImportedFunctionAliasKey(Expr binder)
+        => Environment.GetEnvironmentVariable("GRC_NO_IMPORTALIASSCOPE") is null
+            && binder is Expr.Let { Value: var value }
+            && StripOrSelf(value) is Expr.QualifiedVar qualified
+            && ResolveSpecializableCalleeName(qualified) is { } stitched
+            && _maNameIndex.TryGetValue(stitched, out FuncKey key)
+                ? key
+                : null;
 
     // Plain lets may bind an immutable alias of an exact function already present in scope. Live
     // TCO preserves that identity through the local slot's known function label, so structural TCO
