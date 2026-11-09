@@ -960,6 +960,15 @@ a caller prove that a list handed to a map is never kept: the per-element call
 only ever sees a head. Only a construct whose inputs cannot be enumerated — a
 lambda's captured environment, an unmodelled node — sets `UnenumeratedInputs`,
 and there absence from the account means unknown rather than proven-absent.
+A selector import (`import Ashes.Collection.List.reverse`) arrives as a let binding whose value is
+exactly the qualified name of a registered function; the function scope maps the name to that
+function, so a call through it is that function's call rather than an unknown callee
+(`GRC_NO_IMPORTALIASSCOPE`). A partial application is a call, not a name, and never maps. Before
+this, a generic loop calling a selector-imported helper had an unmodelled reach, and its taken-over
+record was never proven. The rule fixes single-file programs; the self-hosted compiler's own
+modules resolve their selector imports differently and do not take this path. Stage 1's
+`recordReachOf` still treats both forms as unknown callees, a precision gap with no measured leak
+(stage 1 compiles the reproducer flat).
 
 Resolved ordinary heap types are described once by a cycle-guarded
 `OrdinaryHeapLayoutCapability`. It records whether the graph can be copied,
