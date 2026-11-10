@@ -636,7 +636,12 @@ let minimalViewMatchesFull semanticType environment =
     (let full = classifyHeapLayout(semanticType)(environment)
     in
         let minimal = classifyHeapAdmissibility(semanticType)(environment)
-        in full.containsResource == minimal.containsResource && full.containsUnresolvedType == minimal.containsUnresolvedType && Ashes.Collection.List.map(admissibilityProjection)(full.children) == minimal.children)
+        in
+            let shallow =
+                match full with
+                    | HeapLayoutFacts { structuralCopy = ShallowCopy } -> true
+                    | _ -> false
+            in full.containsResource == minimal.containsResource && full.containsUnresolvedType == minimal.containsUnresolvedType && Ashes.Collection.List.map(admissibilityProjection)(full.children) == minimal.children && classifyHeapShallowCopy(semanticType)(environment) == shallow)
 
 let recursive allMinimalViewsMatch types environment =
     match types with
@@ -648,10 +653,19 @@ let testMinimalAdmissibilityMatchesFullClassification unit =
         Unit
         |> heapLayoutTestEnvironment
         |> addInferenceZeroCostTypeDefinition(2000)("ScalarWrapper")([])(SemInt)
+        |> addInferenceZeroCostTypeDefinition(2002)("StringWrapper")([])(SemString)
     in
         [
             SemInt,
+            SemBool,
+            SemFloat,
+            SemRune,
+            SemNever,
+            SemUInt(32),
             SemString,
+            SemBytes,
+            SemBigInt,
+            SemFunction(SemInt)(SemInt)(None),
             SemOpaque("Handle"),
             SemOpaque("View"),
             SemVariable(700),
@@ -659,6 +673,8 @@ let testMinimalAdmissibilityMatchesFullClassification unit =
             SemList(SemString),
             SemTuple([SemInt, SemOpaque("View"), SemString]),
             SemNamed(2000)("ScalarWrapper")([]),
+            SemNamed(2002)("StringWrapper")([]),
+            SemNamed(2003)("Unknown")([]),
             SemNamed(2001)("Phantom")([SemVariable(702)]),
             namedTypeAt("Some")([SemInt])(environment),
             namedTypeAt("Some")([SemString])(environment),

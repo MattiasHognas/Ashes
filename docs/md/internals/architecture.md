@@ -1391,6 +1391,11 @@ Tagless-layout decisions prepare a constructor-shape index once for the declarat
 scheme environment. Resource traversal looks up only the matching type name before substituting
 its generic fields, preserving constructor order and the existing name-based ancestor cuts.
 The index is rebuilt for each declaration decision and does not outlive that environment.
+Heap constructor groups are accumulated in a local index keyed by both symbol ID and type name,
+then returned in first-seen group order with constructor fields in declaration order. This avoids
+rebuilding the preceding group-list prefix for each constructor without reusing renumbered
+groups across declarations. Scope-copy decisions and internal shallow-copy checks ask a dedicated
+predicate, so a negative shallow answer does not calculate an unused deep-copy classification.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and

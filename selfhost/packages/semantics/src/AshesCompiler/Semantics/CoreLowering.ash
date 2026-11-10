@@ -5169,6 +5169,26 @@ let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
                 |> coverageEnvironment
                 |> classifyHeapLayout(resolved))
 
+// Keep settled monomorphic answers authoritative; uncached types need only the shallow-copy
+// decision here, rather than every recursive heap-layout fact.
+let heapShallowCopyOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> facts.structuralCopy == ShallowCopy
+                    | None ->
+                        state
+                        |> coverageEnvironment
+                        |> classifyHeapShallowCopy(resolved)
+            | _ ->
+                state
+                |> coverageEnvironment
+                |> classifyHeapShallowCopy(resolved))
+
 let recursive lookupOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
         | [] -> None
@@ -5451,13 +5471,13 @@ let scopeCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
             then Some(ListScopeCopyOut)
             else None
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match heapFactsOf(named)(state) with
-                | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
-                    state
-                    |> shallowAdtCopySizeBytes(name)
-                    |> ShallowScopeCopyOut
-                    |> Some
-                | _ -> None
+            if heapShallowCopyOf(named)(state)
+            then
+                state
+                |> shallowAdtCopySizeBytes(name)
+                |> ShallowScopeCopyOut
+                |> Some
+            else None
         | _ -> None
 
 // The copy is reference-counted, or an arena copy where the function may run under a live handler

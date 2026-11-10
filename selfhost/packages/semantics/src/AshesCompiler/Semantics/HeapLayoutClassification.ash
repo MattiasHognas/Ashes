@@ -29,6 +29,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
+import Ashes.Collection.Map.MapTree
 export (
     type HeapChildDropKind(..),
     type HeapStructuralCopyKind(..),
@@ -44,6 +45,7 @@ export (
     value heapConstructorFieldGroups,
     value classifyHeapLayout,
     value classifyHeapAdmissibility,
+    value classifyHeapShallowCopy,
 )
 
 type HeapChildDropKind =
@@ -250,40 +252,42 @@ let recursive heapNamedTypeSubstitutedFields (symbolId: Int) (typeName: Str) (ar
                     | _ -> heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
             else heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
 
-let recursive heapAddToGroups (symbolId: Int) (typeName: Str) (constructorName: Str) (fieldTypes: List(SemanticType)) (resultArguments: List(SemanticType)) (groups: List(ConstructorFieldGroup)) =
-    match groups with
-        | [] ->
-            [
-                ConstructorFieldGroup(
-                    groupSymbolId = symbolId,
-                    groupTypeName = typeName,
-                    groupIsGeneric = length(resultArguments) > 0,
-                    groupFields = [(constructorName, fieldTypes)],
-                    groupGenericFields = [(constructorName, fieldTypes, resultArguments)]
-                )
-            ]
-        | (ConstructorFieldGroup { groupSymbolId = candidateId, groupTypeName = candidateName, groupIsGeneric = isGeneric, groupFields = fields, groupGenericFields = genericFields } as group) :: rest ->
-            if candidateId == symbolId && candidateName == typeName
-            then
-                ConstructorFieldGroup(
-                    groupSymbolId = candidateId,
-                    groupTypeName = candidateName,
-                    groupIsGeneric = isGeneric || length(resultArguments) > 0,
-                    groupFields = (constructorName, fieldTypes) :: fields,
-                    groupGenericFields = (constructorName, fieldTypes, resultArguments) :: genericFields
-                ) :: rest
-            else group :: heapAddToGroups(symbolId)(typeName)(constructorName)(fieldTypes)(resultArguments)(rest)
+type HeapGroupKey =
+    | symbolId: Int
+    | typeName: Str
 
-let recursive heapCollectGroups (constructors: List(ConstructorInferenceDefinition)) (groups: List(ConstructorFieldGroup)) =
+type HeapGroupIndex =
+    | groups: MapTree(Int, MapTree(Str, ConstructorFieldGroup))
+    | reversedOrder: List(HeapGroupKey)
+
+let heapGroupsForId (symbolId: Int) (index: HeapGroupIndex) =
+    match Ashes.Collection.Map.getInt(symbolId)(index.groups) with
+        | Some(groups) -> groups
+        | None -> Ashes.Collection.Map.empty
+
+let heapIndexGroup (symbolId: Int) (typeName: Str) (constructorName: Str) (fieldTypes: List(SemanticType)) (resultArguments: List(SemanticType)) (index: HeapGroupIndex) =
+    (let byName = heapGroupsForId(symbolId)(index)
+    in
+        match Ashes.Collection.Map.getStr(typeName)(byName) with
+            | None ->
+                let group = ConstructorFieldGroup(groupSymbolId = symbolId, groupTypeName = typeName, groupIsGeneric = length(resultArguments) > 0, groupFields = [(constructorName, fieldTypes)], groupGenericFields = [(constructorName, fieldTypes, resultArguments)])
+                in
+                    index with groups = Ashes.Collection.Map.setInt(symbolId)(Ashes.Collection.Map.setStr(typeName)(group)(byName))(index.groups), reversedOrder = HeapGroupKey(symbolId = symbolId, typeName = typeName) :: index.reversedOrder
+            | Some(group) ->
+                let updated = group with groupIsGeneric = group.groupIsGeneric || length(resultArguments) > 0, groupFields = (constructorName, fieldTypes) :: group.groupFields, groupGenericFields = (constructorName, fieldTypes, resultArguments) :: group.groupGenericFields
+                in
+                    index with groups = Ashes.Collection.Map.setInt(symbolId)(Ashes.Collection.Map.setStr(typeName)(updated)(byName))(index.groups))
+
+let recursive heapCollectGroups (constructors: List(ConstructorInferenceDefinition)) (index: HeapGroupIndex) =
     match constructors with
-        | [] -> groups
+        | [] -> index
         | ConstructorInferenceDefinition { name = constructorName, scheme = TypeScheme { body = body } } :: rest ->
             match heapConstructorFieldShape(body)([]) with
                 | (fieldTypes, SemNamed(symbolId, typeName, resultArguments)) ->
-                    groups
-                    |> heapAddToGroups(symbolId)(typeName)(constructorName)(fieldTypes)(resultArguments)
+                    index
+                    |> heapIndexGroup(symbolId)(typeName)(constructorName)(fieldTypes)(resultArguments)
                     |> heapCollectGroups(rest)
-                | _ -> heapCollectGroups(rest)(groups)
+                | _ -> heapCollectGroups(rest)(index)
 
 let heapGroupInDeclarationOrder (group: ConstructorFieldGroup) =
     match group with
@@ -296,11 +300,22 @@ let heapGroupInDeclarationOrder (group: ConstructorFieldGroup) =
                 groupGenericFields = reverse(genericFields)
             )
 
-// The constructors indexed by the type each builds, for an environment's `constructorFieldGroups`.
+let recursive heapGroupsInOrder (keys: List(HeapGroupKey)) (index: HeapGroupIndex) =
+    match keys with
+        | [] -> []
+        | HeapGroupKey { symbolId = symbolId, typeName = typeName } :: rest ->
+            match index
+            |> heapGroupsForId(symbolId)
+            |> Ashes.Collection.Map.getStr(typeName) with
+                | Some(group) -> heapGroupInDeclarationOrder(group) :: heapGroupsInOrder(rest)(index)
+                | None -> heapGroupsInOrder(rest)(index)
+
+// Local indexed accumulation avoids rebuilding every preceding group for each constructor.
+// The returned list retains first-seen group order and declaration order within each group.
 let heapConstructorFieldGroups (constructors: List(ConstructorInferenceDefinition)) =
-    []
-    |> heapCollectGroups(constructors)
-    |> map(heapGroupInDeclarationOrder)
+    (let index = heapCollectGroups(constructors)(HeapGroupIndex(groups = Ashes.Collection.Map.empty, reversedOrder = []))
+    in
+        heapGroupsInOrder(reverse(index.reversedOrder))(index))
 
 let recursive heapFindGroup (symbolId: Int) (typeName: Str) (groups: List(ConstructorFieldGroup)) =
     match groups with
@@ -546,6 +561,12 @@ and heapArenaDeepCopyAdtLayout (named: SemanticType) (environment: TypeEnvironme
 
 // A named type is shallow-copyable when every constructor has the same arity and every field is a
 // scalar word; otherwise it is deep-copyable exactly when the arena copier can walk it.
+let heapAdtShallowCopySupported (named: SemanticType) (environment: TypeEnvironment) =
+    match heapNamedTypeConstructors(named)(environment) with
+        | [] -> false
+        | (_firstName, firstFields) :: _rest as grouped ->
+            !heapResourceBearing(named)(environment) && heapSameArity(length(firstFields))(grouped) && heapAllGroupedFields(given (fieldType) -> heapCanReset(fieldType)(environment))(grouped)
+
 let heapAdtStructuralCopyKind (named: SemanticType) (environment: TypeEnvironment) =
     (let grouped = heapNamedTypeConstructors(named)(environment)
     in
@@ -582,6 +603,21 @@ let heapStructuralCopyKind (semanticType: SemanticType) (environment: TypeEnviro
                     else NoStructuralCopy
                 | SemNamed(_symbolId, _name, _arguments) -> heapAdtStructuralCopyKind(resolved)(environment)
                 | _ -> NoStructuralCopy)
+
+// A scope boundary asks only whether one shallow cell copy suffices. Preserve the full
+// classifier's answer without computing deep-copy, child-copy, drop, or reuse layouts.
+let classifyHeapShallowCopy (semanticType: SemanticType) (environment: TypeEnvironment) =
+    (let resolved = resolveLayoutType(semanticType)(environment)
+    in
+        if canArenaResetLayoutIn(resolved)(environment)
+        then false
+        else
+            match resolved with
+                | SemString -> true
+                | SemBytes -> true
+                | SemBigInt -> true
+                | SemNamed(_symbolId, _name, _arguments) -> heapAdtShallowCopySupported(resolved)(environment)
+                | _ -> false)
 
 // The field rule shared by every drop and reuse layout: a scalar, a string-like leaf, a list of
 // scalars, a tuple of such leaves, or a closure is always acceptable (a reference-counted closure
@@ -680,7 +716,7 @@ and heapRuntimeOwnedFieldLayout (semanticType: SemanticType) (environment: TypeE
                 | SemTuple(elements) ->
                     heapAllTypes(given (element) -> heapRuntimeOwnedTupleElementLayout(element)(environment)(path))(elements)
                 | SemFunction(_argument, _result, _capabilityRow) -> true
-                | SemNamed(_symbolId, _name, _arguments) -> heapAdtStructuralCopyKind(resolved)(environment) == ShallowCopy || heapRuntimeRecordAdtLayout(resolved)(environment)(path) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
+                | SemNamed(_symbolId, _name, _arguments) -> heapAdtShallowCopySupported(resolved)(environment) || heapRuntimeRecordAdtLayout(resolved)(environment)(path) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
                 | _ -> false)
 // A tuple element a runtime-managed tuple owns, stage 0's `IsRuntimeOwnedTupleElementLayout`:
 // an owned field other than a closure, whose placement the static tuple rules never trust.
@@ -769,7 +805,7 @@ let recursive heapRuntimeTcoListElementLayout (semanticType: SemanticType) (envi
                 | SemList(element) -> heapRuntimeTcoListElementLayout(element)(environment)(path)
                 | SemTuple(elements) ->
                     heapAllTypes(given (element) -> heapRuntimeTcoListElementLayout(element)(environment)(path))(elements)
-                | SemNamed(_symbolId, _name, _arguments) -> heapAdtStructuralCopyKind(resolved)(environment) == ShallowCopy || heapRuntimeRecordAdtLayout(resolved)(environment)([]) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
+                | SemNamed(_symbolId, _name, _arguments) -> heapAdtShallowCopySupported(resolved)(environment) || heapRuntimeRecordAdtLayout(resolved)(environment)([]) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
                 | _ -> false)
 
 let heapDropKind (semanticType: SemanticType) (environment: TypeEnvironment) =

@@ -7,6 +7,11 @@ let childProjection (child: HeapLayoutChild) = (child.childType, child.dropKind)
 
 let viewsAgree (full: HeapLayoutFacts) (minimal: HeapAdmissibilityFacts) = full.containsResource == minimal.containsResource && full.containsUnresolvedType == minimal.containsUnresolvedType && Ashes.Collection.List.map(childProjection)(full.children) == minimal.children
 
+let shallowCopy (full: HeapLayoutFacts) =
+    match full with
+        | HeapLayoutFacts { structuralCopy = ShallowCopy } -> true
+        | _ -> false
+
 let recursive groups depth leaf =
     (let fields =
         if depth == 0
@@ -39,7 +44,7 @@ let recursive run remaining =
                         in
                             match classifyHeapLayout(node(depth))(environment) with
                                 | HeapLayoutFacts { containsResource = actualResource, containsUnresolvedType = actualUnresolved } as full ->
-                                    if actualResource == resource && actualUnresolved == unresolved && viewsAgree(full)(classifyHeapAdmissibility(node(depth))(environment))
+                                    if actualResource == resource && actualUnresolved == unresolved && viewsAgree(full)(classifyHeapAdmissibility(node(depth))(environment)) && classifyHeapShallowCopy(node(depth))(environment) == shallowCopy(full)
                                     then run(remaining - 1)
                                     else Ashes.IO.panic("unexpected heap classification")
 
