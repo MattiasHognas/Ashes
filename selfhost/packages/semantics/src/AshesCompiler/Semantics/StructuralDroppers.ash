@@ -102,6 +102,8 @@ type DropperBody =
     | nextLambdaId: Int
     | nextLabelId: Int
     | environment: TypeEnvironment
+    // Local to this immutable synthesis environment; never persisted with dropper labels.
+    | layoutFacts: MapTree(Int, List((SemanticType, HeapLayoutFacts)))
     | contractRecords: MapTree(Str, Bool)
     | recordsInProgress: List(Str)
 
@@ -194,6 +196,7 @@ let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nex
             nextLambdaId = nextLambdaId,
             nextLabelId = nextLabelId,
             environment = dropperTypes.dropperTypeEnvironment,
+            layoutFacts = Ashes.Collection.Map.empty,
             contractRecords = dropperTypes.contractRecords,
             recordsInProgress = []
         )))
@@ -217,6 +220,40 @@ let emitDropper (kind: IrInstructionKind) (body: DropperBody) =
 let bodyEnvironment (body: DropperBody) =
     match body with
         | DropperBody { environment = environment } -> environment
+
+// Symbol ids select a bucket only. Full instantiated types must match before reusing facts.
+let recursive matchingLayoutFacts (semanticType: SemanticType) (entries: List((SemanticType, HeapLayoutFacts))) =
+    match entries with
+        | [] -> None
+        | (candidate, facts) :: rest ->
+            if candidate == semanticType
+            then Some(facts)
+            else matchingLayoutFacts(semanticType)(rest)
+
+let namedLayoutEntries (symbolId: Int) (body: DropperBody) =
+    match Ashes.Collection.Map.getInt(symbolId)(body.layoutFacts) with
+        | Some(entries) -> entries
+        | None -> []
+
+let layoutFactsOf (semanticType: SemanticType) (body: DropperBody) =
+    match semanticType with
+        | SemNamed(symbolId, _name, _arguments) ->
+            match body
+            |> namedLayoutEntries(symbolId)
+            |> matchingLayoutFacts(semanticType) with
+                | Some(facts) -> facts
+                | None -> classifyHeapLayout(semanticType)(body.environment)
+        | _ -> classifyHeapLayout(semanticType)(body.environment)
+
+let cacheNamedLayout (semanticType: SemanticType) (body: DropperBody) =
+    match semanticType with
+        | SemNamed(symbolId, _name, _arguments) ->
+            let entries = namedLayoutEntries(symbolId)(body)
+            in
+                match matchingLayoutFacts(semanticType)(entries) with
+                    | Some(_facts) -> body
+                    | None -> body with layoutFacts = Ashes.Collection.Map.setInt(symbolId)((semanticType, classifyHeapLayout(semanticType)(body.environment)) :: entries)(body.layoutFacts)
+        | _ -> body
 
 // The owned type name a whole-value `RcDrop` releases under. The backend releases a `Function`
 // through the closure protocol (its dropper at the closure's fourth word), so a user type of that
@@ -287,7 +324,7 @@ let finishSynthesizedBody (label: Str) (origin: IrFunctionOrigin) (outer: Droppe
                     origin = Some(origin),
                     lifetimesPlaced = true
                 )
-            in outer with cache = cache, functions = append(functions)([function]), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
+            in outer with cache = cache, layoutFacts = inner.layoutFacts, functions = append(functions)([function]), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
 
 let recursive lookupLabel (key: Str) (labels: List((Str, Str))) =
     match labels with
@@ -382,8 +419,7 @@ let ownedChildrenOf (constructorName: Maybe(Str)) (facts: HeapLayoutFacts) =
 
 let ownedChildren (constructorName: Maybe(Str)) (semanticType: SemanticType) (body: DropperBody) =
     body
-    |> bodyEnvironment
-    |> classifyHeapLayout(semanticType)
+    |> layoutFactsOf(semanticType)
     |> ownedChildrenOf(constructorName)
 
 // `Result(Str, Int)` and `Result(Str, Float)` carry no owned payload worth walking: a single
@@ -396,9 +432,7 @@ let isScalarResultType (named: SemanticType) =
 
 // A recursive-copy or owned-child ADT is released by its own constructor-switching dropper.
 let usesRecursiveDropper (named: SemanticType) (body: DropperBody) =
-    match body
-    |> bodyEnvironment
-    |> classifyHeapLayout(named) with
+    match body |> layoutFactsOf(named) with
         | HeapLayoutFacts { runtimeOwnedChildAdtSupported = true } -> true
         | _ ->
             body
@@ -467,30 +501,28 @@ let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Seman
             else
                 match (namedTypeConstructors(semanticType)(body), body
                 |> bodyEnvironment
-                |> classifyHeapLayout(semanticType)) with
+                |> classifyHeapAdmissibility(semanticType)) with
                     | ([], _facts) -> false
-                    | (_constructors, HeapLayoutFacts { containsResource = true }) -> false
-                    | (_constructors, HeapLayoutFacts { containsUnresolvedType = true }) -> false
-                    | (_constructors, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(semanticType :: path)(body)
+                    | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> false
+                    | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> false
+                    | (_constructors, HeapAdmissibilityFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(semanticType :: path)(body)
         | other -> canArenaResetLayout(other)
 and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (body: DropperBody) =
     match types with
         | [] -> true
         | semanticType :: rest -> generalRcAdmissible(semanticType)(path)(body) && allGeneralRcAdmissible(rest)(path)(body)
-and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(SemanticType)) (body: DropperBody) =
+and allChildrenGeneralRcAdmissible (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (body: DropperBody) =
     match children with
         | [] -> true
-        | HeapLayoutChild { dropKind = DropClosure } :: _rest -> false
-        | HeapLayoutChild { dropKind = UnsupportedChildDrop } :: _rest -> false
-        | HeapLayoutChild { childType = childType } :: rest -> generalRcAdmissible(childType)(path)(body) && allChildrenGeneralRcAdmissible(rest)(path)(body)
+        | (_childType, DropClosure) :: _rest -> false
+        | (_childType, UnsupportedChildDrop) :: _rest -> false
+        | (childType, _dropKind) :: rest -> generalRcAdmissible(childType)(path)(body) && allChildrenGeneralRcAdmissible(rest)(path)(body)
 
 // Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type that neither the fixed
 // copy-out nor the inline runtime-managed layouts express. Its values are released through a
 // dropper of their own, synthesized once per type.
 let usesGeneralDropper (named: SemanticType) (body: DropperBody) =
-    match body
-    |> bodyEnvironment
-    |> classifyHeapLayout(named) with
+    match body |> layoutFactsOf(named) with
         | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
         | HeapLayoutFacts { runtimeRecordAdtSupported = true } -> false
         | HeapLayoutFacts { runtimeOwnedChildAdtSupported = true } -> false
@@ -629,15 +661,19 @@ and emitAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
     if isScalarResultType(named)
     then emitTypeDrop(valueTemp)(named)(body)
     else
-        if usesRecursiveDropper(named)(body)
-        then emitRecursiveAdtDrop(valueTemp)(named)(body)
+        body
+        |> cacheNamedLayout(named)
+        |> emitClassifiedAdtDrop(valueTemp)(named)
+and emitClassifiedAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
+    if usesRecursiveDropper(named)(body)
+    then emitRecursiveAdtDrop(valueTemp)(named)(body)
+    else
+        if usesGeneralDropper(named)(body)
+        then emitGeneralAdtDrop(valueTemp)(named)(body)
         else
-            if usesGeneralDropper(named)(body)
-            then emitGeneralAdtDrop(valueTemp)(named)(body)
-            else
-                if usesRecordDropper(named)(body)
-                then emitRecordDrop(valueTemp)(named)(body)
-                else emitFirstConstructorDrop(valueTemp)(named)(body)
+            if usesRecordDropper(named)(body)
+            then emitRecordDrop(valueTemp)(named)(body)
+            else emitFirstConstructorDrop(valueTemp)(named)(body)
 // Stage 0's `TryEmitContractRecordDropCall`: a record of the ownership contract is released by one
 // call to a dropper synthesized once per type, whose body is the release written inline.
 and emitRecordDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
@@ -736,7 +772,9 @@ and synthesizeAdtDropperIn (named: SemanticType) (body: DropperBody) =
                     |> createAdtDropperOrigin(label))(registered)
                     |> (given (outer) -> (label, outer))
 and emitAdtDropperBody (sharedName: Str) (constructorLabelName: Str) (named: SemanticType) (body: DropperBody) =
-    match openSynthesizedValue(body) with
+    match body
+    |> cacheNamedLayout(named)
+    |> openSynthesizedValue with
         | (valueTemp, valueBody) ->
             match freshDropperLabel(sharedName)(valueBody) with
                 | (sharedLabel, labelBody) ->
@@ -913,9 +951,7 @@ let emitKnownConstructorDrop (valueTemp: Int) (named: SemanticType) (constructor
                     |> emitTypeDrop(valueTemp)(named)
 
 let namedTypeOwnsChildren (named: SemanticType) (body: DropperBody) =
-    match body
-    |> bodyEnvironment
-    |> classifyHeapLayout(named) with
+    match body |> layoutFactsOf(named) with
         | HeapLayoutFacts { containsOwnedChild = containsOwnedChild } -> containsOwnedChild
 
 // The inline release of an owned runtime-managed aggregate by its resolved type, stage 0's
@@ -924,7 +960,7 @@ let namedTypeOwnsChildren (named: SemanticType) (body: DropperBody) =
 // other list tests each cell, an ADT built by a known constructor walks that constructor's owned
 // fields, and any other ADT releases through its type-directed dropper. `None` when the value's
 // release is a single allocation, which the caller places as an ordinary owner drop.
-let emitOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (body: DropperBody) =
+let emitClassifiedOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (body: DropperBody) =
     match (semanticType, plan) with
         | (SemTuple(elements), _plan) ->
             body
@@ -952,6 +988,11 @@ let emitOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (pla
                         |> Some
             else None
         | _ -> None
+
+let emitOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (body: DropperBody) =
+    body
+    |> cacheNamedLayout(semanticType)
+    |> emitClassifiedOwnedAggregateRelease(valueTemp)(semanticType)(plan)
 
 let instructionKindOf (instruction: IrInstruction) =
     match instruction with

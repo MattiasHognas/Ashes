@@ -57,6 +57,7 @@ import AshesCompiler.Semantics.TypeResolution.addTypeDefinition
 import AshesCompiler.Semantics.TypeResolution.emptyTypeResolutionContext
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.HeapLayoutClassification
+import AshesCompiler.Semantics.AdmissibilityCache
 import AshesCompiler.Semantics.HelperInlining.isInlinableHelperValue
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
@@ -676,6 +677,7 @@ type CoreProgramState =
     | provenSiblingCallResults: MapTree(Str, SemanticType)
 
 type CoreFunctionState =
+    | admissibilityAnswers: List((SemanticType, Bool))
     | deferredLabelNext: Int
     | deferredLabelGroups: List((Int, Int))
     | nextStringId: Int
@@ -1038,13 +1040,17 @@ type LoweredCoreValue =
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
 
+let clearAdmissibilityAnswers (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with admissibilityAnswers = []))
+
 let stateConstructorLayouts (state: CoreLoweringState) =
     (let group = state.programState
     in group.constructorLayouts)
 
 let withStateConstructorLayouts value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with constructorLayouts = value))
+    in clearAdmissibilityAnswers((state with programState = (group with constructorLayouts = value))))
 
 let stateCoverageTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1052,7 +1058,7 @@ let stateCoverageTypes (state: CoreLoweringState) =
 
 let withStateCoverageTypes value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with coverageTypes = value))
+    in clearAdmissibilityAnswers((state with programState = (group with coverageTypes = value))))
 
 let stateDropperTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1353,7 +1359,7 @@ let stateHeapLayoutFactsByType (state: CoreLoweringState) =
 
 let withStateHeapLayoutFactsByType value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with heapLayoutFactsByType = value))
+    in clearAdmissibilityAnswers((state with programState = (group with heapLayoutFactsByType = value))))
 
 let stateNormalizableRecordTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1401,7 +1407,7 @@ let stateGeneralRcTypeFacts (state: CoreLoweringState) =
 
 let withStateGeneralRcTypeFacts value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with generalRcTypeFacts = value))
+    in clearAdmissibilityAnswers((state with programState = (group with generalRcTypeFacts = value))))
 
 let withStateContractRecordFacts value (state: CoreLoweringState) =
     (let group = state.programState
@@ -1474,7 +1480,7 @@ let statePendingOperatorDefaults (state: CoreLoweringState) =
 
 let withStatePendingOperatorDefaults value (state: CoreLoweringState) =
     (let group = state.functionState
-    in state with functionState = (group with pendingOperatorDefaults = value))
+    in state with functionState = (group with pendingOperatorDefaults = value, admissibilityAnswers = []))
 
 let stateEnclosingBindings (state: CoreLoweringState) =
     (let group = state.functionState
@@ -1506,7 +1512,7 @@ let stateSealedOperatorDefaults (state: CoreLoweringState) =
 
 let withStateSealedOperatorDefaults value (state: CoreLoweringState) =
     (let group = state.functionState
-    in state with functionState = (group with sealedOperatorDefaults = value))
+    in state with functionState = (group with sealedOperatorDefaults = value, admissibilityAnswers = []))
 
 let statePendingSourceFunction (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2833,6 +2839,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             provenSiblingCallResults = Ashes.Collection.Map.empty
         ),
         functionState = CoreFunctionState(
+            admissibilityAnswers = [],
             deferredLabelNext = deferredLabelBase,
             deferredLabelGroups = [],
             nextStringId = 0,
@@ -3069,7 +3076,7 @@ let withNextLocal nextLocal (state: CoreLoweringState) = state with nextLocal = 
 
 let withTypeSupply typeSupply (state: CoreLoweringState) = state with typeSupply = typeSupply
 
-let withSubstitution substitution (state: CoreLoweringState) = state with substitution = substitution
+let withSubstitution substitution (state: CoreLoweringState) = clearAdmissibilityAnswers((state with substitution = substitution))
 
 let withNextLambdaId nextLambdaId (state: CoreLoweringState) = state with nextLambdaId = nextLambdaId
 
@@ -3573,7 +3580,10 @@ let bindType left right state =
             |> resolveType(state)
             |> unify(resolveType(state)(left)) with
                 | UnificationResult { substitution = added, error = None } ->
-                    (withSubstitution(extendSubstitutionMap(added)(existing))(state), None)
+                    match added with
+                        | [] -> (state, None)
+                        | _ ->
+                            (withSubstitution(extendSubstitutionMap(added)(existing))(state), None)
                 | UnificationResult { error = Some(error) } ->
                     (state, state
                     |> mismatchSiteOf
@@ -6689,7 +6699,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> withStateNextStringId(nextStringId)(current))
             |> (given (current: CoreLoweringState) -> current with stringLiterals = stringLiterals)
             |> (given (current: CoreLoweringState) -> current with typeSupply = typeSupply)
-            |> (given (current: CoreLoweringState) -> current with substitution = substitution)
+            |> withSubstitution(substitution)
             |> (given (current: CoreLoweringState) -> withStateSealedOperatorDefaults(sealedOperatorDefaults)(current))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingClosureNormalizers(statePendingClosureNormalizers(bodyState))(current))
@@ -7140,13 +7150,13 @@ let heapAdmissibilityOf (semanticType: SemanticType) (state: CoreLoweringState) 
                 |> coverageEnvironment
                 |> classifyHeapAdmissibility(resolved))
 
-let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+let recursive originalGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> true
         | SemBytes -> true
         | SemBigInt -> true
-        | SemList(element) -> isGeneralRcAdmissible(element)(path)(state)
-        | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(state)
+        | SemList(element) -> originalGeneralRcAdmissible(element)(path)(state)
+        | SemTuple(elements) -> originalAllGeneralRcAdmissible(elements)(path)(state)
         | SemNamed(_symbolId, name, arguments) as named ->
             match (path, arguments, recordedGeneralRcTypeFacts(name)(state)) with
                 | ([], [], Some((admissible, _reaches))) -> admissible
@@ -7163,18 +7173,118 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Sem
                                 | ([], _facts) -> false
                                 | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> false
                                 | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> false
-                                | (_layouts, HeapAdmissibilityFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
+                                | (_layouts, HeapAdmissibilityFacts { children = children }) -> originalAllChildrenGeneralRcAdmissible(children)(named :: path)(state)
         | resolved -> resultSurvivesReset(resolved)(state)
-and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
+and originalAllGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
-        | semanticType :: rest -> isGeneralRcAdmissible(semanticType)(path)(state) && allGeneralRcAdmissible(rest)(path)(state)
-and allChildrenGeneralRcAdmissible (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (state: CoreLoweringState) =
+        | semanticType :: rest -> originalGeneralRcAdmissible(semanticType)(path)(state) && originalAllGeneralRcAdmissible(rest)(path)(state)
+and originalAllChildrenGeneralRcAdmissible (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (state: CoreLoweringState) =
     match children with
         | [] -> true
         | (_childType, DropClosure) :: _rest -> false
         | (_childType, UnsupportedChildDrop) :: _rest -> false
-        | (childType, _dropKind) :: rest -> isGeneralRcAdmissible(childType)(path)(state) && allChildrenGeneralRcAdmissible(rest)(path)(state)
+        | (childType, _dropKind) :: rest -> originalGeneralRcAdmissible(childType)(path)(state) && originalAllChildrenGeneralRcAdmissible(rest)(path)(state)
+
+type GeneralRcAdmissibilityWork =
+    | VisitAdmissibilityType(SemanticType, Bool)
+    | CheckAdmissibilityChild(SemanticType, HeapChildDropKind)
+
+let recursive prependAdmissibilityTypes types allowRootCache pending =
+    match types with
+        | [] -> pending
+        | head :: rest -> VisitAdmissibilityType(head)(allowRootCache) :: prependAdmissibilityTypes(rest)(allowRootCache)(pending)
+
+let recursive prependAdmissibilityChildren children pending =
+    match children with
+        | [] -> pending
+        | (childType, dropKind) :: rest -> CheckAdmissibilityChild(childType)(dropKind) :: prependAdmissibilityChildren(rest)(pending)
+
+// Visited belongs to this whole universal query. Every expanded named type's children
+// remain pending; encountering it again never stores an independently reusable true fact.
+// Existing recursion keys can identify distinct types. Sharing a key across siblings
+// then falls back to the original path-only walk rather than changing its answers.
+let recursive admissibilityVisitStatus semanticType visited =
+    match visited with
+        | [] -> Some(false)
+        | previous :: rest ->
+            if containsType(semanticType)([previous])
+            then
+                if semanticType == previous
+                then Some(true)
+                else None
+            else admissibilityVisitStatus(semanticType)(rest)
+
+let recursive searchGeneralRcAdmissibility pending visited state =
+    match pending with
+        | [] -> Some(true)
+        | CheckAdmissibilityChild(_childType, DropClosure) :: _rest -> Some(false)
+        | CheckAdmissibilityChild(_childType, UnsupportedChildDrop) :: _rest -> Some(false)
+        | CheckAdmissibilityChild(childType, _dropKind) :: rest -> searchGeneralRcAdmissibility(VisitAdmissibilityType(childType)(false) :: rest)(visited)(state)
+        | VisitAdmissibilityType(semanticType, allowRootCache) :: rest ->
+            match resolveType(state)(semanticType) with
+                | SemString -> searchGeneralRcAdmissibility(rest)(visited)(state)
+                | SemBytes -> searchGeneralRcAdmissibility(rest)(visited)(state)
+                | SemBigInt -> searchGeneralRcAdmissibility(rest)(visited)(state)
+                | SemList(element) -> searchGeneralRcAdmissibility(VisitAdmissibilityType(element)(allowRootCache) :: rest)(visited)(state)
+                | SemTuple(elements) ->
+                    searchGeneralRcAdmissibility(prependAdmissibilityTypes(elements)(allowRootCache)(rest))(visited)(state)
+                | SemNamed(_symbolId, name, arguments) as named ->
+                    match (allowRootCache, arguments, recordedGeneralRcTypeFacts(name)(state)) with
+                        | (true, [], Some((admissible, _reaches))) ->
+                            if admissible
+                            then searchGeneralRcAdmissibility(rest)(visited)(state)
+                            else Some(false)
+                        | _ ->
+                            if resultSurvivesReset(named)(state)
+                            then searchGeneralRcAdmissibility(rest)(visited)(state)
+                            else
+                                if name == "Task"
+                                then Some(false)
+                                else
+                                    match admissibilityVisitStatus(named)(visited) with
+                                        | None -> None
+                                        | Some(true) -> searchGeneralRcAdmissibility(rest)(visited)(state)
+                                        | Some(false) ->
+                                            match (state
+                                            |> stateConstructorLayouts
+                                            |> constructorLayoutsOfType(name), heapAdmissibilityOf(named)(state)) with
+                                                | ([], _facts) -> Some(false)
+                                                | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> Some(false)
+                                                | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> Some(false)
+                                                | (_layouts, HeapAdmissibilityFacts { children = children }) ->
+                                                    searchGeneralRcAdmissibility(prependAdmissibilityChildren(children)(rest))(named :: visited)(state)
+                | resolved ->
+                    if resultSurvivesReset(resolved)(state)
+                    then searchGeneralRcAdmissibility(rest)(visited)(state)
+                    else Some(false)
+
+let queryGeneralRcAdmissibility (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match searchGeneralRcAdmissibility([VisitAdmissibilityType(semanticType)(path == [])])(path)(state) with
+        | Some(answer) -> answer
+        | None -> originalGeneralRcAdmissible(semanticType)(path)(state)
+
+let isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match path with
+        | [] ->
+            match lookupAdmissibilityAnswer(resolveType(state)(semanticType))(state.functionState.admissibilityAnswers) with
+                | Some(answer) -> answer
+                | None -> queryGeneralRcAdmissibility(semanticType)(path)(state)
+        | _ -> queryGeneralRcAdmissibility(semanticType)(path)(state)
+
+let prepareGeneralRcAdmissibility semanticType (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        if !concreteAdmissibilityType(resolved)
+        then state
+        else
+            let group = state.functionState
+            in
+                match lookupAdmissibilityAnswer(resolved)(group.admissibilityAnswers) with
+                    | Some(_answer) -> state
+                    | None ->
+                        let answer = queryGeneralRcAdmissibility(resolved)([])(state)
+                        in state with functionState = (group with admissibilityAnswers = rememberAdmissibilityAnswer(resolved)(answer)(group.admissibilityAnswers)))
 
 let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
     match children with
@@ -17294,7 +17404,9 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
 // call's result open at the call even when the body's own later use settles it, so the site keeps
 // its record for the group's pinned lowering.
 let restartedAgainst (entered: CoreLoweringState) (lowered: CoreLoweringState) =
-    withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))((entered with substitution = lowered.substitution, typeSupply = lowered.typeSupply))
+    (entered with typeSupply = lowered.typeSupply)
+    |> withSubstitution(lowered.substitution)
+    |> withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))
 
 // A body lowered again because a call to a later group member resolved its result keeps its self
 // calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
@@ -21095,6 +21207,14 @@ let pinSiblingCallResult (context: CoreCallContext) (stage: CoreCallStage) =
                 | None -> stage
         | _ -> stage
 
+let prepareCallAdmissibility (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as lowered } ->
+            if hasCallCopyOut(semanticType)(state)
+            then stage
+            else stage with lowered = (lowered with state = prepareGeneralRcAdmissibility(semanticType)(state))
+        | _ -> stage
+
 let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) (resultDiscarded: Bool) lower state =
     match state
     |> ensureResultRcEligibility
@@ -21108,6 +21228,7 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                         match applied
                         |> pinSiblingCallResult(context)
                         |> withCallResultLayout(context)
+                        |> prepareCallAdmissibility
                         |> markCallSpineResult(context) with
                             | stage ->
                                 stage
@@ -35263,6 +35384,7 @@ let registerProgramExternals (items: List(TopLevelItem)) (state: CoreLoweringSta
             |> validateExternalProgramAbi(declarations) with
                 | ExternalAbiValidation { metadata = Some(ExternalProgramAbi { functions = functions, opaqueTypes = opaqueTypes }), error = None } ->
                     (state with externalFunctions = append(state.externalFunctions)(functions), externalOpaqueTypes = append(state.externalOpaqueTypes)(opaqueTypes))
+                    |> clearAdmissibilityAnswers
                     |> withStateExternalLayouts(functions
                     |> externalLayoutsOf
                     |> append(stateExternalLayouts(state)))
