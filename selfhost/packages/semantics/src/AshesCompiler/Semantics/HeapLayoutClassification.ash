@@ -23,6 +23,8 @@
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAny
+import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
@@ -393,7 +395,42 @@ and heapContainsResource (semanticType: SemanticType) (environment: TypeEnvironm
             | SemList(element) -> heapContainsResource(element)(environment)(path)
             | _ -> false)
 
-let heapResourceBearing (semanticType: SemanticType) (environment: TypeEnvironment) = heapContainsResource(semanticType)(environment)([])
+let recursive heapFlattenFieldGroups grouped =
+    match grouped with
+        | [] -> []
+        | (_name, fields) :: rest ->
+            rest
+            |> heapFlattenFieldGroups
+            |> append(fields)
+
+let heapGraphChildren includeArguments environment semanticType =
+    match semanticType with
+        | SemNamed(symbolId, name, arguments) ->
+            let fields =
+                environment
+                |> heapNamedTypeFields(symbolId)(name)(arguments)
+                |> heapFlattenFieldGroups
+            in
+                if includeArguments
+                then append(arguments)(fields)
+                else fields
+        | SemList(element) -> [element]
+        | SemTuple(elements) -> elements
+        | _ -> []
+
+let heapDirectResource environment semanticType =
+    match semanticType with
+        | SemOpaque(name) ->
+            environment
+            |> inferenceTypeResolutionContext
+            |> heapExternalTypeHasDestructor(name)
+        | SemNamed(_symbolId, name, _arguments) -> heapBuiltinResourceTypeName(name)
+        | _ -> false
+
+let heapResourceBearing (semanticType: SemanticType) (environment: TypeEnvironment) =
+    match typeGraphAny(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType) with
+        | Some(result) -> result
+        | None -> heapContainsResource(semanticType)(environment)([])
 
 let recursive heapAnyUnresolved (types: List(SemanticType)) (environment: TypeEnvironment) (path: List((Int, Str))) =
     match types with
@@ -428,6 +465,17 @@ and heapContainsUnresolvedType (semanticType: SemanticType) (environment: TypeEn
                         else
                             heapAnyGroupedUnresolved(heapNamedTypeFields(symbolId)(name)(arguments)(environment))(environment)(extendedPath)
             | _ -> false)
+
+let heapDirectUnresolved semanticType =
+    match semanticType with
+        | SemVariable(_id) -> true
+        | SemParameter(_id, _name) -> true
+        | _ -> false
+
+let heapUnresolvedType semanticType environment =
+    match typeGraphAny(given (value) -> resolveLayoutType(value)(environment))(heapDirectUnresolved)(heapGraphChildren(true)(environment))(semanticType) with
+        | Some(result) -> result
+        | None -> heapContainsUnresolvedType(semanticType)(environment)([])
 
 // A named type the runtime may never manage as an ordinary reuse cell: a built-in resource handle
 // or any aggregate that transitively owns one.
@@ -816,7 +864,7 @@ let heapAssembleFacts (resolved: SemanticType) (environment: TypeEnvironment) (c
 let heapLayoutFactsOf (environment: TypeEnvironment) (resolved: SemanticType) =
     environment
     |> heapRuntimeReuseSupport(resolved)
-    |> heapAssembleFacts(resolved)(environment)(heapLayoutChildren(resolved)(environment))(heapResourceBearing(resolved)(environment))(heapCanDropValueGraph(resolved)(environment))(heapContainsUnresolvedType(resolved)(environment)([]))
+    |> heapAssembleFacts(resolved)(environment)(heapLayoutChildren(resolved)(environment))(heapResourceBearing(resolved)(environment))(heapCanDropValueGraph(resolved)(environment))(heapUnresolvedType(resolved)(environment))
 
 let classifyHeapLayout (semanticType: SemanticType) (environment: TypeEnvironment) =
     environment

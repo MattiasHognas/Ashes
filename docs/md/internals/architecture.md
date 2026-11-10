@@ -1366,6 +1366,13 @@ old reference. This conditional implementation still presents one uniform
 "consume left, produce target" contract to TCO parallel assignment, preventing
 both a predecessor double-drop and a retained old reservation.
 
+Self-hosted resource-containment and unresolved-type classification use a per-query worklist
+with shared visits keyed by complete instantiated types. Shared branches are expanded once
+instead of once per path; regular cycles terminate without caching a path-local negative answer
+as a fact about a type. An ancestor reached at different generic arguments falls back to the
+existing name-cycle classifier, preserving its result. Work items retain complete type roots,
+and the temporary query state is released through ordinary inferred ownership.
+
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
 resource-bearing closures and remains governed by the `ASH006`-`ASH008` diagnostics. A declared
