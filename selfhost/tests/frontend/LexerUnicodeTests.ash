@@ -12,6 +12,33 @@ let unicodeTokenAt (index: Int) (tokens: List(Token)) =
                 else find(tail)(current + 1)
     in find(tokens)(0))
 
+// Greek letter + Arabic decimal digit, separated from the keyword by U+2003 EM SPACE.
+// Decimal digits cannot start identifiers; U+2160 and combining U+0301 are not letters.
+let testUnicodeCategories unit =
+    (let result = tokenize("α٣ let")
+    in
+        let _ = test.assertEqual([])(result.diagnostics)
+        in
+            let _ =
+                result.tokens
+                |> unicodeTokenAt(0)
+                |> test.assertEqual(Token(kind = Ident, text = "α٣", intValue = 0, floatValue = 0.0, position = 0, length = 4))
+            in
+                let _ =
+                    result.tokens
+                    |> unicodeTokenAt(1)
+                    |> test.assertEqual(Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 7, length = 3))
+                in
+                    let eof = unicodeTokenAt(2)(result.tokens)
+                    in
+                        let _ = test.assertEqual(10)(eof.position)
+                        in
+                            let rejected = tokenize("٣ Ⅰ á")
+                            in
+                                rejected.tokens
+                                |> LexerCoreTests.lexerKindNames
+                                |> test.assertEqual(["Bad", "Bad", "Ident", "Bad", "EOF"]))
+
 let run unit =
     (let result = tokenize("naïve let 😀")
     in
@@ -56,4 +83,5 @@ let run unit =
             |> (given (unicodeString) -> unicodeString.tokens)
             |> unicodeTokenAt(0)
             |> (given (token) -> token.text)
-            |> test.assertEqual("café 😀")))
+            |> test.assertEqual("café 😀"))
+        |> testUnicodeCategories)

@@ -736,6 +736,24 @@ F. **Clear the blockers the probe reports.** This is the next active step under 
    program ran. No release was added. Its clean-tree census remains **NET +20 / GROWTH +33**, with
    all class deltas unchanged; the full self-hosted semantics suite also passes.
 
+   The completed module surveys found 21/21 backend modules compiling and running after the
+   native-FFI/linker slices, and 69/89 semantics modules passing before the next source fixes.
+   Both semantics modules that exceeded the 4 GiB screening cap reached the same mixed-key
+   diagnostic at 20 GiB, peaking near 6.5 GiB. `StateMachineTransform` and `IrCompileTimeEval`
+   now separate string labels from integer slots/temporaries. The backend also implements the
+   signed numeric conversions used by compile-time evaluation and `Rune.fromInt` used by formatting.
+
+   Replacing the lexer's three fixed regex checks with predicates generated from bundled PCRE2
+   moved the frontend survey from 9/12 passing to 13/13, including the generated module. Both
+   compiler stages agree with PCRE2 for all 1,114,112 code-point entries, and the full frontend
+   suite passes normally. The focused lexer suite passes with poisoning. The complete poisoned
+   frontend suite has a separately reproduced baseline crash in `ModuleSource.ash:125`, reached
+   by `ModuleSourceTests.checkAmbiguousProjectSource`; the old regex lexer and a reproducer that
+   imports only `ModuleSourceTests` fail there too. Do not report that full poisoned suite as green.
+   The full semantics suite passes, and all 30/95 whole-program IR parity diagnostics match a
+   frozen `a51ede27` build byte for byte. A fresh stage-1 build, census and compiler probes are
+   still required before declaring F complete.
+
    During F, crashes, use-after-free and over-releases remain blockers. Fix leaks only when they
    block F within the existing memory budgets; leave the other leak classes tracked under E.
    Ownership fixes still require the stage-0/stage-1 mirror (or a measured exemption), regression

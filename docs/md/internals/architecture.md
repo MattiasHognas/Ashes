@@ -40,6 +40,13 @@ Each pipeline project's public surface is documented directly from its `///` XML
 the [Frontend](api/frontend.md), [Semantics](api/semantics.md), [Backend](api/backend.md), and
 [Formatter](api/formatter.md) API references.
 
+The self-hosted lexer keeps its ASCII fast paths and UTF-8 byte spans. Its non-ASCII letter,
+identifier-continuation and whitespace predicates are generated pure-Ashes integer comparisons
+in `UnicodeClassification.ash`, preserving the three fixed regex patterns from the pinned PCRE2
+payload. `scripts/selfhost-dev/generate-lexer-unicode.sh` regenerates or verifies that source;
+`selfhost/tests/lexer-unicode-classification` compares all Unicode code points against the payload.
+Generation is a development step, not part of compiling with the self-hosted compiler.
+
 ---
 
 ## Project Dependency Graph
