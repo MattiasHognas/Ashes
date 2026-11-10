@@ -10,6 +10,7 @@
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
+import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import Ashes.Collection.Map.MapTree
