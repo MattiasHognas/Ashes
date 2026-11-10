@@ -247,6 +247,7 @@ let layoutResultName (layout: CoreConstructorLayout) =
 type CoreConstructorLookupIndex =
     | byConstructor: MapTree(Str, CoreConstructorLayout)
     | byResult: MapTree(Str, List(CoreConstructorLayout))
+    | byField: MapTree(Str, List(CoreConstructorLayout))
 
 let lookupFirstConstructor (name: Str) (index: CoreConstructorLookupIndex) = Ashes.Collection.Map.getStr(name)(index.byConstructor)
 
@@ -254,6 +255,52 @@ let lookupResultConstructors (name: Str) (index: CoreConstructorLookupIndex) =
     match Ashes.Collection.Map.getStr(name)(index.byResult) with
         | Some(layouts) -> layouts
         | None -> []
+
+let lookupFieldConstructors (name: Str) (index: CoreConstructorLookupIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.byField) with
+        | Some(layouts) -> layouts
+        | None -> []
+
+let recursive constructorFieldNameOccurs (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | head :: rest -> head == name || constructorFieldNameOccurs(name)(rest)
+
+type CoreFieldIndexEntry =
+    | fieldName: Str
+    | layout: CoreConstructorLayout
+
+// Flatten each layout's distinct field names once. The map builder below consumes this
+// temporary list with one unconditional insertion on each back edge.
+let recursive constructorFieldEntries (layouts: List(CoreConstructorLayout)) (fields: List(Str)) (fieldPhase: Bool) (entries: List(CoreFieldIndexEntry)) =
+    match layouts with
+        | [] -> entries
+        | layout :: rest ->
+            if fieldPhase
+            then
+                match fields with
+                    | [] -> constructorFieldEntries(rest)([])(false)(entries)
+                    | name :: remaining ->
+                        if constructorFieldNameOccurs(name)(remaining)
+                        then constructorFieldEntries(layouts)(remaining)(true)(entries)
+                        else constructorFieldEntries(layouts)(remaining)(true)(CoreFieldIndexEntry(fieldName = name, layout = layout) :: entries)
+            else constructorFieldEntries(layouts)(layout.fieldNames)(true)(entries)
+
+// A monomorphic wrapper keeps raw layout payload ownership explicit at this boundary.
+type CoreFieldLookupIndex =
+    | fields: MapTree(Str, List(CoreConstructorLayout))
+
+let fieldIndexLayouts (name: Str) (index: CoreFieldLookupIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.fields) with
+        | Some(layouts) -> layouts
+        | None -> []
+
+let recursive collectFieldLookupIndex (entries: List(CoreFieldIndexEntry)) (index: CoreFieldLookupIndex) =
+    match entries with
+        | [] -> index
+        | entry :: rest ->
+            let updated = CoreFieldLookupIndex(fields = Ashes.Collection.Map.setStr(entry.fieldName)(entry.layout :: fieldIndexLayouts(entry.fieldName)(index))(index.fields))
+            in collectFieldLookupIndex(rest)(updated)
 
 let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
     match layouts with
@@ -268,7 +315,12 @@ let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout
                         in collectConstructorLookupIndex(rest)(updated)
 
 let constructorLookupIndex (layouts: List(CoreConstructorLayout)) =
-    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty))
+    (let fields =
+        collectFieldLookupIndex(constructorFieldEntries(layouts)([])(false)([]))(CoreFieldLookupIndex(fields = Ashes.Collection.Map.empty))
+    in
+        let index =
+            collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty))
+        in index with byField = fields.fields)
 
 type CoreBindingLocation =
     | CoreLocal(Int)
@@ -1094,6 +1146,10 @@ let withStateConstructorLayouts value (state: CoreLoweringState) =
 let stateConstructorsOfType (name: Str) (state: CoreLoweringState) =
     (let group = state.programState
     in lookupResultConstructors(name)(group.constructorIndex))
+
+let stateConstructorsOfField (name: Str) (state: CoreLoweringState) =
+    (let group = state.programState
+    in lookupFieldConstructors(name)(group.constructorIndex))
 
 let stateCoverageTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -2752,8 +2808,7 @@ let recursive constructorInferenceDefinitionsFromLayouts layouts =
 // there, and their field groups, which the layout classifiers answer from.
 let extendCoverageEnvironment (environment: TypeEnvironment) layouts =
     (let definitions = constructorInferenceDefinitionsFromLayouts(layouts)
-    in
-        environment with constructors = append(environment.constructors)(definitions), constructorFieldGroups = append(environment.constructorFieldGroups)(heapConstructorFieldGroups(definitions)))
+    in heapExtendConstructorEnvironment(environment)(definitions))
 
 let recursive schemeResultType (semanticType: SemanticType) =
     match semanticType with
@@ -4043,6 +4098,11 @@ let constructorLayout name state =
     match state with
         | CoreLoweringState { programState = CoreProgramState { constructorIndex = index } } -> lookupFirstConstructor(name)(index)
 
+let constructorNameKnown (name: Str) (state: CoreLoweringState) =
+    match constructorLayout(name)(state) with
+        | Some(_layout) -> true
+        | None -> false
+
 let recursive findBuiltinLayout moduleName memberName layouts =
     match layouts with
         | [] -> None
@@ -4134,8 +4194,9 @@ let recursive findRecordLayout (typeName: Str) (layouts: List(CoreConstructorLay
         | _layout :: tail -> findRecordLayout(typeName)(tail)
 
 let recordLayout typeName state =
-    match state with
-        | CoreLoweringState { programState = CoreProgramState { constructorLayouts = layouts } } -> findRecordLayout(typeName)(layouts)
+    state
+    |> stateConstructorsOfType(typeName)
+    |> findRecordLayout(typeName)
 
 let failedCoreValues state error =
     LoweredCoreValues(
@@ -4264,7 +4325,7 @@ let runtimeManagedAdtTypeName (name: Str) =
 // (string, bytes, big integer, list, tuple, closure, or a declared type, seen through a zero-cost
 // wrapper to its payload) is owned; copy types and unresolved type variables are not. A zero-cost
 // wrapper whose payload is a type variable erases to that variable and so counts as not owned.
-let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreConstructorLayout)) =
+let recursive ownedTypeNameOf (semanticType: SemanticType) (index: CoreConstructorLookupIndex) =
     match semanticType with
         | SemString -> Some("String")
         | SemBytes -> Some("Bytes")
@@ -4273,20 +4334,24 @@ let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreCo
         | SemTuple(_elements) -> Some("Tuple")
         | SemFunction(_parameter, _result, _row) -> Some("Function")
         | SemNamed(_symbolId, name, _arguments) ->
-            match zeroCostPayloadType(name)(layouts) with
-                | Some(payload) -> ownedTypeNameOf(payload)(layouts)
+            match index
+            |> lookupResultConstructors(name)
+            |> zeroCostPayloadType(name) with
+                | Some(payload) -> ownedTypeNameOf(payload)(index)
                 | None ->
                     name
                     |> runtimeManagedAdtTypeName
                     |> Some
         | _ -> None
 
+let stateOwnedTypeNameOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let group = state.programState
+    in ownedTypeNameOf(semanticType)(group.constructorIndex))
+
 // The type name a pattern owner releases under: its owned type name, or stage 0's
 // `PatternBinding` for a binding whose type is a copy type or still unresolved.
 let patternOwnerTypeName (resolved: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> stateConstructorLayouts
-    |> ownedTypeNameOf(resolved) with
+    match state |> stateOwnedTypeNameOf(resolved) with
         | Some(typeName) -> typeName
         | None -> "PatternBinding"
 
@@ -4323,9 +4388,7 @@ let resourceTypeNameOf (semanticType: SemanticType) (state: CoreLoweringState) =
             then Some(name)
             else None
         | other ->
-            match state
-            |> stateConstructorLayouts
-            |> ownedTypeNameOf(other) with
+            match state |> stateOwnedTypeNameOf(other) with
                 | Some(typeName) ->
                     if isResourceTypeName(typeName)
                     then Some(typeName)
@@ -4760,17 +4823,15 @@ let emitBorrowedRead temp semanticType state =
 // A pattern owner's read borrows whatever its type (stage 0's `LowerVar` borrows every binding
 // it finds an ownership entry for); any other owned binding borrows once its type is heap-represented.
 let finishOwnedRead ownedRead (patternOwner: Bool) temp semanticType state =
-    match state with
-        | CoreLoweringState { programState = CoreProgramState { constructorLayouts = layouts } } ->
-            if patternOwner
-            then emitBorrowedRead(temp)(semanticType)(state)
-            else
-                if ownedRead
-                then
-                    match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
-                        | Some(_typeName) -> emitBorrowedRead(temp)(semanticType)(state)
-                        | None -> success(temp)(semanticType)(state)
-                else success(temp)(semanticType)(state)
+    if patternOwner
+    then emitBorrowedRead(temp)(semanticType)(state)
+    else
+        if ownedRead
+        then
+            match stateOwnedTypeNameOf(resolveType(state)(semanticType))(state) with
+                | Some(_typeName) -> emitBorrowedRead(temp)(semanticType)(state)
+                | None -> success(temp)(semanticType)(state)
+        else success(temp)(semanticType)(state)
 
 // A pattern binding of the arm that published a reuse token reads the cell the token released:
 // stage 0 aliases such a binding to the dead scrutinee owner, whose read no longer borrows.
@@ -5168,10 +5229,7 @@ let loweredValueOwnedTypeName lowered =
                     if isDeclaredResourceName(name)(state)
                     then Some(name)
                     else None
-                | resolved ->
-                    state
-                    |> stateConstructorLayouts
-                    |> ownedTypeNameOf(resolved)
+                | resolved -> state |> stateOwnedTypeNameOf(resolved)
         | _ -> None
 
 let coverageEnvironment (state: CoreLoweringState) = stateCoverageTypes(state)
@@ -5282,7 +5340,7 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
         | None -> None
         | Some((semanticType, plan)) ->
             match state with
-                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
                     match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None -> None
                         | Some(synthesis) ->
@@ -5348,7 +5406,7 @@ let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) 
                 |> containsInt(id))
         | SemNamed(_symbolId, name, _arguments) ->
             match state
-            |> stateConstructorLayouts
+            |> stateConstructorsOfType(name)
             |> zeroCostPayloadType(name) with
                 | Some(payload) ->
                     payload
@@ -5486,7 +5544,7 @@ let recursive firstLayoutOfType (name: Str) (layouts: List(CoreConstructorLayout
 // tagless.
 let shallowAdtCopySizeBytes (name: Str) (state: CoreLoweringState) =
     match state
-    |> stateConstructorLayouts
+    |> stateConstructorsOfType(name)
     |> firstLayoutOfType(name) with
         | Some(CoreConstructorLayout { tagless = tagless } as layout) ->
             layout
@@ -8471,7 +8529,7 @@ let spliceInlineReleaseWith emitter (synthesis: InlineReleaseSynthesis) (state: 
 // shared cell is only decremented.
 let emitInlineListRelease emitter (listTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeOwnedAggregateRelease(listTemp)(elementType
             |> resolveType(state)
             |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
@@ -8512,7 +8570,7 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
         | SemList(element) -> emitInlineListRelease(emitter)(valueTemp)(element)(state)
         | SemNamed(_symbolId, name, _arguments) as named ->
             match state with
-                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
                     match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                         | None ->
                             emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
@@ -9531,7 +9589,7 @@ let recursive fieldTypeAlong (path: List((Int, Int))) (semanticType: SemanticTyp
     match (path, resolveType(state)(semanticType)) with
         | ([], _) -> Some(semanticType)
         | ((tag, index) :: rest, SemNamed(_symbolId, name, arguments)) ->
-            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorLayouts(state))(state) with
+            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorsOfType(name)(state))(state) with
                 | Some(fieldType) -> fieldTypeAlong(rest)(fieldType)(state)
                 | None -> None
         | _ -> None
@@ -10419,7 +10477,7 @@ let recursive compactionCopiesManagedList (arguments: List(TcoResetArgument)) (s
 // into the program once per type; answers the temp holding the clone.
 let emitTcoDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
 
@@ -10640,7 +10698,7 @@ let emitAdvancingCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(T
 
 let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
 
@@ -10750,7 +10808,7 @@ let recursive copyTransferDuplicatedFields (cell: Int) (typeName: Str) (typeArgu
         | [] -> state
         | (fieldIndex, source) :: rest ->
             state
-            |> copyTransferDuplicatedField(cell)(tagless)(fieldIndex)(source)(constructorFieldTypeAt(typeName)(typeArguments)(tag)(fieldIndex)(stateConstructorLayouts(state))(state))
+            |> copyTransferDuplicatedField(cell)(tagless)(fieldIndex)(source)(constructorFieldTypeAt(typeName)(typeArguments)(tag)(fieldIndex)(stateConstructorsOfType(typeName)(state))(state))
             |> copyTransferDuplicatedFields(cell)(typeName)(typeArguments)(tag)(tagless)(rest)
 
 // Stage 0's `CopyTransferDuplicatedChildrenIntoArena`: an arena parameter's successor that is a
@@ -11349,7 +11407,7 @@ let recursive recordArenaCopyPlacements (instructions: List(IrInstructionKind)) 
 // The arena clone of a reference-counted result on its arena-result boundary, spliced in place.
 let emitArenaResultDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
                 | (synthesis, resultTemp) ->
                     (state
@@ -11370,7 +11428,7 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
 // allocation.
 let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                 | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
                 | None ->
@@ -12809,7 +12867,7 @@ let recursive collectWrappedResultConstructors (typeName: Str) (arguments: List(
 let wrappedResultConstructors (resultType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemNamed(_symbolId, name, arguments) ->
-            collectWrappedResultConstructors(name)(arguments)(stateConstructorLayouts(state))(state)([])
+            collectWrappedResultConstructors(name)(arguments)(stateConstructorsOfType(name)(state))(state)([])
         | _ -> []
 
 // Whether a call's ownership word forwards this function's own caller's request: the function's
@@ -13205,7 +13263,7 @@ let recursive soleConstructorFieldTypes (typeName: Str) (arguments: List(Semanti
 let releaseOwnedFieldsOfCopiedArenaRecord (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(bodyType) with
         | SemNamed(_symbolId, name, arguments) ->
-            match soleConstructorFieldTypes(name)(arguments)(stateConstructorLayouts(state))(None)(0)(state) with
+            match soleConstructorFieldTypes(name)(arguments)(stateConstructorsOfType(name)(state))(None)(0)(state) with
                 | Some(fieldTypes) ->
                     let cell = soleArenaRecordCellOf(bodyTemp)(state)
                     in
@@ -15544,7 +15602,7 @@ let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int
 // single allocation.
 let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
                     (label, withStateDropperLabels(nextCache)((state with functions = append(synthesized
@@ -16862,7 +16920,7 @@ let reuseAccumulatorIsUnique (functionName: Str) (parameter: Str) (state: CoreLo
 // it advanced are kept.
 let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(0)(named)(dropperTypesOf(state))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
                 | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
                     withStateDropperLabels(copierCache)((state with functions = append(synthesized
@@ -17037,7 +17095,7 @@ let recursive specializationCandidateValueOf (callee: Str) (candidates: List((St
 let specializationRebuildsOnlyAPath (callee: Str) (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(accumulatorType) with
         | SemNamed(_id, typeName, _arguments) ->
-            if typeHasMultipleSelfFields(typeName)(stateConstructorLayouts(state))(state)
+            if typeHasMultipleSelfFields(typeName)(stateConstructorsOfType(typeName)(state))(state)
             then
                 match state
                 |> stateSpecializationCandidates
@@ -17643,26 +17701,28 @@ let recursive nullaryConstructorCount (typeName: Str) (layouts: List(CoreConstru
                 | None -> nullaryConstructorCount(typeName)(rest)
 
 // The nullary constructors that are the only nullary constructor of their type.
-let recursive soleNullaryConstructorNames (layouts: List(CoreConstructorLayout)) (all: List(CoreConstructorLayout)) =
+let recursive soleNullaryConstructorNames (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
     match layouts with
         | [] -> []
         | (CoreConstructorLayout { name = name } as layout) :: rest ->
             match constructorResultName(layout) with
                 | Some(typeName) ->
-                    if constructorArity(layout) == 0 && nullaryConstructorCount(typeName)(all) == 1
-                    then name :: soleNullaryConstructorNames(rest)(all)
-                    else soleNullaryConstructorNames(rest)(all)
-                | None -> soleNullaryConstructorNames(rest)(all)
+                    if constructorArity(layout) == 0 && nullaryConstructorCount(typeName)(lookupResultConstructors(typeName)(index)) == 1
+                    then name :: soleNullaryConstructorNames(rest)(index)
+                    else soleNullaryConstructorNames(rest)(index)
+                | None -> soleNullaryConstructorNames(rest)(index)
 
 let provenanceConstructorsOf (state: CoreLoweringState) =
-    ProvenanceConstructors(
-        arities = state
-        |> stateConstructorLayouts
-        |> constructorAritiesOf,
-        soleNullary = state
-        |> stateConstructorLayouts
-        |> soleNullaryConstructorNames(stateConstructorLayouts(state))
-    )
+    (let group = state.programState
+    in
+        ProvenanceConstructors(
+            arities = state
+            |> stateConstructorLayouts
+            |> constructorAritiesOf,
+            soleNullary = state
+            |> stateConstructorLayouts
+            |> (given (layouts) -> soleNullaryConstructorNames(layouts)(group.constructorIndex))
+        ))
 
 // The functions the whole-program provenance fixpoint classifies: every function the reach
 // registry registered, under its key, with the registered parameters and innermost body (a
@@ -19253,7 +19313,7 @@ let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: 
 // `SynthesizeRuntimeManagedAdtDropper`), synthesizing it once through the state's label cache.
 let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
                 | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
                     (label, withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
@@ -19423,7 +19483,7 @@ and emitRuntimeAdtDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (s
                 else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
 and emitFirstConstructorDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
     match state
-    |> stateConstructorLayouts
+    |> stateConstructorsOfType(typeName)
     |> firstConstructorLayoutOf(typeName) with
         | Some(CoreConstructorLayout { name = constructorName, tagless = tagless }) ->
             match ownedLayoutChildren(Some(constructorName))(named)(state) with
@@ -22590,9 +22650,7 @@ let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType
                 |> canArenaResetLayout, scrutineeType = valueType))
             | SemTuple(_elements) -> Some(MatchScrutineeOwner(scrutineeTypeName = "Tuple", scrutineeIsList = false, scrutineeType = valueType))
             | SemNamed(_symbolId, _name, _arguments) as named ->
-                match state
-                |> stateConstructorLayouts
-                |> ownedTypeNameOf(named) with
+                match state |> stateOwnedTypeNameOf(named) with
                     | Some(typeName) -> Some(MatchScrutineeOwner(scrutineeTypeName = typeName, scrutineeIsList = false, scrutineeType = valueType))
                     | None -> None
             | _ -> None
@@ -22628,9 +22686,7 @@ let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
                         |> ArmResourceOwner(name)(slot)
                         |> Some
                     | None ->
-                        match state
-                        |> stateConstructorLayouts
-                        |> ownedTypeNameOf(resolved) with
+                        match state |> stateOwnedTypeNameOf(resolved) with
                             | Some(typeName) ->
                                 typeName
                                 |> ArmHeapOwner(slot)
@@ -24460,7 +24516,7 @@ let trimPrefixCoversAll state patterns =
             | Some(name) ->
                 match trimAdtOfConstructor(state)(name) with
                     | Some(adtName) ->
-                        match trimAdtConstructorNames(stateConstructorLayouts(state))(adtName)([]) with
+                        match trimAdtConstructorNames(stateConstructorsOfType(adtName)(state))(adtName)([]) with
                             | [] -> false
                             | names ->
                                 []
@@ -27458,7 +27514,7 @@ let relocateSpecializationField (fieldType: SemanticType) (fieldTemp: Int) (stat
     if specializationFieldRelocatable(fieldType)(state)
     then
         match state with
-            | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+            | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
                 match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                     | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
     else (state, fieldTemp)
@@ -28974,9 +29030,7 @@ let recursive recordLayoutsDeclaringField (fieldName: Str) (layouts: List(CoreCo
 // one record type declares the field, by unifying the receiver with a fresh instance of that
 // type. An ambiguous or undeclared field leaves the receiver unresolved.
 let resolveRecordReceiverByFieldName (fieldName: Str) (receiverType: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> stateConstructorLayouts
-    |> recordLayoutsDeclaringField(fieldName) with
+    match state |> stateConstructorsOfField(fieldName) with
         | layout :: [] ->
             match (instantiateConstructor(layout)(state), constructorResultName(layout)) with
                 | (CoreConstructorShape { state = instantiated, resultType = resultType }, Some(typeName)) ->
@@ -31927,9 +31981,7 @@ let recursive ownerTypeNameOfSlot (slot: Int) (bindings: List(CoreBinding)) (sta
         | CoreBinding { location = CoreLocal(candidate), scheme = TypeScheme { body = bindingType } } :: rest ->
             if candidate == slot
             then
-                state
-                |> stateConstructorLayouts
-                |> ownedTypeNameOf(resolveType(state)(bindingType))
+                state |> stateOwnedTypeNameOf(resolveType(state)(bindingType))
             else ownerTypeNameOfSlot(slot)(rest)(state)
         | _ :: rest -> ownerTypeNameOfSlot(slot)(rest)(state)
 
@@ -31943,9 +31995,7 @@ let iterationOwnerTypeName (slot: Int) (state: CoreLoweringState) =
             |> stateOwnerReleasePlans
             |> lookupOwnerReleasePlan(slot) with
                 | Some((semanticType, _plan)) ->
-                    state
-                    |> stateConstructorLayouts
-                    |> ownedTypeNameOf(resolveType(state)(semanticType))
+                    state |> stateOwnedTypeNameOf(resolveType(state)(semanticType))
                 | None -> None
 
 // The runtime owners registered since the loop entry that still hold their reference at the back
@@ -33021,9 +33071,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            if containsName(name)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutNames) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None
+            if constructorNameKnown(name)(state) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None
             then true
             else
                 if state
@@ -33272,12 +33320,7 @@ let specializationReferenceResolvesHere (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            let constructors =
-                state
-                |> stateConstructorLayouts
-                |> constructorLayoutNames
-            in
-                Ashes.Text.contains(name)(".") || containsName(name)(constructors) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None || containsName(name)(stateInlinableHelpers(state))
+            Ashes.Text.contains(name)(".") || constructorNameKnown(name)(state) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None || containsName(name)(stateInlinableHelpers(state))
 
 let recursive specializationReferencesResolveHere (names: List(Str)) (state: CoreLoweringState) =
     match names with
@@ -34749,12 +34792,12 @@ let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailin
 // this shape. A partial application of a real multi-argument constructor would also syntactically
 // match `ExprCall(ExprVar(ctorName), _, _, _)` here, which is why the scheme's OWN arity is checked
 // against — not just that the call produces one argument — before ever answering `Some`.
-let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(CoreConstructorLayout)) =
+let directSingleArgRcConstructorLayout (expr: Expr) (state: CoreLoweringState) =
     match stripExprAt(expr) with
         | ExprCall(callee, _arg, _isSugar, _argLayout) ->
             match stripExprAt(callee) with
                 | ExprVar(constructorName) ->
-                    match findConstructorLayout(constructorName)(constructorLayouts) with
+                    match constructorLayout(constructorName)(state) with
                         | Some(CoreConstructorLayout { isZeroCost = true }) -> None
                         | Some(CoreConstructorLayout { scheme = TypeScheme { body = SemFunction(_parameterType, resultType, _effect) } } as layout) ->
                             match resultType with
@@ -35254,10 +35297,10 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
-                        | CoreLoweringState { bindings = outerBindings, programState = CoreProgramState { constructorLayouts = constructorLayouts } } ->
+                        | CoreLoweringState { bindings = outerBindings } ->
                             let nextAnalysis = peelAnalysis(1)(analysis)
                             in
-                                match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
+                                match directSingleArgRcConstructorLayout(value)(state) with
                                     | Some(layout) ->
                                         if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
                                         then

@@ -43,6 +43,7 @@ export (
     value heapRuntimeOwnedTupleElementLayout,
     value heapNamedTypeConstructors,
     value heapConstructorFieldGroups,
+    value heapExtendConstructorEnvironment,
     value classifyHeapLayout,
     value classifyHeapAdmissibility,
     value classifyHeapShallowCopy,
@@ -325,6 +326,69 @@ let recursive heapFindGroup (symbolId: Int) (typeName: Str) (groups: List(Constr
             then Some(group)
             else heapFindGroup(symbolId)(typeName)(rest)
 
+// Preserve the first matching group, including when incremental declaration batches repeat a key.
+let recursive heapIndexExistingGroups (groups: List(ConstructorFieldGroup)) (index: HeapConstructorLookupIndex) =
+    match groups with
+        | [] -> index
+        | (ConstructorFieldGroup { groupSymbolId = symbolId, groupTypeName = name } as group) :: rest ->
+            let byName =
+                match Ashes.Collection.Map.getInt(symbolId)(index.groups) with
+                    | Some(found) -> found
+                    | None -> Ashes.Collection.Map.empty
+            in
+                let next =
+                    match Ashes.Collection.Map.getStr(name)(byName) with
+                        | Some(_) -> index
+                        | None ->
+                            index with groups = Ashes.Collection.Map.setInt(symbolId)(Ashes.Collection.Map.setStr(name)(group)(byName))(index.groups)
+                in heapIndexExistingGroups(rest)(next)
+
+let recursive heapIndexRecordKinds (constructors: List(ConstructorInferenceDefinition)) (index: HeapConstructorLookupIndex) =
+    match constructors with
+        | [] -> index
+        | ConstructorInferenceDefinition { scheme = TypeScheme { body = body }, fieldNames = fieldNames } :: rest ->
+            match heapConstructorResultType(body) with
+                | SemNamed(symbolId, name, _) ->
+                    let byName =
+                        match Ashes.Collection.Map.getInt(symbolId)(index.records) with
+                            | Some(found) -> found
+                            | None -> Ashes.Collection.Map.empty
+                    in
+                        let next =
+                            match Ashes.Collection.Map.getStr(name)(byName) with
+                                | Some(_) -> index
+                                | None ->
+                                    index with records = Ashes.Collection.Map.setInt(symbolId)(Ashes.Collection.Map.setStr(name)(length(fieldNames) >= 1)(byName))(index.records)
+                        in heapIndexRecordKinds(rest)(next)
+                | _ -> heapIndexRecordKinds(rest)(index)
+
+// Production environments retain the lookup maps alongside the ordered lists. Extending an
+// already prepared environment indexes only the new declaration batch.
+let heapExtendConstructorEnvironment (environment: TypeEnvironment) (definitions: List(ConstructorInferenceDefinition)) =
+    (let previous =
+        match environment.heapConstructorIndex with
+            | Some(index) -> index
+            | None ->
+                HeapConstructorLookupIndex(groups = Ashes.Collection.Map.empty, records = Ashes.Collection.Map.empty)
+                |> heapIndexExistingGroups(environment.constructorFieldGroups)
+                |> heapIndexRecordKinds(environment.constructors)
+    in
+        let groups = heapConstructorFieldGroups(definitions)
+        in
+            let index =
+                previous
+                |> heapIndexExistingGroups(groups)
+                |> heapIndexRecordKinds(definitions)
+            in environment with constructors = append(environment.constructors)(definitions), constructorFieldGroups = append(environment.constructorFieldGroups)(groups), heapConstructorIndex = Some(index))
+
+let heapEnvironmentGroup (symbolId: Int) (name: Str) (environment: TypeEnvironment) =
+    match environment.heapConstructorIndex with
+        | None -> heapFindGroup(symbolId)(name)(environment.constructorFieldGroups)
+        | Some(HeapConstructorLookupIndex { groups = groups }) ->
+            match Ashes.Collection.Map.getInt(symbolId)(groups) with
+                | None -> None
+                | Some(byName) -> Ashes.Collection.Map.getStr(name)(byName)
+
 let recursive heapSubstituteGroupFields (arguments: List(SemanticType)) (genericFields: List((Str, List(SemanticType), List(SemanticType)))) =
     match genericFields with
         | [] -> []
@@ -344,8 +408,8 @@ let heapNamedTypeFields (symbolId: Int) (name: Str) (arguments: List(SemanticTyp
             environment
             |> heapEnvironmentConstructors
             |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments)
-        | groups ->
-            match heapFindGroup(symbolId)(name)(groups) with
+        | _groups ->
+            match heapEnvironmentGroup(symbolId)(name)(environment) with
                 | None -> []
                 | Some(ConstructorFieldGroup { groupIsGeneric = false, groupFields = fields }) -> fields
                 | Some(ConstructorFieldGroup { groupGenericFields = genericFields }) -> heapSubstituteGroupFields(arguments)(genericFields)
@@ -367,25 +431,21 @@ let recursive heapNamedTypeHasFieldNames (symbolId: Int) (typeName: Str) (constr
 let heapNamedTypeIsRecord (named: SemanticType) (environment: TypeEnvironment) =
     match named with
         | SemNamed(symbolId, name, _arguments) ->
-            environment
-            |> heapEnvironmentConstructors
-            |> heapNamedTypeHasFieldNames(symbolId)(name)
+            match environment.heapConstructorIndex with
+                | None ->
+                    environment
+                    |> heapEnvironmentConstructors
+                    |> heapNamedTypeHasFieldNames(symbolId)(name)
+                | Some(HeapConstructorLookupIndex { records = records }) ->
+                    match Ashes.Collection.Map.getInt(symbolId)(records) with
+                        | None -> false
+                        | Some(byName) ->
+                            match Ashes.Collection.Map.getStr(name)(byName) with
+                                | None -> false
+                                | Some(isRecord) -> isRecord
         | _ -> false
 
-let recursive heapExternalTypeHasDestructor (name: Str) (context: TypeResolutionContext) =
-    match context with
-        | TypeResolutionContext { definitions = definitions } -> heapFindExternalDestructor(name)(definitions)
-and heapFindExternalDestructor (name: Str) (definitions: List(TypeDefinition)) =
-    match definitions with
-        | [] -> false
-        | ExternalTypeDefinition(candidateName, destructor) :: rest ->
-            if candidateName == name
-            then
-                match destructor with
-                    | Some(_destructorName) -> true
-                    | None -> false
-            else heapFindExternalDestructor(name)(rest)
-        | _other :: rest -> heapFindExternalDestructor(name)(rest)
+let heapExternalTypeHasDestructor (name: Str) (context: TypeResolutionContext) = externalTypeHasDestructor(name)(context)
 
 let recursive heapAnyResource (types: List(SemanticType)) (environment: TypeEnvironment) (path: List((Int, Str))) =
     match types with

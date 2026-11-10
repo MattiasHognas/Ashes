@@ -28,7 +28,15 @@ let recursive oldResult (name: Str) (layouts: List(CoreConstructorLayout)) =
             then layout :: oldResult(name)(rest)
             else oldResult(name)(rest)
 
-let raw name marker semanticType = CoreConstructorLayout(name = name, tag = marker, fieldNames = [], isZeroCost = false, tagless = false, scheme = TypeScheme(quantified = [], body = semanticType, constraints = []))
+let recursive oldField (name: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | layout :: rest ->
+            if constructorFieldNameOccurs(name)(layout.fieldNames)
+            then layout :: oldField(name)(rest)
+            else oldField(name)(rest)
+
+let raw name marker semanticType = CoreConstructorLayout(name = name, tag = marker, fieldNames = [name, "shared", name], isZeroCost = false, tagless = false, scheme = TypeScheme(quantified = [], body = semanticType, constraints = []))
 
 let fixtures =
     [[]
@@ -47,14 +55,27 @@ let recursive checkNames (names: List(Str)) (layouts: List(CoreConstructorLayout
     match names with
         | [] -> Unit
         | name :: rest ->
-            if oldFirst(name)(layouts) == lookupFirstConstructor(name)(index) && oldResult(name)(layouts) == lookupResultConstructors(name)(index)
+            if oldFirst(name)(layouts) == lookupFirstConstructor(name)(index) && oldResult(name)(layouts) == lookupResultConstructors(name)(index) && oldField(name)(layouts) == lookupFieldConstructors(name)(index) && findRecordLayout(name)(layouts) == findRecordLayout(name)(lookupResultConstructors(name)(index)) && firstLayoutOfType(name)(layouts) == firstLayoutOfType(name)(lookupResultConstructors(name)(index)) && firstConstructorLayoutOf(name)(layouts) == firstConstructorLayoutOf(name)(lookupResultConstructors(name)(index)) && zeroCostPayloadType(name)(layouts) == zeroCostPayloadType(name)(lookupResultConstructors(name)(index)) && nullaryConstructorCount(name)(layouts) == nullaryConstructorCount(name)(lookupResultConstructors(name)(index))
             then checkNames(rest)(layouts)(index)
             else Ashes.IO.panic("lookup mismatch")
 
+let recursive oldSoleNullary (remaining: List(CoreConstructorLayout)) (layouts: List(CoreConstructorLayout)) =
+    match remaining with
+        | [] -> []
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(name) ->
+                    if constructorArity(layout) == 0 && nullaryConstructorCount(name)(layouts) == 1
+                    then layout.name :: oldSoleNullary(rest)(layouts)
+                    else oldSoleNullary(rest)(layouts)
+                | None -> oldSoleNullary(rest)(layouts)
+
 let check layouts =
-    layouts
-    |> prepare
-    |> checkNames(["A", "a", "B", "C", "D", "T", "U", "G", "missing"])(layouts)
+    (let index = prepare(layouts)
+    in
+        if oldSoleNullary(layouts)(layouts) == soleNullaryConstructorNames(layouts)(index)
+        then checkNames(["A", "a", "B", "C", "D", "T", "U", "G", "shared", "Shared", "missing"])(layouts)(index)
+        else Ashes.IO.panic("sole nullary mismatch"))
 
 let recursive selections depth prefix =
     if depth == 0
@@ -80,6 +101,29 @@ let checkSubstitution unit =
                 then Unit
                 else Ashes.IO.panic("raw substitution changed")
 
+let checkWrappers unit =
+    (let w1 =
+        raw("W1")(0)(SemFunction(SemString)(SemNamed(20)("W1")([]))(None)) with isZeroCost = true
+    in
+        let w2 =
+            raw("W2")(0)(SemFunction(SemNamed(20)("W1")([]))(SemNamed(21)("W2")([]))(None)) with isZeroCost = true
+        in
+            let variable =
+                raw("V")(0)(SemFunction(SemVariable(7))(SemNamed(22)("V")([]))(None)) with isZeroCost = true
+            in
+                let shadow =
+                    raw("W1")(1)(SemFunction(SemInt)(SemNamed(20)("W1")([]))(None)) with isZeroCost = true
+                in
+                    let layouts = [w2, variable, w1, shadow]
+                    in
+                        let index = prepare(layouts)
+                        in
+                            if ownedTypeNameOf(SemNamed(21)("W2")([]))(index) == Some("String") && ownedTypeNameOf(SemNamed(22)("V")([]))(index) == None && ownedTypeNameOf(SemNamed(23)("Function")([]))(index) == Some("Function_") && ownedTypeNameOf(SemNamed(20)("W1")([]))(layouts
+                            |> reverse
+                            |> prepare) == None
+                            then checkNames(["W1", "W2", "V", "missing"])(layouts)(index)
+                            else Ashes.IO.panic("wrapper ownership changed"))
+
 let recursive definitions count =
     if count == 0
     then []
@@ -89,13 +133,13 @@ let recursive definitions count =
 let query index =
     match lookupFirstConstructor("1")(index) with
         | Some(layout) ->
-            layout.tag + length(lookupResultConstructors("1")(index))
+            layout.tag + length(lookupResultConstructors("1")(index)) + length(lookupFieldConstructors("1")(index))
         | None -> Ashes.IO.panic("missing")
 
 let oldQuery layouts =
     match oldFirst("1")(layouts) with
         | Some(layout) ->
-            layout.tag + length(oldResult("1")(layouts))
+            layout.tag + length(oldResult("1")(layouts)) + length(oldField("1")(layouts))
         | None -> Ashes.IO.panic("missing")
 
 let recursive bench count useOld layouts index total =
@@ -137,6 +181,7 @@ match Ashes.IO.args with
         |> check
         |> (given (_) -> selections(4)([]))
         |> (given (_) -> checkSubstitution(Unit))
+        |> (given (_) -> checkWrappers(Unit))
         |> (given (_) -> check(fixtures))
         |> (given (_) -> check([]))
         |> (given (_) -> Ashes.IO.print("1296 lookup cases ok"))

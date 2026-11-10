@@ -1,4 +1,7 @@
 import AshesCompiler.Semantics.StructuralDroppers
+import AshesCompiler.Semantics.StructuralCopiers
+import AshesCompiler.Semantics.ToSpaceCopiers
+import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types
 let recursive constructorBody fields result =
@@ -48,12 +51,25 @@ let namesCorrect (body: DropperBody) =
         | ("B0" :: "B1" :: [], "A0" :: [], [], []) -> true
         | _ -> false
 
+let preparedRenumberingCorrect (types: DropperTypes) =
+    (let nested =
+        SemFunction(SemNamed(90)("A")([]))(SemTuple([SemNamed(91)("B")([]), [SemVariable(7)]
+        |> SemNamed(92)("G")
+        |> SemList, SemNamed(77)("Unknown")([])]))(None)
+    in
+        renumberPreparedType(types)(nested) == renumberType(types.dropperTypeIds)(nested) && renumberType([("A", 8), ("A", 9)])(SemNamed(90)("A")([])) == SemNamed(8)("A")([]))
+
+let copierEntriesCorrect (types: DropperTypes) =
+    match (synthesizeDeepCopy(0)(SemNamed(70)("B")([]))(types)(emptyDropperLabelCache)(1)(0)(1)(0)(IndependentClone), synthesizeToSpaceCopy(0)(SemNamed(70)("B")([]))(types)(emptyDropperLabelCache)(1)(0)(1)(0)) with
+        | ((InlineReleaseSynthesis { functions = _deep :: _deepRest }, _deepTemp), (InlineReleaseSynthesis { functions = _space :: _spaceRest }, _spaceTemp)) -> true
+        | _ -> false
+
 let checks unit =
     (let types = prepareDropperTypes(definitions)
     in
         match openDropperBody(types)(emptyDropperLabelCache)(0)(0) with
             | (_ids, body) ->
-                idsCorrect(types) && definitionsCorrect(types) && namesCorrect(body) && typeIsTagless(SemNamed(999)("A")([]))(body) && !typeIsTagless(SemNamed(999)("B")([]))(body) && !typeIsTagless(SemNamed(999)("Missing")([]))(body))
+                idsCorrect(types) && copierEntriesCorrect(types) && preparedRenumberingCorrect(types) && definitionsCorrect(types) && namesCorrect(body) && typeIsTagless(SemNamed(999)("A")([]))(body) && !typeIsTagless(SemNamed(999)("B")([]))(body) && !typeIsTagless(SemNamed(999)("Missing")([]))(body))
 
 let freshBody seed =
     (let name = "Fresh" + Ashes.Text.fromInt(seed)
@@ -65,6 +81,16 @@ let freshBody seed =
         in
             match openDropperBody(types)(emptyDropperLabelCache)(0)(0) with
                 | (_ids, body) -> (name, body))
+
+let freshRenumberCheck seed =
+    (let name = "Renumber" + Ashes.Text.fromInt(seed)
+    in
+        let types =
+            prepareDropperTypes([[]
+            |> SemNamed(seed)(name)
+            |> definition(name)([SemInt])])
+        in
+            renumberPreparedType(types)(SemNamed(seed)(name)([])) == SemNamed(0)(name)([]))
 
 let freshCheck seed =
     match freshBody(seed) with
@@ -78,7 +104,7 @@ let recursive run remaining =
     if remaining == 0
     then Ashes.IO.print("dropper index ok")
     else
-        if freshCheck(remaining)
+        if freshRenumberCheck(remaining) && freshCheck(remaining)
         then run(remaining - 1)
         else Ashes.IO.panic("fresh dropper index mismatch")
 

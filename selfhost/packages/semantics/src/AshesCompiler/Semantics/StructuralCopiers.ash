@@ -272,6 +272,6 @@ and emitCopierField (fieldTemp: Int) (fieldType: SemanticType) (named: SemanticT
 // and `purpose` the copy-out purpose of the clone's own leaf copies.
 let synthesizeDeepCopy (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) purpose =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, opened) ->
-            match emitDeepCopyInto(valueTemp)(renumberType(ids)(semanticType))(purpose)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
+        | (_ids, opened) ->
+            match emitDeepCopyInto(valueTemp)(renumberPreparedType(dropperTypes)(semanticType))(purpose)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | (resultTemp, cloned) -> (inlineReleaseResult(cloned), resultTemp)

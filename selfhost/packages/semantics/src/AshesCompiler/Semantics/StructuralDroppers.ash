@@ -52,6 +52,7 @@ export (
     value prepareDropperTypes,
     value openDropperBody,
     value renumberType,
+    value renumberPreparedType,
     value freshDropperTemp,
     value freshDropperLocal,
     value freshDropperLabel,
@@ -200,10 +201,15 @@ let recursive indexDropperConstructors (definitions: List(ConstructorInferenceDe
 // record of the ownership contract, by name, is released through a dropper of its own.
 type DropperTypes =
     | dropperTypeIds: List((Str, Int))
+    | dropperTypeIdsByName: MapTree(Str, Int)
     | dropperTypeEnvironment: TypeEnvironment
     | constructorsByType: MapTree(Str, List(ConstructorInferenceDefinition))
     | taglessConstructorIndex: TaglessConstructorIndex
     | contractRecords: MapTree(Str, Bool)
+
+// Uses the same first-seen IDs as the public list, without scanning it at each named node.
+let renumberPreparedType (types: DropperTypes) (semanticType: SemanticType) =
+    renumberTypeWith(given (name: Str) -> Ashes.Collection.Map.getStr(name)(types.dropperTypeIdsByName))(semanticType)
 
 let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
     (let ids = namedTypeIds(definitions)([])(Ashes.Collection.Map.empty)(0)
@@ -213,7 +219,8 @@ let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
         in
             DropperTypes(
                 dropperTypeIds = ids.orderedIds,
-                dropperTypeEnvironment = (emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)),
+                dropperTypeIdsByName = ids.byName,
+                dropperTypeEnvironment = heapExtendConstructorEnvironment(emptyTypeEnvironment(Unit))(renumbered),
                 constructorsByType = indexDropperConstructors(renumbered),
                 taglessConstructorIndex = renumbered
                 |> map(given (definition: ConstructorInferenceDefinition) ->
@@ -423,9 +430,12 @@ let namedTypeConstructors (named: SemanticType) (body: DropperBody) =
         | _ -> []
 
 let firstConstructorName (named: SemanticType) (body: DropperBody) =
-    match namedTypeConstructors(named)(body) with
-        | [] -> None
-        | first :: _rest -> Some(first)
+    match named with
+        | SemNamed(_symbolId, name, _arguments) ->
+            match dropperConstructorsOfType(name)(body) with
+                | ConstructorInferenceDefinition { name = first } :: _rest -> Some(first)
+                | [] -> None
+        | _ -> None
 
 let definitionScheme (definition: ConstructorInferenceDefinition) =
     match definition with
@@ -545,11 +555,11 @@ let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Seman
         | SemBigInt -> true
         | SemList(element) -> generalRcAdmissible(element)(path)(body)
         | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(body)
-        | SemNamed(_symbolId, _name, _arguments) ->
+        | SemNamed(_symbolId, name, _arguments) ->
             if containsType(semanticType)(path)
             then true
             else
-                match (namedTypeConstructors(semanticType)(body), body
+                match (dropperConstructorsOfType(name)(body), body
                 |> bodyEnvironment
                 |> classifyHeapAdmissibility(semanticType)) with
                     | ([], _facts) -> false
@@ -902,16 +912,16 @@ let synthesizeStructuralOwnerDropperIn (semanticType: SemanticType) (body: Dropp
 // the cache and counters are the caller's and come back updated.
 let synthesizeStructuralOwnerDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, body) ->
-            synthesizeStructuralOwnerDropperIn(renumberType(ids)(semanticType))(body)
+        | (_ids, body) ->
+            synthesizeStructuralOwnerDropperIn(renumberPreparedType(dropperTypes)(semanticType))(body)
 
 // Names the constructor-switching dropper of a named type, synthesizing it once; a type that is
 // not named has no such dropper.
 // The dropper of a record of the ownership contract, synthesized once per type.
 let synthesizeRecordDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, body) ->
-            match renumberType(ids)(semanticType) with
+        | (_ids, body) ->
+            match renumberPreparedType(dropperTypes)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named ->
                     match synthesizeRecordDropperIn(named)(body) with
                         | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
@@ -919,8 +929,8 @@ let synthesizeRecordDropper (semanticType: SemanticType) (dropperTypes: DropperT
 
 let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, body) ->
-            match renumberType(ids)(semanticType) with
+        | (_ids, body) ->
+            match renumberPreparedType(dropperTypes)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named ->
                     match synthesizeAdtDropperIn(named)(body) with
                         | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
@@ -930,8 +940,8 @@ let synthesizeRuntimeManagedAdtDropper (semanticType: SemanticType) (dropperType
 // `EmitGeneralRuntimeManagedAdtDrop`), synthesizing it once; a type that is not named has none.
 let synthesizeGeneralAdtDropper (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, body) ->
-            match renumberType(ids)(semanticType) with
+        | (_ids, body) ->
+            match renumberPreparedType(dropperTypes)(semanticType) with
                 | SemNamed(_symbolId, _name, _arguments) as named ->
                     match synthesizeGeneralDropperIn(named)(body) with
                         | (label, synthesized) -> synthesisResult(Some(label))(synthesized)
@@ -1069,8 +1079,8 @@ let inlineReleaseResult (body: DropperBody) =
 // `None` when the type's release is a single allocation.
 let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, opened) ->
-            match emitOwnedAggregateRelease(valueTemp)(renumberType(ids)(semanticType))(plan)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
+        | (_ids, opened) ->
+            match emitOwnedAggregateRelease(valueTemp)(renumberPreparedType(dropperTypes)(semanticType))(plan)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | None -> None
                 | Some(released) ->
                     released
@@ -1082,7 +1092,7 @@ let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType
 // string-like leaf released as one allocation.
 let synthesizeChildDrop (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, opened) ->
+        | (_ids, opened) ->
             (opened with nextTemp = nextTemp, nextLocal = nextLocal)
-            |> emitChildDrop(valueTemp)(renumberType(ids)(semanticType))
+            |> emitChildDrop(valueTemp)(renumberPreparedType(dropperTypes)(semanticType))
             |> inlineReleaseResult

@@ -1401,6 +1401,16 @@ constructor lookup retains the first declaration; type buckets retain declaratio
 Replacing the layout list rebuilds both indexes, while inference and generic substitution
 remain at the use site. Dropper preparation separately indexes its freshly renumbered definitions,
 preserving first-seen type IDs and rebuilding when the definition environment changes.
+Heap classification retains exact `(symbol ID, type name)` maps for constructor groups and
+first-constructor record status in prepared environments. Incremental declarations extend those
+maps with the same first-match behavior as the ordered lists; unprepared environments retain
+the list-backed path. Lowering's field-name index preserves layout order and does not duplicate
+a layout whose field-name list repeats a name. All structural synthesis entry points reuse the
+prepared type-ID map rather than searching the ordered ID list for each nested type.
+Type resolution maintains separate maps for name resolution, parameters, provenance IDs,
+zero-cost representations, and external destructors. These have different shadowing predicates:
+for example, a nominal declaration does not hide an older external destructor from an
+external-only query. Updates retain the original declaration lists for ordered enumeration.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and

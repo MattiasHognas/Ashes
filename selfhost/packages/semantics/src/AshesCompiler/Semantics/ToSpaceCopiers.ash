@@ -296,6 +296,6 @@ and emitAdtToSpaceCopierField (fieldTemp: Int) (fieldType: SemanticType) (named:
 // constructors).
 let synthesizeToSpaceCopy (valueTemp: Int) (semanticType: SemanticType) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
-        | (ids, opened) ->
-            match emitToSpaceCopyInto(valueTemp)(renumberType(ids)(semanticType))((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
+        | (_ids, opened) ->
+            match emitToSpaceCopyInto(valueTemp)(renumberPreparedType(dropperTypes)(semanticType))((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
                 | (resultTemp, copied) -> (inlineReleaseResult(copied), resultTemp)
