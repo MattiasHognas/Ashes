@@ -1369,8 +1369,13 @@ both a predecessor double-drop and a retained old reservation.
 Self-hosted resource-containment and unresolved-type classification use a per-query worklist
 with shared visits keyed by complete instantiated types. Shared branches are expanded once
 instead of once per path; regular cycles terminate without caching a path-local negative answer
-as a fact about a type. An ancestor reached at different generic arguments falls back to the
-existing name-cycle classifier, preserving its result. Work items retain complete type roots,
+as a fact about a type. An ancestor reached at different generic arguments switches to a
+path-aware worklist preserving the existing name-cycle cuts. This worklist shares an exact
+type visit only when an earlier visit has a subset of its blocked ancestor names, so all paths
+available to the skipped visit remain covered. Incomparable ancestor sets can still require
+separate expansions; this is not a general linear-time guarantee. Nominal visit records own
+their retained type/path pair, avoiding growth observed for tuple payloads under stage 1.
+Work items retain complete type roots,
 and the temporary query state is released through ordinary inferred ownership.
 General RC admissibility asks only for containment flags and ordered child type/drop-kind
 pairs. It uses `classifyHeapAdmissibility` for generic or uncached types rather than eagerly
@@ -1382,6 +1387,10 @@ are cached by exact type in a bounded, function-local list; substitutions, layou
 declarations, and inference defaults invalidate that list. Dropper synthesis separately caches
 full layout facts within one immutable type environment, sharing them with nested synthesis
 and discarding them at the top-level synthesis boundary.
+Tagless-layout decisions prepare a constructor-shape index once for the declaration's complete
+scheme environment. Resource traversal looks up only the matching type name before substituting
+its generic fields, preserving constructor order and the existing name-based ancestor cuts.
+The index is rebuilt for each declaration decision and does not outlive that environment.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and

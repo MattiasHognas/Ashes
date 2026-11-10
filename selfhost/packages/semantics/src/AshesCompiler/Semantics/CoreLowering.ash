@@ -35042,11 +35042,11 @@ let recursive layoutSchemes (layouts: List(CoreConstructorLayout)) =
         | [] -> []
         | CoreConstructorLayout { scheme = scheme } :: rest -> scheme :: layoutSchemes(rest)
 
-let recursive markTaglessLayouts (state: CoreLoweringState) (schemes: List(TypeScheme)) (layouts: List(CoreConstructorLayout)) =
+let recursive markTaglessLayouts (state: CoreLoweringState) (index: TaglessConstructorIndex) (layouts: List(CoreConstructorLayout)) =
     match layouts with
         | [] -> []
         | (CoreConstructorLayout { scheme = scheme, isZeroCost = isZeroCost } as layout) :: rest ->
-            (layout with tagless = isTaglessAdtConstructor(given (name: Str) -> isDeclaredResourceName(name)(state))(schemes)(isZeroCost)(scheme)) :: markTaglessLayouts(state)(schemes)(rest)
+            (layout with tagless = isTaglessAdtConstructorPrepared(given (name: Str) -> isDeclaredResourceName(name)(state))(index)(isZeroCost)(scheme)) :: markTaglessLayouts(state)(index)(rest)
 
 // The layouts of one type declaration with their tagless flag decided (see TaglessAdtLayout). The
 // sibling count and the resource walk see every registered constructor scheme, the declaration's
@@ -35054,7 +35054,8 @@ let recursive markTaglessLayouts (state: CoreLoweringState) (schemes: List(TypeS
 let decideTaglessLayouts (state: CoreLoweringState) (existingLayouts: List(CoreConstructorLayout)) (newLayouts: List(CoreConstructorLayout)) =
     markTaglessLayouts(state)(newLayouts
     |> append(existingLayouts)
-    |> layoutSchemes)(newLayouts)
+    |> layoutSchemes
+    |> prepareTaglessConstructorIndex)(newLayouts)
 
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with

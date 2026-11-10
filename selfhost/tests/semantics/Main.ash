@@ -69,6 +69,7 @@ import ReuseResetSafetyTests
 import ReuseFunctionSpecializationTests
 import ExplainReportTests
 import TaglessAdtLayoutTests
+import TaglessConstructorIndexTests
 import StructuralDroppersTests
 import ResultReachTests
 import ArgumentTypeContainmentTests
@@ -150,6 +151,7 @@ let run unit =
     |> (given (_) -> ReuseFunctionSpecializationTests.runReuseFunctionSpecializationTests(Unit))
     |> (given (_) -> ExplainReportTests.runExplainReportTests(Unit))
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
+    |> (given (_) -> TaglessConstructorIndexTests.runTaglessConstructorIndexTests(Unit))
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
     |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
     |> (given (_) -> ResultReachTests.runResultReachTests(Unit))

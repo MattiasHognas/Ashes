@@ -24,6 +24,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAny
+import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAnyWithPathCuts
 import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
@@ -440,7 +441,8 @@ let heapDirectResource environment semanticType =
 let heapResourceBearing (semanticType: SemanticType) (environment: TypeEnvironment) =
     match typeGraphAny(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType) with
         | Some(result) -> result
-        | None -> heapContainsResource(semanticType)(environment)([])
+        | None ->
+            typeGraphAnyWithPathCuts(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType)
 
 let recursive heapAnyUnresolved (types: List(SemanticType)) (environment: TypeEnvironment) (path: List((Int, Str))) =
     match types with
@@ -485,7 +487,8 @@ let heapDirectUnresolved semanticType =
 let heapUnresolvedType semanticType environment =
     match typeGraphAny(given (value) -> resolveLayoutType(value)(environment))(heapDirectUnresolved)(heapGraphChildren(true)(environment))(semanticType) with
         | Some(result) -> result
-        | None -> heapContainsUnresolvedType(semanticType)(environment)([])
+        | None ->
+            typeGraphAnyWithPathCuts(given (value) -> resolveLayoutType(value)(environment))(heapDirectUnresolved)(heapGraphChildren(true)(environment))(semanticType)
 
 // A named type the runtime may never manage as an ordinary reuse cell: a built-in resource handle
 // or any aggregate that transitively owns one.
