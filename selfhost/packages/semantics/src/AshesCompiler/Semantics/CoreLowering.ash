@@ -1027,6 +1027,14 @@ type CoreLoweringState =
     | tcoState: CoreTcoState
     | reuseState: CoreReuseState
 
+// Branch helpers below construct and match this private record; declare it before those uses
+// so sequential module stitching can resolve its constructor name.
+type LoweredCoreValue =
+    | state: CoreLoweringState
+    | temp: Int
+    | semanticType: SemanticType
+    | error: Maybe(CoreLoweringError)
+
 let stateConstructorLayouts (state: CoreLoweringState) =
     (let group = state.programState
     in group.constructorLayouts)
@@ -2467,12 +2475,6 @@ let stateInliningInProgress (state: CoreLoweringState) =
 let withStateInliningInProgress value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with inliningInProgress = value))
-
-type LoweredCoreValue =
-    | state: CoreLoweringState
-    | temp: Int
-    | semanticType: SemanticType
-    | error: Maybe(CoreLoweringError)
 
 type FreshTemp =
     | state: CoreLoweringState
