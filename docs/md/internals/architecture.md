@@ -1396,6 +1396,11 @@ then returned in first-seen group order with constructor fields in declaration o
 rebuilding the preceding group-list prefix for each constructor without reusing renumbered
 groups across declarations. Scope-copy decisions and internal shallow-copy checks ask a dedicated
 predicate, so a negative shallow answer does not calculate an unused deep-copy classification.
+Lowering also indexes raw constructor layouts by constructor name and result-type name. The
+constructor lookup retains the first declaration; type buckets retain declaration order.
+Replacing the layout list rebuilds both indexes, while inference and generic substitution
+remain at the use site. Dropper preparation separately indexes its freshly renumbered definitions,
+preserving first-seen type IDs and rebuilding when the definition environment changes.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and

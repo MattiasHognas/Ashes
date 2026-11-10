@@ -16,6 +16,8 @@ let stateConstructorLayouts _state = [0]
 
 let constructorLayoutsOfType _name layouts = layouts
 
+let stateConstructorsOfType name state = constructorLayoutsOfType(name)(stateConstructorLayouts(state))
+
 let recursive power n =
     if n == 0
     then 1

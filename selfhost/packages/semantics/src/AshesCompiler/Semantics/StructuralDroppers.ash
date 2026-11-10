@@ -102,6 +102,8 @@ type DropperBody =
     | nextLambdaId: Int
     | nextLabelId: Int
     | environment: TypeEnvironment
+    | constructorsByType: MapTree(Str, List(ConstructorInferenceDefinition))
+    | taglessConstructorIndex: TaglessConstructorIndex
     // Local to this immutable synthesis environment; never persisted with dropper labels.
     | layoutFacts: MapTree(Int, List((SemanticType, HeapLayoutFacts)))
     | contractRecords: MapTree(Str, Bool)
@@ -121,50 +123,74 @@ let recursive lookupTypeId (name: Str) (ids: List((Str, Int))) =
             then Some(id)
             else lookupTypeId(name)(rest)
 
+type PreparedTypeIds =
+    | orderedIds: List((Str, Int))
+    | byName: MapTree(Str, Int)
+
 // One symbol id per named type declared by a constructor, in first-seen order.
-let recursive namedTypeIds (definitions: List(ConstructorInferenceDefinition)) (reversedIds: List((Str, Int))) =
+// The lookup map accelerates duplicate checks without determining ID or list order.
+let recursive namedTypeIds (definitions: List(ConstructorInferenceDefinition)) (reversedIds: List((Str, Int))) (byName: MapTree(Str, Int)) (nextId: Int) =
     match definitions with
-        | [] -> reverse(reversedIds)
+        | [] -> PreparedTypeIds(orderedIds = reverse(reversedIds), byName = byName)
         | ConstructorInferenceDefinition { scheme = TypeScheme { body = body } } :: rest ->
             match schemeResultTypeName(body) with
-                | None -> namedTypeIds(rest)(reversedIds)
+                | None -> namedTypeIds(rest)(reversedIds)(byName)(nextId)
                 | Some(name) ->
-                    match lookupTypeId(name)(reversedIds) with
-                        | Some(_id) -> namedTypeIds(rest)(reversedIds)
-                        | None -> namedTypeIds(rest)((name, length(reversedIds)) :: reversedIds)
+                    match Ashes.Collection.Map.getStr(name)(byName) with
+                        | Some(_id) -> namedTypeIds(rest)(reversedIds)(byName)(nextId)
+                        | None ->
+                            namedTypeIds(rest)((name, nextId) :: reversedIds)(Ashes.Collection.Map.setStr(name)(nextId)(byName))(nextId + 1)
 
-let recursive renumberType (ids: List((Str, Int))) (semanticType: SemanticType) =
+let recursive renumberTypeWith (lookup: Str -> Maybe(Int)) (semanticType: SemanticType) =
     match semanticType with
         | SemList(element) ->
             element
-            |> renumberType(ids)
+            |> renumberTypeWith(lookup)
             |> SemList
         | SemTuple(elements) ->
             elements
-            |> map(renumberType(ids))
+            |> map(renumberTypeWith(lookup))
             |> SemTuple
         | SemFunction(parameter, result, row) ->
-            SemFunction(renumberType(ids)(parameter))(renumberType(ids)(result))(row)
+            SemFunction(renumberTypeWith(lookup)(parameter))(renumberTypeWith(lookup)(result))(row)
         | SemNamed(symbolId, name, arguments) ->
-            match lookupTypeId(name)(ids) with
+            match lookup(name) with
                 | Some(id) ->
                     arguments
-                    |> map(renumberType(ids))
+                    |> map(renumberTypeWith(lookup))
                     |> SemNamed(id)(name)
                 | None ->
                     arguments
-                    |> map(renumberType(ids))
+                    |> map(renumberTypeWith(lookup))
                     |> SemNamed(symbolId)(name)
         | other -> other
 
-let renumberDefinition (ids: List((Str, Int))) (definition: ConstructorInferenceDefinition) =
+let renumberType (ids: List((Str, Int))) (semanticType: SemanticType) =
+    renumberTypeWith(given (name: Str) -> lookupTypeId(name)(ids))(semanticType)
+
+let renumberDefinition (ids: MapTree(Str, Int)) (definition: ConstructorInferenceDefinition) =
     match definition with
         | ConstructorInferenceDefinition { name = name, scheme = TypeScheme { quantified = quantified, body = body, constraints = constraints }, fieldNames = fieldNames } ->
             ConstructorInferenceDefinition(
                 name = name,
-                scheme = TypeScheme(quantified = quantified, body = renumberType(ids)(body), constraints = constraints),
+                scheme = TypeScheme(quantified = quantified, body = renumberTypeWith(given (typeName: Str) -> Ashes.Collection.Map.getStr(typeName)(ids))(body), constraints = constraints),
                 fieldNames = fieldNames
             )
+
+let recursive indexDropperConstructors (definitions: List(ConstructorInferenceDefinition)) =
+    match definitions with
+        | [] -> Ashes.Collection.Map.empty
+        | (ConstructorInferenceDefinition { scheme = TypeScheme { body = body } } as definition) :: rest ->
+            let index = indexDropperConstructors(rest)
+            in
+                match schemeResultTypeName(body) with
+                    | None -> index
+                    | Some(name) ->
+                        let previous =
+                            match Ashes.Collection.Map.getStr(name)(index) with
+                                | Some(bucket) -> bucket
+                                | None -> []
+                        in Ashes.Collection.Map.setStr(name)(definition :: previous)(index)
 
 // The program's constructors as the release and copy synthesizers read them: one symbol id per
 // declared type, every definition renumbered to those ids, and the definitions indexed by the type
@@ -175,14 +201,27 @@ let renumberDefinition (ids: List((Str, Int))) (definition: ConstructorInference
 type DropperTypes =
     | dropperTypeIds: List((Str, Int))
     | dropperTypeEnvironment: TypeEnvironment
+    | constructorsByType: MapTree(Str, List(ConstructorInferenceDefinition))
+    | taglessConstructorIndex: TaglessConstructorIndex
     | contractRecords: MapTree(Str, Bool)
 
 let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
-    (let ids = namedTypeIds(definitions)([])
+    (let ids = namedTypeIds(definitions)([])(Ashes.Collection.Map.empty)(0)
     in
         let renumbered =
-            map(renumberDefinition(ids))(definitions)
-        in DropperTypes(dropperTypeIds = ids, dropperTypeEnvironment = (emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)), contractRecords = Ashes.Collection.Map.empty))
+            map(renumberDefinition(ids.byName))(definitions)
+        in
+            DropperTypes(
+                dropperTypeIds = ids.orderedIds,
+                dropperTypeEnvironment = (emptyTypeEnvironment(Unit) with constructors = renumbered, constructorFieldGroups = heapConstructorFieldGroups(renumbered)),
+                constructorsByType = indexDropperConstructors(renumbered),
+                taglessConstructorIndex = renumbered
+                |> map(given (definition: ConstructorInferenceDefinition) ->
+                    match definition with
+                        | ConstructorInferenceDefinition { scheme = scheme } -> scheme)
+                |> prepareTaglessConstructorIndex,
+                contractRecords = Ashes.Collection.Map.empty
+            ))
 
 let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextLambdaId: Int) (nextLabelId: Int) =
     (let ids = dropperTypes.dropperTypeIds
@@ -196,6 +235,8 @@ let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nex
             nextLambdaId = nextLambdaId,
             nextLabelId = nextLabelId,
             environment = dropperTypes.dropperTypeEnvironment,
+            constructorsByType = dropperTypes.constructorsByType,
+            taglessConstructorIndex = dropperTypes.taglessConstructorIndex,
             layoutFacts = Ashes.Collection.Map.empty,
             contractRecords = dropperTypes.contractRecords,
             recordsInProgress = []
@@ -366,9 +407,19 @@ let recursive constructorsNamed (typeName: Str) (definitions: List(ConstructorIn
                     else constructorsNamed(typeName)(rest)
                 | None -> constructorsNamed(typeName)(rest)
 
+let dropperConstructorsOfType (name: Str) (body: DropperBody) =
+    match Ashes.Collection.Map.getStr(name)(body.constructorsByType) with
+        | Some(definitions) -> definitions
+        | None -> []
+
 let namedTypeConstructors (named: SemanticType) (body: DropperBody) =
-    match (named, bodyEnvironment(body)) with
-        | (SemNamed(_symbolId, name, _arguments), TypeEnvironment { constructors = definitions }) -> constructorsNamed(name)(definitions)
+    match named with
+        | SemNamed(_symbolId, name, _arguments) ->
+            body
+            |> dropperConstructorsOfType(name)
+            |> map(given (definition: ConstructorInferenceDefinition) ->
+                match definition with
+                    | ConstructorInferenceDefinition { name = constructorName } -> constructorName)
         | _ -> []
 
 let firstConstructorName (named: SemanticType) (body: DropperBody) =
@@ -393,11 +444,10 @@ let recursive schemesOfType (typeName: Str) (definitions: List(ConstructorInfere
 // resource handle nor resource-bearing (a user-declared resource or zero-cost type is not visible
 // here and stays tagged).
 let typeIsTagless (named: SemanticType) (body: DropperBody) =
-    match (named, bodyEnvironment(body)) with
-        | (SemNamed(_symbolId, name, _arguments), TypeEnvironment { constructors = definitions }) ->
-            match schemesOfType(name)(definitions) with
-                | scheme :: [] ->
-                    isTaglessAdtConstructor(isBuiltinResourceTypeName)(map(definitionScheme)(definitions))(false)(scheme)
+    match named with
+        | SemNamed(_symbolId, name, _arguments) ->
+            match dropperConstructorsOfType(name)(body) with
+                | ConstructorInferenceDefinition { scheme = scheme } :: [] -> isTaglessAdtConstructorPrepared(isBuiltinResourceTypeName)(body.taglessConstructorIndex)(false)(scheme)
                 | _ -> false
         | _ -> false
 

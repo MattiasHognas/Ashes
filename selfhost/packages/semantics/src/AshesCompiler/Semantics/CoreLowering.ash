@@ -232,6 +232,44 @@ type CoreConstructorLayout =
     | tagless: Bool
     deriving {Eq, Show}
 
+let recursive schemeResultName (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_, result, _) -> schemeResultName(result)
+        | SemNamed(_, name, _) -> Some(name)
+        | _ -> None
+
+let layoutResultName (layout: CoreConstructorLayout) =
+    match layout with
+        | CoreConstructorLayout { scheme = TypeScheme { body = body } } -> schemeResultName(body)
+
+// Raw constructor declarations are indexed once per layout environment. Queries still instantiate
+// and resolve their fields against the current inference state.
+type CoreConstructorLookupIndex =
+    | byConstructor: MapTree(Str, CoreConstructorLayout)
+    | byResult: MapTree(Str, List(CoreConstructorLayout))
+
+let lookupFirstConstructor (name: Str) (index: CoreConstructorLookupIndex) = Ashes.Collection.Map.getStr(name)(index.byConstructor)
+
+let lookupResultConstructors (name: Str) (index: CoreConstructorLookupIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.byResult) with
+        | Some(layouts) -> layouts
+        | None -> []
+
+let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
+    match layouts with
+        | [] -> index
+        | layout :: rest ->
+            let named = index with byConstructor = Ashes.Collection.Map.setStr(layout.name)(layout)(index.byConstructor)
+            in
+                match layoutResultName(layout) with
+                    | None -> collectConstructorLookupIndex(rest)(named)
+                    | Some(resultName) ->
+                        let updated = named with byResult = Ashes.Collection.Map.setStr(resultName)(layout :: lookupResultConstructors(resultName)(named))(named.byResult)
+                        in collectConstructorLookupIndex(rest)(updated)
+
+let constructorLookupIndex (layouts: List(CoreConstructorLayout)) =
+    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty))
+
 type CoreBindingLocation =
     | CoreLocal(Int)
     | CoreEnvironment(Int)
@@ -568,6 +606,7 @@ type CoreTakenOverSettle =
 
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
+    | constructorIndex: CoreConstructorLookupIndex
     | coverageTypes: TypeEnvironment
     | dropperTypes: DropperTypes
     | builtinLayouts: List(CoreBuiltinLayout)
@@ -1050,7 +1089,11 @@ let stateConstructorLayouts (state: CoreLoweringState) =
 
 let withStateConstructorLayouts value (state: CoreLoweringState) =
     (let group = state.programState
-    in clearAdmissibilityAnswers((state with programState = (group with constructorLayouts = value))))
+    in clearAdmissibilityAnswers((state with programState = (group with constructorLayouts = value, constructorIndex = constructorLookupIndex(value)))))
+
+let stateConstructorsOfType (name: Str) (state: CoreLoweringState) =
+    (let group = state.programState
+    in lookupResultConstructors(name)(group.constructorIndex))
 
 let stateCoverageTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -2784,6 +2827,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         borrowedCalls = [],
         programState = CoreProgramState(
             constructorLayouts = constructorLayouts,
+            constructorIndex = constructorLookupIndex(constructorLayouts),
             coverageTypes = coverageEnvironmentOf(constructorLayouts),
             heapLayoutFactsByType = constructorLayouts
             |> coverageEnvironmentOf
@@ -3997,7 +4041,7 @@ let recursive findConstructorLayout (name: Str) (layouts: List(CoreConstructorLa
 
 let constructorLayout name state =
     match state with
-        | CoreLoweringState { programState = CoreProgramState { constructorLayouts = layouts } } -> findConstructorLayout(name)(layouts)
+        | CoreLoweringState { programState = CoreProgramState { constructorIndex = index } } -> lookupFirstConstructor(name)(index)
 
 let recursive findBuiltinLayout moduleName memberName layouts =
     match layouts with
@@ -5274,12 +5318,6 @@ let emitOwnedLetRelease typeName ownerSlot state =
                         |> emit(LoadLocal(loadTemp)(ownerSlot))
                         |> emitOwnerDrop(typeName)(ownerSlot)(loadTemp)(runtimeOwner == Some(true))
 
-let recursive schemeResultName (semanticType: SemanticType) =
-    match semanticType with
-        | SemFunction(_, result, _) -> schemeResultName(result)
-        | SemNamed(_, name, _) -> Some(name)
-        | _ -> None
-
 let emitRestoreAndReclaim cursorSlot endSlot preRestoreSlot state =
     state
     |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
@@ -5435,10 +5473,6 @@ let closeScopeForResult (resultTemp: Int) (resultType: SemanticType) cursorSlot 
 type ScopeCopyOut =
     | ShallowScopeCopyOut(Int)
     | ListScopeCopyOut
-
-let layoutResultName layout =
-    match layout with
-        | CoreConstructorLayout { scheme = TypeScheme { body = body } } -> schemeResultName(body)
 
 let recursive firstLayoutOfType (name: Str) (layouts: List(CoreConstructorLayout)) =
     match layouts with
@@ -6013,9 +6047,7 @@ let canRuntimeManageRecursiveCopyAdt (semanticType: SemanticType) (state: CoreLo
     |> namedTypeNameOf with
         | None -> false
         | Some(name) ->
-            match state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name) with
+            match state |> stateConstructorsOfType(name) with
                 | [] -> false
                 | first :: _rest as layouts ->
                     isBuiltinTypeName(name) == false && layoutIsGeneric(first) == false && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(semanticType)(state)) == false && allConstructorsScalarOrSelf(layouts)(name)(state)(false)
@@ -6052,9 +6084,7 @@ let canRuntimeManageGenericCopyAdtApplication (layout: CoreConstructorLayout) (a
             match namedTypeNameOf(resultType) with
                 | None -> false
                 | Some(name) ->
-                    layoutIsGeneric(layout) && length(state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && allGenericCopyFields(arguments)(fieldTypes)(state)
+                    layoutIsGeneric(layout) && length(state |> stateConstructorsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && allGenericCopyFields(arguments)(fieldTypes)(state)
 
 let freshHeapChildFieldSupported (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match (resolveType(state)(fieldType), unspanArgument(argument)) with
@@ -6081,9 +6111,7 @@ let canRuntimeManageFreshHeapChildAdtApplication (layout: CoreConstructorLayout)
             match namedTypeNameOf(resultType) with
                 | None -> false
                 | Some(name) ->
-                    length(state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(resultType)(state)) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
+                    length(state |> stateConstructorsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(resultType)(state)) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
 
 // A fresh constructor tree of a recursive-copy type.
 let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (state: CoreLoweringState) =
@@ -7187,9 +7215,7 @@ let recursive originalGeneralRcAdmissible (semanticType: SemanticType) (path: Li
                         if name == "Task" || containsType(named)(path)
                         then name != "Task"
                         else
-                            match (state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name), heapAdmissibilityOf(named)(state)) with
+                            match (state |> stateConstructorsOfType(name), heapAdmissibilityOf(named)(state)) with
                                 | ([], _facts) -> false
                                 | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> false
                                 | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> false
@@ -7266,9 +7292,7 @@ let recursive searchGeneralRcAdmissibility pending visited state =
                                         | None -> None
                                         | Some(true) -> searchGeneralRcAdmissibility(rest)(visited)(state)
                                         | Some(false) ->
-                                            match (state
-                                            |> stateConstructorLayouts
-                                            |> constructorLayoutsOfType(name), heapAdmissibilityOf(named)(state)) with
+                                            match (state |> stateConstructorsOfType(name), heapAdmissibilityOf(named)(state)) with
                                                 | ([], _facts) -> Some(false)
                                                 | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> Some(false)
                                                 | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> Some(false)
@@ -7339,10 +7363,7 @@ let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: Co
                 | HeapLayoutFacts { children = children } as facts ->
                     if runtimeManagedAdtLayout(facts)
                     then
-                        let layouts =
-                            state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name)
+                        let layouts = state |> stateConstructorsOfType(name)
                         in
                             if isInlineCopiedContractRecord(named)(layouts)(facts)(state)
                             then Some(NormalizerArgumentCopy(named))
@@ -7420,9 +7441,7 @@ let heapChildrenOfNamed (named: SemanticType) (state: CoreLoweringState) =
 let inlineAdtCopyPlanOf (named: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(named) with
         | SemNamed(_symbolId, name, _arguments) as resolved ->
-            adtCopyPlanOfWith(false)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name))(heapChildrenOfNamed(resolved)(state))(state)
+            adtCopyPlanOfWith(false)(state |> stateConstructorsOfType(name))(heapChildrenOfNamed(resolved)(state))(state)
         | _ -> None
 
 // Stage 0's `EmitRuntimeManagedTcoParamCopy` and `EmitRuntimeManagedTcoDeepCopy`: the copy of a value
@@ -7440,9 +7459,7 @@ let contractRecordAnswer (named: SemanticType) (name: Str) (facts: HeapLayoutFac
     match facts with
         | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
         | _ ->
-            runtimeManagedAdtLayout(facts) && classifyInlineCopiedContractRecord(named)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name))(facts)(state)
+            runtimeManagedAdtLayout(facts) && classifyInlineCopiedContractRecord(named)(state |> stateConstructorsOfType(name))(facts)(state)
 
 // Stage 0's `IsGeneralRcNamedType`: a named type the contract governs, one only the normalization
 // helper expresses, that owns a heap child, and that the recursive-copy path does not already
@@ -7935,9 +7952,7 @@ and synthesizeAdtNormalizer (named: SemanticType) (state: CoreLoweringState) =
 and emitNormalizerAdtCopy (sourceTemp: Int) (named: SemanticType) (state: CoreLoweringState) =
     match named with
         | SemNamed(_symbolId, name, _arguments) ->
-            match constructorCopyPlansOfWith(true)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name))(heapChildrenOfNamed(named)(state))(state) with
+            match constructorCopyPlansOfWith(true)(state |> stateConstructorsOfType(name))(heapChildrenOfNamed(named)(state))(state) with
                 | Some(single :: []) -> emitConstructorDeepCopy(sourceTemp)(single)(state)
                 | Some(_first :: _rest as plans) -> emitAdtSwitchDeepCopyWith("rcnorm_ctor")("rcnorm_end")(sourceTemp)(plans)(state)
                 | _ -> (state, sourceTemp)
@@ -8330,9 +8345,9 @@ let structuralComponentTypes (semanticType: SemanticType) =
 let namedTypeFieldTypesAs (instantiated: Bool) (name: Str) (arguments: List(SemanticType)) (state: CoreLoweringState) =
     if instantiated
     then
-        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorLayouts(state))(state)([])
+        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorsOfType(name)(state))(state)([])
     else
-        match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+        match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
             | (_found, fieldTypes) -> fieldTypes
 
 // Stage 0's `ContainsBytesLayout`: whether a value of the type may hold Bytes, through its
@@ -8590,9 +8605,7 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
 let ownedChildrenOfNamed (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match (state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
+            match (state |> stateConstructorsOfType(name), heapFactsOf(named)(state)) with
                 | (CoreConstructorLayout { name = constructorName } :: [], HeapLayoutFacts { children = children }) -> ownedConstructorChildren(constructorName)(children)
                 | _ -> []
         | _ -> []
@@ -8965,9 +8978,7 @@ let recursive expressionAt (index: Int) (expressions: List(Expr)) =
 let constructorFieldExpressionsOf (expression: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (resolveType(state)(semanticType), constructorApplicationOf(unspanArgument(expression))([])(state)) with
         | (SemNamed(_symbolId, name, _arguments), Some((CoreConstructorLayout { name = constructorName }, arguments))) ->
-            match state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name) with
+            match state |> stateConstructorsOfType(name) with
                 | CoreConstructorLayout { name = soleConstructor } :: [] ->
                     if soleConstructor == constructorName
                     then Some(arguments)
@@ -14950,10 +14961,7 @@ let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: C
                     if isResourceHandle(named)(state)
                     then None
                     else
-                        let layouts =
-                            state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name)
+                        let layouts = state |> stateConstructorsOfType(name)
                         in
                             match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
                                 | Some(true) -> Some((named, name))
@@ -15965,8 +15973,7 @@ let ownFieldKindOf (resultType: SemanticType) (state: CoreLoweringState) =
             else
                 let constructors =
                     state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)
+                    |> stateConstructorsOfType(name)
                     |> sortBy(given (left: CoreConstructorLayout) ->
                         given (right: CoreConstructorLayout) -> left.tag <= right.tag)
                     |> ownFieldConstructors(arguments)(state)
@@ -16002,9 +16009,7 @@ let recursive containsResolvedType (semanticType: SemanticType) (target: Semanti
                         if seenRecordHolderType(resolved)(seen)
                         then false
                         else
-                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name))(target)(resolved :: seen)(state)
+                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state |> stateConstructorsOfType(name))(target)(resolved :: seen)(state)
                     | _ -> false
 and anyContainsResolvedType (types: List(SemanticType)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -16943,14 +16948,14 @@ let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLowerin
 let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match accumulatorType with
         | SemNamed(_symbolId, typeName, arguments) ->
-            match namedTypeConstructorFieldTypes(typeName)(stateConstructorLayouts(state))(state)(false)([]) with
+            match namedTypeConstructorFieldTypes(typeName)(stateConstructorsOfType(typeName)(state))(state)(false)([]) with
                 | (false, _fieldTypes) -> false
                 | (true, declaredFieldTypes) ->
                     let fieldTypes =
                         match arguments with
                             | [] -> declaredFieldTypes
                             | _ ->
-                                namedTypeInstantiatedFieldTypes(typeName)(arguments)(stateConstructorLayouts(state))(state)([])
+                                namedTypeInstantiatedFieldTypes(typeName)(arguments)(stateConstructorsOfType(typeName)(state))(state)([])
                     in
                         namedAccumulatorFieldsPersistent(typeName)(given (fieldType: SemanticType) -> specializationFieldRelocatable(fieldType)(state))(fieldTypes)
         | _ -> true
@@ -18567,9 +18572,7 @@ let calleeVerifiedResultRuntimeManaged (context: CoreCallContext) (state: CoreLo
 // Stage 0's `IsNormalizableUncoveredRecord`: a single-constructor named type with no call copy-out
 // that the entry normalization's copy re-establishes.
 let classifyNormalizableUncoveredRecord (name: Str) (named: SemanticType) (state: CoreLoweringState) =
-    (match state
-    |> stateConstructorLayouts
-    |> constructorLayoutsOfType(name) with
+    (match state |> stateConstructorsOfType(name) with
         | _layout :: [] -> true
         | _ -> false) && hasCallCopyOut(named)(state) == false && (match (entryNormalizationPlanOf(named)(state), heapFactsOf(named)(state)) with
         | (Some(_plan), HeapLayoutFacts { arenaDeepCopySupported = true }) -> true
@@ -19605,7 +19608,7 @@ let recursive heapPartTypesInto (pending: List(SemanticType)) (expanded: List(St
                                 then
                                     heapPartTypesInto(append(arguments)(rest))(expanded)(resolved :: parts)(state)
                                 else
-                                    match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+                                    match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
                                         | (_found, fieldTypes) ->
                                             heapPartTypesInto(rest
                                             |> append(arguments)
@@ -23126,8 +23129,7 @@ let reuseMatchExhaustiveAndSafe (cases: List((Pattern, Expr, Maybe(Expr)))) (sta
                 | Some(typeName) ->
                     let required =
                         state
-                        |> stateConstructorLayouts
-                        |> constructorLayoutsOfType(typeName)
+                        |> stateConstructorsOfType(typeName)
                         |> constructorLayoutNames
                     in
                         let caseNames = constructorLayoutNames(layouts)
@@ -35744,8 +35746,7 @@ let entryValueHoldsNoHeap (semanticType: SemanticType) (state: CoreLoweringState
     resultSurvivesReset(semanticType)(state) || (match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) ->
             state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name)
+            |> stateConstructorsOfType(name)
             |> declaredAllNullary
         | _ -> false)
 
