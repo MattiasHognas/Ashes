@@ -34,6 +34,7 @@ export (
     type HeapLayoutChild(..),
     type HeapLayoutRejections(..),
     type HeapLayoutFacts(..),
+    type HeapAdmissibilityFacts(..),
     value canArenaResetLayout,
     value heapRuntimeRecursiveCopyAdtLayout,
     value heapRuntimeOwnedFieldLayout,
@@ -41,6 +42,7 @@ export (
     value heapNamedTypeConstructors,
     value heapConstructorFieldGroups,
     value classifyHeapLayout,
+    value classifyHeapAdmissibility,
 )
 
 type HeapChildDropKind =
@@ -105,6 +107,14 @@ type HeapLayoutFacts =
     | runtimePositionalAdtSupported: Bool
     | children: List(HeapLayoutChild)
     | rejections: HeapLayoutRejections
+    deriving {Eq, Show}
+
+// General RC admissibility needs containment and child drop eligibility, not copy or reuse
+// layouts. Keep this view independent so asking for it does not build those recursive facts.
+type HeapAdmissibilityFacts =
+    | containsResource: Bool
+    | containsUnresolvedType: Bool
+    | children: List((SemanticType, HeapChildDropKind))
     deriving {Eq, Show}
 
 let canArenaResetLayout (semanticType: SemanticType) =
@@ -804,6 +814,36 @@ let heapLayoutChildren (resolved: SemanticType) (environment: TypeEnvironment) =
         | SemNamed(_symbolId, _name, _arguments) ->
             heapNamedTypeChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
         | _ -> []
+
+let recursive heapAdmissibilityChildrenOnto (fieldTypes: List(SemanticType)) (environment: TypeEnvironment) (tail: List((SemanticType, HeapChildDropKind))) =
+    match fieldTypes with
+        | [] -> tail
+        | fieldType :: rest -> (fieldType, heapDropKind(fieldType)(environment)) :: heapAdmissibilityChildrenOnto(rest)(environment)(tail)
+
+let recursive heapNamedAdmissibilityChildren grouped environment =
+    match grouped with
+        | [] -> []
+        | (_constructorName, fieldTypes) :: rest ->
+            environment
+            |> heapNamedAdmissibilityChildren(rest)
+            |> heapAdmissibilityChildrenOnto(fieldTypes)(environment)
+
+let heapAdmissibilityChildren (resolved: SemanticType) (environment: TypeEnvironment) =
+    match resolved with
+        | SemList(element) -> heapAdmissibilityChildrenOnto([element, resolved])(environment)([])
+        | SemTuple(elements) -> heapAdmissibilityChildrenOnto(elements)(environment)([])
+        | SemNamed(_symbolId, _name, _arguments) ->
+            heapNamedAdmissibilityChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
+        | _ -> []
+
+let classifyHeapAdmissibility (semanticType: SemanticType) (environment: TypeEnvironment) =
+    (let resolved = resolveLayoutType(semanticType)(environment)
+    in
+        HeapAdmissibilityFacts(
+            containsResource = heapResourceBearing(resolved)(environment),
+            containsUnresolvedType = heapUnresolvedType(resolved)(environment),
+            children = heapAdmissibilityChildren(resolved)(environment)
+        ))
 
 let recursive heapAnyOwnedChild (children: List(HeapLayoutChild)) =
     match children with

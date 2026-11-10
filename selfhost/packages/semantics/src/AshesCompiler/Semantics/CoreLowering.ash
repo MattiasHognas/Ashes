@@ -7113,6 +7113,33 @@ let recordedGeneralRcTypeFacts (name: Str) (state: CoreLoweringState) =
     |> stateGeneralRcTypeFacts
     |> Ashes.Collection.Map.getStr(name)
 
+let admissibilityChildOf (child: HeapLayoutChild) = (child.childType, child.dropKind)
+
+// Reuse settled monomorphic facts without reclassifying them. Generic and uncached types ask
+// only for the containment and child-drop view, avoiding unrelated copy/reuse graph walks.
+let heapAdmissibilityOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) ->
+                        HeapAdmissibilityFacts(
+                            containsResource = facts.containsResource,
+                            containsUnresolvedType = facts.containsUnresolvedType,
+                            children = map(admissibilityChildOf)(facts.children)
+                        )
+                    | None ->
+                        state
+                        |> coverageEnvironment
+                        |> classifyHeapAdmissibility(resolved)
+            | _ ->
+                state
+                |> coverageEnvironment
+                |> classifyHeapAdmissibility(resolved))
+
 let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> true
@@ -7132,22 +7159,22 @@ let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(Sem
                         else
                             match (state
                             |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
+                            |> constructorLayoutsOfType(name), heapAdmissibilityOf(named)(state)) with
                                 | ([], _facts) -> false
-                                | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
-                                | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
-                                | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
+                                | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> false
+                                | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> false
+                                | (_layouts, HeapAdmissibilityFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
         | resolved -> resultSurvivesReset(resolved)(state)
 and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
         | semanticType :: rest -> isGeneralRcAdmissible(semanticType)(path)(state) && allGeneralRcAdmissible(rest)(path)(state)
-and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
+and allChildrenGeneralRcAdmissible (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (state: CoreLoweringState) =
     match children with
         | [] -> true
-        | HeapLayoutChild { dropKind = DropClosure } :: _rest -> false
-        | HeapLayoutChild { dropKind = UnsupportedChildDrop } :: _rest -> false
-        | HeapLayoutChild { childType = childType } :: rest -> isGeneralRcAdmissible(childType)(path)(state) && allChildrenGeneralRcAdmissible(rest)(path)(state)
+        | (_childType, DropClosure) :: _rest -> false
+        | (_childType, UnsupportedChildDrop) :: _rest -> false
+        | (childType, _dropKind) :: rest -> isGeneralRcAdmissible(childType)(path)(state) && allChildrenGeneralRcAdmissible(rest)(path)(state)
 
 let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
     match children with

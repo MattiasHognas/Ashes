@@ -1372,6 +1372,10 @@ instead of once per path; regular cycles terminate without caching a path-local 
 as a fact about a type. An ancestor reached at different generic arguments falls back to the
 existing name-cycle classifier, preserving its result. Work items retain complete type roots,
 and the temporary query state is released through ordinary inferred ownership.
+General RC admissibility asks only for containment flags and ordered child type/drop-kind
+pairs. It uses `classifyHeapAdmissibility` for generic or uncached types rather than eagerly
+computing unrelated copy/reuse layouts and child copy kinds. A monomorphic cache hit projects
+the same facts from the existing full layout; eligibility guards and cycle rules are unchanged.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
