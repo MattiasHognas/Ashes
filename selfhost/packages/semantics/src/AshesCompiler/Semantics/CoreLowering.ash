@@ -7267,9 +7267,11 @@ let queryGeneralRcAdmissibility (semanticType: SemanticType) (path: List(Semanti
 let isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match path with
         | [] ->
-            match lookupAdmissibilityAnswer(resolveType(state)(semanticType))(state.functionState.admissibilityAnswers) with
-                | Some(answer) -> answer
-                | None -> queryGeneralRcAdmissibility(semanticType)(path)(state)
+            let group = state.functionState
+            in
+                match lookupAdmissibilityAnswer(resolveType(state)(semanticType))(group.admissibilityAnswers) with
+                    | Some(answer) -> answer
+                    | None -> queryGeneralRcAdmissibility(semanticType)(path)(state)
         | _ -> queryGeneralRcAdmissibility(semanticType)(path)(state)
 
 let prepareGeneralRcAdmissibility semanticType (state: CoreLoweringState) =
