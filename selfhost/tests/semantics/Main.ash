@@ -71,6 +71,7 @@ import ExplainReportTests
 import TaglessAdtLayoutTests
 import StructuralDroppersTests
 import ResultReachTests
+import ArgumentTypeContainmentTests
 import ResultReachSummariesTests
 import TcoOwnershipRulesTests
 import PatternBindingOwnershipTests
@@ -80,6 +81,7 @@ import LoweringDiagnosticsTests
 import QualifiedShippedReferencesTests
 let run unit =
     Unit
+    |> ArgumentTypeContainmentTests.runArgumentTypeContainmentTests
     |> UnificationTests.runUnificationTests
     |> (given (_) -> TypeSchemeTests.runTypeSchemeTests(Unit))
     |> (given (_) -> TypeInferenceTests.runTypeInferenceTests(Unit))

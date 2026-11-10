@@ -13,6 +13,7 @@ import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
+import AshesCompiler.Semantics.ArgumentTypeContainment.mayContainArgumentType
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
@@ -9245,28 +9246,16 @@ let recursive resetArgumentParameters (arguments: List(TcoResetArgument)) =
 // Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
 // reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
 // (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
-// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
-// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
-// time regardless, so the same generic type at two instantiations still has both compared. A named
+// where it is, so erring this way leaks at worst. A named instantiation is expanded once per walk;
+// its type arguments are walked every time regardless. Non-regular recursive expansion at changing
+// arguments conservatively answers yes, while different sibling instantiations are searched. A named
 // type's fields are read at its instantiation (`instantiated`), so a field of its own type parameter
 // is the argument in its place; the loop placement's sibling question reads them as declared.
-let recursive typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemFunction(_parameter, _result, _row) -> true
-        | resolved ->
-            resolved == argumentType || anyTypeMayContainArgumentType(instantiated)(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
-                | SemNamed(_id, name, arguments) ->
-                    if containsName(name)(expanded)
-                    then false
-                    else
-                        anyTypeMayContainArgumentType(instantiated)(namedTypeFieldTypesAs(instantiated)(name)(arguments)(state))(argumentType)(name :: expanded)(state)
-                | _ -> false)
-and anyTypeMayContainArgumentType (instantiated: Bool) (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match candidates with
-        | [] -> false
-        | candidate :: rest -> typeMayContainArgumentType(instantiated)(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(instantiated)(rest)(argumentType)(expanded)(state)
+let typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    mayContainArgumentType(resolveType(state))(given (semanticType) ->
+        match semanticType with
+            | SemNamed(_id, name, arguments) -> namedTypeFieldTypesAs(instantiated)(name)(arguments)(state)
+            | _ -> [])(expanded)(resultType)(argumentType)
 
 let callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) = typeMayContainArgumentType(true)(resultType)(argumentType)(expanded)(state)
 

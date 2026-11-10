@@ -2393,6 +2393,15 @@ alone decides and the input is released. Reading the result-ownership bit uncond
 keeps the reference on every reference-counted result, stranding the whole consumed argument — its
 spine, its elements and their own children — once per call.
 
+Stage 1's containment walk shares its visited set across sibling constructor fields. Keeping only
+the current path makes a shared type graph expand once per path, which can take exponential time
+during compiler lowering. Identical named instantiations are expanded once per query, while
+different sibling instantiations are searched separately. Recursive expansion of the same name
+at changing type arguments conservatively answers "may contain" to bound non-regular recursion;
+a negative answer for one instantiation must never justify a release for another. Structural type
+arguments are checked before the visited-set test. Stage 0 already shares its expansion set
+across siblings.
+
 Types cannot answer that question when the result's element type equals the argument's — a map from
 strings to strings — and the hand-over is what a caller falls back on whenever the callee's result
 reach is unproven. A complete reach account settles it without types: a callee that provably never
