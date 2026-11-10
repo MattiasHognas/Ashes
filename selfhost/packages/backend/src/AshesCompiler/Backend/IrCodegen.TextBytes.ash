@@ -25,6 +25,7 @@ export (
     value emitDecimalDigitValue,
     value emitTextParseInt,
     value emitRuneByteOrZero,
+    value emitRuneFromInt,
     value emitRuneCombine,
     value emitRuneByteRange,
     value emitTextUncons,
@@ -1948,10 +1949,62 @@ let emitRuneStoreByte builder i64 i8 bytesPtr index value name =
     in
         buildStore(builder)(buildTrunc(builder)(value)(i8)(name))(pointer))
 
-// `Rune.toText(rune)`: the rune encoded as a fresh RC heap string of its UTF-8 width — a reserved
-// four-byte payload so the straight-line stores never address past the allocation, with the
-// logical length being the selected width; `EmitRuneToText`/`EmitRuneStoreUtf8`'s exact select
-// chains.
+// Match stage 0's scalar bounds and honor the instruction's placement through placeAdt.
+let emitRuneFromInt context function_ builder i64 i8 ptrType placeAdt value =
+    (let belowSurrogate =
+        buildICmp(builder)(intPredicateSlt)(value)(constInt(i64)(55296u64)(false))("rune_from_below_surrogate")
+    in
+        let aboveSurrogate =
+            buildICmp(builder)(intPredicateSgt)(value)(constInt(i64)(57343u64)(false))("rune_from_above_surrogate")
+        in
+            let nonNegative =
+                buildICmp(builder)(intPredicateSge)(value)(constInt(i64)(0u64)(false))("rune_from_nonnegative")
+            in
+                let inRange =
+                    buildICmp(builder)(intPredicateSle)(value)(constInt(i64)(1114111u64)(false))("rune_from_in_range")
+                in
+                    let bounds = buildAnd(builder)(nonNegative)(inRange)("rune_from_bounds")
+                    in
+                        let notSurrogate = buildOr(builder)(belowSurrogate)(aboveSurrogate)("rune_from_not_surrogate")
+                        in
+                            let valid = buildAnd(builder)(bounds)(notSurrogate)("rune_from_valid")
+                            in
+                                let resultSlot = buildEntryAlloca(builder)(i64)("rune_from_result")
+                                in
+                                    let validBlock = appendBasicBlock(context)(function_)("rune_from_some")
+                                    in
+                                        let invalidBlock = appendBasicBlock(context)(function_)("rune_from_none")
+                                        in
+                                            let doneBlock = appendBasicBlock(context)(function_)("rune_from_done")
+                                            in
+                                                let _ = buildCondBr(builder)(valid)(validBlock)(invalidBlock)
+                                                in
+                                                    let _ = positionBuilderAtEnd(builder)(validBlock)
+                                                    in
+                                                        let some = placeAdt(1)(1)("rune_from_some_value")
+                                                        in
+                                                            let somePtr = buildIntToPtr(builder)(some)(ptrType)("rune_from_some_ptr")
+                                                            in
+                                                                let _ =
+                                                                    "rune_from_some_field"
+                                                                    |> gepBytes(builder)(i64)(i8)(somePtr)(8)
+                                                                    |> buildStore(builder)(value)
+                                                                in
+                                                                    let _ = buildStore(builder)(some)(resultSlot)
+                                                                    in
+                                                                        let _ = buildBr(builder)(doneBlock)
+                                                                        in
+                                                                            let _ = positionBuilderAtEnd(builder)(invalidBlock)
+                                                                            in
+                                                                                let _ =
+                                                                                    buildStore(builder)(placeAdt(0)(0)("rune_from_none_value"))(resultSlot)
+                                                                                in
+                                                                                    let _ = buildBr(builder)(doneBlock)
+                                                                                    in
+                                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                        in buildLoad(builder)(i64)(resultSlot)("rune_from_result_value"))
+
+// `Rune.toText(rune)`: encode the scalar into a payload with room for four UTF-8 bytes.
 let emitRuneToText builder i64 i8 allocate rune =
     (let widthThreeOrFour =
         buildSelect(builder)(buildICmp(builder)(intPredicateUlt)(rune)(constInt(i64)(65536u64)(false))("rune_text_three"))(constInt(i64)(3u64)(false))(constInt(i64)(4u64)(false))("rune_text_width34")

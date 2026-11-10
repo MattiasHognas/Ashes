@@ -3238,6 +3238,14 @@ let buildFloatScalarOpsModule name context = codegenOptimizedRealSource("Ashes.I
 
 let testRunStaticExecutableForFloatScalarOpsModule unit = assertProgramPrints(buildFloatScalarOpsModule)("selfhostBackendRunFloatScalarOps")("selfhost_backend_float_scalar_ops_e2e")("1")
 
+let buildNumericConversionsModule name context = codegenRealSource("let widen n = Ashes.Number.Math.toFloat(n)\nlet narrow x = Ashes.Number.Math.truncToInt(x)\nAshes.IO.print(Ashes.Text.fromInt(narrow(widen(-42))) + \"|\" + Ashes.Text.fromInt(narrow(-3.75)) + \"|\" + Ashes.Text.fromInt(narrow(3.75)) + \"|\" + Ashes.Text.fromInt(narrow(widen(0))) + \"|\" + Ashes.Text.fromInt(narrow(widen(9007199254740991))))")(name)(context)
+
+let testRunNumericConversionsModule unit = assertProgramPrints(buildNumericConversionsModule)("selfhostBackendNumericConversions")("selfhost_backend_numeric_conversions_e2e")("-42|-3|3|0|9007199254740991")
+
+let buildRuneFromIntModule name context = codegenRealSource("let scalar n = match Ashes.Rune.fromInt(n) with | Some(r) -> Ashes.Text.fromInt(Ashes.Rune.toInt(r)) | None -> \"none\"\nAshes.IO.print(scalar(-1) + \"|\" + scalar(0) + \"|\" + scalar(55295) + \"|\" + scalar(55296) + \"|\" + scalar(57343) + \"|\" + scalar(57344) + \"|\" + scalar(1114111) + \"|\" + scalar(1114112))")(name)(context)
+
+let testRunRuneFromIntModule unit = assertProgramPrints(buildRuneFromIntModule)("selfhostBackendRuneFromInt")("selfhost_backend_rune_from_int_e2e")("none|0|55295|none|none|57344|1114111|none")
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -5941,6 +5949,8 @@ let run shipped =
     |> testRunStaticExecutableForNullarySingleConstructorModule
     |> testRunStaticExecutableForDeepIfInsideMatchJoinLoopModule
     |> testRunStaticExecutableForFloatScalarOpsModule
+    |> testRunNumericConversionsModule
+    |> testRunRuneFromIntModule
     |> testRunStaticExecutableForTextParseUnconsModule
     |> testRunStaticExecutableForBytesBuilderOpsModule
     |> testRunStaticExecutableForBytesRangeOpsModule

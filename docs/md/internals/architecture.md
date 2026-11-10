@@ -254,6 +254,12 @@ Token secrets are random 256-bit values, shown once and stored only as SHA-256 h
 
 The backend converts IR into a native executable through LLVM:
 
+The self-hosted backend carries floating-point temporaries as their raw `f64` bits in an
+`i64` word. `IntToFloat` uses signed integer-to-float conversion before packing that word;
+`FloatToInt` unpacks it before LLVM's signed conversion, matching stage 0. `RuneFromInt`
+checks the Unicode scalar bounds and excludes surrogates, then constructs `Some` or `None`
+using the instruction's existing arena/RC placement flag.
+
 ```mermaid
 flowchart TD
     Factory["BackendFactory.Create(targetId)"]

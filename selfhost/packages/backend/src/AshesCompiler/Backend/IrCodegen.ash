@@ -548,6 +548,10 @@ let codegenInstructionKind cx builder kind state =
                         // zero-extends to the canonical 0/1 `i64` like every int comparison.
                                         | LoadConstFloat(target, value) ->
                                             ((target, buildBitCast(builder)(constReal(doubleType(context))(value))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | IntToFloat(target, value) ->
+                                            ((target, buildBitCast(builder)(buildSIToFP(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("int_to_float"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | FloatToInt(target, value) ->
+                                            ((target, buildFPToSI(builder)(buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_to_int_value"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | AddFloat(target, left, right) ->
                                             ((target, buildBitCast(builder)(buildFAdd(builder)(buildBitCast(builder)(lookupTemp(cx)(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupTemp(cx)(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fadd" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | SubFloat(target, left, right) ->
@@ -576,6 +580,10 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(rune)
                                             |> emitRuneToText(builder)(i64)(i8)(emitPlacedPayloadPtr(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
+                                        | RuneFromInt(target, value, managed) ->
+                                            ((target, tempEnv
+                                            |> lookupTemp(cx)(value)
+                                            |> emitRuneFromInt(context)(function_)(builder)(i64)(i8)(ptrType)(emitPlacedUnconsAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)(managed))) :: tempEnv, terminated)
                                         | TextFromInt(target, value, managed) ->
                                             ((target, tempEnv
                                             |> lookupTemp(cx)(value)
