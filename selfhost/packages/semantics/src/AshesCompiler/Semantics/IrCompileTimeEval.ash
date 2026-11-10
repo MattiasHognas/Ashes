@@ -44,13 +44,22 @@ let stepBudget = 50000
 
 let depthBudget = 1000
 
-let recursive lookupAssociation key entries =
+// Labels and temporary identifiers use different concrete key types during bootstrap.
+let recursive lookupLabelPosition (key: Str) (entries: List((Str, Int))) =
+    match entries with
+        | [] -> None
+        | (candidate, position) :: tail ->
+            if candidate == key
+            then Some(position)
+            else lookupLabelPosition(key)(tail)
+
+let recursive lookupTempAssociation (key: Int) (entries: List((Int, CtValue))) =
     match entries with
         | [] -> None
         | (k, v) :: tail ->
             if k == key
             then Some(v)
-            else lookupAssociation(key)(tail)
+            else lookupTempAssociation(key)(tail)
 
 let recursive setAssociation key value entries =
     match entries with
@@ -283,7 +292,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
         | LoadLocal(target, slot) ->
-            match lookupAssociation(slot)(state.locals) with
+            match lookupTempAssociation(slot)(state.locals) with
                 | None -> None
                 | Some(v) ->
                     Some(
@@ -294,7 +303,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
         | StoreLocal(slot, src) ->
-            match lookupAssociation(src)(state.temps) with
+            match lookupTempAssociation(src)(state.temps) with
                 | None -> None
                 | Some(v) ->
                     Some(
@@ -305,7 +314,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
         | Borrow(dest, src) ->
-            match lookupAssociation(src)(state.temps) with
+            match lookupTempAssociation(src)(state.temps) with
                 | None -> None
                 | Some(v) ->
                     Some(
@@ -316,7 +325,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
         | RcDup(dest, src, _, _) ->
-            match lookupAssociation(src)(state.temps) with
+            match lookupTempAssociation(src)(state.temps) with
                 | None -> None
                 | Some(v) ->
                     Some(
@@ -329,7 +338,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
         | RcDrop(_, _, _, _, _, _) -> Some(state)
         | MakeClosure(target, fnLabel, envTemp, _, _, _, _, _) ->
             let envVal =
-                match lookupAssociation(envTemp)(state.temps) with
+                match lookupTempAssociation(envTemp)(state.temps) with
                     | Some(v) -> v
                     | None -> CtUnit
             in
@@ -342,7 +351,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                 )
         | MakeClosureStack(target, fnLabel, envTemp, _, _, _, _) ->
             let envVal =
-                match lookupAssociation(envTemp)(state.temps) with
+                match lookupTempAssociation(envTemp)(state.temps) with
                     | Some(v) -> v
                     | None -> CtUnit
             in
@@ -362,7 +371,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                 )
             )
         | AddInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -373,7 +382,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | SubInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -384,7 +393,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | MulInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -395,7 +404,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | DivInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     if rv == 0
                     then None
@@ -409,7 +418,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                 | _ -> None
         | DivUInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     if rv == 0
                     then None
@@ -423,7 +432,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                 | _ -> None
         | AndInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -434,7 +443,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | OrInt(target, l, r) ->
-            (match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            (match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     (Some(
                         InterpreterState(
@@ -445,7 +454,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     ))
                 | _ -> None)
         | XorInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -456,7 +465,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | ShlInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -467,7 +476,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | ShrInt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -478,7 +487,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | AddFloat(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -489,7 +498,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | SubFloat(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -500,7 +509,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | MulFloat(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -511,7 +520,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | DivFloat(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -522,7 +531,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | IntToFloat(target, src) ->
-            match lookupAssociation(src)(state.temps) with
+            match lookupTempAssociation(src)(state.temps) with
                 | Some(CtInt(v)) ->
                     Some(
                         InterpreterState(
@@ -535,7 +544,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | FloatToInt(target, src) ->
-            match lookupAssociation(src)(state.temps) with
+            match lookupTempAssociation(src)(state.temps) with
                 | Some(CtFloat(v)) ->
                     Some(
                         InterpreterState(
@@ -548,7 +557,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpIntGt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -559,7 +568,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpIntGe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -570,7 +579,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpIntLt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -581,7 +590,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpIntLe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -592,7 +601,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpUIntGt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -603,7 +612,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpUIntGe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -614,7 +623,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpUIntLt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -625,7 +634,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpUIntLe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -636,7 +645,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpIntEq(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -647,7 +656,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpIntNe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtInt(lv)), Some(CtInt(rv))) ->
                     Some(
                         InterpreterState(
@@ -658,7 +667,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpFloatGt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -669,7 +678,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpFloatGe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -680,7 +689,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpFloatLt(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -691,7 +700,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpFloatLe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -702,7 +711,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpFloatEq(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -713,7 +722,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpFloatNe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtFloat(lv)), Some(CtFloat(rv))) ->
                     Some(
                         InterpreterState(
@@ -724,7 +733,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpStrEq(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtStr(lv)), Some(CtStr(rv))) ->
                     Some(
                         InterpreterState(
@@ -735,7 +744,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | CmpStrNe(target, l, r) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtStr(lv)), Some(CtStr(rv))) ->
                     Some(
                         InterpreterState(
@@ -746,7 +755,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | ConcatStr(target, l, r, _) ->
-            match (lookupAssociation(l)(state.temps), lookupAssociation(r)(state.temps)) with
+            match (lookupTempAssociation(l)(state.temps), lookupTempAssociation(r)(state.temps)) with
                 | (Some(CtStr(lv)), Some(CtStr(rv))) ->
                     Some(
                         InterpreterState(
@@ -777,7 +786,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                 )
             )
         | SetAdtField(ptr, idx, src, _) ->
-            match (lookupAssociation(ptr)(state.temps), lookupAssociation(src)(state.temps)) with
+            match (lookupTempAssociation(ptr)(state.temps), lookupTempAssociation(src)(state.temps)) with
                 | (Some(CtAdt(tag, fields)), Some(srcVal)) ->
                     let updatedFields = updateAdtField(idx)(srcVal)(fields)(0)
                     in
@@ -790,7 +799,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                 | _ -> None
         | GetAdtTag(target, ptr) ->
-            match lookupAssociation(ptr)(state.temps) with
+            match lookupTempAssociation(ptr)(state.temps) with
                 | Some(CtAdt(tag, _)) ->
                     Some(
                         InterpreterState(
@@ -801,7 +810,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     )
                 | _ -> None
         | GetAdtField(target, ptr, idx, _) ->
-            match lookupAssociation(ptr)(state.temps) with
+            match lookupTempAssociation(ptr)(state.temps) with
                 | Some(CtAdt(_, fields)) ->
                     match getAdtFieldAt(idx)(fields)(0) with
                         | None -> None
@@ -853,27 +862,27 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                                             in
                                                 match inst with
                                                     | Return(src) ->
-                                                        match lookupAssociation(src)(stepState.temps) with
+                                                        match lookupTempAssociation(src)(stepState.temps) with
                                                             | None -> (None, nextSteps)
                                                             | Some(val) -> (Some(val), nextSteps)
                                                     | Jump(target) ->
-                                                        match lookupAssociation(target)(labelIndex) with
+                                                        match lookupLabelPosition(target)(labelIndex) with
                                                             | None -> (None, nextSteps)
                                                             | Some(nextPc) -> runLoop(nextPc)(stepState)
                                                     | JumpIfFalse(cond, target) ->
-                                                        match lookupAssociation(cond)(stepState.temps) with
+                                                        match lookupTempAssociation(cond)(stepState.temps) with
                                                             | Some(CtBool(false)) ->
-                                                                match lookupAssociation(target)(labelIndex) with
+                                                                match lookupLabelPosition(target)(labelIndex) with
                                                                     | None -> (None, nextSteps)
                                                                     | Some(nextPc) -> runLoop(nextPc)(stepState)
                                                             | Some(CtBool(true)) -> runLoop(pc + 1)(stepState)
                                                             | _ -> (None, nextSteps)
                                                     | SwitchTag(tagTemp, cases, defaultLabel) ->
-                                                        match lookupAssociation(tagTemp)(stepState.temps) with
+                                                        match lookupTempAssociation(tagTemp)(stepState.temps) with
                                                             | Some(CtInt(tagVal)) ->
                                                                 let target = resolveSwitchTag(tagVal)(cases)(defaultLabel)
                                                                 in
-                                                                    match lookupAssociation(target)(labelIndex) with
+                                                                    match lookupLabelPosition(target)(labelIndex) with
                                                                         | None -> (None, nextSteps)
                                                                         | Some(nextPc) -> runLoop(nextPc)(stepState)
                                                             | _ -> (None, nextSteps)
@@ -887,11 +896,11 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                                                                 )
                                                             in
                                                                 let calleeEnv =
-                                                                    match lookupAssociation(envTemp)(stepState.temps) with
+                                                                    match lookupTempAssociation(envTemp)(stepState.temps) with
                                                                         | Some(e) -> e
                                                                         | None -> CtUnit
                                                                 in
-                                                                    match lookupAssociation(argTemp)(stepState.temps) with
+                                                                    match lookupTempAssociation(argTemp)(stepState.temps) with
                                                                         | None -> (None, nextSteps)
                                                                         | Some(calleeArg) ->
                                                                             match calleeOpt with
@@ -923,12 +932,12 @@ let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env a
                                                                                                             )
                                                                                                         )
                                                     | CallClosure(target, closureTemp, argTemp, _) ->
-                                                        match lookupAssociation(closureTemp)(stepState.temps) with
+                                                        match lookupTempAssociation(closureTemp)(stepState.temps) with
                                                             | Some(CtClosure(calleeLabel, closureEnv)) ->
                                                                 if !listContains(calleeLabel)(evaluable)
                                                                 then (None, nextSteps)
                                                                 else
-                                                                    match lookupAssociation(argTemp)(stepState.temps) with
+                                                                    match lookupTempAssociation(argTemp)(stepState.temps) with
                                                                         | None -> (None, nextSteps)
                                                                         | Some(calleeArg) ->
                                                                             let calleeOpt =
@@ -1021,7 +1030,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )
                     | Borrow(dest, src) ->
                         let nextTemps =
-                            match lookupAssociation(src)(state.temps) with
+                            match lookupTempAssociation(src)(state.temps) with
                                 | Some(v) -> setAssociation(dest)(v)(state.temps)
                                 | None -> removeAssociation(dest)(state.temps)
                         in
@@ -1035,7 +1044,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )
                     | RcDup(dest, src, _, _) ->
                         let nextTemps =
-                            match lookupAssociation(src)(state.temps) with
+                            match lookupTempAssociation(src)(state.temps) with
                                 | Some(v) -> setAssociation(dest)(v)(state.temps)
                                 | None -> removeAssociation(dest)(state.temps)
                         in
@@ -1079,7 +1088,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )
                     | StoreLocal(slot, src) ->
                         let nextSlots =
-                            match lookupAssociation(src)(state.temps) with
+                            match lookupTempAssociation(src)(state.temps) with
                                 | Some(v) -> setAssociation(slot)(v)(state.slots)
                                 | None -> removeAssociation(slot)(state.slots)
                         in
@@ -1093,7 +1102,7 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                             )
                     | LoadLocal(dest, slot) ->
                         let nextTemps =
-                            match lookupAssociation(slot)(state.slots) with
+                            match lookupTempAssociation(slot)(state.slots) with
                                 | Some(v) -> setAssociation(dest)(v)(state.temps)
                                 | None -> removeAssociation(dest)(state.temps)
                         in
@@ -1109,11 +1118,11 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                         let foldOpt =
                             if listContains(calleeLabel)(evaluable)
                             then
-                                match lookupAssociation(argTemp)(state.temps) with
+                                match lookupTempAssociation(argTemp)(state.temps) with
                                     | None -> None
                                     | Some(argVal) ->
                                         let envVal =
-                                            match lookupAssociation(envTemp)(state.temps) with
+                                            match lookupTempAssociation(envTemp)(state.temps) with
                                                 | Some(e) -> e
                                                 | None -> CtUnit
                                         in
@@ -1196,11 +1205,11 @@ let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
                                         )
                     | CallClosure(target, closureTemp, argTemp, _) ->
                         let foldOpt =
-                            match lookupAssociation(closureTemp)(state.temps) with
+                            match lookupTempAssociation(closureTemp)(state.temps) with
                                 | Some(CtClosure(calleeLabel, closureEnv)) ->
                                     if listContains(calleeLabel)(evaluable)
                                     then
-                                        match lookupAssociation(argTemp)(state.temps) with
+                                        match lookupTempAssociation(argTemp)(state.temps) with
                                             | None -> None
                                             | Some(argVal) ->
                                                 let calleeOpt =
