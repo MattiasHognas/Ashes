@@ -1376,6 +1376,12 @@ General RC admissibility asks only for containment flags and ordered child type/
 pairs. It uses `classifyHeapAdmissibility` for generic or uncached types rather than eagerly
 computing unrelated copy/reuse layouts and child copy kinds. A monomorphic cache hit projects
 the same facts from the existing full layout; eligibility guards and cycle rules are unchanged.
+The lowering query shares pending work across branches and falls back to its original path walk
+when display-based cycle keys would merge distinct instantiated types. Completed root answers
+are cached by exact type in a bounded, function-local list; substitutions, layout facts,
+declarations, and inference defaults invalidate that list. Dropper synthesis separately caches
+full layout facts within one immutable type environment, sharing them with nested synthesis
+and discarding them at the top-level synthesis boundary.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
