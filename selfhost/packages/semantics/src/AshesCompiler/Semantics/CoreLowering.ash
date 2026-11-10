@@ -60,6 +60,7 @@ import AshesCompiler.Semantics.HelperInlining.isInlinableHelperValue
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
+import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionTemps
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
