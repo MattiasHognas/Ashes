@@ -6,6 +6,7 @@
 import Ashes.Byte
 import Ashes.Ffi
 import Ashes.Test as test
+import NativeFfiFixtures
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
@@ -3650,6 +3651,22 @@ let buildOptimizedIrExternalCallModule name context = codegenOptimizedRealSource
 
 let testRunStaticExecutableForExternalCallModule unit = assertProgramPrints(buildOptimizedIrExternalCallModule)("selfhostBackendRunExternalCall")("selfhost_backend_external_call_e2e")("5 0 0")
 
+let nativeStringSource = "external nativeRelease(*u8) -> void\nexternal nativeCount() -> Int\nexternal nativeValid() -> FfiStr(owned nativeRelease)\nexternal nativeEmpty() -> FfiStr(owned nativeRelease)\nexternal nativeInvalid() -> FfiStr(owned nativeRelease)\nexternal nativeSurrogate() -> FfiStr(owned nativeRelease)\nexternal nativeTruncated() -> FfiStr(owned nativeRelease)\nexternal nativeAboveMax() -> FfiStr(owned nativeRelease)\nexternal nativeMaxValid() -> FfiStr(owned nativeRelease)\nexternal nativeOverlong() -> FfiStr(owned nativeRelease)\nexternal nativeFourOverlong() -> FfiStr(owned nativeRelease)\nexternal nativeTwoByte() -> FfiStr(owned nativeRelease)\nexternal nativeBorrowed() -> FfiStr(borrowed)\nexternal nativeNull() -> FfiStr(nullable borrowed)\nexternal nativeNullRequired() -> FfiStr(owned nativeRelease)\nexternal nativeOut(out FfiStr(owned nativeRelease)) -> Int\nlet describe result = match result with | Ok(text) -> \"ok:\" + Ashes.Text.fromInt(Ashes.Text.byteLength(text)) | Error(message) -> \"error:\" + message\nlet counted result = describe(result) + \":\" + Ashes.Text.fromInt(nativeCount(Unit))\nlet row0 = counted(nativeValid(Unit))\nlet row1 = counted(nativeEmpty(Unit))\nlet row2 = counted(nativeInvalid(Unit))\nlet row3 = counted(nativeSurrogate(Unit))\nlet row4 = counted(nativeTruncated(Unit))\nlet row5 = counted(nativeAboveMax(Unit))\nlet row6 = counted(nativeMaxValid(Unit))\nlet row7 = counted(nativeOverlong(Unit))\nlet row8 = counted(nativeFourOverlong(Unit))\nlet row9 = counted(nativeTwoByte(Unit))\nlet borrowed = counted(nativeBorrowed(Unit))\nlet absent = (match nativeNull(Unit) with | Ok(None) -> \"none\" | _ -> \"bad\") + \":\" + Ashes.Text.fromInt(nativeCount(Unit))\nlet required = counted(nativeNullRequired(Unit))\nlet output = (match nativeOut(Unit) with | (status, Ok(Some(text))) -> Ashes.Text.fromInt(status) + \":\" + Ashes.Text.fromInt(Ashes.Text.byteLength(text)) | _ -> \"bad\") + \":\" + Ashes.Text.fromInt(nativeCount(Unit))\nAshes.IO.print(row0 + \"\\n\" + row1 + \"\\n\" + row2 + \"\\n\" + row3 + \"\\n\" + row4 + \"\\n\" + row5 + \"\\n\" + row6 + \"\\n\" + row7 + \"\\n\" + row8 + \"\\n\" + row9 + \"\\n\" + borrowed + \"\\n\" + absent + \"\\n\" + required + \"\\n\" + output)"
+
+let nativeOutSource = "external type Handle\nexternal nativeHandles(Int, out Handle, out Handle) -> Int\nexternal nativeRead(Handle) -> Int\nlet handleText value = match value with | None -> \"none\" | Some(nativeHandle) -> Ashes.Text.fromInt(nativeRead(nativeHandle))\nlet describe result = match result with | (status, first, second) -> Ashes.Text.fromInt(status) + \" \" + handleText(first) + \" \" + handleText(second)\nAshes.IO.print(describe(nativeHandles(0)) + \"\\n\" + describe(nativeHandles(1)))"
+
+let buildNativeStringModule name context =
+    match codegenOptimizedRealSource(nativeStringSource)(name)(context) with
+        | (module_, builder) -> addNativeStringFixtures(module_)(context)(builder)
+
+let buildNativeOutModule name context =
+    match codegenOptimizedRealSource(nativeOutSource)(name)(context) with
+        | (module_, builder) -> addNativeOutFixtures(module_)(context)(builder)
+
+let testNativeStrings unit = assertProgramPrintsLines(buildNativeStringModule)("selfhostBackendNativeStrings")("selfhost_backend_native_strings_e2e")(["ok:4:1", "ok:0:2", "error:Native UTF-8 string is invalid.:3", "error:Native UTF-8 string is invalid.:4", "error:Native UTF-8 string is invalid.:5", "error:Native UTF-8 string is invalid.:6", "ok:4:7", "error:Native UTF-8 string is invalid.:8", "error:Native UTF-8 string is invalid.:9", "ok:2:10", "ok:4:10", "none:10", "error:Native UTF-8 string was null.:10", "5:4:11"])
+
+let testNativeOutSlots unit = assertProgramPrintsLines(buildNativeOutModule)("selfhostBackendNativeOut")("selfhost_backend_native_out_e2e")(["7 101 none", "9 none 202"])
+
 let externalBufferSource = "external type Cell\nexternal malloc(Int) -> Cell\nexternal free(Cell) -> void\nexternal compareCells(FfiBuffer(Cell), FfiBuffer(Cell), Int) -> Int = \"memcmp\"\n\nlet first = malloc(1)\nlet second = malloc(1)\nlet empty = compareCells([])([])(0) == 0\nlet single = compareCells([first])([first])(8) == 0\nlet ordered = compareCells([first, second, first])([first, second, first])(24) == 0\nlet different = compareCells([first, second])([second, first])(16) != 0\nlet _ = free(first) |> (given (_) -> free(second))\n\nAshes.IO.print((if empty then \"1\" else \"0\") + \" \" + (if single then \"1\" else \"0\") + \" \" + (if ordered then \"1\" else \"0\") + \" \" + (if different then \"1\" else \"0\"))\n"
 
 let buildOptimizedIrExternalBufferModule name context = codegenOptimizedRealSource(externalBufferSource)(name)(context)
@@ -5947,6 +5964,8 @@ let run shipped =
     |> testRunStaticExecutableForProgramArgsEmptyModule
     |> testRunStaticExecutableForExternalCallModule
     |> testRunStaticExecutableForExternalBufferModule
+    |> testNativeStrings
+    |> testNativeOutSlots
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)

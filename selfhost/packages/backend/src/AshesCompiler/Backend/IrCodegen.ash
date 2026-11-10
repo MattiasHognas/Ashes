@@ -123,6 +123,7 @@ import AshesCompiler.Backend.IrCodegen.AsciiCase
 import AshesCompiler.Backend.IrCodegen.BigInt
 import AshesCompiler.Backend.IrCodegen.ProgramArgs
 import AshesCompiler.Backend.IrCodegen.External
+import AshesCompiler.Backend.IrCodegen.ForeignStrings
 import Ashes.Number.UInt
 export (
     value codegenEntryFunction,
@@ -317,7 +318,7 @@ let runtimeRcImmortalSentinel = Ashes.Number.UInt.fromInt64(1 << 62)
 
 // Whether an `AllocAdt` builds a runtime-managed nullary constructor, which every use shares as one
 // immortal cell per tag (`emitImmortalNullaryAdt`).
-let isImmortalNullaryAlloc fieldCount runtimeManaged tagless = runtimeManaged && fieldCount == 0 && !tagless
+let isImmortalNullaryAlloc (fieldCount: Int) (runtimeManaged: Bool) (tagless: Bool) = runtimeManaged && fieldCount == 0 && !tagless
 
 let recursive stringLiteralByteConstants bytes i8 index length =
     if index >= length
@@ -1116,6 +1117,11 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let declaration = lookupExternalSymbol(symbolName)(externalSymbols)
                                                 in ((target, emitCallExternal(context)(builder)(types)(declaration)(arguments)(parameterTypes)(returnType)) :: tempEnv, terminated)
+                                        | AllocFfiOut(target, elementType) -> ((target, emitAllocFfiOut(context)(builder)(types)(elementType)) :: tempEnv, terminated)
+                                        | LoadFfiOut(target, slot, elementType) ->
+                                            ((target, emitLoadFfiOut(context)(builder)(types)(lookupTemp(cx)(slot)(tempEnv))(elementType)) :: tempEnv, terminated)
+                                        | CopyFfiString(target, pointer, stringType) ->
+                                            ((target, emitCopyFfiString(context)(builder)(types)(arena)(memcpyFn)(memcpyType)(externalSymbols)(lookupTemp(cx)(pointer)(tempEnv))(stringType)) :: tempEnv, terminated)
                                         | LoadProgramArgs(target) -> ((target, emitLoadProgramArgs(builder)(i64)(programArgsGlobal)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | AllocStack(target, sizeBytes) ->
                                             ((target, buildPtrToInt(builder)(emitStackAlloc(builder)(i64)(sizeBytes)("stack_alloc"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)

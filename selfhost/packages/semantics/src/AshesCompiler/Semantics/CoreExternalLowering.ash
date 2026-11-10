@@ -176,14 +176,14 @@ let emitOutSlotMaterialization (slotTemp: Int) (elementType: ExternalAbiType) (c
     match current with
         | OutMaterializationResult { instructions = instrs, nextTemp = temp, nextLocal = local, components = comps } ->
             match elementType with
-                | ExternalAbiNativeString(_nullable, _ownership, _destructor) ->
+                | ExternalAbiNativeString(_nullable, ownership, destructor) ->
                     let loadedTemp = temp
                     in
                         let strTemp = temp + 1
                         in
                             let copyInstruction =
-                                None
-                                |> ExternalAbiNativeString(true)(ExternalNativeStringBorrowed)
+                                destructor
+                                |> ExternalAbiNativeString(true)(ownership)
                                 |> CopyFfiString(strTemp)(loadedTemp)
                             in
                                 OutMaterializationResult(

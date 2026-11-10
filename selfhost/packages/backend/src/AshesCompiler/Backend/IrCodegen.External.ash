@@ -10,10 +10,8 @@
 // since it exists only to hand a `Str` argument to such a call.
 //
 // A `Buffer` parameter is copied from its immutable list into a native array in the current
-// stack frame. Empty lists pass null. The remaining marshalling panics rather than emitting
-// something silently wrong: an `Out` parameter (a caller-allocated slot the callee writes), and a `NativeString` (a returned
-// `char*` copied in, with its ownership rule). Those are `AllocFfiOut`/`LoadFfiOut`/
-// `CopyFfiString`'s own slice of CG-11.
+// stack frame. Empty lists pass null. `Out` parameters use null-initialized native slots;
+// `IrCodegen.ForeignStrings` copies and validates native string results before disposal.
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import AshesCompiler.Semantics.ExternalAbi
@@ -27,6 +25,8 @@ export (
     value declareExternalSymbols,
     value lookupExternalSymbol,
     value emitCallExternal,
+    value emitAllocFfiOut,
+    value emitLoadFfiOut,
 )
 
 // One declared C symbol: the name a call site names it by, the LLVM function value, and its
@@ -69,6 +69,25 @@ let recursive externalAbiLlvmTypes context types (abiTypes: List(ExternalAbiType
     match abiTypes with
         | [] -> []
         | abiType :: rest -> externalAbiLlvmType(context)(types)(abiType) :: externalAbiLlvmTypes(context)(types)(rest)
+
+// The lowering owns null-to-None conversion and tuple assembly. These operations only pass
+// a null-initialized native pointer slot and read its pointer word after the call.
+let emitAllocFfiOut context builder types elementType =
+    (let nativeType = externalAbiLlvmType(context)(types)(elementType)
+    in
+        let slot = buildEntryAlloca(builder)(nativeType)("ffi_out_slot")
+        in
+            let _ =
+                buildStore(builder)(constNull(nativeType))(slot)
+            in buildPtrToInt(builder)(slot)(types.i64)("ffi_out_slot_address"))
+
+let emitLoadFfiOut context builder types slotAddress elementType =
+    (let nativeType = externalAbiLlvmType(context)(types)(elementType)
+    in
+        let slot = buildIntToPtr(builder)(slotAddress)(types.ptrType)("ffi_out_slot_pointer")
+        in
+            let value = buildLoad(builder)(nativeType)(slot)("ffi_out_value")
+            in buildPtrToInt(builder)(value)(types.i64)("ffi_out_value_word"))
 
 let emitExternalBufferCount context function_ builder types value cursorSlot countSlot =
     (let loop = appendBasicBlock(context)(function_)("ffi_buffer_count_loop")
@@ -205,7 +224,7 @@ let convertExternalArgument context builder types value (abiType: ExternalAbiTyp
         | ExternalAbiOpaque(_name) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_arg_ptr")
         | ExternalAbiPointer(_element) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_arg_ptr")
         | ExternalAbiBuffer(element) -> emitExternalBuffer(context)(builder)(types)(value)(element)
-        | ExternalAbiOut(_element) -> Ashes.IO.panic("codegen: an external out parameter needs AllocFfiOut/LoadFfiOut, the out-parameter slice of CG-11")
+        | ExternalAbiOut(_element) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_out_argument")
         | ExternalAbiNativeString(_nullable, _ownership, _free) -> Ashes.IO.panic("codegen: an external native-string parameter needs CopyFfiString, the native-string slice of CG-11")
         | _ -> value
 
@@ -231,7 +250,7 @@ let normalizeExternalResult context builder types result (returnType: ExternalAb
         | ExternalAbiString -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_str")
         | ExternalAbiOpaque(_name) -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_ptr")
         | ExternalAbiPointer(_element) -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_ptr")
-        | ExternalAbiNativeString(_nullable, _ownership, _free) -> Ashes.IO.panic("codegen: an external native-string result needs CopyFfiString, the native-string slice of CG-11")
+        | ExternalAbiNativeString(_nullable, _ownership, _free) -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_native_string")
         | _ -> result
 
 // LLVM's C API counts parameters and arguments in `unsigned`, and there is no Int-to-`u32`
@@ -271,6 +290,13 @@ let recursive containsExternalSymbol (name: Str) (signatures: List((Str, List(Ex
 let recursive collectInstructionExternalSymbols instructions (signatures: List((Str, List(ExternalAbiType), ExternalAbiType))) =
     match instructions with
         | [] -> signatures
+        | IrInstruction { instruction = CopyFfiString(_, _, ExternalAbiNativeString(_, ExternalNativeStringOwned, Some(ExternalSymbolReference { symbolName = name }))) } :: rest ->
+            if containsExternalSymbol(name)(signatures)
+            then collectInstructionExternalSymbols(rest)(signatures)
+            else
+                [(name, [ExternalAbiPointer(ExternalAbiUInt(8))], ExternalAbiVoid)]
+                |> append(signatures)
+                |> collectInstructionExternalSymbols(rest)
         | IrInstruction { instruction = CallExternal(_target, symbolName, _library, _argTemps, parameterTypes, returnType) } :: rest ->
             if containsExternalSymbol(symbolName)(signatures)
             then collectInstructionExternalSymbols(rest)(signatures)

@@ -1381,6 +1381,11 @@ string. Conversion failures are explicit `Result` errors. Borrowed pointers are 
 non-null pointer is passed exactly once to its declaration-validated external destructor after the
 copy or failed conversion and before the result becomes visible to Ashes. Nullable returns and
 string-valued out slots materialize null as `Ok(None)`.
+The self-hosted backend implements this boundary in `IrCodegen.ForeignStrings.ash`, including
+the 1 GiB scan bound and strict UTF-8 continuation bounds. `CoreExternalLowering` makes an out
+string nullable while preserving its declared ownership and destructor; it must not silently
+turn an owned out string into a borrowed one. The external-symbol scan includes destructors used
+only by `CopyFfiString`, even when there is no explicit source call to that destructor.
 `Ashes.Ffi.copyBytes` is the sole trusted escape hatch from a raw foreign byte range into an ordinary
 managed value. Lowering emits `CopyFfiBytes` after the pointer and `u64` length have been evaluated.
 The backend accepts null only for zero length, rejects lengths above 1 GiB with `Error` before pointer

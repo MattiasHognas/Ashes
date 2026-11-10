@@ -726,6 +726,16 @@ F. **Clear the blockers the probe reports.** This is the next active step under 
    rapid 4 MiB anonymous mappings, but neither repeated work nor a missing release is established.
    These are baseline findings, not evidence that F or E is complete.
 
+   The first F slices split backend lookup keys and added FFI buffer marshalling (`17cb09da`).
+   A phase trace then located the `CallOwnership` memory stop in trivial ownership-copy elision's
+   temporary-use counter: rebuilding the association-list prefix allocated quadratically.
+   Prepending the latest count and using the existing integer-key lookup (`89691259`) preserves
+   first-match lookup semantics. At 1,000/2,000/4,000 probe pairs, peak RSS fell from
+   174,348/665,992/2,634,084 KiB to 10,080/10,072/10,076 KiB. A fresh stage 1 built from
+   `e0b13051` compiled the real `CallOwnership` module in 173.24 s at 1,652,220 KiB and the emitted
+   program ran. No release was added. Its clean-tree census remains **NET +20 / GROWTH +33**, with
+   all class deltas unchanged; the full self-hosted semantics suite also passes.
+
    During F, crashes, use-after-free and over-releases remain blockers. Fix leaks only when they
    block F within the existing memory budgets; leave the other leak classes tracked under E.
    Ownership fixes still require the stage-0/stage-1 mirror (or a measured exemption), regression
@@ -2839,9 +2849,13 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   a `Str` argument. Added during step F (2026-11-10): `Buffer` arguments count the immutable list,
   allocate a contiguous stack array, copy the borrowed opaque handles in order, and pass null for
   an empty list. The self-hosted backend suite generates and runs empty, single-element and
-  multi-element buffer comparisons. `Out` and `NativeString` positions still panic rather than
-  emitting something silently wrong: those need `AllocFfiOut`/`LoadFfiOut`/`CopyFfiString`, still open, and
-  the self-hosted linker still resolves an imported symbol against its own fixed table rather than
+  multi-element buffer comparisons. The next F slice implements `AllocFfiOut`/`LoadFfiOut` and
+  `CopyFfiString`: null-initialized output slots, bounded NUL scans, strict UTF-8 validation,
+  nullable results and owned-string disposal. Out-string lowering preserves the declared
+  destructor instead of replacing it with borrowed ownership. The full backend suite passes,
+  including untouched output slots, native status preservation, UTF-8 boundary failures and
+  exactly-once disposal for direct and out strings. The self-hosted linker still resolves an
+  imported symbol against its own fixed table rather than
   the `symbol@library` the declaration carries). Open: the buffered stdout ring (writes are
   immediate), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,

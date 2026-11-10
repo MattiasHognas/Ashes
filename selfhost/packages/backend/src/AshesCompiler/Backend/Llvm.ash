@@ -56,6 +56,7 @@ export (
     value buildAShr,
     value functionType,
     value addFunction,
+    value getNamedFunction,
     value appendBasicBlock,
     value constInt,
     value constNull,
@@ -192,6 +193,7 @@ external LLVMIntTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMIntType
 external LLVMBuildAShr(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAShr@libLLVM.so"
 external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef = "LLVMFunctionType@libLLVM.so"
 external LLVMAddFunction(LLVMModuleRef, Str, LLVMTypeRef) -> LLVMValueRef = "LLVMAddFunction@libLLVM.so"
+external LLVMGetNamedFunction(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedFunction@libLLVM.so"
 external LLVMAppendBasicBlockInContext(LLVMContextRef, LLVMValueRef, Str) -> LLVMBasicBlockRef = "LLVMAppendBasicBlockInContext@libLLVM.so"
 external LLVMConstInt(LLVMTypeRef, u64, Bool) -> LLVMValueRef = "LLVMConstInt@libLLVM.so"
 external LLVMConstNull(LLVMTypeRef) -> LLVMValueRef = "LLVMConstNull@libLLVM.so"
@@ -316,6 +318,8 @@ let intType context (bits: u32) = LLVMIntTypeInContext(context)(bits)
 let buildAShr builder lhs rhs name = LLVMBuildAShr(builder)(lhs)(rhs)(name)
 
 let addFunction module_ name type_ = LLVMAddFunction(module_)(name)(type_)
+
+let getNamedFunction module_ name = LLVMGetNamedFunction(module_)(name)
 
 let appendBasicBlock context function name = LLVMAppendBasicBlockInContext(context)(function)(name)
 
