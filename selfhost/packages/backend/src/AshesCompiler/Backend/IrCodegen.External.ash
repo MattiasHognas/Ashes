@@ -22,6 +22,7 @@ import AshesCompiler.Backend.IrCodegen.Support
 export (
     type ExternalSymbolDeclaration(..),
     value collectExternalSymbols,
+    value collectExternalLibraries,
     value declareExternalSymbols,
     value lookupExternalSymbol,
     value emitCallExternal,
@@ -316,6 +317,14 @@ let recursive collectExternalSymbols functions (signatures: List((Str, List(Exte
             signatures
             |> collectInstructionExternalSymbols(instructions)
             |> collectExternalSymbols(rest)
+
+// Keep declaration-provided libraries separate from runtime defaults. The linker chooses only
+// undefined symbols actually present in the object, so unused declarations add no dependency.
+let recursive collectExternalLibraries (functions: List(ExternalFunctionAbi)) =
+    match functions with
+        | [] -> []
+        | ExternalFunctionAbi { symbol = ExternalSymbolReference { symbolName = name, libraryName = Some(library) } } :: rest -> (name, library) :: collectExternalLibraries(rest)
+        | _ :: rest -> collectExternalLibraries(rest)
 
 let recursive lookupDeclaredSymbol (name: Str) (declared: List((Str, LLVMValueRef))) =
     match declared with

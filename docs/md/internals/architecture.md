@@ -1359,6 +1359,10 @@ resource-bearing closures and remains governed by the `ASH006`-`ASH008` diagnost
 external resource carries its destructor symbol, library, ABI signature, and per-parameter
 borrow/consume metadata from frontend declarations through semantic ownership analysis into the IR;
 the backend emits automatic cleanup through the same external-call machinery as an explicit call.
+The self-hosted compile pipeline also forwards declared symbol/library pairs from that IR to the
+ELF linker. Explicit libraries take precedence over runtime defaults. Only undefined symbols in
+the emitted object produce dynamic imports, so unused declarations do not add library dependencies;
+an unresolved symbol with neither a declaration nor a runtime default remains a link error.
 An external `FfiBuffer(T)` parameter has source type `List(T)` but records a distinct call-scoped
 buffer shape in IR. Immediately before the direct native call, the backend counts the immutable list,
 allocates a target-pointer-width contiguous array in the current stack frame, walks the list again to

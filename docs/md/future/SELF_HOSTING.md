@@ -2854,9 +2854,11 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   nullable results and owned-string disposal. Out-string lowering preserves the declared
   destructor instead of replacing it with borrowed ownership. The full backend suite passes,
   including untouched output slots, native status preservation, UTF-8 boundary failures and
-  exactly-once disposal for direct and out strings. The self-hosted linker still resolves an
-  imported symbol against its own fixed table rather than
-  the `symbol@library` the declaration carries). Open: the buffered stdout ring (writes are
+  exactly-once disposal for direct and out strings. The linker now accepts declared symbol/library
+  pairs from `IrProgram.externalFunctions`, ahead of its runtime defaults, and imports only
+  undefined symbols actually used by the object. A real `nextafter@libm.so.6` call runs; the same
+  object without its mapping is rejected, and an unused declaration adds no dependency on its
+  nonexistent library. These tests also pass in the poisoned backend suite). Open: the buffered stdout ring (writes are
   immediate), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the

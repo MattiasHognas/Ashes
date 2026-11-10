@@ -129,7 +129,10 @@ export (
     value codegenEntryFunction,
     value codegenProgram,
     value codegenProgramWith,
+    value externalLibraries,
 )
+
+let externalLibraries (program: IrProgram) = collectExternalLibraries(program.externalFunctions)
 
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
 // `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,

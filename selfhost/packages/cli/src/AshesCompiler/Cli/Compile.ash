@@ -483,7 +483,10 @@ let emitObject lowered =
                         | Error(message) -> Error(message)
                         | Ok(machine) -> emitObjectWithMachine(machine)(builder)(module_)(context))
 
-let linkExecutable objectBytes = linkLinuxExecutable(objectBytes)(entrySymbolName)
+let linkExecutable program objectBytes =
+    program
+    |> externalLibraries
+    |> linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)
 
 // The output's directory is created first, as stage 0 does, so a fresh project's
 // `<outDir>/<name>` needs no prior `mkdir`.
@@ -515,7 +518,7 @@ let emitAndLink outputPath optimized =
     match emitObject(optimized) with
         | Error(message) -> Error(message)
         | Ok(objectBytes) ->
-            match linkExecutable(objectBytes) with
+            match linkExecutable(optimized)(objectBytes) with
                 | Error(message) -> Error(message)
                 | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 

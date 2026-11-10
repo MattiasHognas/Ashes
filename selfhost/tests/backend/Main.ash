@@ -3503,11 +3503,11 @@ let recursive assertStdoutLines process expectedLines =
                     |> test.assertEqual(line)
                     |> (given (_) -> assertStdoutLines(process)(rest))
 
-let assertProgramPrintsLines buildModule name executablePath expectedLines =
+let assertProgramPrintsLinesWithImports libraries buildModule name executablePath expectedLines =
     match emitModule(buildModule)(name)(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
-            match linkLinuxExecutable(objectBytes)(name) with
+            match linkLinuxExecutableWithImports(objectBytes)(name)(libraries) with
                 | Error(message) -> test.fail(message)
                 | Ok(executableBytes) ->
                     match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
@@ -3523,6 +3523,8 @@ let assertProgramPrintsLines buildModule name executablePath expectedLines =
                                             |> assertStdoutLines(process)
                                             |> Ashes.IO.Process.waitForExit
                                             |> test.assertEqual(0)
+
+let assertProgramPrintsLines buildModule name executablePath expectedLines = assertProgramPrintsLinesWithImports([])(buildModule)(name)(executablePath)(expectedLines)
 
 // A single-constructor record is laid out without a tag word: constructed, matched positionally,
 // read through `.field`, and rebuilt with `with`, every field value read back at offset 0.
@@ -3666,6 +3668,30 @@ let buildNativeOutModule name context =
 let testNativeStrings unit = assertProgramPrintsLines(buildNativeStringModule)("selfhostBackendNativeStrings")("selfhost_backend_native_strings_e2e")(["ok:4:1", "ok:0:2", "error:Native UTF-8 string is invalid.:3", "error:Native UTF-8 string is invalid.:4", "error:Native UTF-8 string is invalid.:5", "error:Native UTF-8 string is invalid.:6", "ok:4:7", "error:Native UTF-8 string is invalid.:8", "error:Native UTF-8 string is invalid.:9", "ok:2:10", "ok:4:10", "none:10", "error:Native UTF-8 string was null.:10", "5:4:11"])
 
 let testNativeOutSlots unit = assertProgramPrintsLines(buildNativeOutModule)("selfhostBackendNativeOut")("selfhost_backend_native_out_e2e")(["7 101 none", "9 none 202"])
+
+// The declaration, rather than the runtime's libc table, supplies this import. An unused
+// declaration must not add its nonexistent library to DT_NEEDED.
+let declaredLibrarySource = "external nextValue(Float, Float) -> Float = \"nextafter@libm.so.6\"\nexternal unused() -> Int = \"unused@does-not-exist.so\"\nAshes.IO.print(nextValue(1.0)(2.0) > 1.0)"
+
+let testDeclaredLibraryImports unit =
+    (let name = "selfhostBackendDeclaredLibrary"
+    in
+        let libraries =
+            name
+            |> lowerRealSource(declaredLibrarySource)
+            |> externalLibraries
+        in
+            let _ = test.assertEqual([("nextafter", "libm.so.6"), ("unused", "does-not-exist.so")])(libraries)
+            in
+                let _ =
+                    match emitModule(codegenRealSource(declaredLibrarySource))(name)(objectFileType) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(objectBytes) ->
+                            match linkLinuxExecutable(objectBytes)(name) with
+                                | Error(message) -> test.assertEqual("dynamic linker: unknown external symbol 'nextafter' (not in the recognized-library table)")(message)
+                                | Ok(_) -> test.fail("undeclared library import was accepted")
+                in
+                    assertProgramPrintsLinesWithImports(libraries)(codegenRealSource(declaredLibrarySource))(name)("selfhost_backend_declared_library_e2e")(["true"]))
 
 let externalBufferSource = "external type Cell\nexternal malloc(Int) -> Cell\nexternal free(Cell) -> void\nexternal compareCells(FfiBuffer(Cell), FfiBuffer(Cell), Int) -> Int = \"memcmp\"\n\nlet first = malloc(1)\nlet second = malloc(1)\nlet empty = compareCells([])([])(0) == 0\nlet single = compareCells([first])([first])(8) == 0\nlet ordered = compareCells([first, second, first])([first, second, first])(24) == 0\nlet different = compareCells([first, second])([second, first])(16) != 0\nlet _ = free(first) |> (given (_) -> free(second))\n\nAshes.IO.print((if empty then \"1\" else \"0\") + \" \" + (if single then \"1\" else \"0\") + \" \" + (if ordered then \"1\" else \"0\") + \" \" + (if different then \"1\" else \"0\"))\n"
 
@@ -5966,6 +5992,7 @@ let run shipped =
     |> testRunStaticExecutableForExternalBufferModule
     |> testNativeStrings
     |> testNativeOutSlots
+    |> testDeclaredLibraryImports
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
