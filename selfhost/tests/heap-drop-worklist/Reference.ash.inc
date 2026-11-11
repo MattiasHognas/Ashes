@@ -17,4 +17,3 @@ let recursive referenceCanDropAdtGraph (named: SemanticType) (environment: TypeE
 
 let referenceCanDropValueGraph (semanticType: SemanticType) (environment: TypeEnvironment) =
     heapDroppableLeafField(semanticType)(environment)(given (named) -> referenceCanDropAdtGraph(named)(environment)([]))
-

@@ -14,25 +14,25 @@ public sealed class ConsedTailCallRefillTests
                 | Leaf(Str)
                 | Nested(Tree)
                 | Many(List(Tree))
-            
+
             type Job =
                 | value: Tree
                 | path: List(Tree)
-            
+
             type WalkResult =
                 | ok: Bool
                 | known: List(Tree)
-            
+
             let resolve value environment =
                 if environment == 0
                 then value
                 else Nested(value)
-            
+
             let recursive prepend values path pending =
                 match values with
                     | [] -> pending
                     | value :: rest -> Job(value = value, path = path) :: prepend(rest)(path)(pending)
-            
+
             let recursive walk (pending: List(Job)) (visited: List(Tree)) (known: List(Tree)) (environment: Int) (flag: Bool) =
                 match pending with
                     | [] -> WalkResult(ok = true, known = known)
@@ -44,7 +44,7 @@ public sealed class ConsedTailCallRefillTests
                                 | Nested(child) -> walk(Job(value = child, path = path) :: rest)(visited)(known)(environment)(flag)
                                 | Many(children) ->
                                     walk(prepend(children)(path)(rest))(visited)(known)(environment)(flag)
-            
+
             walk([Job(value = Many([Nested(Leaf("x"))]), path = [])])([])([])(0)(false)
             """;
         Diagnostics diagnostics = new();
