@@ -8971,6 +8971,24 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
                                                                 lifetimesPlaced = false
                                                             ) :: functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState), label))
 
+let classifyClosureCaptureLayout (resolved: SemanticType) (state: CoreLoweringState) =
+    (let facts =
+        state
+        |> coverageEnvironment
+        |> classifyHeapCopyPlan(resolved)
+    in facts.runtimeRecordAdtSupported || facts.runtimeOwnedChildAdtSupported)
+
+// A cached Boolean query must not allocate copies of the cached child descriptors.
+let heapClosureCaptureLayoutOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(facts) -> facts.runtimeRecordAdtSupported || facts.runtimeOwnedChildAdtSupported
+                | None -> classifyClosureCaptureLayout(resolved)(state)
+        | resolved -> classifyClosureCaptureLayout(resolved)(state)
+
 // Stage 0's `CanRuntimeNormalizeClosureCapture`: a scalar, a string, bytes or big integer, a list
 // over scalars, and a named type that is not a resource and that the record or owned-child layout
 // manages.
@@ -8982,7 +9000,9 @@ let canNormalizeClosureCapture (resolved: SemanticType) (state: CoreLoweringStat
         | SemList(element) ->
             resultSurvivesReset(resolveType(state)(element))(state)
         | SemNamed(_symbolId, _name, _arguments) as named ->
-            !isResourceHandle(named)(state) && (recordAdtSupported(heapFactsOf(named)(state)) || ownedChildAdtSupported(heapFactsOf(named)(state)))
+            if isResourceHandle(named)(state)
+            then false
+            else heapClosureCaptureLayoutOf(named)(state)
         | scalar ->
             match scalarCaptureText(scalar) with
                 | Some(_text) -> true
@@ -18660,9 +18680,22 @@ let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: C
                     else consumed
                 | _ -> consumed
 
+// Settled monomorphic facts remain authoritative; a miss needs only the graph verdict.
 let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringState) =
-    match heapFactsOf(semanticType)(state) with
-        | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(facts) -> facts.ownedChildrenDroppable
+                | None ->
+                    state
+                    |> coverageEnvironment
+                    |> classifyHeapOwnedChildrenDroppable(resolved)
+        | resolved ->
+            state
+            |> coverageEnvironment
+            |> classifyHeapOwnedChildrenDroppable(resolved)
 
 // Stage 0's `IsConcretelyRuntimeManageableResultType`: a result type runtime RC holds — a
 // scalar, a string, `Bytes`, a `BigInt`, a list the runtime may own, a tuple the runtime-managed

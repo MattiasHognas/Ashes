@@ -56,6 +56,7 @@ export (
     value classifyHeapChildren,
     value classifyHeapChildTypes,
     value classifyHeapResource,
+    value classifyHeapOwnedChildrenDroppable,
     value classifyHeapArenaDeepCopy,
     value classifyHeapAdmissibility,
     value classifyHeapShallowCopy,
@@ -847,6 +848,10 @@ let heapCanDropValueGraph (semanticType: SemanticType) (environment: TypeEnviron
                 match heapDropSearch(work)([])(known)(environment)(true) with
                     | HeapDropSearchResult { droppable = Some(result) } -> result
                     | HeapDropSearchResult { droppable = None } -> false)
+
+// Query the existing path-sensitive graph verdict without constructing unrelated layout facts.
+let classifyHeapOwnedChildrenDroppable (semanticType: SemanticType) (environment: TypeEnvironment) =
+    heapCanDropValueGraph(resolveLayoutType(semanticType)(environment))(environment)
 
 // A copy ADT: every field of every constructor is a scalar word.
 let heapRuntimeCopyAdtLayout (named: SemanticType) (environment: TypeEnvironment) =

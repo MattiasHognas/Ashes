@@ -820,6 +820,13 @@ follows argument aliases through the returned closure to its later uses. This
 placement fact does not change resource ownership summaries,
 call adoption, or result reachability. `GRC_NO_ARENACURRYBORROW` disables it.
 
+Closure-capture normalization projects record and owned-child eligibility directly
+from settled cached facts; cache misses read the existing copy-plan view once,
+behind the resource guard. Boolean cache hits never copy child descriptors. Runtime
+result droppability requests the existing path-sensitive graph verdict directly.
+Both queries preserve settled monomorphic full-fact cache answers; uncached
+queries do not construct unrelated heap-layout facts or retain new cache state.
+
 The self-hosted inspect-only parameter fixpoint keeps its public ownership table
 in registration order. Each pass builds a private string-keyed lookup index from
 the complete previous table before walking any function bodies. A second name
