@@ -2326,6 +2326,10 @@ let stateCallArgumentLabelStart (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.callArgumentLabelStart)
 
+let stateCallArgumentFrameActive (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.callArgumentFrameActive)
+
 let stateTcoParameterRetainSites (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.tcoParameterRetainSites)
@@ -21426,7 +21430,7 @@ let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(Cor
                 |> withCallArgumentRetainFrame([])(false)
                 |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
                 |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
-                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(state.tcoState.callArgumentFrameActive)
+                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(stateCallArgumentFrameActive(state))
 
 let failedIfPlan state error =
     CoreIfPlan(
@@ -26974,7 +26978,7 @@ let recordCallArgumentCellOwnerPart (owned: LoweredCoreValue) (duplicated: Lower
 let recordCallArgumentCellOwnerDuplicates (request: ConsumerRequest) (ownedHead: LoweredCoreValue) (duplicatedHead: LoweredCoreValue) (ownedTail: LoweredCoreValue) (duplicatedTail: LoweredCoreValue) (cell: LoweredCoreValue) =
     match cell with
         | LoweredCoreValue { state = state, temp = temp, error = None } ->
-            if !state.tcoState.callArgumentFrameActive || state.nextLabelId != stateCallArgumentLabelStart(state) || isRuntimeTemp(temp)(state) || request.borrowsCellParts || request.lateCopiedCellParts || request.recordFieldCell
+            if !stateCallArgumentFrameActive(state) || state.nextLabelId != stateCallArgumentLabelStart(state) || isRuntimeTemp(temp)(state) || request.borrowsCellParts || request.lateCopiedCellParts || request.recordFieldCell
             then cell
             else
                 cell with state = state |> recordCallArgumentCellOwnerPart(ownedHead)(duplicatedHead) |> recordCallArgumentCellOwnerPart(ownedTail)(duplicatedTail)
