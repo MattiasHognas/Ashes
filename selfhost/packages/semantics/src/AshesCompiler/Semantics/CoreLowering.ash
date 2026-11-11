@@ -266,47 +266,21 @@ let recursive constructorFieldNameOccurs (name: Str) (names: List(Str)) =
         | [] -> false
         | head :: rest -> head == name || constructorFieldNameOccurs(name)(rest)
 
-type CoreFieldIndexEntry =
-    | fieldName: Str
-    | layout: CoreConstructorLayout
-
-// Flatten each layout's distinct field names once. The map builder below consumes this
-// temporary list with one unconditional insertion on each back edge.
-let recursive constructorFieldEntries (layouts: List(CoreConstructorLayout)) (fields: List(Str)) (fieldPhase: Bool) (entries: List(CoreFieldIndexEntry)) =
-    match layouts with
-        | [] -> entries
-        | layout :: rest ->
-            if fieldPhase
-            then
-                match fields with
-                    | [] -> constructorFieldEntries(rest)([])(false)(entries)
-                    | name :: remaining ->
-                        if constructorFieldNameOccurs(name)(remaining)
-                        then constructorFieldEntries(layouts)(remaining)(true)(entries)
-                        else constructorFieldEntries(layouts)(remaining)(true)(CoreFieldIndexEntry(fieldName = name, layout = layout) :: entries)
-            else constructorFieldEntries(layouts)(layout.fieldNames)(true)(entries)
-
-// A monomorphic wrapper keeps raw layout payload ownership explicit at this boundary.
-type CoreFieldLookupIndex =
-    | fields: MapTree(Str, List(CoreConstructorLayout))
-
-let fieldIndexLayouts (name: Str) (index: CoreFieldLookupIndex) =
-    match Ashes.Collection.Map.getStr(name)(index.fields) with
-        | Some(layouts) -> layouts
-        | None -> []
-
-let recursive collectFieldLookupIndex (entries: List(CoreFieldIndexEntry)) (index: CoreFieldLookupIndex) =
-    match entries with
+let recursive indexConstructorFields (layout: CoreConstructorLayout) (names: List(Str)) (index: CoreConstructorLookupIndex) =
+    match names with
         | [] -> index
-        | entry :: rest ->
-            let updated = CoreFieldLookupIndex(fields = Ashes.Collection.Map.setStr(entry.fieldName)(entry.layout :: fieldIndexLayouts(entry.fieldName)(index))(index.fields))
-            in collectFieldLookupIndex(rest)(updated)
+        | name :: rest ->
+            if constructorFieldNameOccurs(name)(rest)
+            then indexConstructorFields(layout)(rest)(index)
+            else
+                let updated = index with byField = Ashes.Collection.Map.setStr(name)(layout :: lookupFieldConstructors(name)(index))(index.byField)
+                in indexConstructorFields(layout)(rest)(updated)
 
 let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
     match layouts with
         | [] -> index
         | layout :: rest ->
-            let named = index with byConstructor = Ashes.Collection.Map.setStr(layout.name)(layout)(index.byConstructor)
+            let named = indexConstructorFields(layout)(layout.fieldNames)((index with byConstructor = Ashes.Collection.Map.setStr(layout.name)(layout)(index.byConstructor)))
             in
                 match layoutResultName(layout) with
                     | None -> collectConstructorLookupIndex(rest)(named)
@@ -315,12 +289,7 @@ let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout
                         in collectConstructorLookupIndex(rest)(updated)
 
 let constructorLookupIndex (layouts: List(CoreConstructorLayout)) =
-    (let fields =
-        collectFieldLookupIndex(constructorFieldEntries(layouts)([])(false)([]))(CoreFieldLookupIndex(fields = Ashes.Collection.Map.empty))
-    in
-        let index =
-            collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty))
-        in index with byField = fields.fields)
+    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty))
 
 type CoreBindingLocation =
     | CoreLocal(Int)
@@ -656,6 +625,54 @@ type CoreTakenOverSettle =
     | settleCallee: Str
     | settleKind: CoreSettleKind
 
+// Prepared function lookup indexes: declaration-first candidates and newest registered refs.
+type CoreSpecializationCandidate =
+    | parameters: List(Str)
+    | value: Expr
+
+type CoreTopLevelFunctionReference =
+    | label: Str
+    | scheme: TypeScheme
+
+let recursive specializationCandidateIndexInto (candidates: List((Str, List(Str), Expr))) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match candidates with
+        | [] -> index
+        | (name, parameters, value) :: rest ->
+            match Ashes.Collection.Map.getStr(name)(index) with
+                | Some(_earlier) -> specializationCandidateIndexInto(rest)(index)
+                | None ->
+                    index
+                    |> Ashes.Collection.Map.setStr(name)(CoreSpecializationCandidate(parameters = parameters, value = value))
+                    |> specializationCandidateIndexInto(rest)
+
+let specializationCandidateIndex candidates = specializationCandidateIndexInto(candidates)(Ashes.Collection.Map.empty)
+
+let lookupSpecializationCandidate (name: Str) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreSpecializationCandidate { parameters = parameters, value = value }) -> Some((parameters, value))
+        | None -> None
+
+let specializationCandidateArity (name: Str) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreSpecializationCandidate { parameters = parameters, value = value }) ->
+            value
+            |> specializationArity(parameters)
+            |> Some
+        | None -> None
+
+let specializationCandidateValueOf (name: Str) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreSpecializationCandidate { value = value }) -> Some(value)
+        | None -> None
+
+let registerFunctionReference (name: Str) (label: Str) (scheme: TypeScheme) (index: MapTree(Str, CoreTopLevelFunctionReference)) = Ashes.Collection.Map.setStr(name)(CoreTopLevelFunctionReference(label = label, scheme = scheme))(index)
+
+let lookupTopLevelFunctionRef (name: Str) (index: MapTree(Str, CoreTopLevelFunctionReference)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreTopLevelFunctionReference { label = label, scheme = scheme }) -> Some((label, scheme))
+        | None -> None
+
+// End prepared function lookup indexes.
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
     | constructorIndex: CoreConstructorLookupIndex
@@ -722,6 +739,8 @@ type CoreProgramState =
     | normalizableRecordTypes: MapTree(Str, Bool)
     | reachByIdentity: MapTree(Str, ReachSummary)
     | reachByName: MapTree(Str, ReachSummary)
+    // Query-only argument reach answers, frozen with the selected function summaries.
+    | callReachByKey: MapTree(Str, PreparedCallReach)
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
@@ -743,11 +762,13 @@ type CoreProgramState =
     // for; and stage 0's `_specializingLinearParam`, the parameter the specialization being
     // generated treats as a linear reuse root, consumed by the lambda that binds it.
     | specializationCandidates: List((Str, List(Str), Expr))
+    | specializationCandidateByName: MapTree(Str, CoreSpecializationCandidate)
     // Stage 0's `_topLevelFunctionRefs`: each top-level `let` whose lambda captured nothing, by
     // name with its code label and generalized scheme, so a body spliced into a scope that never
     // captured it (an inlined helper) can rebuild its closure from the label with a null
     // environment.
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
+    | topLevelFunctionRefByName: MapTree(Str, CoreTopLevelFunctionReference)
     // The standard trait environment with the program's own implementations registered, the
     // evidence a trait-mapped operator at a concrete operand type resolves against.
     | traitEnvironment: TypeEnvironment
@@ -1037,6 +1058,7 @@ type CoreTcoState =
     | callArgumentRecordRetains: List((Int, Int, SemanticType))
     | collectingCallArgumentRetains: Bool
     | callArgumentLabelStart: Int
+    | callArgumentFrameActive: Bool
 
 type CoreReuseState =
     | reuseTransferredNames: List(Str)
@@ -1372,6 +1394,10 @@ let withStateReachByName value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with reachByName = value))
 
+let withStateCallReachByKey value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with callReachByKey = value))
+
 let stateProgramParameterOwnership (state: CoreLoweringState) =
     (let group = state.programState
     in group.programParameterOwnership)
@@ -1412,13 +1438,13 @@ let withStateLetLambdaIdentities value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with letLambdaIdentities = value))
 
-let stateTopLevelFunctionRefs (state: CoreLoweringState) =
+let stateTopLevelFunctionRefIndex (state: CoreLoweringState) =
     (let group = state.programState
-    in group.topLevelFunctionRefs)
+    in group.topLevelFunctionRefByName)
 
-let withStateTopLevelFunctionRefs value (state: CoreLoweringState) =
+let withRegisteredTopLevelFunctionRef name label scheme (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with topLevelFunctionRefs = value))
+    in state with programState = (group with topLevelFunctionRefs = (name, label, scheme) :: group.topLevelFunctionRefs, topLevelFunctionRefByName = registerFunctionReference(name)(label)(scheme)(group.topLevelFunctionRefByName)))
 
 let stateInlinableHelpers (state: CoreLoweringState) =
     (let group = state.programState
@@ -1432,9 +1458,13 @@ let stateSpecializationCandidates (state: CoreLoweringState) =
     (let group = state.programState
     in group.specializationCandidates)
 
+let stateSpecializationCandidateIndex (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.specializationCandidateByName)
+
 let withStateSpecializationCandidates value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with specializationCandidates = value))
+    in state with programState = (group with specializationCandidates = value, specializationCandidateByName = specializationCandidateIndex(value)))
 
 let stateGeneralRcOwnedResultLabels (state: CoreLoweringState) =
     (let group = state.programState
@@ -2923,6 +2953,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             reachTable = Ashes.Collection.Map.empty,
             reachByIdentity = Ashes.Collection.Map.empty,
             reachByName = Ashes.Collection.Map.empty,
+            callReachByKey = Ashes.Collection.Map.empty,
             programParameterOwnership = [],
             dropperLabels = emptyDropperLabelCache,
             resultRcEligibility = None,
@@ -2930,7 +2961,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             contractRecordFacts = Ashes.Collection.Map.empty,
             inlinableHelpers = [],
             specializationCandidates = [],
+            specializationCandidateByName = Ashes.Collection.Map.empty,
             topLevelFunctionRefs = [],
+            topLevelFunctionRefByName = Ashes.Collection.Map.empty,
             traitEnvironment = standardLoweringTraitEnvironment,
             traitMethodLabels = Ashes.Collection.Map.empty,
             closureDropperLabels = [],
@@ -3039,7 +3072,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             selfCallResultUnifications = [],
             callArgumentRecordRetains = [],
             collectingCallArgumentRetains = false,
-            callArgumentLabelStart = 0
+            callArgumentLabelStart = 0,
+            callArgumentFrameActive = false
         ),
         reuseState = CoreReuseState(
             reuseTransferredNames = [],
@@ -5088,7 +5122,7 @@ let registerTopLevelFunctionRef (name: Str) (valueTemp: Int) (scheme: TypeScheme
     if inProgramEntryFrame(state)
     then
         match emptyEnvironmentClosureLabel(valueTemp)(state.reversedInstructions) with
-            | Some(label) -> withStateTopLevelFunctionRefs((name, label, scheme) :: stateTopLevelFunctionRefs(state))(state)
+            | Some(label) -> withRegisteredTopLevelFunctionRef(name)(label)(scheme)(state)
             | None -> state
     else state
 
@@ -5290,6 +5324,26 @@ let heapShallowCopyOf (semanticType: SemanticType) (state: CoreLoweringState) =
                 state
                 |> coverageEnvironment
                 |> classifyHeapShallowCopy(resolved))
+
+// Preserve the same settled monomorphic cache answer as heapFactsOf. An uncached resource
+// query needs only the resource walk, not unrelated copy/drop layout classification.
+let heapResourceOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> facts.containsResource
+                    | None ->
+                        state
+                        |> coverageEnvironment
+                        |> classifyHeapResource(resolved)
+            | _ ->
+                state
+                |> coverageEnvironment
+                |> classifyHeapResource(resolved))
 
 let recursive lookupOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
@@ -6107,8 +6161,7 @@ let canRuntimeManageRecursiveCopyAdt (semanticType: SemanticType) (state: CoreLo
         | Some(name) ->
             match state |> stateConstructorsOfType(name) with
                 | [] -> false
-                | first :: _rest as layouts ->
-                    isBuiltinTypeName(name) == false && layoutIsGeneric(first) == false && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(semanticType)(state)) == false && allConstructorsScalarOrSelf(layouts)(name)(state)(false)
+                | first :: _rest as layouts -> isBuiltinTypeName(name) == false && layoutIsGeneric(first) == false && isResourceTypeNameIn(name)(state) == false && heapResourceOf(semanticType)(state) == false && allConstructorsScalarOrSelf(layouts)(name)(state)(false)
 
 // Stage 0's `IsFreshConstructorTree`: a constructor application of `typeName` whose every
 // non-scalar field is itself such a tree.
@@ -6169,7 +6222,7 @@ let canRuntimeManageFreshHeapChildAdtApplication (layout: CoreConstructorLayout)
             match namedTypeNameOf(resultType) with
                 | None -> false
                 | Some(name) ->
-                    length(state |> stateConstructorsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(resultType)(state)) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
+                    length(state |> stateConstructorsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && heapResourceOf(resultType)(state) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
 
 // A fresh constructor tree of a recursive-copy type.
 let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (state: CoreLoweringState) =
@@ -6892,7 +6945,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> withStateEnclosingBindings(state.bindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
@@ -8663,8 +8716,10 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
 let ownedChildrenOfNamed (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match (state |> stateConstructorsOfType(name), heapFactsOf(named)(state)) with
-                | (CoreConstructorLayout { name = constructorName } :: [], HeapLayoutFacts { children = children }) -> ownedConstructorChildren(constructorName)(children)
+            match state |> stateConstructorsOfType(name) with
+                | CoreConstructorLayout { name = constructorName } :: [] ->
+                    match heapFactsOf(named)(state) with
+                        | HeapLayoutFacts { children = children } -> ownedConstructorChildren(constructorName)(children)
                 | _ -> []
         | _ -> []
 
@@ -14945,15 +15000,17 @@ let shapeListElement (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop:
 // the cell's structural walk; a parameter of the contract's own types is normalized by its helper
 // (`tcoGeneralRcParameterPlacement`). Answers the resolved type and that name.
 let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
-    match (layouts, heapFactsOf(named)(state)) with
-        | (_layout :: [], HeapLayoutFacts { structuralCopy = ShallowCopy }) -> Some((named, name))
-        | (_layout :: [], facts) ->
-            if runtimeManagedAdtLayout(facts)
-            then
-                match inlineAdtCopyPlanOf(named)(state) with
-                    | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
-                    | _ -> None
-            else None
+    match layouts with
+        | _layout :: [] ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { structuralCopy = ShallowCopy } -> Some((named, name))
+                | facts ->
+                    if runtimeManagedAdtLayout(facts)
+                    then
+                        match inlineAdtCopyPlanOf(named)(state) with
+                            | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
+                            | _ -> None
+                    else None
         | _ -> None
 
 let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
@@ -16966,17 +17023,6 @@ let recursive nthCurriedArgumentType (functionType: SemanticType) (ordinal: Int)
             else nthCurriedArgumentType(resultType)(ordinal - 1)(state)
         | _ -> None
 
-let recursive specializationCandidateArity (callee: Str) (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> None
-        | (candidate, parameters, value) :: rest ->
-            if candidate == callee
-            then
-                value
-                |> specializationArity(parameters)
-                |> Some
-            else specializationCandidateArity(callee)(rest)
-
 // The accumulator type a specialization candidate is called at, read through the current
 // substitution: the argument a saturated call passes last (the parameter of a single-parameter
 // candidate, the worker's parameter of a nested-worker one), stage 0's
@@ -16984,7 +17030,7 @@ let recursive specializationCandidateArity (callee: Str) (candidates: List((Str,
 // it unique is `reusableSpecializationAccumulatorType`.
 let specializationAccumulatorTypeOf (callee: Str) (state: CoreLoweringState) =
     match (lookupBinding(callee)(state.bindings), state
-    |> stateSpecializationCandidates
+    |> stateSpecializationCandidateIndex
     |> specializationCandidateArity(callee)) with
         | (Some(CoreBinding { scheme = TypeScheme { body = body } }), Some(arity)) -> nthCurriedArgumentType(body)(arity - 1)(state)
         | _ -> None
@@ -17081,14 +17127,6 @@ let recursive specializationRecursiveBody (callee: Str) (value: Expr) =
                 | _ -> (callee, value)
         | _ -> (callee, value)
 
-let recursive specializationCandidateValueOf (callee: Str) (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> None
-        | (candidate, _parameters, value) :: rest ->
-            if candidate == callee
-            then Some(value)
-            else specializationCandidateValueOf(callee)(rest)
-
 // Stage 0's `SpecializationRebuildsOnlyAPath`: the clone descends into at most one child of the
 // accumulator on any path, over a type whose constructors hold two or more children of their own
 // type, so its in-place pass rewrites one root-to-leaf path per call rather than the structure.
@@ -17098,7 +17136,7 @@ let specializationRebuildsOnlyAPath (callee: Str) (accumulatorType: SemanticType
             if typeHasMultipleSelfFields(typeName)(stateConstructorsOfType(typeName)(state))(state)
             then
                 match state
-                |> stateSpecializationCandidates
+                |> stateSpecializationCandidateIndex
                 |> specializationCandidateValueOf(callee) with
                     | Some(value) ->
                         match specializationRecursiveBody(callee)(value) with
@@ -17764,6 +17802,22 @@ let resultRcEligibilityOf (state: CoreLoweringState) =
         | Some(eligibility) -> eligibility
         | None -> Ashes.Collection.Map.empty
 
+// Resolve the same completed function identity as calleeSummaryOf. Only an unregistered
+// fallback prepares its local reach at a call site.
+let preparedReachOfSummary (summary: ReachSummary) (state: CoreLoweringState) =
+    match summary with
+        | ReachSummary { function = ReachFunction { key = key, parameters = parameters }, reach = reach } ->
+            let group = state.programState
+            in
+                match Ashes.Collection.Map.getStr(key)(group.callReachByKey) with
+                    | Some(prepared) -> prepared
+                    | None -> prepareCallReach(parameters)(reach)
+
+let calleePreparedReach (callee: Str) (parameters: List(Str)) (reach: ResultReachState) (state: CoreLoweringState) =
+    match calleeSummaryOf(callee)(state) with
+        | Some(summary) -> preparedReachOfSummary(summary)(state)
+        | None -> prepareCallReach(parameters)(reach)
+
 // Stage 0's ownership summary of a let-bound callee: the whole-program result-reach summary of
 // the function recorded under the name, whose parameters and body are the registered ones (a
 // Map.set-shaped function's outer parameters plus its accumulator over the inner body); a callee
@@ -17801,6 +17855,7 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 parameters = parameters,
                                 ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                                 reach = reach,
+                                preparedReach = calleePreparedReach(callee)(parameters)(reach)(state),
                                 rcEligible = calleeRcEligible(callee)(state),
                                 argumentCount = length(spine.arguments)
                             ))
@@ -21323,11 +21378,11 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 |> withCallResultType(applied)
                                 |> noteTakenOverCallResult(context))
 
-let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
+let restoreCallArgumentLabelStart (start: Int) (active: Bool) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state } ->
             let group = state.tcoState
-            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start))
+            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start, callArgumentFrameActive = active))
 
 // Stage 0's `NoteDiscardedResultArgument`: a lambda ignoring its parameter applied to a call.
 let noteDiscardedResultArgument (spine: CoreCallSpine) (state: CoreLoweringState) =
@@ -21365,11 +21420,13 @@ let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(Cor
     |> noteDiscardedResultArgument(spine)
     |> takeDiscardedResultSite with
         | (resultDiscarded, noted) ->
-            noted
-            |> withCallArgumentRetainFrame([])(false)
-            |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
-            |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
-            |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))
+            let framed = noted with tcoState = (noted.tcoState with callArgumentFrameActive = true)
+            in
+                framed
+                |> withCallArgumentRetainFrame([])(false)
+                |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
+                |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
+                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(state.tcoState.callArgumentFrameActive)
 
 let failedIfPlan state error =
     CoreIfPlan(
@@ -24900,7 +24957,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) ->
             withStateRecursiveGroupNames(bindingNames(selfBindings))(current))
@@ -26897,6 +26954,32 @@ let recordLateCopiedCellHead (request: ConsumerRequest) (ownedHead: LoweredCoreV
     |> recordLateCopiedCellPart(request)(ownedHead)(duplicatedHead)
     |> recordLateCopiedCellPart(request)(ownedTail)(duplicatedTail)
 
+// Stage 0's `RecordCallArgumentCellOwnerDuplicates`: an arena cons in an argument
+// never releases its pattern-owner references. The existing call-frame release takes
+// them back only when the result owns itself, or cannot reach the argument.
+// Successor cells retain their existing back-edge cleanup instead.
+let recordCallArgumentCellOwnerPart (owned: LoweredCoreValue) (duplicated: LoweredCoreValue) (state: CoreLoweringState) =
+    match (owned, duplicated) with
+        | (LoweredCoreValue { temp = original }, LoweredCoreValue { temp = duplicate, semanticType = semanticType }) ->
+            if original == duplicate
+            then state
+            else
+                let slot =
+                    if stateCollectingCallArgumentRetains(state)
+                    then -2
+                    else -3
+                in
+                    withCallArgumentRetainFrame((duplicate, slot, semanticType) :: stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))(state)
+
+let recordCallArgumentCellOwnerDuplicates (request: ConsumerRequest) (ownedHead: LoweredCoreValue) (duplicatedHead: LoweredCoreValue) (ownedTail: LoweredCoreValue) (duplicatedTail: LoweredCoreValue) (cell: LoweredCoreValue) =
+    match cell with
+        | LoweredCoreValue { state = state, temp = temp, error = None } ->
+            if !state.tcoState.callArgumentFrameActive || state.nextLabelId != stateCallArgumentLabelStart(state) || isRuntimeTemp(temp)(state) || request.borrowsCellParts || request.lateCopiedCellParts || request.recordFieldCell
+            then cell
+            else
+                cell with state = state |> recordCallArgumentCellOwnerPart(ownedHead)(duplicatedHead) |> recordCallArgumentCellOwnerPart(ownedTail)(duplicatedTail)
+        | _ -> cell
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -26914,6 +26997,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                                     |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
                                     |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
+                                    |> recordCallArgumentCellOwnerDuplicates(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
                                     |> keepArgumentExitCellOwned(request)(tailExpression)
 
@@ -30803,14 +30887,6 @@ let finishCoreBuiltinReference layout lower state =
 // LowerVarUnbound/_topLevelBindingNames specialization (Lowering.cs:2844). Expression-only entry
 // points (lowerCoreExpression*) never populate topLevelNames, so this never fires for them — there
 // is no "later in the file" to be forward-referencing without a whole program.
-let recursive lookupTopLevelFunctionRef (name: Str) (refs: List((Str, Str, TypeScheme))) =
-    match refs with
-        | [] -> None
-        | (candidate, label, scheme) :: rest ->
-            if candidate == name
-            then Some((label, scheme))
-            else lookupTopLevelFunctionRef(name)(rest)
-
 // Stage 0's `LowerVarUnbound` for a registered top-level function: reached only when the scope
 // holds no binding for the name, from a body spliced into a scope that never captured it. The
 // function is already lowered (a genuine backward reference), has no environment, so its closure
@@ -30846,7 +30922,7 @@ let lowerCoreVariable name lower (state: CoreLoweringState) =
         | Some(binding) -> lowerBoundVariable(binding)(state)
         | None ->
             match state
-            |> stateTopLevelFunctionRefs
+            |> stateTopLevelFunctionRefIndex
             |> lookupTopLevelFunctionRef(name) with
                 | Some((label, scheme)) -> lowerTopLevelFunctionReference(label)(scheme)(state)
                 | None -> lowerUnboundVariable(name)(lower)(state)
@@ -33071,7 +33147,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            if constructorNameKnown(name)(state) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None
+            if constructorNameKnown(name)(state) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefIndex(state)) != None
             then true
             else
                 if state
@@ -33229,14 +33305,6 @@ let recursive lastArgument (arguments: List(Expr)) =
         | argument :: [] -> Some(argument)
         | _argument :: rest -> lastArgument(rest)
 
-let recursive lookupSpecializationCandidate (name: Str) (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> None
-        | (candidate, parameters, value) :: rest ->
-            if candidate == name
-            then Some((parameters, value))
-            else lookupSpecializationCandidate(name)(rest)
-
 // Stage 0's `IsFreshOwnershipResultCall`: the accumulator argument is itself a saturated call
 // whose callee's whole-program result reach keeps none of its parameters, so the value handed to
 // the specialization is freshly built here and aliased by nothing the specialization could
@@ -33320,7 +33388,7 @@ let specializationReferenceResolvesHere (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            Ashes.Text.contains(name)(".") || constructorNameKnown(name)(state) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None || containsName(name)(stateInlinableHelpers(state))
+            Ashes.Text.contains(name)(".") || constructorNameKnown(name)(state) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefIndex(state)) != None || containsName(name)(stateInlinableHelpers(state))
 
 let recursive specializationReferencesResolveHere (names: List(Str)) (state: CoreLoweringState) =
     match names with
@@ -33344,7 +33412,7 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
             if stateReuseEnabled(state) && containsName(callee)(stateSpecializingInProgress(state)) == false
             then
                 match state
-                |> stateSpecializationCandidates
+                |> stateSpecializationCandidateIndex
                 |> lookupSpecializationCandidate(callee) with
                     | Some((parameters, value)) ->
                         match (specializationLinearParameter(parameters)(value), lastArgument(spine.arguments)) with
@@ -33961,11 +34029,6 @@ let recursive flowEvidenceArgumentCount (arguments: List(Expr)) =
                     else 0
                 | _ -> 0
 
-let recursive flowReachFlags (parameters: List(Str)) (counts: List(ParameterReachEntry)) =
-    match parameters with
-        | [] -> []
-        | parameter :: rest -> (reachCountOf(parameter)(counts) > 0) :: flowReachFlags(rest)(counts)
-
 let recursive flowTrueFlags (count: Int) =
     if count == 0
     then []
@@ -33978,13 +34041,14 @@ let flowSummaryFlags (root: Expr) (arguments: List(Expr)) (state: CoreLoweringSt
     match unspanArgument(root) with
         | ExprVar(callee) ->
             match calleeSummaryOf(callee)(state) with
-                | Some(ReachSummary { function = ReachFunction { parameters = parameters }, reach = ResultReachState { counts = counts, isPoisoned = false } }) ->
+                | Some(ReachSummary { function = ReachFunction { parameters = parameters }, reach = ResultReachState { isPoisoned = false } } as summary) ->
                     let evidence = flowEvidenceArgumentCount(arguments)
                     in
                         if coreListLength(arguments) - evidence == length(parameters)
                         then
-                            counts
-                            |> flowReachFlags(parameters)
+                            state
+                            |> preparedReachOfSummary(summary)
+                            |> preparedCallReachFlags
                             |> append(flowTrueFlags(evidence))
                             |> Some
                         else None
@@ -35907,13 +35971,22 @@ let recursive reachSummariesByName (summaries: List(ReachSummary)) (byName: MapT
                 else summary)
             |> reachSummariesByName(rest)
 
-// Seeds the state with the whole-program result-reach summaries and their two indexes.
+let recursive callReachByFunctionKey (summaries: List(ReachSummary)) (index: MapTree(Str, PreparedCallReach)) =
+    match summaries with
+        | [] -> index
+        | ReachSummary { function = ReachFunction { key = key, parameters = parameters }, reach = reach } :: rest ->
+            index
+            |> Ashes.Collection.Map.setStr(key)(prepareCallReach(parameters)(reach))
+            |> callReachByFunctionKey(rest)
+
+// Seeds the state with completed summaries and all of their query indexes.
 let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState) =
     state
     |> withStateReachSummaries(summaries)
     |> withStateReachTable(summariesTable(summaries))
     |> withStateReachByIdentity(reachSummariesByIdentity(summaries)(Ashes.Collection.Map.empty))
     |> withStateReachByName(reachSummariesByName(summaries)(Ashes.Collection.Map.empty))
+    |> withStateCallReachByKey(callReachByFunctionKey(summaries)(Ashes.Collection.Map.empty))
 
 // Stage 0's live-handler effects (`ComputeLiveHandlerEffects`): what one function's body tells the
 // analysis. The functions it calls by name, the functions it names as values (which may escape

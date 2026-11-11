@@ -24,6 +24,8 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAny
+import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAnyComplete
+import AshesCompiler.Semantics.TypeGraphSearch.TypeGraphClosureResult
 import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAnyWithPathCuts
 import Ashes.Collection.List.append
 import Ashes.Collection.List.map
@@ -45,6 +47,8 @@ export (
     value heapConstructorFieldGroups,
     value heapExtendConstructorEnvironment,
     value classifyHeapLayout,
+    value classifyHeapResource,
+    value classifyHeapArenaDeepCopy,
     value classifyHeapAdmissibility,
     value classifyHeapShallowCopy,
 )
@@ -519,6 +523,9 @@ let heapResourceBearing (semanticType: SemanticType) (environment: TypeEnvironme
         | None ->
             typeGraphAnyWithPathCuts(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType)
 
+// Resource-only consumers must not construct copy, drop, or reuse facts.
+let classifyHeapResource (semanticType: SemanticType) (environment: TypeEnvironment) = heapResourceBearing(semanticType)(environment)
+
 let recursive heapAnyUnresolved (types: List(SemanticType)) (environment: TypeEnvironment) (path: List((Int, Str))) =
     match types with
         | [] -> false
@@ -619,6 +626,10 @@ and heapArenaDeepCopyAdtLayout (named: SemanticType) (environment: TypeEnvironme
                         heapAllGroupedFields(given (fieldType) -> heapArenaDeepCopyLayout(fieldType)(environment)((symbolId, name) :: path))(grouped)
         | _ -> false
 
+// Arena-copy consumers need this capability, not unrelated drop and reuse facts.
+let classifyHeapArenaDeepCopy (semanticType: SemanticType) (environment: TypeEnvironment) =
+    heapArenaDeepCopyLayout(resolveLayoutType(semanticType)(environment))(environment)([])
+
 // A named type is shallow-copyable when every constructor has the same arity and every field is a
 // scalar word; otherwise it is deep-copyable exactly when the arena copier can walk it.
 let heapAdtShallowCopySupported (named: SemanticType) (environment: TypeEnvironment) =
@@ -702,25 +713,129 @@ let recursive heapDroppableLeafField (semanticType: SemanticType) (environment: 
                 | SemNamed(_symbolId, _name, _arguments) -> namedRule(resolved)
                 | _ -> false)
 
-// Whether the type-directed drop walker can release every owned child of a named type's graph; a
-// cycle back into a type already on the path is droppable by construction.
-let recursive heapCanDropAdtGraph (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
-    match named with
-        | SemNamed(symbolId, name, _arguments) ->
-            if heapResourceBearing(named)(environment)
-            then false
-            else
-                if heapPathContains(symbolId)(name)(path)
-                then true
-                else
-                    environment
-                    |> heapNamedTypeConstructors(named)
-                    |> heapAllGroupedFields(given (fieldType) ->
-                        heapDroppableLeafField(fieldType)(environment)(given (child) -> heapCanDropAdtGraph(child)(environment)((symbolId, name) :: path)))
+// The drop query shares work only for exact resolved types. Paths retain nominal (id,name)
+// cycle cuts; their arguments remain part of every memo key.
+type HeapDropWork =
+    | semanticType: SemanticType
+    | path: List(SemanticType)
+
+type HeapDropVisit =
+    | semanticType: SemanticType
+    | path: List(SemanticType)
+
+type HeapDropResourceResult =
+    | containsResource: Bool
+    | resourceFree: List(SemanticType)
+
+let recursive heapExactTypeSeen (semanticType: SemanticType) (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | previous :: rest -> previous == semanticType || heapExactTypeSeen(semanticType)(rest)
+
+let recursive heapAddResourceFree (roots: List(SemanticType)) (known: List(SemanticType)) =
+    match roots with
+        | [] -> known
+        | root :: rest ->
+            if heapExactTypeSeen(root)(known)
+            then heapAddResourceFree(rest)(known)
+            else heapAddResourceFree(rest)(root :: known)
+
+let heapDropResourceQuery (semanticType: SemanticType) (environment: TypeEnvironment) (known: List(SemanticType)) =
+    if heapExactTypeSeen(semanticType)(known)
+    then HeapDropResourceResult(containsResource = false, resourceFree = known)
+    else
+        match typeGraphAnyComplete(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType) with
+            | TypeGraphClosureResult { answer = Some(false), completeRoots = roots } -> HeapDropResourceResult(containsResource = false, resourceFree = heapAddResourceFree(roots)(known))
+            | TypeGraphClosureResult { answer = Some(true) } -> HeapDropResourceResult(containsResource = true, resourceFree = known)
+            | TypeGraphClosureResult { answer = None } ->
+                let resource =
+                    typeGraphAnyWithPathCuts(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType)
+                in
+                    HeapDropResourceResult(containsResource = resource, resourceFree = if resource
+                    then known
+                    else semanticType :: known)
+
+let heapSameDropName (left: SemanticType) (right: SemanticType) =
+    match (left, right) with
+        | (SemNamed(leftId, leftName, _leftArguments), SemNamed(rightId, rightName, _rightArguments)) -> leftId == rightId && leftName == rightName
         | _ -> false
 
+let recursive heapDropPathContains (semanticType: SemanticType) (path: List(SemanticType)) =
+    match path with
+        | [] -> false
+        | previous :: rest -> heapSameDropName(semanticType)(previous) || heapDropPathContains(semanticType)(rest)
+
+let recursive heapDropChangesInstantiation (semanticType: SemanticType) (path: List(SemanticType)) =
+    match path with
+        | [] -> false
+        | previous :: rest ->
+            if heapSameDropName(semanticType)(previous)
+            then previous != semanticType
+            else heapDropChangesInstantiation(semanticType)(rest)
+
+let recursive heapDropPathSubset (lessBlocked: List(SemanticType)) (moreBlocked: List(SemanticType)) =
+    match lessBlocked with
+        | [] -> true
+        | previous :: rest -> heapDropPathContains(previous)(moreBlocked) && heapDropPathSubset(rest)(moreBlocked)
+
+let recursive heapDropCovered (semanticType: SemanticType) (path: List(SemanticType)) (pathCuts: Bool) (visited: List(HeapDropVisit)) =
+    match visited with
+        | [] -> false
+        | HeapDropVisit { semanticType = previous, path = previousPath } :: rest -> previous == semanticType && (pathCuts == false || heapDropPathSubset(previousPath)(path)) || heapDropCovered(semanticType)(path)(pathCuts)(rest)
+
+let recursive heapPrependDropWork (types: List(SemanticType)) (path: List(SemanticType)) (pending: List(HeapDropWork)) =
+    match types with
+        | [] -> pending
+        | head :: rest -> HeapDropWork(semanticType = head, path = path) :: heapPrependDropWork(rest)(path)(pending)
+
+type HeapDropSearchResult =
+    | droppable: Maybe(Bool)
+    | resourceFree: List(SemanticType)
+
+// A regular graph visits each exact named type once. If instantiation changes on a path,
+// restart with the original nominal cut and only share visits with fewer blocked ancestors.
+// Every queued successor is processed before returning true; no partial drop answer is cached.
+let recursive heapDropSearch (pending: List(HeapDropWork)) (visited: List(HeapDropVisit)) (known: List(SemanticType)) (environment: TypeEnvironment) (pathCuts: Bool) =
+    match pending with
+        | [] -> HeapDropSearchResult(droppable = Some(true), resourceFree = known)
+        | HeapDropWork { semanticType = semanticType, path = path } :: rest ->
+            let resolved = resolveLayoutType(semanticType)(environment)
+            in
+                if canArenaResetLayoutIn(resolved)(environment)
+                then heapDropSearch(rest)(visited)(known)(environment)(pathCuts)
+                else
+                    match resolved with
+                        | SemString -> heapDropSearch(rest)(visited)(known)(environment)(pathCuts)
+                        | SemBytes -> heapDropSearch(rest)(visited)(known)(environment)(pathCuts)
+                        | SemBigInt -> heapDropSearch(rest)(visited)(known)(environment)(pathCuts)
+                        | SemFunction(_argument, _result, _row) -> heapDropSearch(rest)(visited)(known)(environment)(pathCuts)
+                        | SemList(element) -> heapDropSearch(HeapDropWork(semanticType = element, path = path) :: rest)(visited)(known)(environment)(pathCuts)
+                        | SemTuple(elements) ->
+                            heapDropSearch(heapPrependDropWork(elements)(path)(rest))(visited)(known)(environment)(pathCuts)
+                        | SemNamed(_symbolId, _name, _arguments) ->
+                            match heapDropResourceQuery(resolved)(environment)(known) with
+                                | HeapDropResourceResult { containsResource = true, resourceFree = nextKnown } -> HeapDropSearchResult(droppable = Some(false), resourceFree = nextKnown)
+                                | HeapDropResourceResult { containsResource = false, resourceFree = nextKnown } ->
+                                    if pathCuts == false && heapDropChangesInstantiation(resolved)(path)
+                                    then HeapDropSearchResult(droppable = None, resourceFree = nextKnown)
+                                    else
+                                        if heapDropPathContains(resolved)(path) || heapDropCovered(resolved)(path)(pathCuts)(visited)
+                                        then heapDropSearch(rest)(visited)(nextKnown)(environment)(pathCuts)
+                                        else
+                                            let children = heapGraphChildren(false)(environment)(resolved)
+                                            in
+                                                heapDropSearch(heapPrependDropWork(children)(resolved :: path)(rest))(HeapDropVisit(semanticType = resolved, path = path) :: visited)(nextKnown)(environment)(pathCuts)
+                        | _ -> HeapDropSearchResult(droppable = Some(false), resourceFree = known)
+
 let heapCanDropValueGraph (semanticType: SemanticType) (environment: TypeEnvironment) =
-    heapDroppableLeafField(semanticType)(environment)(given (named) -> heapCanDropAdtGraph(named)(environment)([]))
+    (let work = [HeapDropWork(semanticType = semanticType, path = [])]
+    in
+        match heapDropSearch(work)([])([])(environment)(false) with
+            | HeapDropSearchResult { droppable = Some(result) } -> result
+            | HeapDropSearchResult { droppable = None, resourceFree = known } ->
+                match heapDropSearch(work)([])(known)(environment)(true) with
+                    | HeapDropSearchResult { droppable = Some(result) } -> result
+                    | HeapDropSearchResult { droppable = None } -> false)
 
 // A copy ADT: every field of every constructor is a scalar word.
 let heapRuntimeCopyAdtLayout (named: SemanticType) (environment: TypeEnvironment) =

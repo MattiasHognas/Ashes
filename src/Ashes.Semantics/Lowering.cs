@@ -18569,6 +18569,7 @@ public sealed partial class Lowering
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
+        RecordCallArgumentCellOwnerDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
         KeepLoopResultFieldCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);

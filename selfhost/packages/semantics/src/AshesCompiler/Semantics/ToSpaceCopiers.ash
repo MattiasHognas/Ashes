@@ -60,9 +60,7 @@ let recursive containsTypeKey (key: Str) (keys: List(Str)) =
         | [] -> false
         | candidate :: rest -> candidate == key || containsTypeKey(key)(rest)
 
-let namedTypeIsResourceBearing (named: SemanticType) (environment: TypeEnvironment) =
-    match classifyHeapLayout(named)(environment) with
-        | HeapLayoutFacts { containsResource = containsResource } -> containsResource
+let namedTypeIsResourceBearing (named: SemanticType) (environment: TypeEnvironment) = classifyHeapResource(named)(environment)
 
 // Stage 0's `IsToSpaceCopySafeType`: whether the walk below relocates every heap pointer inside a
 // value of this type. Copy types are inline and need nothing; a string or bytes value copies by its

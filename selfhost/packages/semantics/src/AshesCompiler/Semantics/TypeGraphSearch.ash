@@ -1,6 +1,8 @@
 import AshesCompiler.Semantics.Types
 export (
     value typeGraphAny,
+    value typeGraphAnyComplete,
+    type TypeGraphClosureResult(..),
     value typeGraphAnyWithPathCuts,
 )
 
@@ -53,6 +55,35 @@ let recursive search resolve matches children (pending: List(TypeGraphWork)) (vi
                             search(resolve)(matches)(children)(prependWork(children(resolved))(path)(rest))(visited)
 
 let typeGraphAny resolve matches children semanticType = search(resolve)(matches)(children)([VisitType(semanticType)([])])([])
+
+// Only a fully exhausted search with no matching node publishes its closed set of named roots.
+// A positive result or changing-instantiation abort publishes no partial negative facts.
+type TypeGraphClosureResult =
+    | answer: Maybe(Bool)
+    | completeRoots: List(SemanticType)
+
+let recursive searchComplete resolve matches children (pending: List(TypeGraphWork)) (visited: List(SemanticType)) =
+    match pending with
+        | [] -> TypeGraphClosureResult(answer = Some(false), completeRoots = visited)
+        | VisitType(semanticType, path) :: rest ->
+            let resolved = resolve(semanticType)
+            in
+                if matches(resolved)
+                then TypeGraphClosureResult(answer = Some(true), completeRoots = [])
+                else
+                    match resolved with
+                        | SemNamed(symbolId, name, _arguments) ->
+                            if changesInstantiation(symbolId)(name)(resolved)(path)
+                            then TypeGraphClosureResult(answer = None, completeRoots = [])
+                            else
+                                if containsType(resolved)(visited)
+                                then searchComplete(resolve)(matches)(children)(rest)(visited)
+                                else
+                                    searchComplete(resolve)(matches)(children)(prependWork(children(resolved))(resolved :: path)(rest))(resolved :: visited)
+                        | _ ->
+                            searchComplete(resolve)(matches)(children)(prependWork(children(resolved))(path)(rest))(visited)
+
+let typeGraphAnyComplete resolve matches children semanticType = searchComplete(resolve)(matches)(children)([VisitType(semanticType)([])])([])
 
 let sameNamedType (left: SemanticType) (right: SemanticType) =
     match (left, right) with

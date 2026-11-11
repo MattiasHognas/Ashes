@@ -42,10 +42,9 @@ let registerCopierLabel (prefix: Str) (key: Str) (body: DropperBody) =
 // Whether the arena copier can clone a value of this type completely (stage 0's
 // `IsDeepCopyOutSafeType`).
 let elementDeepCopySupported (element: SemanticType) (body: DropperBody) =
-    match body
+    body
     |> bodyEnvironment
-    |> classifyHeapLayout(element) with
-        | HeapLayoutFacts { arenaDeepCopySupported = supported } -> supported
+    |> classifyHeapArenaDeepCopy(element)
 
 // Calls a synthesized copier on `valueTemp` through a fresh closure whose environment holds the
 // closure itself, so the copier can recurse through `LoadEnv 0`; answers the clone's temp.
@@ -66,10 +65,9 @@ let emitCopierCall (label: Str) (valueTemp: Int) (body: DropperBody) =
 // A named type whose value is, or holds, a resource handle is never cloned: duplicating a handle
 // is wrong, so the reference stays shared.
 let namedTypeHoldsResource (named: SemanticType) (body: DropperBody) =
-    match body
+    body
     |> bodyEnvironment
-    |> classifyHeapLayout(named) with
-        | HeapLayoutFacts { containsResource = containsResource } -> containsResource
+    |> classifyHeapResource(named)
 
 let recursive constructorLabels (label: Str) (count: Int) (index: Int) =
     if index >= count

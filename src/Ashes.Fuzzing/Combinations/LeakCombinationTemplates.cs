@@ -255,6 +255,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConstrainedLoopAtCallerTypesTemplate());
         registry.Register(new ArenaSuccessorJoinTemplate());
         registry.Register(new CallPartAccumulatorTemplate());
+        registry.Register(new ConsedTailCallRefillTemplate());
     }
 }
 

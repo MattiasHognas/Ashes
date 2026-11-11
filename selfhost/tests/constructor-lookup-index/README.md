@@ -28,18 +28,23 @@ Arguments:
   source declaration list's builder returns, checking retained names and payloads.
 
 All three modes pass the expanded equivalence checks. Both old and new fresh-index
-repetition tests are flat at one live cell, including temporary field-entry allocation.
+repetition tests are flat at one live cell with the original nested index builder.
 Stage 1's one-off `check` mode reports 293 live cells; this is not the repeated fresh-index
 plateau metric. Stage 0 plain and poisoned checks report one.
 Measured lookup time: s0 1.49 seconds versus below 0.01 seconds; s1 1.17 seconds
 versus below 0.01 seconds. These are isolated lookup timings, not compiler timings.
-Fixture compile times were 4.34 seconds (s0), 4.33 seconds (s0 poisoned), and 9.45
-seconds (s1), with maximum RSS 309, 308, and 321 MiB respectively.
+The restored nested-builder fixture compiled in 4.58 seconds (s0), 4.19 seconds
+(s0 poisoned), and 3.85 seconds (s1), with maximum RSS 316, 293, and 251 MiB.
 
-The field map consumes a temporary nominal entry list in a separate loop with one
-insertion per back edge. Its final map is attached outside both index-building loops.
-This shape avoids stale normalized map-result retains observed with nested whole-index
-updates and a phase-dependent map accumulator; neither failed representation is used.
+The field map is built by a nested walk that threads the complete index through
+record updates. There is no temporary field-entry list. Stage 0 records unchanged-field
+retains even when a preceding call in the argument emitted completed normalizer branches;
+it releases those retains once the outer call's result owns its references. Open branches
+still reject that proof. Setting `GRC_NO_ARGRETCLOSEDREGION=1` restores the original
+351 leaked cells per fresh index (351001/3510001 at 1000/10000 iterations).
+Stage 1 already runs this original nested shape flat at both counts, so this case does
+not require a corresponding selfhost rule change. The alternative cursor implementation
+and its separate anonymous-provenance candidate remain parked while Step E is paused.
 
 The driver tests the actual monomorphic index implementation and raw payloads, but
 not the complete Core inference/frame lifecycle. Core integration must separately

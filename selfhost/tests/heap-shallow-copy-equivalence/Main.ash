@@ -125,7 +125,7 @@ let minimalViewMatchesFull semanticType environment =
                 match full with
                     | HeapLayoutFacts { structuralCopy = ShallowCopy } -> true
                     | _ -> false
-            in full.containsResource == minimal.containsResource && full.containsUnresolvedType == minimal.containsUnresolvedType && Ashes.Collection.List.map(admissibilityProjection)(full.children) == minimal.children && classifyHeapShallowCopy(semanticType)(environment) == shallow)
+            in classifyHeapArenaDeepCopy(semanticType)(environment) == full.arenaDeepCopySupported && classifyHeapResource(semanticType)(environment) == full.containsResource && full.containsResource == minimal.containsResource && full.containsUnresolvedType == minimal.containsUnresolvedType && Ashes.Collection.List.map(admissibilityProjection)(full.children) == minimal.children && classifyHeapShallowCopy(semanticType)(environment) == shallow)
 
 let recursive allMinimalViewsMatch types environment =
     match types with

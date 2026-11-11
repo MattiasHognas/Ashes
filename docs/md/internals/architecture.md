@@ -1407,10 +1407,31 @@ maps with the same first-match behavior as the ordered lists; unprepared environ
 the list-backed path. Lowering's field-name index preserves layout order and does not duplicate
 a layout whose field-name list repeats a name. All structural synthesis entry points reuse the
 prepared type-ID map rather than searching the ordered ID list for each nested type.
+The constructor index uses a nested field-name walk that threads the complete index
+through record updates. Unchanged fields retained into an arena call argument remain
+tracked after completed normalization branches within that argument: every preceding
+jump and switch target must already be defined before the retain. Open conditional arms
+still reject the proof. Once the callee's result owns its references, the existing call
+cleanup releases those temporary field retains (`GRC_NO_ARGRETCLOSEDREGION`, stage 0).
+A blanket rejection of any earlier label missed these retains and leaked the old field
+maps. The original nested builder is flat at two round counts in stage 1, so this case
+needs no mirrored rule or source-level representation workaround.
 Type resolution maintains separate maps for name resolution, parameters, provenance IDs,
 zero-cost representations, and external destructors. These have different shadowing predicates:
 for example, a nominal declaration does not hide an older external destructor from an
 external-only query. Updates retain the original declaration lists for ordered enumeration.
+`bash scripts/selfhost-dev/list-classification-callers.sh` lists classification entry points
+and wrapper references with their enclosing source functions. Resource-only and arena-deep-copy
+queries compute their respective predicates without constructing unrelated drop, child-copy,
+or reuse facts. Core resource queries first project any settled monomorphic answer. Callers
+whose layout requires exactly one constructor check that condition before classifying it.
+
+Completed function reach summaries have a separate index of per-argument reach counts, selected
+by the resolved function identity. Call lowering and flow flags reuse those counts rather than
+scanning reach paths for each argument query. Specialization candidates retain their earliest
+declaration in a prepared name index; successfully registered top-level closure references
+update a separate newest-entry index. Ordered lists and lexical/frame restoration retain their
+existing semantics.
 
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
@@ -1830,6 +1851,17 @@ unless the callee's result may reach the argument and does not own itself. A dup
 behind a branch of the argument keeps its reference. The duplicate and its release are markers
 promoted together with the owner (`GRC_NO_ARGUMENTTUPLEOWNERDUP`, stage 0; stage 1's
 `prepareRecursiveGroup([(name, value)])` kept the binder strings).
+The same accounting applies to pattern-owner duplicates stored in an arena cons call argument,
+including the tail of `refill(children)(resolved :: path)(rest)`. The helper's normalized result
+retains its own paths, so the temporary cons must give up its separate retain after the call.
+`RecordCallArgumentCellOwnerDuplicates` collects those head and tail duplicates only in the
+active call frame's function and before any argument label. Reference-counted cells own their
+duplicates; direct or late-copied back-edge cells and record-field cells keep their existing
+cleanup instead. The existing call-result ownership/reachability gate controls release; it is
+not an unconditional drop (`GRC_NO_ARGUMENTCELLOWNERDUP`, stage 0; mirrored by
+`recordCallArgumentCellOwnerDuplicates` in stage 1). The stage-1 call-frame marker is disabled
+inside lifted function bodies and restored with the outer frame. The direct recursive regression
+is `selfhost/tests/owned-cons-argument-worklist`; it must not be replaced by a step/fold workaround.
 The pattern-owner duplicates an aggregate took, and those already released after a
 normalization, are kept per function: temps are numbered per function, and one set shared by
 every function let an earlier function's released duplicate stop a later one's release under the
@@ -2309,6 +2341,17 @@ an arena successor might still hold a part of either (`GRC_NO_WALKREFILLSCALARS`
 from such a list's heads (`current :: reachable`) receives copies, not parts: the blocking-sibling
 check and the predecessor release follow a list of inline values only through its spine, as they
 do a list of strings (`GRC_NO_INLINESPINEFLOW`).
+
+A worklist may combine all three edges: its consumed tail, a proven one-cell cons onto that
+tail, and a helper-call refill. The cons-tail analysis accepts the helper call as another edge
+without removing the requirement for at least one proven cons-tail edge. Existing head-layout,
+tail-identity, and sibling-ownership checks still control RC placement. Thus the successor owns
+its children before the ordinary back-edge cleanup releases earlier call results; no broader
+release rule is needed (`GRC_NO_CONSEDTAILCALLREFILL`, stage 0; mirrored by
+`shapeObserveConsedTails` in stage 1). A pop/refill-only loop keeps its existing classification.
+`selfhost/tests/owned-call-result-worklist` preserves the original direct walker and checks an
+escaping aggregate head and a borrowed sibling. The latter deliberately retains the existing
+conservative placement and is compared with the disabled-rule baseline.
 
 ### Buffered standard output
 
