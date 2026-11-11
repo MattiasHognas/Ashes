@@ -1,6 +1,6 @@
 # Narrow lowering heap queries
 
-Run `python3 selfhost/tests/narrow-heap-consumers/render.py` from the repository.
+Run `perl selfhost/tests/narrow-heap-consumers/render.pl` from the repository.
 It generates `work/narrow-consumers/ashes.json`. The historical full classifier
 comes from frozen commit b19daa03; only private nominal type and exported value
 names are prefixed to prevent cross-module importer collisions. The byte-for-byte
@@ -71,3 +71,10 @@ Production `.ash` files and generated fixtures were canonically formatted. The
 existing selfhost heap-layout test now compares the public Boolean classifier
 against the whole fact. Full suites and the subsequent compiler build/profile
 remain coordinated integration gates, not claimed complete here.
+
+The Perl renderer replaces the original prototype renderer. After the same
+canonical formatting, `cmp` verified identical generated fixture bytes: Main
+SHA256 `a1e5c56ebe628ea339fbb00527a4b8e43ac3a06afb4379d9082bc05242f20cad`;
+frozen reference SHA256
+`44fbe7e87945abdbeae8f82e1210a4888fd88fa450ae618f6ef711bc373b49d7`.
+Manifest, lockfile and untouched reference snapshot also match byte-for-byte.
