@@ -257,6 +257,7 @@ type TypeGraphNode =
     | sourceType: SemanticType
     | resolvedType: SemanticType
     | constructorGroups: List((Str, List(SemanticType)))
+    | sourceConstructorGroups: List((Str, List(SemanticType)))
     | fields: List(SemanticType)
     | resourceChildren: List(SemanticType)
     | unresolvedChildren: List(SemanticType)
@@ -448,6 +449,9 @@ let buildNode nodeId semanticType environment =
                         sourceType = semanticType,
                         resolvedType = resolved,
                         constructorGroups = groups,
+                        sourceConstructorGroups = if semanticType == resolved
+                        then groups
+                        else typeGraphNamedTypeConstructors(semanticType)(environment),
                         fields = fields,
                         resourceChildren = resourceChildren,
                         unresolvedChildren = match resolved with
