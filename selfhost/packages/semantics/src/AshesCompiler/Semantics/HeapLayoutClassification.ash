@@ -21,6 +21,7 @@
 //   cell is declined rather than leaving the reason to be inferred from a missing positive fact.
 
 import AshesCompiler.Semantics.Types
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeGraphSearch.typeGraphAny
@@ -609,10 +610,126 @@ let canArenaResetLayoutIn (semanticType: SemanticType) (environment: TypeEnviron
             |> (given (hasDestructor: Bool) -> hasDestructor == false)
         | other -> canArenaResetLayout(other)
 
+type HeapDropResourceResult =
+    | containsResource: Bool
+    | resourceFree: List(SemanticType)
+
+let recursive heapExactTypeSeen (semanticType: SemanticType) (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | previous :: rest -> previous == semanticType || heapExactTypeSeen(semanticType)(rest)
+
+let recursive heapAddResourceFree (roots: List(SemanticType)) (known: List(SemanticType)) =
+    match roots with
+        | [] -> known
+        | root :: rest ->
+            if heapExactTypeSeen(root)(known)
+            then heapAddResourceFree(rest)(known)
+            else heapAddResourceFree(rest)(root :: known)
+
+// The fresh query publishes only context-free negative facts. Its complete set
+// can seed an index without a redundant whole-list deduplication pass.
+let heapFreshResourceQuery (semanticType: SemanticType) (environment: TypeEnvironment) =
+    match typeGraphAnyComplete(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType) with
+        | TypeGraphClosureResult { answer = Some(false), completeRoots = roots } -> HeapDropResourceResult(containsResource = false, resourceFree = roots)
+        | TypeGraphClosureResult { answer = Some(true) } -> HeapDropResourceResult(containsResource = true, resourceFree = [])
+        | TypeGraphClosureResult { answer = None } ->
+            let resource =
+                typeGraphAnyWithPathCuts(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType)
+            in
+                HeapDropResourceResult(containsResource = resource, resourceFree = if resource
+                then []
+                else [semanticType])
+
+let heapDropResourceQuery (semanticType: SemanticType) (environment: TypeEnvironment) (known: List(SemanticType)) =
+    if heapExactTypeSeen(semanticType)(known)
+    then HeapDropResourceResult(containsResource = false, resourceFree = known)
+    else
+        let result = heapFreshResourceQuery(semanticType)(environment)
+        in HeapDropResourceResult(containsResource = result.containsResource, resourceFree = heapAddResourceFree(result.resourceFree)(known))
+
+// Per-classification facts for one immutable environment. Only complete regular
+// resource-free closures publish descendant negatives; nonregular fallback publishes
+// only the queried root. Layout answers and their nominal cycle paths are never cached.
+type HeapNamedRootInputs =
+    | semanticType: SemanticType
+    | grouped: List((Str, List(SemanticType)))
+    | isRecord: Bool
+    | containsResource: Bool
+    | resourceFree: MapTree(Int, MapTree(Str, List(SemanticType)))
+
+let heapResourceBucket (symbolId: Int) (name: Str) (index: MapTree(Int, MapTree(Str, List(SemanticType)))) =
+    match Ashes.Collection.Map.getInt(symbolId)(index) with
+        | None -> []
+        | Some(byName) ->
+            match Ashes.Collection.Map.getStr(name)(byName) with
+                | None -> []
+                | Some(types) -> types
+
+let recursive heapIndexResourceFree (roots: List(SemanticType)) (index: MapTree(Int, MapTree(Str, List(SemanticType)))) =
+    match roots with
+        | [] -> index
+        | root :: rest ->
+            match root with
+                | SemNamed(symbolId, name, _arguments) ->
+                    let byName =
+                        match Ashes.Collection.Map.getInt(symbolId)(index) with
+                            | None -> Ashes.Collection.Map.empty
+                            | Some(existing) -> existing
+                    in
+                        let bucket = heapResourceBucket(symbolId)(name)(index)
+                        in
+                            index
+                            |> Ashes.Collection.Map.setInt(symbolId)(Ashes.Collection.Map.setStr(name)(root :: bucket)(byName))
+                            |> heapIndexResourceFree(rest)
+                | _ -> heapIndexResourceFree(rest)(index)
+
+let heapNamedRootInputs (named: SemanticType) (environment: TypeEnvironment) =
+    (let resource = heapFreshResourceQuery(named)(environment)
+    in HeapNamedRootInputs(semanticType = named, grouped = heapNamedTypeConstructors(named)(environment), isRecord = heapNamedTypeIsRecord(named)(environment), containsResource = resource.containsResource, resourceFree = heapIndexResourceFree(resource.resourceFree)(Ashes.Collection.Map.empty)))
+
+let heapRootConstructors (named: SemanticType) (environment: TypeEnvironment) (root: Maybe(HeapNamedRootInputs)) =
+    match root with
+        | Some(inputs) ->
+            if inputs.semanticType == named
+            then inputs.grouped
+            else heapNamedTypeConstructors(named)(environment)
+        | None -> heapNamedTypeConstructors(named)(environment)
+
+let heapRootIsRecord (named: SemanticType) (environment: TypeEnvironment) (root: Maybe(HeapNamedRootInputs)) =
+    match root with
+        | Some(inputs) ->
+            if inputs.semanticType == named
+            then inputs.isRecord
+            else heapNamedTypeIsRecord(named)(environment)
+        | None -> heapNamedTypeIsRecord(named)(environment)
+
+let heapRootResourceBearing (named: SemanticType) (environment: TypeEnvironment) (root: Maybe(HeapNamedRootInputs)) =
+    match root with
+        | Some(inputs) ->
+            if inputs.semanticType == named
+            then inputs.containsResource
+            else
+                match named with
+                    | SemNamed(symbolId, name, _arguments) ->
+                        if inputs.resourceFree
+                        |> heapResourceBucket(symbolId)(name)
+                        |> heapExactTypeSeen(named)
+                        then false
+                        else heapResourceBearing(named)(environment)
+                    | _ -> heapResourceBearing(named)(environment)
+        | None -> heapResourceBearing(named)(environment)
+
+let heapRootExcludedFromReuse (named: SemanticType) (environment: TypeEnvironment) (root: Maybe(HeapNamedRootInputs)) =
+    match named with
+        | SemNamed(_symbolId, name, _arguments) -> heapBuiltinResourceTypeName(name) || heapRootResourceBearing(named)(environment)(root)
+        | _ -> true
+
 // Whether the arena copier can walk the whole graph: scalars and strings are leaves, lists and
 // tuples recurse, and a named type recurses through every constructor field unless it owns a
 // resource or the walk has already entered it.
-let recursive heapArenaDeepCopyLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+let recursive heapArenaDeepCopyLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapArenaDeepCopyLayoutWithRoot(semanticType)(environment)(path)(None)
+and heapArenaDeepCopyLayoutWithRoot (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
         if canArenaResetLayoutIn(resolved)(environment)
@@ -621,21 +738,22 @@ let recursive heapArenaDeepCopyLayout (semanticType: SemanticType) (environment:
             match resolved with
                 | SemString -> true
                 | SemBytes -> true
-                | SemList(element) -> heapArenaDeepCopyLayout(element)(environment)(path)
+                | SemList(element) -> heapArenaDeepCopyLayoutWithRoot(element)(environment)(path)(root)
                 | SemTuple(elements) ->
-                    heapAllTypes(given (element) -> heapArenaDeepCopyLayout(element)(environment)(path))(elements)
-                | SemNamed(_symbolId, _name, _arguments) -> heapArenaDeepCopyAdtLayout(resolved)(environment)(path)
+                    heapAllTypes(given (element) -> heapArenaDeepCopyLayoutWithRoot(element)(environment)(path)(root))(elements)
+                | SemNamed(_symbolId, _name, _arguments) -> heapArenaDeepCopyAdtLayoutWithRoot(resolved)(environment)(path)(root)
                 | _ -> false)
-and heapArenaDeepCopyAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+and heapArenaDeepCopyAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapArenaDeepCopyAdtLayoutWithRoot(named)(environment)(path)(None)
+and heapArenaDeepCopyAdtLayoutWithRoot (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     match named with
         | SemNamed(symbolId, name, _arguments) ->
-            if heapPathContains(symbolId)(name)(path) || heapAdtExcludedFromReuse(named)(environment)
+            if heapPathContains(symbolId)(name)(path) || heapRootExcludedFromReuse(named)(environment)(root)
             then false
             else
-                match heapNamedTypeConstructors(named)(environment) with
+                match heapRootConstructors(named)(environment)(root) with
                     | [] -> false
                     | grouped ->
-                        heapAllGroupedFields(given (fieldType) -> heapArenaDeepCopyLayout(fieldType)(environment)((symbolId, name) :: path))(grouped)
+                        heapAllGroupedFields(given (fieldType) -> heapArenaDeepCopyLayoutWithRoot(fieldType)(environment)((symbolId, name) :: path)(root))(grouped)
         | _ -> false
 
 // Arena-copy consumers need this capability, not unrelated drop and reuse facts.
@@ -644,11 +762,13 @@ let classifyHeapArenaDeepCopy (semanticType: SemanticType) (environment: TypeEnv
 
 // A named type is shallow-copyable when every constructor has the same arity and every field is a
 // scalar word; otherwise it is deep-copyable exactly when the arena copier can walk it.
-let heapAdtShallowCopySupported (named: SemanticType) (environment: TypeEnvironment) =
-    match heapNamedTypeConstructors(named)(environment) with
+let heapAdtShallowCopySupportedWithRoot (named: SemanticType) (environment: TypeEnvironment) (root: Maybe(HeapNamedRootInputs)) =
+    match heapRootConstructors(named)(environment)(root) with
         | [] -> false
         | (_firstName, firstFields) :: _rest as grouped ->
-            !heapResourceBearing(named)(environment) && heapSameArity(length(firstFields))(grouped) && heapAllGroupedFields(given (fieldType) -> heapCanReset(fieldType)(environment))(grouped)
+            !heapRootResourceBearing(named)(environment)(root) && heapSameArity(length(firstFields))(grouped) && heapAllGroupedFields(given (fieldType) -> heapCanReset(fieldType)(environment))(grouped)
+
+let heapAdtShallowCopySupported (named: SemanticType) (environment: TypeEnvironment) = heapAdtShallowCopySupportedWithRoot(named)(environment)(None)
 
 let heapAdtStructuralCopyKind (named: SemanticType) (environment: TypeEnvironment) =
     (let grouped = heapNamedTypeConstructors(named)(environment)
@@ -734,38 +854,6 @@ type HeapDropWork =
 type HeapDropVisit =
     | semanticType: SemanticType
     | path: List(SemanticType)
-
-type HeapDropResourceResult =
-    | containsResource: Bool
-    | resourceFree: List(SemanticType)
-
-let recursive heapExactTypeSeen (semanticType: SemanticType) (types: List(SemanticType)) =
-    match types with
-        | [] -> false
-        | previous :: rest -> previous == semanticType || heapExactTypeSeen(semanticType)(rest)
-
-let recursive heapAddResourceFree (roots: List(SemanticType)) (known: List(SemanticType)) =
-    match roots with
-        | [] -> known
-        | root :: rest ->
-            if heapExactTypeSeen(root)(known)
-            then heapAddResourceFree(rest)(known)
-            else heapAddResourceFree(rest)(root :: known)
-
-let heapDropResourceQuery (semanticType: SemanticType) (environment: TypeEnvironment) (known: List(SemanticType)) =
-    if heapExactTypeSeen(semanticType)(known)
-    then HeapDropResourceResult(containsResource = false, resourceFree = known)
-    else
-        match typeGraphAnyComplete(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType) with
-            | TypeGraphClosureResult { answer = Some(false), completeRoots = roots } -> HeapDropResourceResult(containsResource = false, resourceFree = heapAddResourceFree(roots)(known))
-            | TypeGraphClosureResult { answer = Some(true) } -> HeapDropResourceResult(containsResource = true, resourceFree = known)
-            | TypeGraphClosureResult { answer = None } ->
-                let resource =
-                    typeGraphAnyWithPathCuts(given (value) -> resolveLayoutType(value)(environment))(heapDirectResource(environment))(heapGraphChildren(false)(environment))(semanticType)
-                in
-                    HeapDropResourceResult(containsResource = resource, resourceFree = if resource
-                    then known
-                    else semanticType :: known)
 
 let heapSameDropName (left: SemanticType) (right: SemanticType) =
     match (left, right) with
@@ -878,22 +966,24 @@ let heapOwnsHeapField (semanticType: SemanticType) (environment: TypeEnvironment
 
 // A record ADT: a single named-field constructor whose fields a runtime-managed cell owns, not
 // already on the path.
-let recursive heapRuntimeRecordAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+let recursive heapRuntimeRecordAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapRuntimeRecordAdtLayoutWithRoot(named)(environment)(path)(None)
+and heapRuntimeRecordAdtLayoutWithRoot (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     match named with
         | SemNamed(symbolId, name, _arguments) ->
-            match heapNamedTypeConstructors(named)(environment) with
+            match heapRootConstructors(named)(environment)(root) with
                 | (_constructorName, fieldTypes) :: [] ->
-                    if !heapNamedTypeIsRecord(named)(environment) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                    if !heapRootIsRecord(named)(environment)(root) || heapRootExcludedFromReuse(named)(environment)(root) || heapPathContains(symbolId)(name)(path)
                     then false
                     else
-                        heapAllTypes(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(fieldTypes)
+                        heapAllTypes(given (fieldType) -> heapRuntimeOwnedFieldLayoutWithRoot(fieldType)(environment)((symbolId, name) :: path)(root))(fieldTypes)
                 | _ -> false
         | _ -> false
 // A field a runtime-managed record or variant owns, stage 0's `IsRuntimeOwnedFieldLayout`: a
 // scalar, a string, bytes, or a big integer, a list or tuple of such fields, a record, variant,
 // or positional type of them, or a reference-counted closure. A type that reaches itself is
 // rejected, since the inline runtime-managed copy of such a graph would not terminate.
-and heapRuntimeOwnedFieldLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+and heapRuntimeOwnedFieldLayout (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapRuntimeOwnedFieldLayoutWithRoot(semanticType)(environment)(path)(None)
+and heapRuntimeOwnedFieldLayoutWithRoot (semanticType: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
         if canArenaResetLayoutIn(resolved)(environment)
@@ -903,57 +993,61 @@ and heapRuntimeOwnedFieldLayout (semanticType: SemanticType) (environment: TypeE
                 | SemString -> true
                 | SemBytes -> true
                 | SemBigInt -> true
-                | SemList(element) -> heapRuntimeOwnedFieldLayout(element)(environment)(path)
+                | SemList(element) -> heapRuntimeOwnedFieldLayoutWithRoot(element)(environment)(path)(root)
                 | SemTuple(elements) ->
-                    heapAllTypes(given (element) -> heapRuntimeOwnedTupleElementLayout(element)(environment)(path))(elements)
+                    heapAllTypes(given (element) -> heapRuntimeOwnedTupleElementLayoutWithRoot(element)(environment)(path)(root))(elements)
                 | SemFunction(_argument, _result, _capabilityRow) -> true
-                | SemNamed(_symbolId, _name, _arguments) -> heapAdtShallowCopySupported(resolved)(environment) || heapRuntimeRecordAdtLayout(resolved)(environment)(path) || heapRuntimeOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)(path) || heapRuntimePositionalAdtLayout(resolved)(environment)(path)
+                | SemNamed(_symbolId, _name, _arguments) -> heapAdtShallowCopySupportedWithRoot(resolved)(environment)(root) || heapRuntimeRecordAdtLayoutWithRoot(resolved)(environment)(path)(root) || heapRuntimeOwnedChildAdtLayoutWithRoot(resolved)(environment)(path)(root) || heapRuntimeTcoOwnedChildAdtLayoutWithRoot(resolved)(environment)(path)(root) || heapRuntimePositionalAdtLayoutWithRoot(resolved)(environment)(path)(root)
                 | _ -> false)
 // A tuple element a runtime-managed tuple owns, stage 0's `IsRuntimeOwnedTupleElementLayout`:
 // an owned field other than a closure, whose placement the static tuple rules never trust.
-and heapRuntimeOwnedTupleElementLayout (element: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+and heapRuntimeOwnedTupleElementLayout (element: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapRuntimeOwnedTupleElementLayoutWithRoot(element)(environment)(path)(None)
+and heapRuntimeOwnedTupleElementLayoutWithRoot (element: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     match resolveLayoutType(element)(environment) with
         | SemFunction(_argument, _result, _capabilityRow) -> false
-        | _ -> heapRuntimeOwnedFieldLayout(element)(environment)(path)
+        | _ -> heapRuntimeOwnedFieldLayoutWithRoot(element)(environment)(path)(root)
 // A positional single-constructor type with at least one owned field, every field one a
 // runtime-managed cell owns, stage 0's `IsRuntimePositionalAdtLayout`: a child a record or
 // variant owns and a list element, outside the outer-cell reuse and record paths.
-and heapRuntimePositionalAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+and heapRuntimePositionalAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapRuntimePositionalAdtLayoutWithRoot(named)(environment)(path)(None)
+and heapRuntimePositionalAdtLayoutWithRoot (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     match named with
         | SemNamed(symbolId, name, _arguments) ->
-            match heapNamedTypeConstructors(named)(environment) with
+            match heapRootConstructors(named)(environment)(root) with
                 | (_constructorName, fieldTypes) :: [] ->
-                    if heapBuiltinTypeName(name) || heapNamedTypeIsRecord(named)(environment) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                    if heapBuiltinTypeName(name) || heapRootIsRecord(named)(environment)(root) || heapRootExcludedFromReuse(named)(environment)(root) || heapPathContains(symbolId)(name)(path)
                     then false
                     else
-                        heapAllTypes(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(fieldTypes) && heapAnyType(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(fieldTypes)
+                        heapAllTypes(given (fieldType) -> heapRuntimeOwnedFieldLayoutWithRoot(fieldType)(environment)((symbolId, name) :: path)(root))(fieldTypes) && heapAnyType(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(fieldTypes)
                 | _ -> false
         | _ -> false
 // An owned-child ADT: a non-builtin type with at least two constructors and at least one
 // heap-owning field, every field one a runtime-managed cell owns, not already on the path. A
 // single unnamed-field constructor is instead the TCO owned-child layout: every heap-owning
 // field a list of scalars, with at least one such field.
-and heapRuntimeOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
+and heapRuntimeOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapRuntimeOwnedChildAdtLayoutWithRoot(named)(environment)(path)(None)
+and heapRuntimeOwnedChildAdtLayoutWithRoot (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
     match named with
         | SemNamed(symbolId, name, _arguments) ->
-            let grouped = heapNamedTypeConstructors(named)(environment)
+            let grouped = heapRootConstructors(named)(environment)(root)
             in
-                if heapBuiltinResourceTypeName(name) || !(length(grouped) >= 2) || heapAdtExcludedFromReuse(named)(environment) || heapPathContains(symbolId)(name)(path)
+                if heapBuiltinResourceTypeName(name) || !(length(grouped) >= 2) || heapRootExcludedFromReuse(named)(environment)(root) || heapPathContains(symbolId)(name)(path)
                 then false
                 else
-                    heapAllGroupedFields(given (fieldType) -> heapRuntimeOwnedFieldLayout(fieldType)(environment)((symbolId, name) :: path))(grouped) && heapAnyGroupedField(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(grouped)
+                    heapAllGroupedFields(given (fieldType) -> heapRuntimeOwnedFieldLayoutWithRoot(fieldType)(environment)((symbolId, name) :: path)(root))(grouped) && heapAnyGroupedField(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(grouped)
         | _ -> false
-and heapRuntimeTcoOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) =
-    match heapNamedTypeConstructors(named)(environment) with
+and heapRuntimeTcoOwnedChildAdtLayout (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) = heapRuntimeTcoOwnedChildAdtLayoutWithRoot(named)(environment)(path)(None)
+and heapRuntimeTcoOwnedChildAdtLayoutWithRoot (named: SemanticType) (environment: TypeEnvironment) (path: List((Int, Str))) (root: Maybe(HeapNamedRootInputs)) =
+    match heapRootConstructors(named)(environment)(root) with
         | (_constructorName, fieldTypes) :: [] ->
-            if heapNamedTypeIsRecord(named)(environment)
-            then heapRuntimeOwnedChildAdtLayout(named)(environment)(path)
+            if heapRootIsRecord(named)(environment)(root)
+            then heapRuntimeOwnedChildAdtLayoutWithRoot(named)(environment)(path)(root)
             else
-                if !heapMonomorphicUserAdt(named) || heapAdtExcludedFromReuse(named)(environment)
+                if !heapMonomorphicUserAdt(named) || heapRootExcludedFromReuse(named)(environment)(root)
                 then false
                 else
                     heapAllTypes(given (fieldType) -> heapTcoOwnedChildField(fieldType)(environment))(fieldTypes) && heapAnyType(given (fieldType) -> heapOwnsHeapField(fieldType)(environment))(fieldTypes)
-        | _ -> heapRuntimeOwnedChildAdtLayout(named)(environment)(path)
+        | _ -> heapRuntimeOwnedChildAdtLayoutWithRoot(named)(environment)(path)(root)
 
 // A recursive-copy field: a scalar word or a direct reference to the enclosing type.
 let heapRecursiveCopyField (symbolId: Int) (name: Str) (semanticType: SemanticType) (environment: TypeEnvironment) =
@@ -1155,18 +1249,41 @@ let heapCopyPlanChildren (resolved: SemanticType) (environment: TypeEnvironment)
             heapNamedCopyPlanChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
         | _ -> []
 
+let heapClassificationRoot resolved environment =
+    match resolved with
+        | SemNamed(_symbolId, _name, _arguments) ->
+            environment
+            |> heapNamedRootInputs(resolved)
+            |> Some
+        | _ -> None
+
+let heapRootShallowCopy resolved environment root =
+    match root with
+        | Some(_inputs) ->
+            if canArenaResetLayoutIn(resolved)(environment)
+            then false
+            else heapAdtShallowCopySupportedWithRoot(resolved)(environment)(root)
+        | None -> classifyHeapShallowCopy(resolved)(environment)
+
+let heapRootArenaDeepCopy resolved environment root =
+    match root with
+        | Some(_inputs) -> heapArenaDeepCopyAdtLayoutWithRoot(resolved)(environment)([])(root)
+        | None -> heapArenaDeepCopyLayout(resolved)(environment)([])
+
 let classifyHeapCopyPlan (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        HeapCopyPlanFacts(
-            shallowCopy = classifyHeapShallowCopy(resolved)(environment),
-            arenaDeepCopySupported = heapArenaDeepCopyLayout(resolved)(environment)([]),
-            runtimeRecordAdtSupported = heapRuntimeRecordAdtLayout(resolved)(environment)([]),
-            runtimeOwnedChildAdtSupported = heapRuntimeOwnedChildAdtLayout(resolved)(environment)([]),
-            runtimeTcoOwnedChildAdtSupported = heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)([]),
-            runtimePositionalAdtSupported = heapRuntimePositionalAdtLayout(resolved)(environment)([]),
-            children = heapCopyPlanChildren(resolved)(environment)
-        ))
+        let root = heapClassificationRoot(resolved)(environment)
+        in
+            HeapCopyPlanFacts(
+                shallowCopy = heapRootShallowCopy(resolved)(environment)(root),
+                arenaDeepCopySupported = heapRootArenaDeepCopy(resolved)(environment)(root),
+                runtimeRecordAdtSupported = heapRuntimeRecordAdtLayoutWithRoot(resolved)(environment)([])(root),
+                runtimeOwnedChildAdtSupported = heapRuntimeOwnedChildAdtLayoutWithRoot(resolved)(environment)([])(root),
+                runtimeTcoOwnedChildAdtSupported = heapRuntimeTcoOwnedChildAdtLayoutWithRoot(resolved)(environment)([])(root),
+                runtimePositionalAdtSupported = heapRuntimePositionalAdtLayoutWithRoot(resolved)(environment)([])(root),
+                children = heapCopyPlanChildren(resolved)(environment)
+            ))
 
 let recursive heapAnyOwnedChild (children: List(HeapLayoutChild)) =
     match children with
@@ -1298,16 +1415,18 @@ let recursive anyDropperOwnedChild (children: List(HeapDropperChild)) =
 let classifyHeapDropper (semanticType: SemanticType) (environment: TypeEnvironment) =
     (let resolved = resolveLayoutType(semanticType)(environment)
     in
-        let children = dropperChildren(resolved)(environment)
+        let root = heapClassificationRoot(resolved)(environment)
         in
-            HeapDropperFacts(
-                containsResource = heapResourceBearing(resolved)(environment),
-                containsUnresolvedType = heapUnresolvedType(resolved)(environment),
-                containsOwnedChild = anyDropperOwnedChild(children),
-                shallowCopy = classifyHeapShallowCopy(resolved)(environment),
-                runtimeRecordAdtSupported = heapRuntimeRecordAdtLayout(resolved)(environment)([]),
-                runtimeOwnedChildAdtSupported = heapRuntimeOwnedChildAdtLayout(resolved)(environment)([]),
-                runtimeTcoOwnedChildAdtSupported = heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)([]),
-                runtimePositionalAdtSupported = heapRuntimePositionalAdtLayout(resolved)(environment)([]),
-                children = children
-            ))
+            let children = dropperChildren(resolved)(environment)
+            in
+                HeapDropperFacts(
+                    containsResource = heapRootResourceBearing(resolved)(environment)(root),
+                    containsUnresolvedType = heapUnresolvedType(resolved)(environment),
+                    containsOwnedChild = anyDropperOwnedChild(children),
+                    shallowCopy = heapRootShallowCopy(resolved)(environment)(root),
+                    runtimeRecordAdtSupported = heapRuntimeRecordAdtLayoutWithRoot(resolved)(environment)([])(root),
+                    runtimeOwnedChildAdtSupported = heapRuntimeOwnedChildAdtLayoutWithRoot(resolved)(environment)([])(root),
+                    runtimeTcoOwnedChildAdtSupported = heapRuntimeTcoOwnedChildAdtLayoutWithRoot(resolved)(environment)([])(root),
+                    runtimePositionalAdtSupported = heapRuntimePositionalAdtLayoutWithRoot(resolved)(environment)([])(root),
+                    children = children
+                ))

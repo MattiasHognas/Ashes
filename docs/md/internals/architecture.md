@@ -1469,6 +1469,14 @@ eligibility, and ordered constructor/field/type/drop-kind children. The view omi
 kinds and unrelated root drop/reuse/rejection classifications. Settled monomorphic full-cache
 entries remain authoritative through projection. Constructor order, recorded contract answers,
 inline-plan recursion, and the general-RC normalizer fallback retain their existing decisions.
+Named-root copy-plan and dropper queries share constructor groups, recordness, and a resource
+query within that classification's immutable environment. A completed regular resource-free
+walk supplies exact negative facts for its visited named types; a changing-instantiation
+fallback supplies a negative only for its queried root. Recursive layout gates consult these
+facts through symbol-ID/type-name buckets followed by complete instantiated-type equality.
+Root constructor and record facts additionally require exact root identity. The context owns
+its retained type roots, ends with the classification, and never caches layout answers or
+changes the nominal ancestor paths used by recursive layout checks.
 The general-RC admissibility lowering query shares pending work across branches and falls back to its original path walk
 when display-based cycle keys would merge distinct instantiated types. Completed root answers
 are cached by exact type in a bounded, function-local list; substitutions, layout facts,
