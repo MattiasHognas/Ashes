@@ -135,10 +135,97 @@ let recursive lookupCountOr (missing: Int) (entries: List(ParameterReachEntry)) 
             then count
             else lookupCountOr(missing)(rest)(key)
 
-let recursive namesRepeat (entries: List(ParameterReachEntry)) =
+let recursive indexReachCounts (entries: List(ParameterReachEntry)) (index: MapTree(Str, Int)) =
+    match entries with
+        | [] -> index
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            match Ashes.Collection.Map.getStr(name)(index) with
+                | Some(_first) -> indexReachCounts(rest)(index)
+                | None ->
+                    index
+                    |> Ashes.Collection.Map.setStr(name)(count)
+                    |> indexReachCounts(rest)
+
+let lookupIndexedCountOr (missing: Int) (index: MapTree(Str, Int)) (name: Str) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(count) -> count
+        | None -> missing
+
+// The old suffix scan tests the next occurrence's count, not merely membership.
+// A repeated name with a negative count therefore does not trigger the fallback.
+let recursive namesRepeatIndexed (entries: List(ParameterReachEntry)) (seen: MapTree(Str, Bool)) =
     match entries with
         | [] -> false
-        | ParameterReachEntry { parameterName = name } :: rest -> lookupCountOr(-1)(rest)(name) >= 0 || namesRepeat(rest)
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            match Ashes.Collection.Map.getStr(name)(seen) with
+                | Some(_present) -> count >= 0 || namesRepeatIndexed(rest)(seen)
+                | None ->
+                    seen
+                    |> Ashes.Collection.Map.setStr(name)(true)
+                    |> namesRepeatIndexed(rest)
+
+let recursive linear_namesRepeat (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> false
+        | ParameterReachEntry { parameterName = name } :: rest -> lookupCountOr(-1)(rest)(name) >= 0 || linear_namesRepeat(rest)
+
+let recursive linear_summedOntoLeft (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) (added: List(ParameterReachEntry)) =
+    match left with
+        | [] -> added
+        | (ParameterReachEntry { parameterName = name, reachCount = count } as entry) :: rest ->
+            let other = lookupCountOr(-1)(right)(name)
+            in
+                if other < 0
+                then entry :: linear_summedOntoLeft(rest)(right)(added)
+                else ParameterReachEntry(parameterName = name, reachCount = capped(count + other)) :: linear_summedOntoLeft(rest)(right)(added)
+
+let recursive linear_summedBesideLeft (right: List(ParameterReachEntry)) (left: List(ParameterReachEntry)) =
+    match right with
+        | [] -> []
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            if lookupCountOr(-1)(left)(name) >= 0
+            then linear_summedBesideLeft(rest)(left)
+            else ParameterReachEntry(parameterName = name, reachCount = capped(count)) :: linear_summedBesideLeft(rest)(left)
+
+// The left table with the right one added into it: shared names in place, the right's own names
+// after them in its order. Built in one pass that only reads both tables. Writing the right's
+// entries into the left one at a time hands the table to a helper and takes it back once per entry,
+// and a helper that returns a list it was passed must return an owned one, which for a parameter
+// whose ownership it cannot see is a copy of the whole table. A right table naming something twice
+// keeps the entry-by-entry order, which is what defines the result then.
+let recursive linear_maximizedOntoLeft (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) (added: List(ParameterReachEntry)) =
+    match left with
+        | [] -> added
+        | (ParameterReachEntry { parameterName = name, reachCount = count } as entry) :: rest ->
+            let other = lookupCountOr(-1)(right)(name)
+            in
+                if other < 0 || count > other
+                then entry :: linear_maximizedOntoLeft(rest)(right)(added)
+                else ParameterReachEntry(parameterName = name, reachCount = other) :: linear_maximizedOntoLeft(rest)(right)(added)
+
+let recursive linear_absentFromLeft (right: List(ParameterReachEntry)) (left: List(ParameterReachEntry)) =
+    match right with
+        | [] -> []
+        | (ParameterReachEntry { parameterName = name } as entry) :: rest ->
+            if lookupCountOr(-1)(left)(name) >= 0
+            then linear_absentFromLeft(rest)(left)
+            else entry :: linear_absentFromLeft(rest)(left)
+
+// The branch-join counterpart of `sumCounts`, one reading pass for the same reason.
+// Map construction loses on short or strongly skewed tables. Inspect at most
+// 256 cells and preserve the original linear path below that measured boundary.
+let recursive hasCountIndexSize (entries: List(ParameterReachEntry)) (remaining: Int) =
+    if remaining == 0
+    then true
+    else
+        match entries with
+            | [] -> false
+            | _entry :: rest -> hasCountIndexSize(rest)(remaining - 1)
+
+let namesRepeat (entries: List(ParameterReachEntry)) =
+    if hasCountIndexSize(entries)(256)
+    then namesRepeatIndexed(entries)(Ashes.Collection.Map.empty)
+    else linear_namesRepeat(entries)
 
 let recursive sumCountsEntryByEntry (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) =
     match right with
@@ -146,21 +233,21 @@ let recursive sumCountsEntryByEntry (left: List(ParameterReachEntry)) (right: Li
         | ParameterReachEntry { parameterName = key, reachCount = count } :: rest ->
             sumCountsEntryByEntry(setCount(key)(capped(lookupCount(left)(key) + count))(left))(rest)
 
-let recursive summedOntoLeft (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) (added: List(ParameterReachEntry)) =
+let recursive summedOntoLeft (left: List(ParameterReachEntry)) (right: MapTree(Str, Int)) (added: List(ParameterReachEntry)) =
     match left with
         | [] -> added
         | (ParameterReachEntry { parameterName = name, reachCount = count } as entry) :: rest ->
-            let other = lookupCountOr(-1)(right)(name)
+            let other = lookupIndexedCountOr(-1)(right)(name)
             in
                 if other < 0
                 then entry :: summedOntoLeft(rest)(right)(added)
                 else ParameterReachEntry(parameterName = name, reachCount = capped(count + other)) :: summedOntoLeft(rest)(right)(added)
 
-let recursive summedBesideLeft (right: List(ParameterReachEntry)) (left: List(ParameterReachEntry)) =
+let recursive summedBesideLeft (right: List(ParameterReachEntry)) (left: MapTree(Str, Int)) =
     match right with
         | [] -> []
         | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
-            if lookupCountOr(-1)(left)(name) >= 0
+            if lookupIndexedCountOr(-1)(left)(name) >= 0
             then summedBesideLeft(rest)(left)
             else ParameterReachEntry(parameterName = name, reachCount = capped(count)) :: summedBesideLeft(rest)(left)
 
@@ -174,9 +261,19 @@ let sumCounts (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry
     if namesRepeat(right)
     then sumCountsEntryByEntry(left)(right)
     else
-        left
-        |> summedBesideLeft(right)
-        |> summedOntoLeft(left)(right)
+        if hasCountIndexSize(right)(256) && hasCountIndexSize(left)(256)
+        then
+            let leftIndex = indexReachCounts(left)(Ashes.Collection.Map.empty)
+            in
+                let rightIndex = indexReachCounts(right)(Ashes.Collection.Map.empty)
+                in
+                    leftIndex
+                    |> summedBesideLeft(right)
+                    |> summedOntoLeft(left)(rightIndex)
+        else
+            left
+            |> linear_summedBesideLeft(right)
+            |> linear_summedOntoLeft(left)(right)
 
 let recursive anyCapped (entries: List(ParameterReachEntry)) =
     match entries with
@@ -260,21 +357,21 @@ let recursive maxCountsEntryByEntry (left: List(ParameterReachEntry)) (right: Li
                 else
                     maxCountsEntryByEntry(setCount(key)(count)(left))(rest)
 
-let recursive maximizedOntoLeft (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry)) (added: List(ParameterReachEntry)) =
+let recursive maximizedOntoLeft (left: List(ParameterReachEntry)) (right: MapTree(Str, Int)) (added: List(ParameterReachEntry)) =
     match left with
         | [] -> added
         | (ParameterReachEntry { parameterName = name, reachCount = count } as entry) :: rest ->
-            let other = lookupCountOr(-1)(right)(name)
+            let other = lookupIndexedCountOr(-1)(right)(name)
             in
                 if other < 0 || count > other
                 then entry :: maximizedOntoLeft(rest)(right)(added)
                 else ParameterReachEntry(parameterName = name, reachCount = other) :: maximizedOntoLeft(rest)(right)(added)
 
-let recursive absentFromLeft (right: List(ParameterReachEntry)) (left: List(ParameterReachEntry)) =
+let recursive absentFromLeft (right: List(ParameterReachEntry)) (left: MapTree(Str, Int)) =
     match right with
         | [] -> []
         | (ParameterReachEntry { parameterName = name } as entry) :: rest ->
-            if lookupCountOr(-1)(left)(name) >= 0
+            if lookupIndexedCountOr(-1)(left)(name) >= 0
             then absentFromLeft(rest)(left)
             else entry :: absentFromLeft(rest)(left)
 
@@ -283,11 +380,20 @@ let maxCounts (left: List(ParameterReachEntry)) (right: List(ParameterReachEntry
     if namesRepeat(right)
     then maxCountsEntryByEntry(left)(right)
     else
-        left
-        |> absentFromLeft(right)
-        |> maximizedOntoLeft(left)(right)
+        if hasCountIndexSize(right)(256) && hasCountIndexSize(left)(256)
+        then
+            let leftIndex = indexReachCounts(left)(Ashes.Collection.Map.empty)
+            in
+                let rightIndex = indexReachCounts(right)(Ashes.Collection.Map.empty)
+                in
+                    leftIndex
+                    |> absentFromLeft(right)
+                    |> maximizedOntoLeft(left)(rightIndex)
+        else
+            left
+            |> linear_absentFromLeft(right)
+            |> linear_maximizedOntoLeft(left)(right)
 
-// A branch join (at most one arm executes) and the fixpoint join: multiplicities take the maximum.
 let reachJoin (left: ResultReachState) (right: ResultReachState) =
     match (left, right) with
         | (ResultReachState { counts = leftCounts, causes = leftCauses }, ResultReachState { counts = rightCounts, causes = rightCauses }) ->

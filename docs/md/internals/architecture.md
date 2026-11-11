@@ -832,6 +832,14 @@ checks slash-delimited prefixes only when a nonempty suffix follows. Duplicate
 names and count ordering are unchanged. The capped-count short-circuit avoids
 index construction; tokenShared retains its distinct ancestor semantics.
 
+Result-reach sum and branch-join merges preserve ordered count lists and the first
+matching count, including negative sentinel behavior. For two tables of at least
+256 entries, per-query string maps replace repeated cross-table scans. Smaller
+or skewed merges retain the original list path; duplicate detection independently
+uses its original scan below 256 entries. Repeated right-hand names still select
+the original entry-by-entry fallback. The cutoff reflects measured construction
+cost, and introduces no semantic size limit or retained cross-query state.
+
 The self-hosted inspect-only parameter fixpoint keeps its public ownership table
 in registration order. Each pass builds a private string-keyed lookup index from
 the complete previous table before walking any function bodies. A second name
