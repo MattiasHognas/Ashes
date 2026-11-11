@@ -91,8 +91,8 @@ let testEdgePolicies unit =
                                 match typeGraphNode(SemNamed(88)("Socket")([]))(afterHandle) with
                                     | (socket, _last) -> test.assertEqual(true)(socket.directResource))))
 
-// Keep this regression separate while diagnosing the stage-0 resolver dropping SemPointer's
-// reconstruction after a recursive call. A pointer is not a resource-containment edge.
+// Runtime resolution preserves pointer wrappers. Pointer components participate in argument
+// containment, while a pointer is not a resource-containment edge.
 let runTypeGraphPointerIndexTests unit =
     match ""
     |> testEnvironment
@@ -122,7 +122,7 @@ let testLazyNonregularGraph unit =
                         |> (given (_) -> test.assertEqual(2)(next.nodeCount)))
 
 let testFactSeparation unit =
-    (let semanticType = named(0)("Box")([SemInt])
+    (let semanticType = named(0)("Box")([SemVariable(92)])
     in
         let initial =
             ""
@@ -147,6 +147,10 @@ let testFactSeparation unit =
                     |> (given (_) ->
                         completed
                         |> typeGraphRootFact(ResourceFact)(named(0)("Box")([SemString]))
+                        |> test.assertEqual(None))
+                    |> (given (_) ->
+                        indexed
+                        |> typeGraphRootFact(UnresolvedFact)(semanticType)
                         |> test.assertEqual(None))
                     |> (given (_) -> test.assertEqual(1)(completed.nodeCount)))
 
