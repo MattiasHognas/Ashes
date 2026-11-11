@@ -1386,7 +1386,13 @@ General RC admissibility asks only for containment flags and ordered child type/
 pairs. It uses `classifyHeapAdmissibility` for generic or uncached types rather than eagerly
 computing unrelated copy/reuse layouts and child copy kinds. A monomorphic cache hit projects
 the same facts from the existing full layout; eligibility guards and cycle rules are unchanged.
-The lowering query shares pending work across branches and falls back to its original path walk
+Copy-plan queries similarly use a dedicated `HeapCopyPlanFacts` view on cache misses: shallow
+copy eligibility, the four runtime-layout flags consulted by the planner, arena deep-copy
+eligibility, and ordered constructor/field/type/drop-kind children. The view omits child copy
+kinds and unrelated root drop/reuse/rejection classifications. Settled monomorphic full-cache
+entries remain authoritative through projection. Constructor order, recorded contract answers,
+inline-plan recursion, and the general-RC normalizer fallback retain their existing decisions.
+The general-RC admissibility lowering query shares pending work across branches and falls back to its original path walk
 when display-based cycle keys would merge distinct instantiated types. Completed root answers
 are cached by exact type in a bounded, function-local list; substitutions, layout facts,
 declarations, and inference defaults invalidate that list. Dropper synthesis separately caches

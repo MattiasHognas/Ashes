@@ -39,6 +39,8 @@ export (
     type HeapLayoutRejections(..),
     type HeapLayoutFacts(..),
     type HeapAdmissibilityFacts(..),
+    type HeapCopyPlanChild(..),
+    type HeapCopyPlanFacts(..),
     value canArenaResetLayout,
     value heapRuntimeRecursiveCopyAdtLayout,
     value heapRuntimeOwnedFieldLayout,
@@ -57,6 +59,9 @@ export (
     value classifyHeapArenaDeepCopy,
     value classifyHeapAdmissibility,
     value classifyHeapShallowCopy,
+    value classifyHeapCopyPlan,
+    value projectHeapCopyPlanFacts,
+    value projectHeapCopyPlanChildren,
 )
 
 type HeapChildDropKind =
@@ -1087,6 +1092,75 @@ let classifyHeapAdmissibility (semanticType: SemanticType) (environment: TypeEnv
             containsResource = heapResourceBearing(resolved)(environment),
             containsUnresolvedType = heapUnresolvedType(resolved)(environment),
             children = heapAdmissibilityChildren(resolved)(environment)
+        ))
+
+// Copy-plan consumers need drop ownership and field order, but never child copy kinds or
+// root droppability/resource/rejection facts. Keep this a distinct, complete query result.
+type HeapCopyPlanChild =
+    | constructorName: Maybe(Str)
+    | fieldIndex: Int
+    | childType: SemanticType
+    | dropKind: HeapChildDropKind
+    deriving {Eq, Show}
+
+type HeapCopyPlanFacts =
+    | shallowCopy: Bool
+    | arenaDeepCopySupported: Bool
+    | runtimeRecordAdtSupported: Bool
+    | runtimeOwnedChildAdtSupported: Bool
+    | runtimeTcoOwnedChildAdtSupported: Bool
+    | runtimePositionalAdtSupported: Bool
+    | children: List(HeapCopyPlanChild)
+    deriving {Eq, Show}
+
+let recursive projectHeapCopyPlanChildren (children: List(HeapLayoutChild)) =
+    match children with
+        | [] -> []
+        | HeapLayoutChild { constructorName = name, fieldIndex = index, childType = childType, dropKind = dropKind } :: rest -> HeapCopyPlanChild(constructorName = name, fieldIndex = index, childType = childType, dropKind = dropKind) :: projectHeapCopyPlanChildren(rest)
+
+let projectHeapCopyPlanFacts (facts: HeapLayoutFacts) =
+    HeapCopyPlanFacts(
+        shallowCopy = facts.structuralCopy == ShallowCopy,
+        arenaDeepCopySupported = facts.arenaDeepCopySupported,
+        runtimeRecordAdtSupported = facts.runtimeRecordAdtSupported,
+        runtimeOwnedChildAdtSupported = facts.runtimeOwnedChildAdtSupported,
+        runtimeTcoOwnedChildAdtSupported = facts.runtimeTcoOwnedChildAdtSupported,
+        runtimePositionalAdtSupported = facts.runtimePositionalAdtSupported,
+        children = projectHeapCopyPlanChildren(facts.children)
+    )
+
+let recursive heapCopyPlanChildrenOnto (name: Maybe(Str)) (fields: List(SemanticType)) (index: Int) (environment: TypeEnvironment) (tail: List(HeapCopyPlanChild)) =
+    match fields with
+        | [] -> tail
+        | fieldType :: rest -> HeapCopyPlanChild(constructorName = name, fieldIndex = index, childType = fieldType, dropKind = heapDropKind(fieldType)(environment)) :: heapCopyPlanChildrenOnto(name)(rest)(index + 1)(environment)(tail)
+
+let recursive heapNamedCopyPlanChildren (grouped: List((Str, List(SemanticType)))) (environment: TypeEnvironment) =
+    match grouped with
+        | [] -> []
+        | (name, fields) :: rest ->
+            environment
+            |> heapNamedCopyPlanChildren(rest)
+            |> heapCopyPlanChildrenOnto(Some(name))(fields)(0)(environment)
+
+let heapCopyPlanChildren (resolved: SemanticType) (environment: TypeEnvironment) =
+    match resolved with
+        | SemList(element) -> heapCopyPlanChildrenOnto(None)([element, resolved])(0)(environment)([])
+        | SemTuple(elements) -> heapCopyPlanChildrenOnto(None)(elements)(0)(environment)([])
+        | SemNamed(_id, _name, _args) ->
+            heapNamedCopyPlanChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
+        | _ -> []
+
+let classifyHeapCopyPlan (semanticType: SemanticType) (environment: TypeEnvironment) =
+    (let resolved = resolveLayoutType(semanticType)(environment)
+    in
+        HeapCopyPlanFacts(
+            shallowCopy = classifyHeapShallowCopy(resolved)(environment),
+            arenaDeepCopySupported = heapArenaDeepCopyLayout(resolved)(environment)([]),
+            runtimeRecordAdtSupported = heapRuntimeRecordAdtLayout(resolved)(environment)([]),
+            runtimeOwnedChildAdtSupported = heapRuntimeOwnedChildAdtLayout(resolved)(environment)([]),
+            runtimeTcoOwnedChildAdtSupported = heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)([]),
+            runtimePositionalAdtSupported = heapRuntimePositionalAdtLayout(resolved)(environment)([]),
+            children = heapCopyPlanChildren(resolved)(environment)
         ))
 
 let recursive heapAnyOwnedChild (children: List(HeapLayoutChild)) =

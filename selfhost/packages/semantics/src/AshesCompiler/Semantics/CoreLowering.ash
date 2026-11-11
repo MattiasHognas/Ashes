@@ -7455,6 +7455,41 @@ let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: 
         | [] -> false
         | HeapLayoutChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyChildSurvivesNoReset(rest)(state)
 
+// A settled monomorphic layout remains authoritative, including inferred contract flags.
+// Only an uncached copy-plan query computes the narrower view from the environment.
+let heapCopyPlanFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(facts) -> projectHeapCopyPlanFacts(facts)
+                | None ->
+                    state
+                    |> coverageEnvironment
+                    |> classifyHeapCopyPlan(resolved)
+        | resolved ->
+            state
+            |> coverageEnvironment
+            |> classifyHeapCopyPlan(resolved)
+
+let runtimeManagedCopyPlanLayout (facts: HeapCopyPlanFacts) = facts.runtimeRecordAdtSupported || facts.runtimeOwnedChildAdtSupported || facts.runtimeTcoOwnedChildAdtSupported || facts.runtimePositionalAdtSupported
+
+let recursive ownedCopyPlanChildren (constructorName: Str) (children: List(HeapCopyPlanChild)) =
+    match children with
+        | [] -> []
+        | HeapCopyPlanChild { dropKind = NoChildDrop } :: rest -> ownedCopyPlanChildren(constructorName)(rest)
+        | HeapCopyPlanChild { constructorName = Some(name), fieldIndex = index, childType = childType } :: rest ->
+            if name == constructorName
+            then (index, childType) :: ownedCopyPlanChildren(constructorName)(rest)
+            else ownedCopyPlanChildren(constructorName)(rest)
+        | _ :: rest -> ownedCopyPlanChildren(constructorName)(rest)
+
+let recursive anyCopyPlanChildSurvivesNoReset (children: List(HeapCopyPlanChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> false
+        | HeapCopyPlanChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyCopyPlanChildSurvivesNoReset(rest)(state)
+
 let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemString -> Some(LeafArgumentCopy(-1))
@@ -7472,14 +7507,14 @@ let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: Co
                 | Some(plans) -> Some(TupleArgumentCopy(plans))
                 | None -> None
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match heapFactsOf(named)(state) with
-                | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
+            match heapCopyPlanFactsOf(named)(state) with
+                | HeapCopyPlanFacts { shallowCopy = true } ->
                     state
                     |> shallowAdtCopySizeBytes(name)
                     |> ShallowAdtArgumentCopy
                     |> Some
-                | HeapLayoutFacts { children = children } as facts ->
-                    if runtimeManagedAdtLayout(facts)
+                | HeapCopyPlanFacts { children = children } as facts ->
+                    if runtimeManagedCopyPlanLayout(facts)
                     then
                         let layouts = state |> stateConstructorsOfType(name)
                         in
@@ -7510,14 +7545,14 @@ and childCopyPlansOfWith (general: Bool) (children: List((Int, SemanticType))) (
             match (copyPlanOf(general)(childType)(state), childCopyPlansOfWith(general)(rest)(state)) with
                 | (Some(plan), Some(plans)) -> Some((index, plan) :: plans)
                 | _ -> None
-and constructorCopyPlansOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+and constructorCopyPlansOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapCopyPlanChild)) (state: CoreLoweringState) =
     match layouts with
         | [] -> Some([])
         | (CoreConstructorLayout { name = constructorName, tag = tag, tagless = tagless } as layout) :: rest ->
-            match (childCopyPlansOfWith(general)(ownedConstructorChildren(constructorName)(children))(state), constructorCopyPlansOfWith(general)(rest)(children)(state)) with
+            match (childCopyPlansOfWith(general)(ownedCopyPlanChildren(constructorName)(children))(state), constructorCopyPlansOfWith(general)(rest)(children)(state)) with
                 | (Some(plans), Some(restPlans)) -> Some((tag, layoutAllocationSizeBytes(layout), tagless, plans) :: restPlans)
                 | _ -> None
-and adtCopyPlanOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+and adtCopyPlanOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapCopyPlanChild)) (state: CoreLoweringState) =
     match constructorCopyPlansOfWith(general)(layouts)(children)(state) with
         | Some(single :: []) -> Some(ConstructorArgumentCopy(single))
         | Some([]) -> None
@@ -7529,17 +7564,20 @@ and adtCopyPlanOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (ch
 // synthesized normalization helper, one call per site instead of its whole graph. An
 // argument-free type is answered from the table the program's start recorded: classifying one
 // walks its children's copy plans, which ask the same of every record nested in it.
-and isInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+and isInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapCopyPlanFacts) (state: CoreLoweringState) =
     match recordedContractRecord(named)(state) with
         | Some(answer) -> answer
-        | None -> classifyInlineCopiedContractRecord(named)(layouts)(facts)(state)
-and classifyInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+        | None -> classifyCopyPlanContractRecord(named)(layouts)(facts)(state)
+and classifyCopyPlanContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapCopyPlanFacts) (state: CoreLoweringState) =
     match (layouts, facts) with
-        | (_layout :: [], HeapLayoutFacts { runtimeOwnedChildAdtSupported = false, arenaDeepCopySupported = true, children = children }) ->
-            anyChildSurvivesNoReset(children)(state) && !canRuntimeManageRecursiveCopyAdt(named)(state) && (match adtCopyPlanOfWith(false)(layouts)(children)(state) with
+        | (_layout :: [], HeapCopyPlanFacts { runtimeOwnedChildAdtSupported = false, arenaDeepCopySupported = true, children = children }) ->
+            anyCopyPlanChildSurvivesNoReset(children)(state) && !canRuntimeManageRecursiveCopyAdt(named)(state) && (match adtCopyPlanOfWith(false)(layouts)(children)(state) with
                 | Some(_plan) -> true
                 | None -> false)
         | _ -> false
+
+let classifyInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+    classifyCopyPlanContractRecord(named)(layouts)(projectHeapCopyPlanFacts(facts))(state)
 
 // The copy of a value into the reference-counted heap by the inline copies alone, which is also
 // how the placement rules ask whether a type has one.
@@ -7588,7 +7626,9 @@ let heapChildTypesOfNamed (named: SemanticType) (state: CoreLoweringState) =
 let inlineAdtCopyPlanOf (named: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(named) with
         | SemNamed(_symbolId, name, _arguments) as resolved ->
-            adtCopyPlanOfWith(false)(state |> stateConstructorsOfType(name))(heapChildrenOfNamed(resolved)(state))(state)
+            adtCopyPlanOfWith(false)(state |> stateConstructorsOfType(name))(state
+            |> heapChildrenOfNamed(resolved)
+            |> projectHeapCopyPlanChildren)(state)
         | _ -> None
 
 // Stage 0's `EmitRuntimeManagedTcoParamCopy` and `EmitRuntimeManagedTcoDeepCopy`: the copy of a value
