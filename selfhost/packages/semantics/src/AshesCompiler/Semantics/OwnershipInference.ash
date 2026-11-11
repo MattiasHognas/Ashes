@@ -15,6 +15,7 @@ import AshesCompiler.Semantics.PathOccurrences.maxPathOccurrences
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
+import Ashes.Collection.Map.MapTree
 export (
     type FunctionSignature(..),
     value isParamUsedOnlyAsBorrowRead,
@@ -43,6 +44,9 @@ type FunctionSignature =
 
 // Each registered function name with the ownership of each of its parameters, in parameter order.
 type alias ProgramParameterOwnership = List((Str, List((Str, ParameterOwnership))))
+
+// A missing map entry is unknown; a stored None stays ambiguous after any duplicate.
+type alias UniqueParameterOwnership = MapTree(Str, Maybe(List((Str, ParameterOwnership))))
 
 let notBool (b: Bool) =
     if b
@@ -427,22 +431,29 @@ and patternFieldBoundNames (fields: List((Str, Pattern))) (names: List(Str)) =
 
 // The registered function `name` resolves to exactly one table entry whose arity matches the
 // call; a shadowed, unregistered, ambiguous, or partially applied callee resolves to nothing.
-let recursive lookupUniqueOwnership (name: Str) (table: ProgramParameterOwnership) (found: Maybe(List((Str, ParameterOwnership)))) =
+let recursive indexUniqueOwnership (table: ProgramParameterOwnership) (index: UniqueParameterOwnership) =
     match table with
-        | [] -> found
-        | (candidate, ownership) :: rest ->
-            if candidate != name
-            then lookupUniqueOwnership(name)(rest)(found)
-            else
-                match found with
-                    | Some(_) -> None
-                    | None -> lookupUniqueOwnership(name)(rest)(Some(ownership))
+        | [] -> index
+        | (name, ownership) :: rest ->
+            let entry =
+                match Ashes.Collection.Map.getStr(name)(index) with
+                    | None -> Some(ownership)
+                    | Some(_previous) -> None
+            in
+                index
+                |> Ashes.Collection.Map.setStr(name)(entry)
+                |> indexUniqueOwnership(rest)
 
-let handOffOwnership (table: ProgramParameterOwnership) (shadowed: List(Str)) (callee: Str) (argumentCount: Int) =
+let lookupUniqueOwnership (name: Str) (index: UniqueParameterOwnership) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(ownership) -> ownership
+        | None -> None
+
+let handOffOwnership (table: UniqueParameterOwnership) (shadowed: List(Str)) (callee: Str) (argumentCount: Int) =
     if listContainsStr(shadowed)(callee)
     then None
     else
-        match lookupUniqueOwnership(callee)(table)(None) with
+        match lookupUniqueOwnership(callee)(table) with
             | Some(ownership) ->
                 if length(ownership) == argumentCount
                 then Some(ownership)
@@ -454,7 +465,7 @@ let isWholeParameter (expr: Expr) (param: Str) =
         | ExprVar(name) -> name == param
         | _ -> false
 
-let recursive borrowReadWalk (table: ProgramParameterOwnership) (shadowed: List(Str)) (expr: Expr) (param: Str) =
+let recursive borrowReadWalk (table: UniqueParameterOwnership) (shadowed: List(Str)) (expr: Expr) (param: Str) =
     match expr with
         | ExprAt(_span, inner) -> borrowReadWalk(table)(shadowed)(inner)(param)
         | ExprInt(_) -> true
@@ -536,11 +547,11 @@ let recursive borrowReadWalk (table: ProgramParameterOwnership) (shadowed: List(
             param
             |> mentionsVar(expr)
             |> notBool
-and borrowReadPair (table: ProgramParameterOwnership) (shadowed: List(Str)) (left: Expr) (right: Expr) (param: Str) =
+and borrowReadPair (table: UniqueParameterOwnership) (shadowed: List(Str)) (left: Expr) (right: Expr) (param: Str) =
     if borrowReadWalk(table)(shadowed)(left)(param)
     then borrowReadWalk(table)(shadowed)(right)(param)
     else false
-and borrowReadCall (table: ProgramParameterOwnership) (shadowed: List(Str)) (call: Expr) (param: Str) =
+and borrowReadCall (table: UniqueParameterOwnership) (shadowed: List(Str)) (call: Expr) (param: Str) =
     match collectCallArgsAndRoot(call)([]) with
         | (root, args) ->
             match stripSpan(root) with
@@ -567,7 +578,7 @@ and borrowReadCall (table: ProgramParameterOwnership) (shadowed: List(Str)) (cal
                     if borrowReadWalk(table)(shadowed)(root)(param)
                     then borrowReadList(table)(shadowed)(args)(param)
                     else false
-and borrowReadHandOff (table: ProgramParameterOwnership) (shadowed: List(Str)) (args: List(Expr)) (ownership: List((Str, ParameterOwnership))) (param: Str) =
+and borrowReadHandOff (table: UniqueParameterOwnership) (shadowed: List(Str)) (args: List(Expr)) (ownership: List((Str, ParameterOwnership))) (param: Str) =
     match args with
         | [] -> true
         | arg :: restArgs ->
@@ -584,21 +595,21 @@ and borrowReadHandOff (table: ProgramParameterOwnership) (shadowed: List(Str)) (
                     then borrowReadHandOff(table)(shadowed)(restArgs)(restOwnership)(param)
                     else false
                 | [] -> borrowReadList(table)(shadowed)(args)(param)
-and borrowReadList (table: ProgramParameterOwnership) (shadowed: List(Str)) (list: List(Expr)) (param: Str) =
+and borrowReadList (table: UniqueParameterOwnership) (shadowed: List(Str)) (list: List(Expr)) (param: Str) =
     match list with
         | [] -> true
         | head :: tail ->
             if borrowReadWalk(table)(shadowed)(head)(param)
             then borrowReadList(table)(shadowed)(tail)(param)
             else false
-and borrowReadFields (table: ProgramParameterOwnership) (shadowed: List(Str)) (fields: List((Str, Expr))) (param: Str) =
+and borrowReadFields (table: UniqueParameterOwnership) (shadowed: List(Str)) (fields: List((Str, Expr))) (param: Str) =
     match fields with
         | [] -> true
         | (_field, expr) :: tail ->
             if borrowReadWalk(table)(shadowed)(expr)(param)
             then borrowReadFields(table)(shadowed)(tail)(param)
             else false
-and borrowReadArms (table: ProgramParameterOwnership) (shadowed: List(Str)) (arms: List((Pattern, Expr, Maybe(Expr)))) (param: Str) =
+and borrowReadArms (table: UniqueParameterOwnership) (shadowed: List(Str)) (arms: List((Pattern, Expr, Maybe(Expr)))) (param: Str) =
     match arms with
         | [] -> true
         | (pattern, body, guard) :: tail ->
@@ -617,7 +628,7 @@ and borrowReadArms (table: ProgramParameterOwnership) (shadowed: List(Str)) (arm
                     else false
 
 // The single-function verdict: no other function is known, so every hand-off consumes.
-let isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) = borrowReadWalk([])([])(expr)(param)
+let isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) = borrowReadWalk(Ashes.Collection.Map.empty)([])(expr)(param)
 
 // --- Whole-program inspect-only parameters ---
 // `inferProgramParameterOwnership` refines the single-function verdict with every other registered
@@ -647,7 +658,7 @@ let recursive unprovenProgramParameterOwnership (funcs: List((Str, List(Str), Ex
         | [] -> []
         | (name, params, _body) :: rest -> (name, allConsumed(params)) :: unprovenProgramParameterOwnership(rest)
 
-let recursive promoteParameters (table: ProgramParameterOwnership) (shadowed: List(Str)) (body: Expr) (previous: List((Str, ParameterOwnership))) =
+let recursive promoteParameters (table: UniqueParameterOwnership) (shadowed: List(Str)) (body: Expr) (previous: List((Str, ParameterOwnership))) =
     match previous with
         | [] -> []
         | (param, Borrowed) :: rest -> (param, Borrowed) :: promoteParameters(table)(shadowed)(body)(rest)
@@ -658,7 +669,7 @@ let recursive promoteParameters (table: ProgramParameterOwnership) (shadowed: Li
                 else Consumed
             in (param, own) :: promoteParameters(table)(shadowed)(body)(rest)
 
-let recursive refineProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) (table: ProgramParameterOwnership) (previous: ProgramParameterOwnership) =
+let recursive refineProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) (table: UniqueParameterOwnership) (previous: ProgramParameterOwnership) =
     match funcs with
         | [] -> []
         | (name, params, body) :: restFuncs ->
@@ -667,11 +678,13 @@ let recursive refineProgramParameterOwnership (funcs: List((Str, List(Str), Expr
                 | [] -> []
 
 let recursive runInspectOnlyFixpoint (funcs: List((Str, List(Str), Expr))) (table: ProgramParameterOwnership) =
-    (let next = refineProgramParameterOwnership(funcs)(table)(table)
+    (let index = indexUniqueOwnership(table)(Ashes.Collection.Map.empty)
     in
-        if next == table
-        then table
-        else runInspectOnlyFixpoint(funcs)(next))
+        let next = refineProgramParameterOwnership(funcs)(index)(table)
+        in
+            if next == table
+            then table
+            else runInspectOnlyFixpoint(funcs)(next))
 
 // The parameter ownership of every registered function, one `(name, parameters, body)` triple per
 // function, after the whole-program fixpoint; entries keep the registration order.

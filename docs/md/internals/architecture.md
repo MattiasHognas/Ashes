@@ -820,6 +820,19 @@ follows argument aliases through the returned closure to its later uses. This
 placement fact does not change resource ownership summaries,
 call adoption, or result reachability. `GRC_NO_ARENACURRYBORROW` disables it.
 
+The self-hosted inspect-only parameter fixpoint keeps its public ownership table
+in registration order. Each pass builds a private string-keyed lookup index from
+the complete previous table before walking any function bodies. A second name
+occurrence permanently marks that index entry ambiguous, including later third
+occurrences. Handoffs still require an unshadowed name and exact argument count;
+newly promoted parameters become visible only in the following pass. The index
+has pass-local lifetime and is not retained between independent inference calls.
+The three stage-0 rules are not mirrored for this case: unchanged stage 1 is
+already flat at 100 and 1000 complete inference invocations on the exact original
+AST, including expression wrappers and byte spans. Reproducible fixtures and the
+historical comparison renderer live in `selfhost/tests/ownership-lookup/`.
+
+
 Which side does what. Everything that depends on ownership, reference counting,
 reuse, arena scoping, trait evidence, capabilities, purity across closures and
 user ADTs, or closure construction is Ashes-only: LLVM sees opaque calls and

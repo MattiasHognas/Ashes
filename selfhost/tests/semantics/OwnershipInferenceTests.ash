@@ -589,6 +589,38 @@ let testPartialHandOffIsConsumed unit =
     |> assertConsumed("part")(["h"])
     |> done
 
+// Duplicate registered names remain ambiguous even when every occurrence inspects its handle.
+let testDuplicateCalleesAreConsumed unit =
+    peekSource + peekSource + "let wrap h = peek(h)\n"
+    |> programOwnershipTable
+    |> assertConsumed("wrap")(["h"])
+    |> done
+
+let testThirdDuplicateDoesNotRestoreUniqueness unit =
+    peekSource + peekSource + peekSource + "let wrap h = peek(h)\n"
+    |> programOwnershipTable
+    |> assertConsumed("wrap")(["h"])
+    |> done
+
+let testParameterShadowedCalleeIsConsumed unit =
+    peekSource + "let wrap peek h = peek(h)\n"
+    |> programOwnershipTable
+    |> assertConsumed("wrap")(["peek", "h"])
+    |> done
+
+let testOverAppliedHandOffIsConsumed unit =
+    peekSource + "let wrap h = peek(h)(2)\n"
+    |> programOwnershipTable
+    |> assertConsumed("wrap")(["h"])
+    |> done
+
+let testTransitiveInspectorsAreBorrowed unit =
+    peekSource + "let mid h = peek(h)\nlet outer h = mid(h)\n"
+    |> programOwnershipTable
+    |> assertBorrowed("mid")(["h"])
+    |> assertBorrowed("outer")(["h"])
+    |> done
+
 let recursive signaturesOf (funcs: List((Str, List(Str), Expr))) =
     match funcs with
         | [] -> []
@@ -697,6 +729,11 @@ let runOwnershipInferenceTests unit =
     |> testUnregisteredCalleeIsConsumed
     |> testShadowedCalleeIsConsumed
     |> testPartialHandOffIsConsumed
+    |> testDuplicateCalleesAreConsumed
+    |> testThirdDuplicateDoesNotRestoreUniqueness
+    |> testParameterShadowedCalleeIsConsumed
+    |> testOverAppliedHandOffIsConsumed
+    |> testTransitiveInspectorsAreBorrowed
     |> testProgramSummariesSeeThroughHandOff
     |> testNullarySeededAccumulatorHandedOnOncePerPathIsMoveSafe
     |> reportOwnershipInferenceSuccess
