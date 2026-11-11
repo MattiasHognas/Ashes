@@ -1,0 +1,1 @@
+{"name":"diagnostic-ir-dump","entry":"Main.ash","sourceRoots":["."],"devDependencies":{"cli":{"path":"../../packages/cli"}},"overrides":{"AshesCompiler.Frontend":{"path":"../../packages/frontend"},"AshesCompiler.Semantics":{"path":"../../packages/semantics"},"AshesCompiler.Backend":{"path":"../../packages/backend"},"AshesCompiler.Formatter":{"path":"../../packages/formatter"}}}

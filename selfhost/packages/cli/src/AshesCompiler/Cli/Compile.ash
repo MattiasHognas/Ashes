@@ -43,6 +43,7 @@ import Ashes.Ffi
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.IO.Path
+import AshesCompiler.Cli.DiagnosticIrDump
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
@@ -530,7 +531,10 @@ let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabl
         | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
             optimized
             |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
-            |> (given (_) -> emitAndLink(outputPath)(optimized))
+            |> (given (_) ->
+                match writeDiagnosticIrDump(lowered)(optimized) with
+                    | Error(message) -> Error(message)
+                    | Ok(_) -> emitAndLink(outputPath)(optimized))
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.

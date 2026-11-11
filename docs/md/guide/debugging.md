@@ -566,3 +566,19 @@ flowchart LR
    DWARF debug info from the binary to map machine code back to source
    locations.
 4. Responses flow back through the same chain.
+
+## Self-hosted IR capture for compiler investigations
+
+The self-hosted compiler has an opt-in development hook for investigations that
+need its lowered and optimized IR. Set `ASHES_DIAGNOSTIC_IR_PREFIX` to a path in
+an existing directory; compilation writes `<prefix>.lowered.ir` and
+`<prefix>.final.ir` using the existing IR formatter before native emission.
+`ASHES_DIAGNOSTIC_IR_FILTER`, when nonempty, uses that formatter's existing
+ASCII-case-insensitive substring matching across generated labels, source names,
+qualified source names, and parent labels. An unset or empty filter selects all
+functions. This is separate from the stage-0 `--emit-ir` command-line option.
+
+An unset or empty prefix disables IR formatting and file writes. Requested write
+failures fail compilation with a diagnostic; a successful first dump remains if
+the second write fails. Capturing IR does not alter instructions or ownership
+metadata. Use distinct output prefixes to preserve evidence between iterations.
