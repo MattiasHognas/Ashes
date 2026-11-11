@@ -3151,3 +3151,21 @@ Adding a new compile target requires:
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | ELF64 | ELF64 (AArch64) |
 | `win-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |
 | `win-arm64` | `aarch64-pc-windows-msvc` | COFF (AArch64) | PE32+ (AArch64) |
+
+### Selfhost join ownership follows emitted backedges
+
+A syntactic saturated self-call is not proof that a branch cannot reach its join:
+inside a curried helper it can remain a `CallClosure` whose returned owner is
+parked in a local cleanup slot. Stage 1 now uses the existing function-local
+backedge dummy-temp provenance for both unreachable-arm and neutral-funnel arm
+facts, matching stage 0's emitted ownership-neutral values. A nonempty join of
+only proven backedges propagates that fact; a mixed join keeps every reaching
+call result in its ownership calculation. The separate syntactic funnel checks
+used for escape-shape and static-string planning retain their existing meaning.
+
+This corrects a premature free in `parserParseSugarParameters`: a recursive
+owned pair was returned unchanged and then freed by its local owned-slot cleanup.
+The fix establishes the join's real reference ownership rather than retaining a
+child of an already freed returned owner. The extracted metadata regression is
+`selfhost/tests/join-backedge-provenance`; the original parser-only runtime case
+is preserved in `selfhost/tests/parser-curried-result`.

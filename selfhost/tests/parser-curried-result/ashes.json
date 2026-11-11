@@ -1,0 +1,1 @@
+{"name":"parser-original-crash","entry":"Main.ash","sourceRoots":["."],"devDependencies":{"semantics":{"path":"../../packages/semantics"}},"overrides":{"AshesCompiler.Frontend":{"path":"../../packages/frontend"}}}

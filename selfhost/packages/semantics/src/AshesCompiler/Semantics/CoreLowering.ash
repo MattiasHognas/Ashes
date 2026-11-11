@@ -6344,20 +6344,14 @@ let isSelfFunnelArm (expression: Expr) (state: CoreLoweringState) =
                 | (ExprVar(name), applied) -> name == selfName && applied == arity
                 | _ -> false
 
-// An arm that never reaches its join: every path through it is a tail self call, whose back edge
-// jumps away. Stage 0 records such a call's value, and a join of nothing else, as ownership neutral.
-let recursive armNeverReachesJoin (expression: Expr) (state: CoreLoweringState) =
-    match expression with
-        | ExprAt(_span, inner) -> armNeverReachesJoin(inner)(state)
-        | ExprIf(_condition, thenBranch, elseBranch) -> armNeverReachesJoin(thenBranch)(state) && armNeverReachesJoin(elseBranch)(state)
-        | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> armNeverReachesJoin(body)(state)
-        | ExprMatch(_scrutinee, [], _position) -> false
-        | ExprMatch(_scrutinee, arms, _position) -> everyArmNeverReachesJoin(arms)(state)
-        | other -> isSelfFunnelArm(other)(state)
-and everyArmNeverReachesJoin (arms: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
-    match arms with
-        | [] -> true
-        | (_pattern, body, _guard) :: rest -> armNeverReachesJoin(body)(state) && everyArmNeverReachesJoin(rest)(state)
+// Only an emitted back edge proves an arm cannot reach its join. A syntactic self call can
+// remain a CallClosure in a curried helper and return a value owned by a local result slot.
+// Treating that call as unreachable would let a fresh sibling give the join false ownership.
+// Like stage 0's IsOwnershipNeutralTemp, this fact follows the lowered value, not the AST.
+let armNeverReachesJoin (temp: Int) (state: CoreLoweringState) =
+    state
+    |> stateBackEdgeDummyTemps
+    |> containsInt(temp)
 
 let recursive patternFactsNamed (name: Str) (facts: List(PatternBindingFact)) =
     match facts with
@@ -21629,13 +21623,13 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
         MatchArmResult(
             armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || retainedParameterPart || emptyListArm,
             armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart || emptyListArm,
-            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && (retainedParameterPart || forwardsPatternOwner(body)(state) == false) || isSelfFunnelArm(body)(state),
+            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && (retainedParameterPart || forwardsPatternOwner(body)(state) == false) || armNeverReachesJoin(finalTemp)(state),
             armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
             armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
             armFreshCell = constructsFreshCell(body)(state),
             armConsesOntoSelfResult = isConsChainOntoSelfCall(body)(state),
             armJoinsSelfConsingArms = nestedJoinConsesOntoSelfResult(body)(state),
-            armStoreTemp = if armNeverReachesJoin(body)(state)
+            armStoreTemp = if armNeverReachesJoin(finalTemp)(state)
             then -1
             else finalTemp
         ))
@@ -22000,9 +21994,20 @@ let recursive armsStoreRetains (arms: List(MatchArmResult)) (state: CoreLowering
         | [] -> true
         | arm :: rest -> (arm.armStoreTemp < 0 || isRuntimeTemp(arm.armStoreTemp)(state) && definedByRetain(arm.armStoreTemp)(state.reversedInstructions)) && armsStoreRetains(rest)(state)
 
+// Stage 0's RecordNeutralJoin: a join is unreachable only if all its arms are proven so.
+// Keep that proof through nested if/match joins without excluding any reaching call result.
+let recordNeutralJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> state
+        | _ ->
+            if anyArmReachesJoin(arms)
+            then state
+            else withStateBackEdgeDummyTemps(resultTemp :: stateBackEdgeDummyTemps(state))(state)
+
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     ((given (marked: CoreLoweringState) ->
         marked
+        |> recordNeutralJoin(resultTemp)(arms)
         |> (given (owners: CoreLoweringState) ->
             if joinIsRetainedOwner(arms)
             then withStatePatternOwnerResultTemps(resultTemp :: statePatternOwnerResultTemps(owners))(owners)
