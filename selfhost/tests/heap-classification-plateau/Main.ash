@@ -44,7 +44,7 @@ let recursive run remaining =
                         in
                             match classifyHeapLayout(node(depth))(environment) with
                                 | HeapLayoutFacts { containsResource = actualResource, containsUnresolvedType = actualUnresolved } as full ->
-                                    if classifyHeapArenaDeepCopy(node(depth))(environment) == full.arenaDeepCopySupported && classifyHeapResource(node(depth))(environment) == actualResource && actualResource == resource && actualUnresolved == unresolved && viewsAgree(full)(classifyHeapAdmissibility(node(depth))(environment)) && classifyHeapShallowCopy(node(depth))(environment) == shallowCopy(full)
+                                    if classifyHeapChildren(node(depth))(environment) == full.children && classifyHeapChildTypes(node(depth))(environment) == Ashes.Collection.List.map(given (child: HeapLayoutChild) -> child.childType)(full.children) && classifyHeapArenaDeepCopy(node(depth))(environment) == full.arenaDeepCopySupported && classifyHeapResource(node(depth))(environment) == actualResource && actualResource == resource && actualUnresolved == unresolved && viewsAgree(full)(classifyHeapAdmissibility(node(depth))(environment)) && classifyHeapShallowCopy(node(depth))(environment) == shallowCopy(full)
                                     then run(remaining - 1)
                                     else Ashes.IO.panic("unexpected heap classification")
 

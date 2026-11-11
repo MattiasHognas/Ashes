@@ -16,3 +16,6 @@ expected facts under stage 0 plain and poisoned, including runtime reuse flags.
 The single-run live-cell total is not a plateau measurement. Repetition and
 fresh-environment lifetime checks live in `../heap-classification-plateau`.
 Stage 1 does not generate poison instrumentation.
+
+Child projections are compared with full facts as well: all descriptor fields,
+ordered child types, generic instantiations, zero-cost wrappers, and list self edges.

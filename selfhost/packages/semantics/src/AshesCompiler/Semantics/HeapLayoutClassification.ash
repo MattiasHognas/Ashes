@@ -47,6 +47,8 @@ export (
     value heapConstructorFieldGroups,
     value heapExtendConstructorEnvironment,
     value classifyHeapLayout,
+    value classifyHeapChildren,
+    value classifyHeapChildTypes,
     value classifyHeapResource,
     value classifyHeapArenaDeepCopy,
     value classifyHeapAdmissibility,
@@ -1027,6 +1029,30 @@ let heapLayoutChildren (resolved: SemanticType) (environment: TypeEnvironment) =
         | SemTuple(elements) -> heapChildrenOnto(None)(elements)(0)(environment)([])
         | SemNamed(_symbolId, _name, _arguments) ->
             heapNamedTypeChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
+        | _ -> []
+
+// Exact projections of full layout classification, without unrelated root facts.
+let classifyHeapChildren (semanticType: SemanticType) (environment: TypeEnvironment) =
+    heapLayoutChildren(resolveLayoutType(semanticType)(environment))(environment)
+
+let recursive heapNamedChildTypes (grouped: List((Str, List(SemanticType)))) =
+    match grouped with
+        | [] -> []
+        | (_constructorName, fieldTypes) :: rest ->
+            rest
+            |> heapNamedChildTypes
+            |> append(fieldTypes)
+
+// Preserve the list's self/tail edge as well as constructor and field order.
+// A graph-containment child query intentionally omits that edge and is not equivalent.
+let classifyHeapChildTypes (semanticType: SemanticType) (environment: TypeEnvironment) =
+    match resolveLayoutType(semanticType)(environment) with
+        | SemList(element) as resolved -> [element, resolved]
+        | SemTuple(elements) -> elements
+        | SemNamed(_symbolId, _name, _arguments) as resolved ->
+            environment
+            |> heapNamedTypeConstructors(resolved)
+            |> heapNamedChildTypes
         | _ -> []
 
 let recursive heapAdmissibilityChildrenOnto (fieldTypes: List(SemanticType)) (environment: TypeEnvironment) (tail: List((SemanticType, HeapChildDropKind))) =

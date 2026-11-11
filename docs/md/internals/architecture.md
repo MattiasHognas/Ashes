@@ -1396,6 +1396,16 @@ then returned in first-seen group order with constructor fields in declaration o
 rebuilding the preceding group-list prefix for each constructor without reusing renumbered
 groups across declarations. Scope-copy decisions and internal shallow-copy checks ask a dedicated
 predicate, so a negative shallow answer does not calculate an unused deep-copy classification.
+Child projections likewise avoid unrelated root classification. `classifyHeapChildren` returns
+the same ordered field descriptors as full classification; `classifyHeapChildTypes` returns only
+their types without computing child drop/copy kinds. Both resolve zero-cost wrappers first,
+instantiate generic constructor fields at the use site, and preserve a list's element and
+self/tail edges. Lowering projects settled monomorphic cached facts before using either narrow
+query on a miss. The type-only view is used by bounded-copy and general-RC reachability walks;
+their path guards and ownership decisions are unchanged, and path-relative answers are not cached.
+`heap-shallow-copy-equivalence` and `heap-classification-plateau` compare the projections with
+full facts; `scripts/selfhost-dev/render-heap-child-projections.sh` extracts the Core query
+boundaries for cache-authority and fresh-state regression checks.
 Lowering also indexes raw constructor layouts by constructor name and result-type name. The
 constructor lookup retains the first declaration; type buckets retain declaration order.
 Replacing the layout list rebuilds both indexes, while inference and generic substitution

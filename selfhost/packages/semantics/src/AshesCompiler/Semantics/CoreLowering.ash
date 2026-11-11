@@ -7550,8 +7550,37 @@ let argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
 let generalCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) = copyPlanOf(true)(semanticType)(state)
 
 let heapChildrenOfNamed (named: SemanticType) (state: CoreLoweringState) =
-    match heapFactsOf(named)(state) with
-        | HeapLayoutFacts { children = children } -> children
+    match resolveType(state)(named) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(HeapLayoutFacts { children = children }) -> children
+                | None ->
+                    state
+                    |> coverageEnvironment
+                    |> classifyHeapChildren(resolved)
+        | resolved ->
+            state
+            |> coverageEnvironment
+            |> classifyHeapChildren(resolved)
+
+let heapChildTypesOfNamed (named: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(named) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(HeapLayoutFacts { children = children }) ->
+                    map(given (child: HeapLayoutChild) -> child.childType)(children)
+                | None ->
+                    state
+                    |> coverageEnvironment
+                    |> classifyHeapChildTypes(resolved)
+        | resolved ->
+            state
+            |> coverageEnvironment
+            |> classifyHeapChildTypes(resolved)
 
 // The cell-by-cell copy of a named type written inline, a record of the contract's types included:
 // stage 0's constructor deep copy, which the normalization helper's body and a successor built at
@@ -7597,16 +7626,12 @@ let recursive reachesGeneralRcNamedType (semanticType: SemanticType) (path: List
             match (path, arguments, recordedGeneralRcTypeFacts(name)(state)) with
                 | ([], [], Some((_admissible, reaches))) -> reaches
                 | _ ->
-                    isGeneralRcNamedType(named)(state) || !containsType(named)(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(named :: path)(state)
+                    isGeneralRcNamedType(named)(state) || !containsType(named)(path) && anyReachesGeneralRcNamedType(heapChildTypesOfNamed(named)(state))(named :: path)(state)
         | _ -> false
 and anyReachesGeneralRcNamedType (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> false
         | semanticType :: rest -> reachesGeneralRcNamedType(semanticType)(path)(state) || anyReachesGeneralRcNamedType(rest)(path)(state)
-and anyChildReachesGeneralRcNamedType (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match children with
-        | [] -> false
-        | HeapLayoutChild { childType = childType } :: rest -> reachesGeneralRcNamedType(childType)(path)(state) || anyChildReachesGeneralRcNamedType(rest)(path)(state)
 
 // Both walks' answers for every argument-free type the program declares whose layout facts are
 // settled (no unresolved type left for inference to close), so a question asked at a call site reads
@@ -8271,17 +8296,12 @@ let recursive hasBoundedCopy (semanticType: SemanticType) (path: List(SemanticTy
             if containsType(named)(path)
             then false
             else
-                match heapFactsOf(named)(state) with
-                    | HeapLayoutFacts { children = children } -> allChildrenBoundedCopies(children)(named :: path)(state)
+                allBoundedCopies(heapChildTypesOfNamed(named)(state))(named :: path)(state)
         | _ -> true
 and allBoundedCopies (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
         | semanticType :: rest -> hasBoundedCopy(semanticType)(path)(state) && allBoundedCopies(rest)(path)(state)
-and allChildrenBoundedCopies (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match children with
-        | [] -> true
-        | HeapLayoutChild { childType = childType } :: rest -> hasBoundedCopy(childType)(path)(state) && allChildrenBoundedCopies(rest)(path)(state)
 
 // Whether a loop can place a list of this element on the reference-counted heap, as
 // `tcoListElementSupported` answers.

@@ -10,3 +10,6 @@ child types and drop kinds.
 Run with stage 0 plain and poisoned, then stage 1 plain. Stage 1 currently has no
 poison-code-generation implementation. Keep compiler exit leak counts separate
 from the generated program's measured plateau.
+
+The same comparison also checks the complete child-descriptor query and the
+child-type-only query against full facts, including constructor/field order.
