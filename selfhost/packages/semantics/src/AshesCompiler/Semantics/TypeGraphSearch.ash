@@ -1,4 +1,5 @@
 import AshesCompiler.Semantics.Types
+import Ashes.Collection.Map.MapTree
 export (
     value typeGraphAny,
     value typeGraphAnyComplete,
@@ -109,11 +110,29 @@ let recursive coveredPathVisit (semanticType: SemanticType) (path: List(Semantic
         | [] -> false
         | TypeGraphVisited { semanticType = previous, blockedPath = previousPath } :: rest -> previous == semanticType && blockedPathSubset(previousPath)(path) || coveredPathVisit(semanticType)(path)(rest)
 
+// Nominal buckets only exclude unrelated types from the expensive structural comparison.
+// Every instantiation and incomparable blocked path remains in its original bucket order.
+let pathVisitBucket (symbolId: Int) (name: Str) (visited: MapTree(Int, MapTree(Str, List(TypeGraphVisited)))) =
+    match Ashes.Collection.Map.getInt(symbolId)(visited) with
+        | None -> []
+        | Some(byName) ->
+            match Ashes.Collection.Map.getStr(name)(byName) with
+                | None -> []
+                | Some(entries) -> entries
+
+let addPathVisit (symbolId: Int) (name: Str) (semanticType: SemanticType) (path: List(SemanticType)) (bucket: List(TypeGraphVisited)) (visited: MapTree(Int, MapTree(Str, List(TypeGraphVisited)))) =
+    (let byName =
+        match Ashes.Collection.Map.getInt(symbolId)(visited) with
+            | None -> Ashes.Collection.Map.empty
+            | Some(entries) -> entries
+    in
+        Ashes.Collection.Map.setInt(symbolId)(Ashes.Collection.Map.setStr(name)(TypeGraphVisited(semanticType = semanticType, blockedPath = path) :: bucket)(byName))(visited))
+
 // Nonregular instantiation retains the original name-based ancestor cut. Sharing is safe only
 // when an earlier visit of this exact type has no more blocked ancestors: all its successors
 // remain queued, and they cover every path this more restricted visit could search. These are
 // query-local work states, never context-free cached false answers for individual types.
-let recursive searchWithPathCuts resolve matches children (pending: List(TypeGraphWork)) (visited: List(TypeGraphVisited)) =
+let recursive searchWithPathCuts resolve matches children (pending: List(TypeGraphWork)) (visited: MapTree(Int, MapTree(Str, List(TypeGraphVisited)))) =
     match pending with
         | [] -> false
         | VisitType(semanticType, path) :: rest ->
@@ -123,12 +142,19 @@ let recursive searchWithPathCuts resolve matches children (pending: List(TypeGra
                 then true
                 else
                     match resolved with
-                        | SemNamed(_symbolId, _name, _arguments) ->
-                            if pathContainsType(resolved)(path) || coveredPathVisit(resolved)(path)(visited)
+                        | SemNamed(symbolId, name, _arguments) ->
+                            if pathContainsType(resolved)(path)
                             then searchWithPathCuts(resolve)(matches)(children)(rest)(visited)
                             else
-                                searchWithPathCuts(resolve)(matches)(children)(prependWork(children(resolved))(resolved :: path)(rest))(TypeGraphVisited(semanticType = resolved, blockedPath = path) :: visited)
+                                let bucket = pathVisitBucket(symbolId)(name)(visited)
+                                in
+                                    if coveredPathVisit(resolved)(path)(bucket)
+                                    then searchWithPathCuts(resolve)(matches)(children)(rest)(visited)
+                                    else
+                                        visited
+                                        |> addPathVisit(symbolId)(name)(resolved)(path)(bucket)
+                                        |> searchWithPathCuts(resolve)(matches)(children)(prependWork(children(resolved))(resolved :: path)(rest))
                         | _ ->
                             searchWithPathCuts(resolve)(matches)(children)(prependWork(children(resolved))(path)(rest))(visited)
 
-let typeGraphAnyWithPathCuts resolve matches children semanticType = searchWithPathCuts(resolve)(matches)(children)([VisitType(semanticType)([])])([])
+let typeGraphAnyWithPathCuts resolve matches children semanticType = searchWithPathCuts(resolve)(matches)(children)([VisitType(semanticType)([])])(Ashes.Collection.Map.empty)

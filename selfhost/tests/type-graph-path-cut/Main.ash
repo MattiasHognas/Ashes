@@ -139,7 +139,36 @@ let countedForkChildren value =
     |> Ashes.IO.print
     |> (given (_) -> forkChildren(value))
 
+// Collisions in either nominal component must not discard a distinct reachable node.
+// Equal nominal keys at different generic arguments must still compare the full type.
+let bucketCollisionChildren (value: SemanticType) =
+    match value with
+        | SemTuple(values) -> values
+        | SemNamed(7, "Different", _args) -> [SemOpaque("Hit")]
+        | SemNamed(8, "Shared", _args) -> [SemOpaque("Hit")]
+        | SemNamed(7, "Shared", SemBool :: []) -> [SemOpaque("Hit")]
+        | _ -> []
+
+let bucketCollision (hit: SemanticType) =
+    (let start = SemTuple([SemNamed(7)("Shared")([SemInt]), hit])
+    in assert(oldSearch(bucketCollisionChildren)(start)([]) && typeGraphAnyWithPathCuts(identity)(target)(bucketCollisionChildren)(start)))
+
+let bucketCollisions (_unit: Unit) =
+    [SemInt]
+    |> SemNamed(7)("Different")
+    |> bucketCollision
+    |> (given (_) ->
+        [SemInt]
+        |> SemNamed(8)("Shared")
+        |> bucketCollision)
+    |> (given (_) ->
+        [SemBool]
+        |> SemNamed(7)("Shared")
+        |> bucketCollision)
+    |> (given (_) -> Ashes.IO.print("bucket collisions ok"))
+
 match Ashes.IO.args with
+    | "buckets" :: [] -> bucketCollisions(Unit)
     | "fork-old" :: [] -> assert(!oldSearch(countedForkChildren)(root)([]))
     | "fork-new" :: [] -> assert(!typeGraphAnyWithPathCuts(identity)(target)(countedForkChildren)(root))
     | "graphs" :: [] -> graphs(0)

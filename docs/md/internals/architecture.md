@@ -1373,7 +1373,12 @@ as a fact about a type. An ancestor reached at different generic arguments switc
 path-aware worklist preserving the existing name-cycle cuts. This worklist shares an exact
 type visit only when an earlier visit has a subset of its blocked ancestor names, so all paths
 available to the skipped visit remain covered. Incomparable ancestor sets can still require
-separate expansions; this is not a general linear-time guarantee. Nominal visit records own
+separate expansions; this is not a general linear-time guarantee. The path-aware visited index
+first selects the exact symbol ID and type name using nested maps, then compares complete
+instantiations and blocked-path subsets only inside that nominal bucket. Neither generic
+arguments nor incomparable blocked paths are merged; bucket insertion preserves the previous
+newest-first comparison order. This avoids structural equality against unrelated named types
+without changing traversal order or publishing negative facts. Nominal visit records own
 their retained type/path pair, avoiding growth observed for tuple payloads under stage 1.
 Work items retain complete type roots,
 and the temporary query state is released through ordinary inferred ownership.
