@@ -58,6 +58,7 @@ export (
     value freshDropperLabel,
     value emitDropper,
     value bodyEnvironment,
+    value dropperAdmissibilityFacts,
     value openSynthesizedValue,
     value beginSynthesizedBody,
     value finishSynthesizedBody,
@@ -292,6 +293,25 @@ let layoutFactsOf (semanticType: SemanticType) (body: DropperBody) =
                 | Some(facts) -> facts
                 | None -> classifyHeapLayout(semanticType)(body.environment)
         | _ -> classifyHeapLayout(semanticType)(body.environment)
+
+let admissibilityChild (child: HeapLayoutChild) = (child.childType, child.dropKind)
+
+// Full facts already belong to this immutable synthesis environment. Reuse only their
+// context-free projection; admissibility answers still depend on the caller's cycle path.
+let dropperAdmissibilityFacts (semanticType: SemanticType) (body: DropperBody) =
+    match semanticType with
+        | SemNamed(symbolId, _name, _arguments) ->
+            match body
+            |> namedLayoutEntries(symbolId)
+            |> matchingLayoutFacts(semanticType) with
+                | Some(facts) ->
+                    HeapAdmissibilityFacts(
+                        containsResource = facts.containsResource,
+                        containsUnresolvedType = facts.containsUnresolvedType,
+                        children = map(admissibilityChild)(facts.children)
+                    )
+                | None -> classifyHeapAdmissibility(semanticType)(body.environment)
+        | _ -> classifyHeapAdmissibility(semanticType)(body.environment)
 
 let cacheNamedLayout (semanticType: SemanticType) (body: DropperBody) =
     match semanticType with
@@ -559,9 +579,7 @@ let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Seman
             if containsType(semanticType)(path)
             then true
             else
-                match (dropperConstructorsOfType(name)(body), body
-                |> bodyEnvironment
-                |> classifyHeapAdmissibility(semanticType)) with
+                match (dropperConstructorsOfType(name)(body), dropperAdmissibilityFacts(semanticType)(body)) with
                     | ([], _facts) -> false
                     | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> false
                     | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> false

@@ -1392,6 +1392,10 @@ are cached by exact type in a bounded, function-local list; substitutions, layou
 declarations, and inference defaults invalidate that list. Dropper synthesis separately caches
 full layout facts within one immutable type environment, sharing them with nested synthesis
 and discarding them at the top-level synthesis boundary.
+Within that synthesis, admissibility queries project the containment flags and ordered
+child type/drop-kind pairs from an existing exact-type layout-cache hit. A miss still
+uses the dedicated admissibility classifier. Path-dependent admissibility answers are
+not cached, and neither cache keys nor classification environments change.
 Tagless-layout decisions prepare a constructor-shape index once for the declaration's complete
 scheme environment. Resource traversal looks up only the matching type name before substituting
 its generic fields, preserving constructor order and the existing name-based ancestor cuts.

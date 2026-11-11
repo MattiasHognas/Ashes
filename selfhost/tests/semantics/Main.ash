@@ -71,6 +71,7 @@ import ExplainReportTests
 import TaglessAdtLayoutTests
 import TaglessConstructorIndexTests
 import StructuralDroppersTests
+import DropperAdmissibilityProjectionTests
 import ResultReachTests
 import ArgumentTypeContainmentTests
 import TypeGraphSearchTests
@@ -153,6 +154,7 @@ let run unit =
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
     |> (given (_) -> TaglessConstructorIndexTests.runTaglessConstructorIndexTests(Unit))
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
+    |> (given (_) -> DropperAdmissibilityProjectionTests.runDropperAdmissibilityProjectionTests(Unit))
     |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
     |> (given (_) -> ResultReachTests.runResultReachTests(Unit))
     |> (given (_) -> ResultReachSummariesTests.runResultReachSummariesTests(Unit))
