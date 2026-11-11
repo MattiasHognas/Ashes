@@ -625,6 +625,26 @@ public sealed partial class Lowering
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(fieldType));
     }
 
+    // A returned arena constructor never walks its retained parameter fields. Track the
+    // concrete retain just like a result record-update field, so result normalization
+    // establishes independent ownership before the temporary field reference is released.
+    private void KeepLoopResultConstructorFieldRetainOwned(int retainedTemp, TypeRef fieldType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTCTORFIELDRETAIN") is not null
+            || _tcoCtx?.InTailPosition != true
+            || _backEdgeArgumentPosition is not null
+            || _tcoArgumentDestination is not null
+            || ContainsUnresolvedLayoutType(Prune(fieldType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(fieldType));
+    }
+
     /// <summary>
     /// A loop-parameter child of unresolved layout retained into an arena aggregate: the parameter's
     /// type is only known once its body is lowered, so the arena copy that

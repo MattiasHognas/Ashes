@@ -236,10 +236,17 @@ public sealed class CurriedChainPredecessorLeakTests
     }
 }
 
-public sealed class ConsedTailCallRefillLeakTests
+public sealed class CompilerOwnershipLeakRegressionTests
 {
     [Test]
-    public async Task MixedWorklistEdgesReleaseOwnedCallResults()
+    public Task MixedWorklistEdgesReleaseOwnedCallResults()
+        => VerifyPlateauAndPoison("leak.consed-tail-call-refill");
+
+    [Test]
+    public Task ReturnedConstructorReleasesItsParameterFieldRetain()
+        => VerifyPlateauAndPoison("leak.loop-result-constructor-field");
+
+    private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -254,7 +261,7 @@ public sealed class ConsedTailCallRefillLeakTests
 
         var fixture = TestFixture.Create();
         FuzzProfile profile = fixture.Profiles.Get("memory-growth");
-        int caseIndex = Array.IndexOf(fixture.Generator.RotationOrder(profile), "leak.consed-tail-call-refill");
+        int caseIndex = Array.IndexOf(fixture.Generator.RotationOrder(profile), template);
         caseIndex.ShouldBeGreaterThanOrEqualTo(0);
         GeneratedFuzzCase generated = fixture.Generator.Generate(1, caseIndex, profile, profile.EffectiveDefaults.MaximumNodes);
         CompilerExecution compiler = new();

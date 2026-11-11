@@ -999,7 +999,7 @@ type CoreTcoState =
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | tcoLoop: Maybe(CoreTcoLoop)
-    | functionReturnedClosureLabels: List((Str, Str))
+    | functionReturnedClosureLabels: MapTree(Str, Str)
     // The parameter of the plain function being lowered whose body returns it on some arms and
     // a fresh value on the others (stage 0's `_passthroughParameter`): its name, its slot, and
     // its type. The arm returning it copies it into an owned reference-counted graph.
@@ -3056,7 +3056,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             runtimeNormalizedArgumentLabels = [],
             recursiveGroupNames = [],
             tcoLoop = None,
-            functionReturnedClosureLabels = [],
+            functionReturnedClosureLabels = Ashes.Collection.Map.empty,
             passthroughParameter = None,
             loweringBodyLabel = "",
             predictedRuntimeManagedResultLabels = [],
@@ -3897,7 +3897,10 @@ let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List
 // function's label, so a saturated spine can be followed to the innermost body it reaches.
 let recordReturnedClosureLabel (label: Str) (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) (state: CoreLoweringState) =
     match returnedClosureLabelOf(bodyTemp)(reversedInstructions) with
-        | Some(returned) -> withStateFunctionReturnedClosureLabels((label, returned) :: stateFunctionReturnedClosureLabels(state))(state)
+        | Some(returned) ->
+            withStateFunctionReturnedClosureLabels(state
+            |> stateFunctionReturnedClosureLabels
+            |> Ashes.Collection.Map.setStr(label)(returned))(state)
         | None -> state
 
 // Whether a lifted function normalizes its argument into an owned value at entry, so its closure
@@ -11618,17 +11621,11 @@ let recursive functionResultOf (semanticType: SemanticType) =
         | SemFunction(_argument, result, _row) -> functionResultOf(result)
         | other -> other
 
-let recursive returnedStageOf (label: Str) (pairs: List((Str, Str))) =
-    match pairs with
-        | [] -> None
-        | (stage, next) :: rest ->
-            if stage == label
-            then Some(next)
-            else returnedStageOf(label)(rest)
+let returnedStageOf (label: Str) (pairs: MapTree(Str, Str)) = Ashes.Collection.Map.getStr(label)(pairs)
 
 // Stage 0's `CurryChainReaches`: whether the function `label` is `current` or one of the curry
 // stages it returns.
-let recursive curryChainReaches (depth: Int) (current: Str) (label: Str) (pairs: List((Str, Str))) =
+let recursive curryChainReaches (depth: Int) (current: Str) (label: Str) (pairs: MapTree(Str, Str)) =
     if current == label
     then true
     else
@@ -14000,7 +13997,9 @@ let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
             then
                 state
                 |> withStateCurryStage(None)
-                |> withStateFunctionReturnedClosureLabels((stageLabel, label) :: stateFunctionReturnedClosureLabels(state))
+                |> withStateFunctionReturnedClosureLabels(state
+                |> stateFunctionReturnedClosureLabels
+                |> Ashes.Collection.Map.setStr(stageLabel)(label))
                 |> noteLetBoundCurryStage(stageLabel)(label)
             else withStateCurryStage(None)(state)
         | None -> state
@@ -28137,6 +28136,20 @@ let noteOwnFieldParameterRetain (argument: Expr) (retained: Bool) (state: CoreLo
 // An arena cell built as a call's argument is no successor cell, the call's result is: its retain
 // of a parameter read is collected with the call argument's retains and released after the call
 // (stage 0's `RecordCallArgumentArenaRetain` in `RetainRuntimeManagedTcoConstructorArguments`).
+let keepLoopResultConstructorFieldRetainOwned (duplicate: Int) (fieldType: SemanticType) (state: CoreLoweringState) =
+    (let request = consumerRequestOf(state)
+    in
+        if generalRcEnabled(state) && (request.tailPosition || request.consTailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot) with
+            | (Some(_frame), None, None) -> true
+            | _ -> false)
+        then
+            match freshLocal(state) with
+                | FreshLocal { state = allocated, local = ownedSlot } ->
+                    allocated
+                    |> emit(StoreLocal(ownedSlot)(duplicate))
+                    |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(fieldType))
+        else state)
+
 let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (state
     |> statePatternOwnerCopyTemps
@@ -28158,7 +28171,13 @@ let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Exp
                                     |> (given (recorded: CoreLoweringState) ->
                                         if releasedAfterCall
                                         then recorded
-                                        else noteOwnFieldParameterRetain(argument)(true)(recorded))
+                                        else
+                                            recorded
+                                            |> noteOwnFieldParameterRetain(argument)(true)
+                                            |> (given (noted: CoreLoweringState) ->
+                                                if runtimeManaged
+                                                then noted
+                                                else keepLoopResultConstructorFieldRetainOwned(duplicate)(semanticType)(noted)))
                                     |> (given (noted: CoreLoweringState) -> (noted, duplicate))
             else
                 match emitPendingConstructorFieldRetain(temp)(slot)(state) with

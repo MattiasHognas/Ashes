@@ -1662,6 +1662,10 @@ public sealed partial class Lowering
                 if (!releasedAfterCall)
                 {
                     NoteOwnFieldParameterRetain(arguments[index], retained: true);
+                    if (!runtimeManagedCandidate)
+                    {
+                        KeepLoopResultConstructorFieldRetainOwned(argumentTemps[index], argumentTypes[index]);
+                    }
                 }
             }
         }

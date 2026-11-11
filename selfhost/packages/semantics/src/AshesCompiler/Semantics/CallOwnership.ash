@@ -142,17 +142,11 @@ type CoreCalleeFacts =
     | rcEligible: Bool
     | argumentCount: Int
 
-let recursive lookupReturnedClosureLabel (label: Str) (labels: List((Str, Str))) =
-    match labels with
-        | [] -> None
-        | (candidate, returned) :: rest ->
-            if candidate == label
-            then Some(returned)
-            else lookupReturnedClosureLabel(label)(rest)
+let lookupReturnedClosureLabel (label: Str) (labels: MapTree(Str, Str)) = Ashes.Collection.Map.getStr(label)(labels)
 
 // The label of the stage `hops` returned closures past `label` along the recorded
 // returned-closure chain, `None` where the chain is not recorded.
-let recursive innermostStageLabel (hops: Int) (label: Str) (labels: List((Str, Str))) =
+let recursive innermostStageLabel (hops: Int) (label: Str) (labels: MapTree(Str, Str)) =
     if hops <= 0
     then Some(label)
     else
@@ -166,7 +160,7 @@ let lookupBodyPlacement (label: Str) (placements: MapTree(Str, Bool)) = Ashes.Co
 // the spine's applications reach produced a reference-counted result, following the
 // returned-closure chain one hop per application past the first; `None` while that body is not
 // lowered or the chain is not recorded.
-let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: List((Str, Str))) (bodyPlacements: MapTree(Str, Bool)) =
+let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: MapTree(Str, Str)) (bodyPlacements: MapTree(Str, Bool)) =
     match facts with
         | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
             match innermostStageLabel(count - 1)(label)(returnedClosureLabels) with

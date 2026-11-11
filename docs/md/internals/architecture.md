@@ -1433,6 +1433,12 @@ declaration in a prepared name index; successfully registered top-level closure 
 update a separate newest-entry index. Ordered lists and lexical/frame restoration retain their
 existing semantics.
 
+Returned-closure stage labels are stored directly in a persistent name map. Both registration
+sites replace the previous value, preserving the former prepended-list lookup's newest-entry
+semantics. Nested lowering carries the completed map back through the existing outer-frame
+restoration. Call-result placement and bounded curry-chain reachability share it, so each hop
+looks up one label without scanning every previously compiled function.
+
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
 resource-bearing closures and remains governed by the `ASH006`-`ASH008` diagnostics. A declared
@@ -2352,6 +2358,16 @@ release rule is needed (`GRC_NO_CONSEDTAILCALLREFILL`, stage 0; mirrored by
 `selfhost/tests/owned-call-result-worklist` preserves the original direct walker and checks an
 escaping aggregate head and a borrowed sibling. The latter deliberately retains the existing
 conservative placement and is compared with the disabled-rule baseline.
+
+A loop returning an arena constructor such as `Some(label)` may retain a reference-counted
+parameter in its field even though the constructor itself has no RC owner. A concrete field
+retain at the loop result is registered in an owned slot, as for a returned record update.
+Existing result normalization makes the result independent before releasing that slot and the
+loop parameter. Runtime-owned constructors, back-edge arguments, unresolved layouts and fields
+whose retains are already handled by call cleanup are excluded. This is an exit operation, not
+a copy of the graph at each back edge (`GRC_NO_LOOPRESULTCTORFIELDRETAIN`, stage 0; mirrored by
+`keepLoopResultConstructorFieldRetainOwned` in stage 1). The unchanged regression lives in
+`selfhost/tests/returned-constructor-field` and the last-registered leak template.
 
 ### Buffered standard output
 
