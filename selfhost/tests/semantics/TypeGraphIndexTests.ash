@@ -7,6 +7,7 @@ import AshesCompiler.Semantics.HeapLayoutClassification.heapNamedTypeConstructor
 export (
     value runTypeGraphIndexTests,
     value runTypeGraphPointerIndexTests,
+    value runTypeGraphCollisionTests,
     value runFreshTypeGraphIndexTest,
 )
 
@@ -291,3 +292,64 @@ let runTypeGraphIndexTests unit =
     |> testZeroCostAndEnvironmentScope
     |> testDuplicateGroupsKeepFirst
     |> (given (_) -> runFreshTypeGraphIndexTest(17))
+
+// Distinct IDs separated by the fingerprint modulus collide through nested type structure too.
+// Every collision must preserve exact node identity, completed facts and immutable snapshots.
+let collisionTypePairs unit =
+    (let first = SemVariable(0)
+    in
+        let second = SemVariable(2147483647)
+        in
+            [
+                (first, second),
+                (SemNamed(0)("Collision")([SemInt]), SemNamed(2147483647)("Collision")([SemInt])),
+                (SemParameter(0)("a"), SemParameter(2147483647)("a")),
+                (SemList(first), SemList(second)),
+                (SemTuple([SemInt, first]), SemTuple([SemInt, second])),
+                (SemFunction(SemInt)(first)(None), SemFunction(SemInt)(second)(None)),
+                (SemRow([SemString])(Some(first)), SemRow([SemString])(Some(second))),
+                (SemPointer(first), SemPointer(second))
+            ])
+
+let recursive checkCollisionPairs pairs index =
+    match pairs with
+        | [] -> index
+        | (first, second) :: rest ->
+            first
+            |> typeGraphFingerprint
+            |> test.assertEqual(typeGraphFingerprint(second))
+            |> (given (_) ->
+                match typeGraphNode(first)(index) with
+                    | (firstNode, afterFirst) ->
+                        match typeGraphNode(second)(afterFirst) with
+                            | (secondNode, afterSecond) ->
+                                let completed = completeTypeGraphRootFact(ResourceFact)(first)(false)(afterSecond)
+                                in
+                                    match typeGraphNode(first)(completed) with
+                                        | (repeated, afterRepeat) ->
+                                            firstNode.nodeId != secondNode.nodeId
+                                            |> test.assertEqual(true)
+                                            |> (given (_) -> test.assertEqual(first)(repeated.sourceType))
+                                            |> (given (_) -> test.assertEqual(second)(secondNode.sourceType))
+                                            |> (given (_) -> test.assertEqual(firstNode.nodeId)(repeated.nodeId))
+                                            |> (given (_) ->
+                                                afterRepeat
+                                                |> typeGraphRootFact(ResourceFact)(first)
+                                                |> test.assertEqual(Some(false)))
+                                            |> (given (_) ->
+                                                afterRepeat
+                                                |> typeGraphRootFact(ResourceFact)(second)
+                                                |> test.assertEqual(None))
+                                            |> (given (_) ->
+                                                afterSecond
+                                                |> typeGraphRootFact(ResourceFact)(first)
+                                                |> test.assertEqual(None))
+                                            |> (given (_) -> checkCollisionPairs(rest)(afterRepeat)))
+
+let runTypeGraphCollisionTests unit =
+    (let result =
+        Unit
+        |> emptyTypeEnvironment
+        |> emptyTypeGraphIndex
+        |> checkCollisionPairs(collisionTypePairs(Unit))
+    in test.assertEqual(16)(result.nodeCount))

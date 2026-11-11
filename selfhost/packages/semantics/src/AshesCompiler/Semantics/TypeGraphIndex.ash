@@ -17,6 +17,7 @@ export (
     type TypeGraphFactKind(..),
     value emptyTypeGraphIndex,
     value compareTypeGraphKeys,
+    value typeGraphFingerprint,
     value typeGraphNode,
     value typeGraphRootFact,
     value completeTypeGraphRootFact,
@@ -304,11 +305,12 @@ type TypeGraphEntry =
     | resourceFact: Maybe(Bool)
     | unresolvedFact: Maybe(Bool)
 
-// One balanced tree indexes complete SemanticType keys. The comparator short-circuits at the
-// first different component and includes every field used by structural type equality.
+// A complete structural fingerprint selects an integer AVL bucket; exact type equality resolves
+// collisions. Key computation is linear in type size, tree lookup logarithmic in distinct hashes.
+// The comparator remains an independent full-identity oracle for differential tests.
 type TypeGraphIndex =
     | environment: TypeEnvironment
-    | nodes: MapTree(SemanticType, TypeGraphEntry)
+    | nodes: MapTree(Int, List(TypeGraphEntry))
     | nodeCount: Int
 
 let emptyTypeGraphIndex (environment: TypeEnvironment) = TypeGraphIndex(environment = environment, nodes = Ashes.Collection.Map.empty, nodeCount = 0)
@@ -418,9 +420,102 @@ and compareTypeGraphKeys (left: SemanticType) (right: SemanticType) =
                         else compareOptionalTypes(leftTail)(rightTail)
                 | _ -> 0)
 
-let findNode semanticType (index: TypeGraphIndex) = Ashes.Collection.Map.getWith(compareTypeGraphKeys)(semanticType)(index.nodes)
+let combineHash left right = (left * 16777619 + right) % 2147483647
 
-let setNode semanticType entry (index: TypeGraphIndex) = index with nodes = Ashes.Collection.Map.setWith(compareTypeGraphKeys)(semanticType)(entry)(index.nodes)
+let stringHash name =
+    Ashes.Byte.hash(Ashes.Byte.fromText(name)) % 2147483647
+
+let recursive hashTypeList seed values =
+    match values with
+        | [] -> combineHash(seed)(0)
+        | head :: rest ->
+            hashTypeList(head
+            |> typeGraphFingerprint
+            |> combineHash(combineHash(seed)(1)))(rest)
+and hashOptionalType value =
+    match value with
+        | None -> 0
+        | Some(semanticType) ->
+            semanticType
+            |> typeGraphFingerprint
+            |> combineHash(1)
+and typeGraphFingerprint semanticType =
+    (let tag = typeVariant(semanticType) + 1
+    in
+        match semanticType with
+            | SemUInt(bits) -> combineHash(tag)(bits)
+            | SemVariable(id) -> combineHash(tag)(id)
+            | SemList(element) ->
+                element
+                |> typeGraphFingerprint
+                |> combineHash(tag)
+            | SemPointer(element) ->
+                element
+                |> typeGraphFingerprint
+                |> combineHash(tag)
+            | SemTuple(elements) -> hashTypeList(tag)(elements)
+            | SemOpaque(name) ->
+                name
+                |> stringHash
+                |> combineHash(tag)
+            | SemNamed(id, name, arguments) ->
+                hashTypeList(name
+                |> stringHash
+                |> combineHash(combineHash(tag)(id)))(arguments)
+            | SemParameter(id, name) ->
+                name
+                |> stringHash
+                |> combineHash(combineHash(tag)(id))
+            | SemCapability(name, arguments) ->
+                hashTypeList(name
+                |> stringHash
+                |> combineHash(tag))(arguments)
+            | SemFunction(parameter, result, row) ->
+                row
+                |> hashOptionalType
+                |> combineHash(result
+                |> typeGraphFingerprint
+                |> combineHash(parameter
+                |> typeGraphFingerprint
+                |> combineHash(tag)))
+            | SemRow(elements, tail) ->
+                tail
+                |> hashOptionalType
+                |> combineHash(hashTypeList(tag)(elements))
+            | _ -> tag)
+
+let bucket hash (index: TypeGraphIndex) =
+    match Ashes.Collection.Map.getInt(hash)(index.nodes) with
+        | None -> []
+        | Some(entries) -> entries
+
+let recursive findInBucket (semanticType: SemanticType) (entries: List(TypeGraphEntry)) =
+    match entries with
+        | [] -> None
+        | (TypeGraphEntry { node = node } as entry) :: rest ->
+            if node.sourceType == semanticType
+            then Some(entry)
+            else findInBucket(semanticType)(rest)
+
+let recursive putInBucket (semanticType: SemanticType) (entry: TypeGraphEntry) (entries: List(TypeGraphEntry)) =
+    match entries with
+        | [] -> [entry]
+        | (TypeGraphEntry { node = previousNode } as previous) :: rest ->
+            if previousNode.sourceType == semanticType
+            then entry :: rest
+            else previous :: putInBucket(semanticType)(entry)(rest)
+
+let findNode semanticType (index: TypeGraphIndex) =
+    index
+    |> bucket(typeGraphFingerprint(semanticType))
+    |> findInBucket(semanticType)
+
+let setNode semanticType entry (index: TypeGraphIndex) =
+    (let hash = typeGraphFingerprint(semanticType)
+    in
+        index with nodes = Ashes.Collection.Map.setInt(hash)(index
+        |> bucket(hash)
+        |> putInBucket(semanticType)(entry))(index.nodes))
 
 let recursive flattenGroups grouped =
     match grouped with
