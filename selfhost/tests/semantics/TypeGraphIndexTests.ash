@@ -152,7 +152,7 @@ let testFactSeparation unit =
 
 let testZeroCostAndEnvironmentScope unit =
     (let environment =
-        typeGraphExtendConstructorEnvironment(testEnvironment(""))([constructor("Wrap")(named(31)("Wrapper")([SemVariable(71)]))([SemVariable(71)])])
+        typeGraphExtendConstructorEnvironment(testEnvironment(""))([ConstructorInferenceDefinition(name = "Wrap", scheme = TypeScheme(quantified = [], body = SemFunction(SemVariable(71))(named(31)("Wrapper")([SemVariable(71)]))(None), constraints = []), fieldNames = ["value"])])
     in
         let context =
             addZeroCostTypeDefinitionWithProvenance(31)("Wrapper")([71])(SemParameter(71)("a"))(DeclarationProvenance(packageId = "test"))(environment.typeResolutionContext)
@@ -162,6 +162,8 @@ let testZeroCostAndEnvironmentScope unit =
                     wrapped.resolvedType
                     |> test.assertEqual(SemOpaque("Handle"))
                     |> (given (_) -> test.assertEqual(true)(wrapped.directResource))
+                    |> (given (_) -> test.assertEqual(true)(wrapped.sourceIsRecord))
+                    |> (given (_) -> test.assertEqual(false)(wrapped.isRecord))
                     |> (given (_) -> test.assertEqual([])(wrapped.constructorGroups))
                     |> (given (_) -> test.assertEqual([("Wrap", [SemOpaque("Handle")])])(wrapped.sourceConstructorGroups))
                     |> (given (_) ->

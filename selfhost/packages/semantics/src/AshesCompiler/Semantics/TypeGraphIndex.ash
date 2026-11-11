@@ -27,6 +27,7 @@ export (
     value typeGraphNamedTypeFields,
     value typeGraphConstructorBuilds,
     value typeGraphEnvironmentConstructors,
+    value typeGraphNamedTypeIsRecord,
 )
 
 let typeGraphEnvironmentConstructors (environment: TypeEnvironment) =
@@ -249,6 +250,32 @@ let typeGraphNamedTypeConstructors (named: SemanticType) (environment: TypeEnvir
         | SemNamed(symbolId, name, arguments) -> typeGraphNamedTypeFields(symbolId)(name)(arguments)(environment)
         | _ -> []
 
+// Whether the named type's first constructor declares record field names.
+let recursive typeGraphNamedTypeHasFieldNames (symbolId: Int) (typeName: Str) (constructors: List(ConstructorInferenceDefinition)) =
+    match constructors with
+        | [] -> false
+        | ConstructorInferenceDefinition { scheme = TypeScheme { body = body }, fieldNames = fieldNames } :: rest ->
+            if typeGraphConstructorBuilds(symbolId)(typeName)(body)
+            then length(fieldNames) >= 1
+            else typeGraphNamedTypeHasFieldNames(symbolId)(typeName)(rest)
+
+let typeGraphNamedTypeIsRecord (named: SemanticType) (environment: TypeEnvironment) =
+    match named with
+        | SemNamed(symbolId, name, _arguments) ->
+            match environment.heapConstructorIndex with
+                | None ->
+                    environment
+                    |> typeGraphEnvironmentConstructors
+                    |> typeGraphNamedTypeHasFieldNames(symbolId)(name)
+                | Some(HeapConstructorLookupIndex { records = records }) ->
+                    match Ashes.Collection.Map.getInt(symbolId)(records) with
+                        | None -> false
+                        | Some(byName) ->
+                            match Ashes.Collection.Map.getStr(name)(byName) with
+                                | None -> false
+                                | Some(isRecord) -> isRecord
+        | _ -> false
+
 // The different edge sets intentionally remain separate. Resource reachability does not inspect
 // phantom generic arguments; unresolved reachability does. Argument containment additionally
 // inspects pointers and capability arguments, and decides independently when to expand fields.
@@ -258,6 +285,8 @@ type TypeGraphNode =
     | resolvedType: SemanticType
     | constructorGroups: List((Str, List(SemanticType)))
     | sourceConstructorGroups: List((Str, List(SemanticType)))
+    | isRecord: Bool
+    | sourceIsRecord: Bool
     | fields: List(SemanticType)
     | resourceChildren: List(SemanticType)
     | unresolvedChildren: List(SemanticType)
@@ -438,29 +467,35 @@ let buildNode nodeId semanticType environment =
         |> inferenceTypeResolutionContext
         |> semanticRuntimeRepresentation(semanticType)
     in
-        let groups = typeGraphNamedTypeConstructors(resolved)(environment)
+        let isRecord = typeGraphNamedTypeIsRecord(resolved)(environment)
         in
-            let fields = flattenGroups(groups)
+            let groups = typeGraphNamedTypeConstructors(resolved)(environment)
             in
-                let resourceChildren = graphResourceChildren(resolved)(fields)
+                let fields = flattenGroups(groups)
                 in
-                    TypeGraphNode(
-                        nodeId = nodeId,
-                        sourceType = semanticType,
-                        resolvedType = resolved,
-                        constructorGroups = groups,
-                        sourceConstructorGroups = if semanticType == resolved
-                        then groups
-                        else typeGraphNamedTypeConstructors(semanticType)(environment),
-                        fields = fields,
-                        resourceChildren = resourceChildren,
-                        unresolvedChildren = match resolved with
-                            | SemNamed(_id, _name, arguments) -> append(arguments)(fields)
-                            | _ -> resourceChildren,
-                        argumentComponents = graphArgumentComponents(resolved),
-                        directResource = graphDirectResource(resolved)(environment),
-                        directUnresolved = graphDirectUnresolved(resolved)
-                    ))
+                    let resourceChildren = graphResourceChildren(resolved)(fields)
+                    in
+                        TypeGraphNode(
+                            nodeId = nodeId,
+                            sourceType = semanticType,
+                            resolvedType = resolved,
+                            constructorGroups = groups,
+                            sourceConstructorGroups = if semanticType == resolved
+                            then groups
+                            else typeGraphNamedTypeConstructors(semanticType)(environment),
+                            isRecord = isRecord,
+                            sourceIsRecord = if semanticType == resolved
+                            then isRecord
+                            else typeGraphNamedTypeIsRecord(semanticType)(environment),
+                            fields = fields,
+                            resourceChildren = resourceChildren,
+                            unresolvedChildren = match resolved with
+                                | SemNamed(_id, _name, arguments) -> append(arguments)(fields)
+                                | _ -> resourceChildren,
+                            argumentComponents = graphArgumentComponents(resolved),
+                            directResource = graphDirectResource(resolved)(environment),
+                            directUnresolved = graphDirectUnresolved(resolved)
+                        ))
 
 let typeGraphNode (semanticType: SemanticType) (index: TypeGraphIndex) =
     match findNode(semanticType)(index) with
