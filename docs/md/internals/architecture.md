@@ -3181,3 +3181,15 @@ The fix establishes the join's real reference ownership rather than retaining a
 child of an already freed returned owner. The extracted metadata regression is
 `selfhost/tests/join-backedge-provenance`; the original parser-only runtime case
 is preserved in `selfhost/tests/parser-curried-result`.
+
+### Indexed whole-program ownership handoff approval
+
+Core lowering prepares a name index when installing the completed whole-program
+parameter-ownership table. The index preserves the first entry, including an
+empty parameter list; it deliberately differs from the inference fixpoint's
+unique-name index, where duplicates are ambiguous. Qualified names remain exact
+string keys. Handoff approval still requires top-level registration and the same
+ordered parameter-name chain before overlaying proven borrows. The index shares
+its immutable ownership lists under ordinary RC lifetimes and is scoped to the
+lowering state. `selfhost/tests/handoff-ownership-index` compares the old scan and
+actual approval logic, including fresh index/state lifetimes.

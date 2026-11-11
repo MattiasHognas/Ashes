@@ -86,7 +86,7 @@ import AshesCompiler.Semantics.ResultReachSummaries.expressionReachSummaries
 import AshesCompiler.Semantics.ResultReachSummaries.lambdaIdentityOf
 import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
-import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
+import AshesCompiler.Semantics.ProgramParameterOwnershipIndex
 import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
 import AshesCompiler.Semantics.OwnershipInference.programSoleNullaryConstructors
 import AshesCompiler.Semantics.OwnershipInference.MoveCallSite
@@ -741,7 +741,7 @@ type CoreProgramState =
     | reachByName: MapTree(Str, ReachSummary)
     // Query-only argument reach answers, frozen with the selected function summaries.
     | callReachByKey: MapTree(Str, PreparedCallReach)
-    | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
+    | programParameterOwnership: ProgramParameterOwnershipIndex
     | dropperLabels: DropperLabelCache
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
     // Per argument-free named type of the program: whether it is admissible to the general contract and
@@ -1404,7 +1404,7 @@ let stateProgramParameterOwnership (state: CoreLoweringState) =
 
 let withStateProgramParameterOwnership value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with programParameterOwnership = value))
+    in state with programState = (group with programParameterOwnership = indexProgramParameterOwnership(value)))
 
 let stateLetLambdas (state: CoreLoweringState) =
     (let group = state.programState
@@ -2958,7 +2958,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             reachByIdentity = Ashes.Collection.Map.empty,
             reachByName = Ashes.Collection.Map.empty,
             callReachByKey = Ashes.Collection.Map.empty,
-            programParameterOwnership = [],
+            programParameterOwnership = Ashes.Collection.Map.empty,
             dropperLabels = emptyDropperLabelCache,
             resultRcEligibility = None,
             generalRcTypeFacts = Ashes.Collection.Map.empty,
@@ -4639,7 +4639,7 @@ let registeredTopLevelName (name: Str) (names: MapTree(Str, Bool)) =
 let provenParameterOwnership (callee: Str) (parameters: List(Str)) (ownership: List((Str, ParameterOwnership))) (state: CoreLoweringState) =
     match state
     |> stateProgramParameterOwnership
-    |> lookupProgramParameterOwnership(callee) with
+    |> lookupIndexedProgramParameterOwnership(callee) with
         | Some(proven) ->
             if registeredTopLevelName(callee)(stateTopLevelNames(state)) && sameParameterNames(proven)(parameters)
             then overlayProvenBorrows(proven)(ownership)
