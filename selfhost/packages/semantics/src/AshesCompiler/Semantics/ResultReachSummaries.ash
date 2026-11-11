@@ -190,10 +190,48 @@ let recursive hasDescendantOf (prefix: Str) (entries: List(ParameterReachEntry))
 
 // Whether the entries hold a token and a proper path descendant of it (`map` beside `map/1`): the
 // result embeds a value and one of its own sub-cells, the internal sharing an entry copy unshares.
-let recursive hasPathAncestorPair (entries: List(ParameterReachEntry)) (all: List(ParameterReachEntry)) =
+let recursive indexReachNames (entries: List(ParameterReachEntry)) (names: MapTree(Str, Bool)) =
     match entries with
+        | [] -> names
+        | ParameterReachEntry { parameterName = name } :: rest ->
+            names
+            |> Ashes.Collection.Map.setStr(name)(true)
+            |> indexReachNames(rest)
+
+// Match Text.length's codepoint-start rule even for byte-sliced text: a suffix
+// consisting only of continuation bytes has zero length under the old predicate.
+let recursive hasPathSuffix (bytes: Bytes) (from: Int) =
+    if from >= Ashes.Byte.length(bytes)
+    then false
+    else
+        let byte =
+            from
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
+        in byte < 128 || byte >= 192 || hasPathSuffix(bytes)(from + 1)
+
+// Slash is one UTF-8 byte. A nonempty suffix after it preserves hasDescendantOf's
+// strict length rule, including empty names and repeated/trailing slashes.
+let recursive hasIndexedPathAncestor (names: MapTree(Str, Bool)) (bytes: Bytes) (from: Int) =
+    (let slash = Ashes.Byte.indexOf(bytes)(47)(from)
+    in
+        if slash < 0 || slash + 1 >= Ashes.Byte.length(bytes)
+        then false
+        else
+            match Ashes.Collection.Map.getStr(Ashes.Byte.subText(bytes)(0)(slash))(names) with
+                | Some(_present) -> hasPathSuffix(bytes)(slash + 1)
+                | None -> hasIndexedPathAncestor(names)(bytes)(slash + 1))
+
+let recursive anyIndexedPathAncestor (all: List(ParameterReachEntry)) (names: MapTree(Str, Bool)) =
+    match all with
         | [] -> false
-        | ParameterReachEntry { parameterName = name } :: rest -> hasDescendantOf(name + "/")(all) || hasPathAncestorPair(rest)(all)
+        | ParameterReachEntry { parameterName = name } :: rest ->
+            hasIndexedPathAncestor(names)(Ashes.Byte.fromText(name))(0) || anyIndexedPathAncestor(rest)(names)
+
+let hasPathAncestorPair (entries: List(ParameterReachEntry)) (all: List(ParameterReachEntry)) =
+    Ashes.Collection.Map.empty
+    |> indexReachNames(entries)
+    |> anyIndexedPathAncestor(all)
 
 // Simultaneously live positions (a constructor's fields, an aggregate's elements): multiplicities
 // add, and a parameter reached twice, or beside one of its own sub-cells, poisons.

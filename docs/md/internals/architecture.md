@@ -827,6 +827,11 @@ result droppability requests the existing path-sensitive graph verdict directly.
 Both queries preserve settled monomorphic full-fact cache answers; uncached
 queries do not construct unrelated heap-layout facts or retain new cache state.
 
+Result-reach ancestor-pair detection indexes exact token names per query and
+checks slash-delimited prefixes only when a nonempty suffix follows. Duplicate
+names and count ordering are unchanged. The capped-count short-circuit avoids
+index construction; tokenShared retains its distinct ancestor semantics.
+
 The self-hosted inspect-only parameter fixpoint keeps its public ownership table
 in registration order. Each pass builds a private string-keyed lookup index from
 the complete previous table before walking any function bodies. A second name
