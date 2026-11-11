@@ -791,6 +791,35 @@ Shared analysis infrastructure the passes build on:
 | `Lowering.DirectCalleeAnalysis` | `Lowering.DirectCalleeAnalysis.cs` | Whether a let-bound name is only ever used as a direct call target | Stack allocation of non-escaping closures |
 | `IrCompileTimeEval` | `IrCompileTimeEval.cs` | The whole-program set of provably evaluable (pure, terminating under a budget) functions | Whole-call folding and, as a purity oracle, local CSE |
 
+A runtime-managed match scrutinee owns a reference, which does not imply a unique
+wrapper: a call may return a retained alias. Stage 0's direct constructor-field
+ownership transfer checks wrapper uniqueness. Shared wrappers retain each eligible
+field before that field becomes an independent owner; unique wrappers transfer
+without an extra retain. A local flag remembers this initial distinction through
+deferred loop cleanup. Only the transferred branch excludes fields from the
+wrapper drop; the retained branch performs an ordinary full drop, including its
+original child references if the wrapper has since become unique. Stage 1 keeps
+constructor bindings aliased to the whole scrutinee owner.
+
+Loop-owned match results record names from resolved pattern bindings, in both
+linear and tag-switch lowering. Bare nullary constructor tests such as `None` are
+not binders: treating them as names of the old value falsely makes a later fresh
+`None` look like an escaping alias and prevents the existing back-edge release
+proof. Explicit `as` aliases and other real bindings remain in the reach analysis.
+Stage 0 exposes `GRC_NO_RESOLVEDMATCHBINDERS` for regression comparisons;
+`GRC_NO_SHAREDMATCHFIELD` disables the shared-wrapper field retain above.
+
+Unspecialized reuse fallback calls record their actual lexical callee and its
+returned stages for a final check before Perceus placement. A stage that only
+constructs an arena environment and arena closure borrows its captured argument
+through the returned closure; it
+cannot consume a duplicate reference. The existing strict currying-stage matcher
+proves this shape and rejects calls, drops, owned allocations and pending lowering
+instructions; non-owning aliases of captured source loads are permitted. Placement
+follows argument aliases through the returned closure to its later uses. This
+placement fact does not change resource ownership summaries,
+call adoption, or result reachability. `GRC_NO_ARENACURRYBORROW` disables it.
+
 Which side does what. Everything that depends on ownership, reference counting,
 reuse, arena scoping, trait evidence, capabilities, purity across closures and
 user ADTs, or closure construction is Ashes-only: LLVM sees opaque calls and

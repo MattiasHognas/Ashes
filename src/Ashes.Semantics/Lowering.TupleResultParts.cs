@@ -519,6 +519,11 @@ public sealed partial class Lowering
 
         IrInst.CallClosure forwardingCall = call with { RuntimeManagedArgumentFlagTemp = wordTemp };
         _inst[callIndex] = forwardingCall;
+        if (_curryStageCallLabels.Remove(call, out string? stageLabel))
+        {
+            _curryStageCallLabels[forwardingCall] = stageLabel;
+        }
+
         if (_borrowedArgumentCalls.Remove(call))
         {
             _borrowedArgumentCalls.Add(forwardingCall);

@@ -246,6 +246,18 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task ReturnedConstructorReleasesItsParameterFieldRetain()
         => VerifyPlateauAndPoison("leak.loop-result-constructor-field");
 
+    [Test]
+    public Task SharedCallResultWrapperRetainsIndependentlyOwnedFields()
+        => VerifyPlateauAndPoison("leak.shared-call-result-field");
+
+    [Test]
+    public Task NullaryPatternTestsDoNotKeepLookupResultsAlive()
+        => VerifyPlateauAndPoison("leak.resolved-nullary-pattern-binder");
+
+    [Test]
+    public Task ArenaCurryStageDoesNotConsumeCapturedArgument()
+        => VerifyPlateauAndPoison("leak.arena-curry-borrow");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())

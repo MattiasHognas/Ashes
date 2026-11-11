@@ -1251,7 +1251,7 @@ public sealed partial class Lowering
         // Running lifetime placement over that IR cannot affect those elaborations.
         return _collectInferredTraitElaboration
             ? loweredProgram
-            : PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
+            : PlaceWithArenaCurryBorrows(loweredProgram);
     }
 
     private void FinishEntryInference(TypeRef resultType)
@@ -13371,6 +13371,7 @@ public sealed partial class Lowering
         AddPendingTcoResetSlots(slots, info.RuntimeManagedParamActiveSlots);
         AddPendingTcoResetSlots(slots, info.RuntimeManagedClosureActiveSlots);
         AddPendingTcoResetSlots(slots, info.IterationOwnedDrops.Select(owned => owned.Slot));
+        AddPendingTcoResetSlots(slots, info.IterationOwnedDrops.Select(owned => owned.ExcludedDropFieldsTransferFlagSlot));
         AddPendingTcoResetSlots(slots, info.ArgResvStartSlots);
         AddPendingTcoResetSlots(slots, info.ArgResvEndSlots);
         AddPendingTcoResetSlots(slots,
@@ -16980,6 +16981,11 @@ public sealed partial class Lowering
         if (_arenaResultRequestingCalls.Remove(original))
         {
             _arenaResultRequestingCalls.Add(renamed);
+        }
+
+        if (_curryStageCallLabels.Remove(original, out string? stageLabel))
+        {
+            _curryStageCallLabels[renamed] = stageLabel;
         }
     }
 

@@ -850,7 +850,8 @@ public sealed partial class Lowering
         bool runtimeDeepUnique = false,
         IReadOnlySet<int>? excludedDropFieldIndices = null,
         bool perceusPatternOwner = false,
-        int perceusRootParameterSlot = -1)
+        int perceusRootParameterSlot = -1,
+        int excludedDropFieldsTransferFlagSlot = -1)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -870,7 +871,10 @@ public sealed partial class Lowering
                 excludedDropFieldIndices,
                 perceusPatternOwner,
                 perceusRootParameterSlot,
-                _lambdaDepth);
+                _lambdaDepth)
+            {
+                ExcludedDropFieldsTransferFlagSlot = excludedDropFieldsTransferFlagSlot,
+            };
             Dictionary<string, OwnershipInfo> scope = _ownershipScopes.Peek();
             if (scope.TryGetValue(name, out OwnershipInfo? previous))
             {
@@ -1117,12 +1121,7 @@ public sealed partial class Lowering
             // placement pass moves one RcDrop anchor, not a guarded tree of child drops.
             if (info.RuntimeConstructor is { } constructor)
             {
-                EmitKnownConstructorRuntimeManagedAdtDrop(
-                    loadTemp,
-                    runtimeAdt,
-                    constructor,
-                    info.RuntimeDeepUnique,
-                    info.ExcludedDropFieldIndices);
+                EmitOwnedConstructorDrop(info, loadTemp, runtimeAdt, constructor);
             }
             else
             {
@@ -1133,6 +1132,26 @@ public sealed partial class Lowering
         {
             EmitSimpleOwnedValueDrop(info, loadTemp);
         }
+    }
+
+    private void EmitOwnedConstructorDrop(OwnershipInfo info, int valueTemp, TypeRef.TNamedType type, ConstructorSymbol constructor)
+    {
+        if (info.ExcludedDropFieldsTransferFlagSlot < 0)
+        {
+            EmitKnownConstructorRuntimeManagedAdtDrop(valueTemp, type, constructor, info.RuntimeDeepUnique, info.ExcludedDropFieldIndices);
+            return;
+        }
+
+        int transferredTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(transferredTemp, info.ExcludedDropFieldsTransferFlagSlot));
+        string retainedLabel = NewLabel("rc_match_fields_retained");
+        string doneLabel = NewLabel("rc_match_wrapper_released");
+        Emit(new IrInst.JumpIfFalse(transferredTemp, retainedLabel));
+        EmitKnownConstructorRuntimeManagedAdtDrop(valueTemp, type, constructor, info.RuntimeDeepUnique, info.ExcludedDropFieldIndices);
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(retainedLabel));
+        EmitRuntimeManagedAdtDrop(valueTemp, type);
+        Emit(new IrInst.Label(doneLabel));
     }
 
     private void EmitSimpleOwnedValueDrop(OwnershipInfo info, int loadTemp)

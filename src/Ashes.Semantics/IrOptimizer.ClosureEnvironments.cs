@@ -575,7 +575,10 @@ public static partial class IrOptimizer
     // exactly one store per environment slot from those loads, one closure construction over that
     // environment (not itself reference-counted, so skipping it drops no release), and a return of
     // that closure as the last instruction. Anything else disqualifies the function.
-    private static CurryingStage? TryMatchCurryingStage(IrFunction function)
+    internal static bool IsBorrowingArenaCurryingStage(IrFunction function)
+        => TryMatchCurryingStage(function, allowBorrowedCaptures: true) is not null;
+
+    private static CurryingStage? TryMatchCurryingStage(IrFunction function, bool allowBorrowedCaptures = false)
     {
         if (!function.HasEnvAndArgParams || function.Coroutine is not null || function.Instructions.Count < 3)
         {
@@ -583,7 +586,7 @@ public static partial class IrOptimizer
         }
 
         List<IrInst> body = function.Instructions;
-        var scan = new CurryingStageScan();
+        var scan = new CurryingStageScan(allowBorrowedCaptures);
         for (int i = 0; i < body.Count; i++)
         {
             if (!scan.Accept(body[i], last: i == body.Count - 1))
@@ -596,7 +599,7 @@ public static partial class IrOptimizer
     }
 
     // The instruction-by-instruction state of matching a stage body.
-    private sealed class CurryingStageScan
+    private sealed class CurryingStageScan(bool allowBorrowedCaptures)
     {
         private int _envTemp = -1;
         private int _envSize;
@@ -620,6 +623,10 @@ public static partial class IrOptimizer
                     return true;
                 case IrInst.LoadLocal { Slot: 1 } argument:
                     _sourceIndexByTemp[argument.Target] = -1;
+                    return true;
+                case IrInst.Borrow borrow when allowBorrowedCaptures
+                    && _sourceIndexByTemp.TryGetValue(borrow.SourceTemp, out int borrowedIndex):
+                    _sourceIndexByTemp[borrow.Target] = borrowedIndex;
                     return true;
                 case IrInst.StoreMemOffset store when _envTemp >= 0 && store.BasePtr == _envTemp
                     && _sourceIndexByTemp.TryGetValue(store.Source, out int captureIndex):

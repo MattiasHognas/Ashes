@@ -219,10 +219,26 @@ public sealed partial class Lowering
         }
     }
 
+    private static bool ResolvedMatchBindersRuleEnabled =>
+        string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_RESOLVEDMATCHBINDERS"));
+
+    private void NoteResolvedMatchBinders(int valueTemp, IEnumerable<string> names)
+    {
+        if (ResolvedMatchBindersRuleEnabled)
+        {
+            NoteGeneralRcOwnedSlotBinders(valueTemp, names);
+        }
+    }
+
     // The names every arm of a match binds from its value, noted as binders of the owned slot the
     // value reads.
     private void NoteMatchScrutineeBinders(Expr.Match match, int valueTemp)
     {
+        if (ResolvedMatchBindersRuleEnabled)
+        {
+            return;
+        }
+
         HashSet<string> binders = new(StringComparer.Ordinal);
         foreach (MatchCase matchCase in match.Cases)
         {
