@@ -47,6 +47,10 @@ export (
     value heapConstructorFieldGroups,
     value heapExtendConstructorEnvironment,
     value classifyHeapLayout,
+    type HeapDropperChild(..),
+    type HeapDropperFacts(..),
+    value projectHeapDropperFacts,
+    value classifyHeapDropper,
     value classifyHeapChildren,
     value classifyHeapChildTypes,
     value classifyHeapResource,
@@ -1150,3 +1154,81 @@ let classifyHeapLayout (semanticType: SemanticType) (environment: TypeEnvironmen
     environment
     |> resolveLayoutType(semanticType)
     |> heapLayoutFactsOf(environment)
+
+// Drop emission never consumes child copy kinds or the unrelated whole-layout support fields.
+type HeapDropperChild =
+    | constructorName: Maybe(Str)
+    | fieldIndex: Int
+    | childType: SemanticType
+    | dropKind: HeapChildDropKind
+    deriving {Eq, Show}
+
+type HeapDropperFacts =
+    | containsResource: Bool
+    | containsUnresolvedType: Bool
+    | containsOwnedChild: Bool
+    | shallowCopy: Bool
+    | runtimeRecordAdtSupported: Bool
+    | runtimeOwnedChildAdtSupported: Bool
+    | runtimeTcoOwnedChildAdtSupported: Bool
+    | runtimePositionalAdtSupported: Bool
+    | children: List(HeapDropperChild)
+    deriving {Eq, Show}
+
+let projectDropperChild (child: HeapLayoutChild) = HeapDropperChild(constructorName = child.constructorName, fieldIndex = child.fieldIndex, childType = child.childType, dropKind = child.dropKind)
+
+let projectHeapDropperFacts (facts: HeapLayoutFacts) =
+    HeapDropperFacts(
+        containsResource = facts.containsResource,
+        containsUnresolvedType = facts.containsUnresolvedType,
+        containsOwnedChild = facts.containsOwnedChild,
+        shallowCopy = facts.structuralCopy == ShallowCopy,
+        runtimeRecordAdtSupported = facts.runtimeRecordAdtSupported,
+        runtimeOwnedChildAdtSupported = facts.runtimeOwnedChildAdtSupported,
+        runtimeTcoOwnedChildAdtSupported = facts.runtimeTcoOwnedChildAdtSupported,
+        runtimePositionalAdtSupported = facts.runtimePositionalAdtSupported,
+        children = map(projectDropperChild)(facts.children)
+    )
+
+let recursive dropperChildrenOnto constructorName fieldTypes index environment tail =
+    match fieldTypes with
+        | [] -> tail
+        | fieldType :: rest -> HeapDropperChild(constructorName = constructorName, fieldIndex = index, childType = fieldType, dropKind = heapDropKind(fieldType)(environment)) :: dropperChildrenOnto(constructorName)(rest)(index + 1)(environment)(tail)
+
+let recursive namedDropperChildren grouped environment =
+    match grouped with
+        | [] -> []
+        | (name, fields) :: rest ->
+            environment
+            |> namedDropperChildren(rest)
+            |> dropperChildrenOnto(Some(name))(fields)(0)(environment)
+
+let dropperChildren resolved environment =
+    match resolved with
+        | SemList(element) -> dropperChildrenOnto(None)([element, resolved])(0)(environment)([])
+        | SemTuple(elements) -> dropperChildrenOnto(None)(elements)(0)(environment)([])
+        | SemNamed(_id, _name, _arguments) ->
+            namedDropperChildren(heapNamedTypeConstructors(resolved)(environment))(environment)
+        | _ -> []
+
+let recursive anyDropperOwnedChild (children: List(HeapDropperChild)) =
+    match children with
+        | [] -> false
+        | child :: rest -> child.dropKind != NoChildDrop || anyDropperOwnedChild(rest)
+
+let classifyHeapDropper (semanticType: SemanticType) (environment: TypeEnvironment) =
+    (let resolved = resolveLayoutType(semanticType)(environment)
+    in
+        let children = dropperChildren(resolved)(environment)
+        in
+            HeapDropperFacts(
+                containsResource = heapResourceBearing(resolved)(environment),
+                containsUnresolvedType = heapUnresolvedType(resolved)(environment),
+                containsOwnedChild = anyDropperOwnedChild(children),
+                shallowCopy = classifyHeapShallowCopy(resolved)(environment),
+                runtimeRecordAdtSupported = heapRuntimeRecordAdtLayout(resolved)(environment)([]),
+                runtimeOwnedChildAdtSupported = heapRuntimeOwnedChildAdtLayout(resolved)(environment)([]),
+                runtimeTcoOwnedChildAdtSupported = heapRuntimeTcoOwnedChildAdtLayout(resolved)(environment)([]),
+                runtimePositionalAdtSupported = heapRuntimePositionalAdtLayout(resolved)(environment)([]),
+                children = children
+            ))

@@ -1390,8 +1390,12 @@ The lowering query shares pending work across branches and falls back to its ori
 when display-based cycle keys would merge distinct instantiated types. Completed root answers
 are cached by exact type in a bounded, function-local list; substitutions, layout facts,
 declarations, and inference defaults invalidate that list. Dropper synthesis separately caches
-full layout facts within one immutable type environment, sharing them with nested synthesis
-and discarding them at the top-level synthesis boundary.
+a drop-specific view within one immutable type environment, sharing it with nested synthesis
+and discarding it at the top-level synthesis boundary. The view preserves containment flags,
+shallow-copy eligibility, the four relevant runtime layout flags, and ordered child ownership
+descriptors. It omits child copy kinds and unrelated reuse/deep-copy support queries. Existing
+full layout-cache entries remain authoritative and are projected before the dedicated cache
+is consulted. Both caches use exact instantiated type identity within symbol-id buckets.
 Within that synthesis, admissibility queries project the containment flags and ordered
 child type/drop-kind pairs from an existing exact-type layout-cache hit. A miss still
 uses the dedicated admissibility classifier. Path-dependent admissibility answers are
