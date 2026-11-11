@@ -28,6 +28,7 @@ internal enum TcoRcEligibilityReason
 {
     UnresolvedType,
     ScalarTupleOrAdtLayout,
+    GenericVariantLoop,
     FreshListRebuild,
     AffineConsList,
     ConsumedListTail,

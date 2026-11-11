@@ -366,6 +366,12 @@ public sealed partial class Lowering
                 TcoRuntimeManagedKind.None,
                 TcoRcEligibilityReason.UnresolvedType);
         }
+        if (IsGeneralRcGenericVariantLoopParameter(tco, facts, parameterType))
+        {
+            return new TcoRcEligibility(true, true, TcoRuntimeManagedKind.Ordinary,
+                TcoRcEligibilityReason.GenericVariantLoop);
+        }
+
         if (IsRcEligibleScalarTupleOrAdtType(parameterType)
             && !IsGeneralRcSpecializationAccumulator(tco, facts, parameterType)
             && !IsUnplaceableGeneralRcVariantParameter(tco, facts, parameterType))

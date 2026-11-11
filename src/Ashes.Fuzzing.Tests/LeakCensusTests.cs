@@ -258,6 +258,10 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task ArenaCurryStageDoesNotConsumeCapturedArgument()
         => VerifyPlateauAndPoison("leak.arena-curry-borrow");
 
+    [Test]
+    public Task NestedGenericMapSuccessorsOwnTheirChildren()
+        => VerifyPlateauAndPoison("leak.nested-generic-map-accumulator");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())

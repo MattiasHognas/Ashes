@@ -926,6 +926,29 @@ values, scheduler state, OS-backed payload views, and a small number of
 specialized data-structure regions retain explicit region lifetimes. There is
 no tracing garbage collector and no ownership syntax in the source language.
 
+### Generic variant loop roots
+
+A fully resolved generic variant can use an owned RC loop slot when canonical
+ownership facts prove a changing tail-selfcall argument and all terminal exits
+return that same unshadowed parameter directly. This decision precedes persistent
+region specialization. Entry acquires an independent root; each back edge acquires
+all successor roots before releasing predecessors and iteration temporaries. The
+normalizer retains existing RC subtrees and only normalizes fresh arena cells, so
+this does not introduce a whole-map copy on each update.
+
+The contextual rule declines TMC, invariant/shadowed parameters, hidden evidence
+parameters, unresolved or inadmissible layouts, and aggregate or unknown terminal
+returns. In particular, a polymorphic tuple result can force arena demotion whose
+unsupported list-field copy borrows from the released RC root. Such exits retain
+the previous placement until an independent returned-field ownership contract is
+proved. `GRC_NO_GENERICVARIANTLOOPRC=1` disables the rule; an unset or empty value
+leaves it enabled. This does not broaden context-free generic layout predicates.
+
+The exact nested-map accumulator regression is flat under unchanged stage 1 at
+two round counts, so this stage-0 placement correction has no stage-1 mirror.
+That exemption is limited to this loop: the larger resource-query fixture still
+has pre-existing stage-1 growth, measured separately from candidate regressions.
+
 ### The trade this model makes
 
 The absence of a tracing collector is a deliberate trade with a measurable cost and a measurable
