@@ -28136,21 +28136,19 @@ let noteOwnFieldParameterRetain (argument: Expr) (retained: Bool) (state: CoreLo
 // An arena cell built as a call's argument is no successor cell, the call's result is: its retain
 // of a parameter read is collected with the call argument's retains and released after the call
 // (stage 0's `RecordCallArgumentArenaRetain` in `RetainRuntimeManagedTcoConstructorArguments`).
-let keepLoopResultConstructorFieldRetainOwned (duplicate: Int) (fieldType: SemanticType) (state: CoreLoweringState) =
-    (let request = consumerRequestOf(state)
-    in
-        if generalRcEnabled(state) && (request.tailPosition || request.consTailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot) with
-            | (Some(_frame), None, None) -> true
-            | _ -> false)
-        then
-            match freshLocal(state) with
-                | FreshLocal { state = allocated, local = ownedSlot } ->
-                    allocated
-                    |> emit(StoreLocal(ownedSlot)(duplicate))
-                    |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(fieldType))
-        else state)
+let keepLoopResultConstructorFieldRetainOwned (request: ConsumerRequest) (duplicate: Int) (fieldType: SemanticType) (state: CoreLoweringState) =
+    if generalRcEnabled(state) && (request.tailPosition || request.consTailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot) with
+        | (Some(_frame), None, None) -> true
+        | _ -> false)
+    then
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = ownedSlot } ->
+                allocated
+                |> emit(StoreLocal(ownedSlot)(duplicate))
+                |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(fieldType))
+    else state
 
-let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let retainConstructorLoopParameterArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (state
     |> statePatternOwnerCopyTemps
     |> containsInt(temp), constructorArgumentParameterSlot(argument)(semanticType)(state)) with
@@ -28177,23 +28175,23 @@ let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Exp
                                             |> (given (noted: CoreLoweringState) ->
                                                 if runtimeManaged
                                                 then noted
-                                                else keepLoopResultConstructorFieldRetainOwned(duplicate)(semanticType)(noted)))
+                                                else keepLoopResultConstructorFieldRetainOwned(request)(duplicate)(semanticType)(noted)))
                                     |> (given (noted: CoreLoweringState) -> (noted, duplicate))
             else
                 match emitPendingConstructorFieldRetain(temp)(slot)(state) with
                     | (pending, pendingTemp) -> (noteOwnFieldParameterRetain(argument)(false)(pending), pendingTemp)
 
-let recursive retainLoopParameterArguments (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+let recursive retainLoopParameterArguments (request: ConsumerRequest) (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (arguments, temps, semanticTypes) with
         | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
-            match retainConstructorLoopParameterArgument(runtimeManaged)(argument)(temp)(semanticType)(state) with
-                | (marked, markedTemp) -> retainLoopParameterArguments(runtimeManaged)(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
+            match retainConstructorLoopParameterArgument(request)(runtimeManaged)(argument)(temp)(semanticType)(state) with
+                | (marked, markedTemp) -> retainLoopParameterArguments(request)(runtimeManaged)(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
-let retainConstructorLoopParameterArguments (runtimeManaged: Bool) arguments lowered =
+let retainConstructorLoopParameterArguments (request: ConsumerRequest) (runtimeManaged: Bool) arguments lowered =
     match lowered with
         | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
-            match retainLoopParameterArguments(runtimeManaged)(arguments)(temps)(semanticTypes)(state)([]) with
+            match retainLoopParameterArguments(request)(runtimeManaged)(arguments)(temps)(semanticTypes)(state)([]) with
                 | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
         | _ -> lowered
 
@@ -28516,7 +28514,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                                                     | (placed, placedRuntimeManaged) ->
                                                         placed
                                                         |> handConstructorFreshChildren(layout)(arguments)(resultType)(placedRuntimeManaged)(stackAllocate)
-                                                        |> retainConstructorLoopParameterArguments(placedRuntimeManaged)(arguments)
+                                                        |> retainConstructorLoopParameterArguments(request)(placedRuntimeManaged)(arguments)
                                                         |> retainRuntimeCellChildren(placedRuntimeManaged)(arguments)
                                                         |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(placedRuntimeManaged)
 
