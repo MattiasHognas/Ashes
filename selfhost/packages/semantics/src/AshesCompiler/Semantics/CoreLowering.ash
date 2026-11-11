@@ -8135,7 +8135,9 @@ and synthesizeAdtNormalizer (named: SemanticType) (state: CoreLoweringState) =
 and emitNormalizerAdtCopy (sourceTemp: Int) (named: SemanticType) (state: CoreLoweringState) =
     match named with
         | SemNamed(_symbolId, name, _arguments) ->
-            match constructorCopyPlansOfWith(true)(state |> stateConstructorsOfType(name))(heapChildrenOfNamed(named)(state))(state) with
+            match constructorCopyPlansOfWith(true)(state |> stateConstructorsOfType(name))(state
+            |> heapChildrenOfNamed(named)
+            |> projectHeapCopyPlanChildren)(state) with
                 | Some(single :: []) -> emitConstructorDeepCopy(sourceTemp)(single)(state)
                 | Some(_first :: _rest as plans) -> emitAdtSwitchDeepCopyWith("rcnorm_ctor")("rcnorm_end")(sourceTemp)(plans)(state)
                 | _ -> (state, sourceTemp)

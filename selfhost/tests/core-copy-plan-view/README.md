@@ -54,3 +54,22 @@ is real at this scale; the narrower miss query improves this fixture. These shor
 measurements are indicative, not a whole-build speed claim. The final stage-1
 fixture compilation took 1:58.33 with 843508 KiB maximum RSS. All final decision
 and fresh-lifetime checks passed again after the benchmark harness was added.
+
+The renderer also extracts the actual `heapChildrenOfNamed` and
+`emitNormalizerAdtCopy` caller (changing only `and` to `let` at the isolated
+function boundary). Minimal emission stubs record complete constructor/switch
+plans and check the production label names. The oracle invokes the old planner
+on full children and compares exact emitted plans and source temps against the
+production caller, including settled cache hits, misses, generic bypass, empty,
+single and multiple constructors, and non-named fallback. This catches a missing
+full-child to copy-plan-child adapter at the caller boundary during compilation.
+
+The added normalizer boundary passed the 192-case oracle and 1,000/10,000 fresh
+queries in stage 0 plain and poisoned modes: **5/5 live cells** in each mode.
+An ignored generated control with only the child projection removed fails with
+`ASH002 Type mismatch: HeapCopyPlanChild vs HeapLayoutChild` in argument 3 of
+`constructorCopyPlansOfWith`, reproducing the bootstrap18 failure. Plain/poison
+fixture compilation took 16.79/17.35 seconds, with 1090940/1116360 KiB peak RSS.
+This extension has not had a separate stage-1 fixture compilation; the subsequent
+full bootstrap validates that integration boundary. Evidence and separate timing
+files are under `work/core-copy-plan-view/normalizer-caller-*`.

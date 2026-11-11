@@ -18,13 +18,13 @@ let check seed =
                         in
                             let layouts = if seed % 4 == 0 then [] else if seed % 4 == 1 then [CoreConstructorLayout(name = "A", tag = 7, tagless = true, size = 16)] else [CoreConstructorLayout(name = "A", tag = 7, tagless = false, size = 24), CoreConstructorLayout(name = "B", tag = 3, tagless = false, size = 16)]
                             in
-                                let plain = CoreLoweringState(environment = environment, facts = Ashes.Collection.Map.empty, resolvedOverride = None, layouts = layouts, recorded = (if seed % 3 == 0 then None else Some(seed % 3 == 1)), recursiveCopy = false, admissible = false)
+                                let plain = CoreLoweringState(environment = environment, facts = Ashes.Collection.Map.empty, resolvedOverride = None, layouts = layouts, recorded = (if seed % 3 == 0 then None else Some(seed % 3 == 1)), recursiveCopy = false, admissible = false, emittedPlan = None)
                                 in
                                     let cached = plain with facts = Ashes.Collection.Map.setStr(name)(full)(Ashes.Collection.Map.empty)
                                     in
                                         let generic = SemNamed(seed)(name)([SemInt])
                                         in
-                                            heapCopyPlanFactsOf(named)(cached) == projectHeapCopyPlanFacts(full) && heapCopyPlanFactsOf(generic)(cached) == projectHeapCopyPlanFacts(heapFactsOf(generic)(cached)) && plansAgree(named)(plain) && plansAgree(named)(cached) && plansAgree(named)((cached with recursiveCopy = true, admissible = true)) && plansAgree(SemVariable(seed))((cached with resolvedOverride = Some(named))) && plansAgree(SemTuple([SemString, SemList(SemBytes), SemInt]))(plain)
+                                            normalizerPlansAgree(named)(plain) && normalizerPlansAgree(named)(cached) && normalizerPlansAgree(generic)(cached) && normalizerPlansAgree(SemInt)(plain) && heapCopyPlanFactsOf(named)(cached) == projectHeapCopyPlanFacts(full) && heapCopyPlanFactsOf(generic)(cached) == projectHeapCopyPlanFacts(heapFactsOf(generic)(cached)) && plansAgree(named)(plain) && plansAgree(named)(cached) && plansAgree(named)((cached with recursiveCopy = true, admissible = true)) && plansAgree(SemVariable(seed))((cached with resolvedOverride = Some(named))) && plansAgree(SemTuple([SemString, SemList(SemBytes), SemInt]))(plain)
 
 let recursive repeat remaining =
     if remaining == 0
@@ -41,7 +41,7 @@ let benchmarkState cached =
         in
             let full = classifyHeapLayout(named)(environment)
             in
-                CoreLoweringState(environment = environment, facts = (if cached then Ashes.Collection.Map.setStr("Measured")(full)(Ashes.Collection.Map.empty) else Ashes.Collection.Map.empty), resolvedOverride = None, layouts = [CoreConstructorLayout(name = "A", tag = 0, tagless = false, size = 24)], recorded = None, recursiveCopy = false, admissible = true)
+                CoreLoweringState(environment = environment, facts = (if cached then Ashes.Collection.Map.setStr("Measured")(full)(Ashes.Collection.Map.empty) else Ashes.Collection.Map.empty), resolvedOverride = None, layouts = [CoreConstructorLayout(name = "A", tag = 0, tagless = false, size = 24)], recorded = None, recursiveCopy = false, admissible = true, emittedPlan = None)
 
 let benchmarkToken (plan: Maybe(ArgumentCopyPlan)) =
     match plan with

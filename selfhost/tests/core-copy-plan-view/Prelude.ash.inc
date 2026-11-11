@@ -9,6 +9,17 @@ type CoreConstructorLayout =
     | tagless: Bool
     | size: Int
 
+type ArgumentCopyPlan =
+    | ScalarArgumentCopy
+    | LeafArgumentCopy(Int)
+    | ListHeadArgumentCopy(ListHeadCopyKind)
+    | ListDeepArgumentCopy(ArgumentCopyPlan)
+    | TupleArgumentCopy(List(ArgumentCopyPlan))
+    | ShallowAdtArgumentCopy(Int)
+    | ConstructorArgumentCopy((Int, Int, Bool, List((Int, ArgumentCopyPlan))))
+    | SwitchArgumentCopy(List((Int, Int, Bool, List((Int, ArgumentCopyPlan)))))
+    | NormalizerArgumentCopy(SemanticType)
+
 type CoreLoweringState =
     | environment: TypeEnvironment
     | facts: MapTree(Str, HeapLayoutFacts)
@@ -17,6 +28,7 @@ type CoreLoweringState =
     | recorded: Maybe(Bool)
     | recursiveCopy: Bool
     | admissible: Bool
+    | emittedPlan: Maybe(ArgumentCopyPlan)
 
 // The plan implementation and query boundary are extracted verbatim. Surrounding policy
 // answers are injected so every flag/fallback branch can be compared with the old algorithm.
@@ -40,16 +52,6 @@ let listHeadCopyKindOf (element: SemanticType) (state: CoreLoweringState) =
         | SemList(inner) -> if canArenaResetLayout(resolveType(state)(inner)) then Some(InnerListHead) else None
         | resolved -> if resultSurvivesReset(resolved)(state) then Some(InlineListHead) else None
 
-type ArgumentCopyPlan =
-    | ScalarArgumentCopy
-    | LeafArgumentCopy(Int)
-    | ListHeadArgumentCopy(ListHeadCopyKind)
-    | ListDeepArgumentCopy(ArgumentCopyPlan)
-    | TupleArgumentCopy(List(ArgumentCopyPlan))
-    | ShallowAdtArgumentCopy(Int)
-    | ConstructorArgumentCopy((Int, Int, Bool, List((Int, ArgumentCopyPlan))))
-    | SwitchArgumentCopy(List((Int, Int, Bool, List((Int, ArgumentCopyPlan)))))
-    | NormalizerArgumentCopy(SemanticType)
 let recursive samePlan (left: ArgumentCopyPlan) (right: ArgumentCopyPlan) =
     match (left, right) with
         | (ScalarArgumentCopy, ScalarArgumentCopy) -> true
