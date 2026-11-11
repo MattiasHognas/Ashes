@@ -512,6 +512,9 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMAddAttributeAtIndex")]
     public static partial void AddAttributeAtIndex(LlvmValueHandle function, uint index, LlvmAttributeHandle attribute);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetEnumAttributeAtIndex")]
+    public static partial LlvmAttributeHandle GetEnumAttributeAtIndex(LlvmValueHandle function, uint index, uint kind);
+
     [LibraryImport(Lib, EntryPoint = "LLVMCreateStringAttribute")]
     private static partial LlvmAttributeHandle CreateStringAttributeRaw(
         LlvmContextHandle context, nint kind, uint kindLength, nint value, uint valueLength);
