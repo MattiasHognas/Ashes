@@ -3224,3 +3224,19 @@ ordered parameter-name chain before overlaying proven borrows. The index shares
 its immutable ownership lists under ordinary RC lifetimes and is scoped to the
 lowering state. `selfhost/tests/handoff-ownership-index` compares the old scan and
 actual approval logic, including fresh index/state lifetimes.
+
+### Constructor arguments preserve their returning continuation
+
+Stage0 suppresses loop tail position while evaluating a runtime constructor's
+fields. A recursive call in a field must return so that the enclosing constructor
+can still allocate and store its result. The surrounding tail state is restored
+before constructor ownership and allocation are completed. Erased zero-cost
+constructors retain their existing transparent treatment; direct tail calls and
+the separate list tail-modulo-constructor path are unchanged.
+
+This fixes `semanticRuntimeRepresentation` losing `SemPointer` wrappers: its
+pointer arm previously became a plain self backedge, skipping the constructor.
+The defect predates the generic-variant RC loop rule. Stage1 already preserves
+single and nested pointers. Focused regressions cover direct/piped, multi-field,
+and generic constructors with a genuine tail-recursive alternate branch, plus
+the real selfhost type-resolution function.

@@ -1911,7 +1911,8 @@ public sealed partial class Lowering
                 arguments[i],
                 fieldType,
                 runtimeManagedCandidate,
-                childRequest);
+                childRequest,
+                constructor.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost);
             argumentTemp = RetainEscapingConstructorArgument(
                 arguments[i],
                 argumentTemp,
@@ -2097,8 +2098,12 @@ public sealed partial class Lowering
 
     // A constructor argument lowered as the field it becomes: a cell built as the argument itself
     // knows it is a field of the value (KeepLoopResultFieldCellHeadDuplicateOwned).
-    private LoweredValue LowerConstructorFieldElement(Expr argument, LoweredValueRequest request, bool escapesArenaParent)
+    private LoweredValue LowerConstructorFieldElement(Expr argument, LoweredValueRequest request, bool escapesArenaParent, bool tailTransparent = false)
     {
+        // The parent still has to construct its cell after evaluating this field.
+        // A recursive call here must return rather than jump past that construction.
+        // Only an erased zero-cost constructor has no remaining construction.
+        using TcoTailPositionScope tailPosition = new(tailTransparent ? null : _tcoCtx);
         Expr? savedConstructorFieldArgument = _constructorFieldArgument;
         _constructorFieldArgument = argument;
         try
@@ -2115,7 +2120,8 @@ public sealed partial class Lowering
         Expr argument,
         TypeRef fieldType,
         bool runtimeManagedParent,
-        LoweredValueRequest parentRequest)
+        LoweredValueRequest parentRequest,
+        bool tailTransparent = false)
     {
         LoweredValueRequest request = BuildRuntimeManagedConstructorArgumentRequest(
             argument,
@@ -2125,7 +2131,7 @@ public sealed partial class Lowering
         LoweredValue loweredValue = LowerConstructorFieldElement(
             argument,
             request,
-            !runtimeManagedParent && EscapesArenaParent(parentRequest));
+            !runtimeManagedParent && EscapesArenaParent(parentRequest), tailTransparent);
         if (runtimeManagedParent && fieldType is TypeRef.TBytes)
         {
             loweredValue = NormalizeRuntimeManagedBytesValue(loweredValue);
