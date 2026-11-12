@@ -3331,3 +3331,26 @@ the context even when it emits no release. Body-local full layout facts retain
 priority over shared projections. Only context-free facts are shared: recursive
 admissibility still evaluates its nominal cycle path, and lowering-dependent copy
 plans are not stored in this table.
+
+Core lowering has a separate `CoreHeapQueryContext` for its coverage environment,
+whose symbol IDs differ from the prepared dropper environment. Copy-plan,
+admissibility, shallow-copy, child-layout and child-type views are populated on
+demand and keyed by exact nodes of that context's graph. Settled monomorphic
+layout facts still take precedence. The final copy plan, general-RC decision and
+cycle-path answer are not stored there: their indexed evaluators return the
+updated state, preserving the original guards and short-circuit order. Legacy
+answer-only entry points delegate to these same evaluators.
+
+Call argument hand-off, call-result window classification and call admissibility
+preparation retain the returned context. Returning from a nested function also
+retains both coverage and dropper query contexts, while preserving the outer
+dropper contract-record decisions. A coverage-environment version advances on
+type declaration; equal versions prove no replacement only along the descendant
+frame lineage passed to restoration, not between independently initialized
+states. Replacing the coverage environment resets its query context. Startup
+constructs one coverage environment shared by the context and settled facts.
+
+Some pure lowering boundaries still discard cold query updates. Raw tuple-element
+and recursive-copy gates, full-layout/owned-child views, and closure-capture's
+intentional settled-cache bypass remain separate paths; this migration does not
+claim to make every classification persistent.
