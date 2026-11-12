@@ -77,6 +77,7 @@ import DropperViewCacheTests
 import ResultReachTests
 import ArgumentTypeContainmentTests
 import TypeGraphSearchTests
+import TypeGraphIndexTests
 import ResultReachSummariesTests
 import TcoOwnershipRulesTests
 import PatternBindingOwnershipTests
@@ -88,6 +89,9 @@ let run unit =
     Unit
     |> ArgumentTypeContainmentTests.runArgumentTypeContainmentTests
     |> TypeGraphSearchTests.runTypeGraphSearchTests
+    |> TypeGraphIndexTests.runTypeGraphIndexTests
+    |> TypeGraphIndexTests.runTypeGraphPointerIndexTests
+    |> TypeGraphIndexTests.runTypeGraphCollisionTests
     |> UnificationTests.runUnificationTests
     |> (given (_) -> TypeSchemeTests.runTypeSchemeTests(Unit))
     |> (given (_) -> TypeInferenceTests.runTypeInferenceTests(Unit))
