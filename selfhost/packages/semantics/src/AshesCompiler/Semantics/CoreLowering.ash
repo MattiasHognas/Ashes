@@ -19141,7 +19141,9 @@ let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argument
                 match state with
                     | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
                         match synthesizeToSpaceCopy(argumentTemp)(resolveType(state)(argumentType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                            | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
+                            | (synthesis, resultTemp) ->
+                                let copiedState = spliceInlineReleaseWith(emit)(synthesis)(state)
+                                in (recordBorrowedCall(resultTemp != argumentTemp)(resultTemp)(copiedState), resultTemp)
             else (state, argumentTemp)
         | None -> (state, argumentTemp)
 
@@ -19236,13 +19238,26 @@ let borrowedByReuseSpecialization (context: CoreCallContext) (arity: Int) (state
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
 // follows.
-let applyCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
+// A copied argument lives in persistent non-RC storage. Source-binding ownership
+// cannot describe the replacement temp, even if that binding is an owned loop field.
+let toSpaceArgumentHandOff = CoreArgumentHandOff(borrowsOnly = true, borrowsForPlacement = true, fresh = false, runtimeArgument = false, mayReach = false, transfers = false, keptWholeUnderOwnedResult = false, normalizes = false, borrowedReach = false, cannotBeKeptWhole = false, pendingRootSlot = None)
+
+let applyCoreCall (context: CoreCallContext) arity argument (copiedToSpace: Bool) argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
     match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
         | (decidedState, readsResult, resultNormalizedOwned) ->
-            decidedState
-            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
-            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
-            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
+            let handOff =
+                if copiedToSpace
+                then toSpaceArgumentHandOff
+                else
+                    decidedState
+                    |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
+                    |> borrowedByReuseSpecialization(context)(arity)(decidedState)
+            in emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState)
+
+let freshToSpaceSourceOwner (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(argumentTemp)(state) with
+        | Some(RuntimeNewlyProduced) -> !isVariableArgument(argument)
+        | _ -> false
 
 // The argument reaches the application as the value itself, a handed-over reference for a generic
 // string parameter, or a to-space copy for any other generic parameter.
@@ -19254,10 +19269,17 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> callStageOf
         | (unifiedState, None) ->
             match handOverGenericStringArgument(context)(arity)(argumentType)(resultType)(argumentTemp)(consumed)(unifiedState) with
-                | Some((ownedState, ownedTemp, handedConsumed)) -> applyCoreCall(context)(arity)(argument)(argumentType)(handedConsumed)(functionTemp)(resultType)(ownedTemp)(ownedState)
+                | Some((ownedState, ownedTemp, handedConsumed)) -> applyCoreCall(context)(arity)(argument)(false)(argumentType)(handedConsumed)(functionTemp)(resultType)(ownedTemp)(ownedState)
                 | None ->
                     match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
-                        | (copiedState, passedTemp) -> applyCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(resultType)(passedTemp)(copiedState)
+                        | (copiedState, passedTemp) ->
+                            let copied = passedTemp != argumentTemp
+                            in
+                                let sourceConsumed =
+                                    if copied && freshToSpaceSourceOwner(argument)(argumentTemp)(unifiedState)
+                                    then append(consumed)([CoreConsumedArgument(temp = argumentTemp, semanticType = resolveType(unifiedState)(argumentType), preserveEscapedChildren = false, adoptionFlagTemp = -1)])
+                                    else consumed
+                                in applyCoreCall(context)(arity)(argument)(copied)(argumentType)(sourceConsumed)(functionTemp)(resultType)(passedTemp)(copiedState)
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
 // state's span is back to once the argument is lowered.

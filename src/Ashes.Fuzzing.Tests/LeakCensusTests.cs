@@ -262,6 +262,10 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task NestedGenericMapSuccessorsOwnTheirChildren()
         => VerifyPlateauAndPoison("leak.nested-generic-map-accumulator");
 
+    [Test]
+    public Task CopiedGenericEnumArgumentKeepsItsRepresentation()
+        => VerifyPlateauAndPoison("leak.copied-generic-enum-argument");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())

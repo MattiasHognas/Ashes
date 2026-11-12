@@ -949,6 +949,21 @@ two round counts, so this stage-0 placement correction has no stage-1 mirror.
 That exemption is limited to this loop: the larger resource-query fixture still
 has pre-existing stage-1 growth, measured separately from candidate regressions.
 
+### Generic call argument representation
+
+When a quantified call parameter requires a persistent-region copy, ownership
+metadata follows the actual argument temp. The copied value has no RC header and
+must not inherit the source binding's adoption, retain, or accessor-result facts.
+Only a real conversion takes this route; scalar/no-op copies and deliberate RC
+handoffs retain their existing contracts. Resource-bearing and unsupported layouts
+remain excluded by the copy-safety proof. Named or borrowed sources keep their ordinary owner and release. A fresh owned
+source is recorded separately for release after the call, since the independent
+copy keeps none of its children. Synthesized to-space copiers borrow their input, preventing
+lifetime placement from inserting an unconsumed retain around the read-only copy.
+The call's result-ownership and requested-result contracts remain independent.
+`GRC_NO_TOSPACEARGUMENTREPRESENTATION=1` disables the representation correction for
+regression diagnosis; unset or empty leaves it enabled.
+
 ### The trade this model makes
 
 The absence of a tracing collector is a deliberate trade with a measurable cost and a measurable

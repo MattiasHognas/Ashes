@@ -14922,19 +14922,10 @@ public sealed partial class Lowering
         // to-space/blob region itself before the call — immune to an ordinary RestoreArenaState
         // reset, unlike a plain RC allocation, which shares the arena's own reclaimable cursor and
         // would otherwise dangle once the caller's own enclosing scope reclaims it.
-        bool calleeParameterIsGeneric = IsCalleeParameterQuantifiedInScheme(rootExpr, i);
-        if (calleeParameterIsGeneric)
-        {
-            TypeRef prunedArgType = Prune(argType);
-            if (IsToSpaceCopySafeType(prunedArgType))
-            {
-                argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
-                    || OwnsGenericAdtArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
-                    || OwnsGenericListArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
-                    ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
-                    : EmitDeepCopyToSpace(argTemp, prunedArgType);
-            }
-        }
+        (int preparedArgumentTemp, bool copiedToSpace) = PrepareGenericCallArgument(
+            rootExpr, collectedArgs[i], i, funType, collectedArgs.Count - 1 - i,
+            argTemp, argType, consumedRuntimeArguments);
+        argTemp = preparedArgumentTemp;
 
         // The applied arrow's capabilities happen here: record them in the ambient row.
         using (PushDiagnosticSpan(GetSpan(call)))
@@ -14955,6 +14946,17 @@ public sealed partial class Lowering
             && i == collectedArgs.Count - 1
             && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, resultType, out _)
             && ResultOwnershipReadAtRunTime(rootExpr, collectedArgs.Count, resultType);
+        if (copiedToSpace && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_TOSPACEARGUMENTREPRESENTATION")))
+        {
+            currentTemp = ApplyToSpaceArgument(
+                rootExpr, currentTemp, argTemp, needsResultOwnership,
+                RequestsArenaResult(funType.Ret)
+                    || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, collectedArgs.Count, resultType, needsResultOwnership)),
+                i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
+                ref runtimeManagedResultFlagTemp);
+            return;
+        }
+
         currentTemp = LowerAppliedClosureCall(
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,

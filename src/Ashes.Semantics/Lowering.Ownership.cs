@@ -4372,7 +4372,7 @@ public sealed partial class Lowering
         Emit(new IrInst.MakeClosure(copier, listLabel, envPtr, 8));
         Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
         int result = NewTemp();
-        Emit(new IrInst.CallClosure(result, copier, sourceTemp));
+        EmitClosureCall(result, copier, sourceTemp, borrowsArgument: true);
         return result;
     }
 
@@ -4521,7 +4521,7 @@ public sealed partial class Lowering
                     Emit(new IrInst.MakeClosure(copier, label, envPtr, 8));
                     Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
                     int result = NewTemp();
-                    Emit(new IrInst.CallClosure(result, copier, temp));
+                    EmitClosureCall(result, copier, temp, borrowsArgument: true);
                     return result;
                 }
 
