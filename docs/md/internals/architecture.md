@@ -3291,3 +3291,23 @@ The defect predates the generic-variant RC loop rule. Stage1 already preserves
 single and nested pointers. Focused regressions cover direct/piped, multi-field,
 and generic constructors with a genuine tail-recursive alternate branch, plus
 the real selfhost type-resolution function.
+
+### Shared immutable type-graph classification
+
+`TypeGraphIndex` owns one immutable type environment and assigns exact node IDs
+within that index lineage. Nodes retain both source and runtime-resolved
+constructor groups, record shape and query-specific child edges. Complete type
+fingerprints select integer-AVL buckets; full semantic-type equality resolves
+collisions. A hash alone never establishes type identity.
+
+`TypeGraphQueries` reuses those nodes for resource, unresolved-type and drop
+queries. Only completed context-free root facts are published. Regular negative
+searches may publish their fully visited named closure; nonregular fallback
+publishes only its queried root. Blocked-path visits remain query-local.
+
+Every indexed heap-layout view returns its updated index alongside its answer.
+Layout gates retain their original nominal cycle paths and short-circuit order;
+path-dependent answers are not cached as root facts. Legacy public classifiers
+are fresh-index compatibility wrappers around the same implementation, rather
+than a second traversal engine. Stateful lowering and synthesis consumers must
+retain the returned index and replace it when their type environment changes.
