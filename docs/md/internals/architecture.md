@@ -2369,6 +2369,12 @@ and reject unresolved evidence rather than emit provisional IR. Ordinary generic
 without mapped evidence remain unsupported for non-Boolean uses; this is not full polymorphic
 operator support.
 
+A recursive group's disposable member pass keeps trait discovery enabled even inside a
+whole-program replay: later siblings still need to settle their result types. The retained member
+pass starts again from the original group state with the proved sibling results and the caller's
+original pinned-goal flag. A pinned caller always takes that final pass, including when no sibling
+result settled, so provisional operator values cannot escape through expression entry points.
+
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).

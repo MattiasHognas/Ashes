@@ -97,3 +97,41 @@ suites or successful stage-2 compilation are claimed by this change.
 
 The frozen minimal sources, watchpoint observations, and a counter-equality runner
 are tracked in [pending-goal-lifetime](../pending-goal-lifetime/README.md).
+
+## Recursive-group discovery during whole-program replay
+
+Final bootstrap29 passed each small predicate case individually, but the combined
+native fixture failed at `!odd(n - 1)` in `even`. The same combined source also
+failed in the direct-Core driver; this was a missing combination test, not evidence
+of a CLI-only difference. GDB showed `traitGoalsPinned = true` with only the earlier
+`invert` site's Boolean proof in the map. The mutual group's first member pass
+could no longer infer its later sibling's result, although the group's ordinary
+unpinned discovery/replay path handled the group successfully on its own.
+
+The recursive-group helper now permits discovery in its disposable first member
+pass. Its final member pass starts from the original group state plus settled
+sibling proofs, preserving the caller's pinned flag. A pinned caller always takes
+that final pass, even if no sibling result settled; no provisional expression may
+escape through a public expression API. Tests combine an inferred `invert` with
+mutual predicates and cover concrete and unresolved recursive expressions.
+
+The known pending-goal string ownership defect above remains outstanding. This
+inference correction does not change its releases or relax its equality check.
+
+The revised real-Core driver compiled in 3:25.13 (peak 10,151,556 KiB).
+Its dynamic source checks now accept the combined `invert`/mutual program; the
+previous driver rejects that identical source. Explicit and inferred custom Not
+still report the expected Not/Bit error, and mixed uses retain their call mismatch.
+A valid nested recursive Boolean expression lowers successfully, while an abstract
+recursive `invert` still reports Not/SemVariable. Production Core SHA256 for this
+candidate is `3f61297ff2a69465768239a1502dbb6ca8b6758470c447ff659191381d199eac`.
+
+The expanded registered test module has **not yet passed as a whole**: its first
+run stopped at a malformed new test using nested mutual `and ... in` syntax.
+Mutual groups are top-level syntax. That test now uses a valid nested single
+recursive binding, whose success/error cases were checked through the existing
+driver's dynamic expression mode. The corrected registered module awaits the
+combined real-Core validation build; no extra compiler build was started for it.
+Evidence is in `work/logical-not-inference/recursive-compile.{log,time}`,
+`check-recursive.{stdout,stderr,time}`, and
+`work/not-inference/{s29-invert-mutual-gdb.log,recursive-*.stdout}`.

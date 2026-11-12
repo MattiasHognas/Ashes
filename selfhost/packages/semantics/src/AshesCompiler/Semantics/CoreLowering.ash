@@ -25785,18 +25785,24 @@ let recursive settledSiblingCallResults (pending: List((Str, SemanticType))) (co
 // one that stands starts over from the state before the group with those types pinned at their
 // sites, so its numbering is the single lowering's.
 let lowerRecursiveMembersPinningSiblingResults members selfBindings captures environmentTemp memberLower (environmentState: CoreLoweringState) =
-    match lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)(environmentState) with
+    // The disposable member pass must still infer later siblings during a pinned
+    // whole-program replay. Its final pass restores the caller's pinned boundary.
+    match environmentState
+    |> withStateTraitGoalsPinned(false)
+    |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower) with
         | LoweredCoreValue { error = Some(_error) } as failed -> failed
         | LoweredCoreValue { state = firstState } as first ->
             let recorded =
                 coreListLength(statePendingSiblingCallResults(firstState)) - coreListLength(statePendingSiblingCallResults(environmentState))
             in
                 match settledSiblingCallResults(statePendingSiblingCallResults(firstState))(recorded)(firstState)(stateProvenSiblingCallResults(environmentState))(false) with
-                    | (_proven, false) -> first
-                    | (proven, true) ->
-                        environmentState
-                        |> withStateProvenSiblingCallResults(proven)
-                        |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)
+                    | (proven, settled) ->
+                        if settled || stateTraitGoalsPinned(environmentState)
+                        then
+                            environmentState
+                            |> withStateProvenSiblingCallResults(proven)
+                            |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)
+                        else first
 
 let recursive addRecursiveGroupContinuationBindings members outerBindings state =
     match members with

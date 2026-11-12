@@ -31,6 +31,10 @@ let checkInvalidOperand unit =
         | CoreLoweringResult { error = Some(CoreOperatorTypeMismatch("not", SemInt, SemInt)) } -> Unit
         | _ -> Ashes.IO.panic("logical-not changed the invalid operand diagnostic")
 
+// An earlier deferred goal forces whole-program replay. The recursive group's
+// provisional member pass must still settle its later sibling before final emission.
+let checkCombinedReplay unit = expectBool("let invert value = !value\nlet recursive even n = if n == 0 then true else !odd(n - 1) and odd n = if n == 0 then true else !even(n - 1)\ninvert(false) && even(10)")
+
 let checkActiveGenericEvidence unit = expectBool("type Bit = | Bit(Bool) deriving {Eq}\nimplement Not(Bit) = | not = given bit -> match bit with | Bit(value) -> Bit(!value)\ntype Box(a) = | Box(a)\nimplement Eq(Box(a)) requires {Not(a), Eq(a)} = | equal = given left -> given right -> match (left, right) with | (Box(x), Box(y)) -> !x == y\nlet same (left: Box(Bit)) (right: Box(Bit)) = left == right\nsame(Box(Bit(false)))(Box(Bit(true)))")
 
 // Ordinary constrained bindings do not yet register mapped Not evidence. Keep both
@@ -69,13 +73,28 @@ let checkShowExpressionBoundary unit =
         | CoreLoweringResult { error = Some(MissingCoreTraitEvidence("Show", SemVariable(_id))) } -> Unit
         | _ -> Ashes.IO.panic("non-replaying Show expression accepted an unresolved goal")
 
+let checkRecursiveExpressionBoundary unit =
+    match lowerExpressionSource("let recursive even n = if n == 0 then true else !even(n - 1) in even(10)") with
+        | CoreLoweringResult { program = Some(program), semanticType = SemBool, error = None } ->
+            if Ashes.Text.contains(None
+            |> formatIr(program)(LoweredIr)
+            |> Ashes.Text.join("\n"))("CmpIntEq")
+            then
+                match lowerExpressionSource("let recursive invert x = !x in invert") with
+                    | CoreLoweringResult { error = Some(CoreOperatorTypeMismatch("not", SemVariable(_left), SemVariable(_right))) } -> Unit
+                    | _ -> Ashes.IO.panic("recursive discovery placeholder escaped")
+            else Ashes.IO.panic("recursive expression did not emit negation")
+        | _ -> Ashes.IO.panic("recursive expression inference failed")
+
 let runCoreLogicalNotInferenceTests unit =
     Unit
     |> checkUnresolvedOperands
     |> checkInvalidOperand
+    |> checkCombinedReplay
     |> checkActiveGenericEvidence
     |> (given (_) -> checkUnsupportedGenericNot(" : a -> a requires {Not(a)}"))
     |> (given (_) -> checkUnsupportedGenericNot(""))
     |> checkUnsupportedMixedNot
     |> checkExpressionBoundary
     |> checkShowExpressionBoundary
+    |> checkRecursiveExpressionBoundary
