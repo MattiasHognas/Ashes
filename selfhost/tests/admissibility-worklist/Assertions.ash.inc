@@ -3,13 +3,21 @@ let check actual =
     then Unit
     else Ashes.IO.panic("worklist differential mismatch")
 
-let sameAnswer root path state = originalGeneralRcAdmissible(root)(path)(state) == queryGeneralRcAdmissibility(root)(path)(state)
+let queryGeneralRcAdmissibility root path state =
+    match queryGeneralRcAdmissibilityIndexed(root)(path)(state) with
+        | (answer, _queried) -> answer
+
+let searchGeneralRcAdmissibility pending visited state =
+    match searchGeneralRcAdmissibilityIndexed(pending)(visited)(state) with
+        | (answer, _queried) -> answer
+
+let sameAnswer root path state = referenceOriginalGeneralRcAdmissible(root)(path)(state) == queryGeneralRcAdmissibility(root)(path)(state)
 
 let recursive checkRoots graph mask root =
     if root == 3
     then Unit
     else
-        let state = CoreLoweringState(graph = graph, forbidden = mask, mode = 0, cached = None)
+        let state = CoreLoweringState(graph = graph, forbidden = mask, mode = 0, cached = None, queries = 0)
         in
             state
             |> sameAnswer(node(root))([])
@@ -33,7 +41,7 @@ let recursive checkGraphs graph =
         |> (given (_) -> checkGraphs(graph + 1))
 
 let checkSpecial unit =
-    (let collision = CoreLoweringState(graph = 0, forbidden = 2, mode = 1, cached = None)
+    (let collision = CoreLoweringState(graph = 0, forbidden = 2, mode = 1, cached = None, queries = 0)
     in
         let left = SemNamed(0)("Shared")([])
         in
@@ -69,9 +77,11 @@ let checkSpecial unit =
                         |> sameAnswer(node(10))([])
                         |> check)
                     |> (given (_) ->
-                        (collision with forbidden = 0, mode = 3)
-                        |> queryGeneralRcAdmissibility(node(26))([])
-                        |> check))
+                        match queryGeneralRcAdmissibilityIndexed(node(26))([])((collision with forbidden = 0, mode = 3)) with
+                            | (answer, queried) -> check(answer && queried.queries == 27))
+                    |> (given (_) ->
+                        match queryGeneralRcAdmissibilityIndexed(node(1))([])(collision) with
+                            | (answer, queried) -> check(!answer && queried.queries == 1)))
 
 Unit
 |> checkSpecial

@@ -5,6 +5,7 @@ type CoreLoweringState =
     | forbidden: Int
     | mode: Int
     | cached: Maybe((Bool, Bool))
+    | queries: Int
 
 let resolveType _state semanticType = semanticType
 
@@ -54,4 +55,6 @@ let heapAdmissibilityOf semanticType state =
     match semanticType with
         | SemNamed(id, _name, _arguments) -> HeapAdmissibilityFacts(containsResource = state.forbidden / power(id) % 2 == 1, containsUnresolvedType = false, children = fields(id)(state))
         | _ -> HeapAdmissibilityFacts(containsResource = false, containsUnresolvedType = false, children = [])
+
+let heapAdmissibilityOfIndexed semanticType state = (heapAdmissibilityOf(semanticType)(state), (state with queries = state.queries + 1))
 
