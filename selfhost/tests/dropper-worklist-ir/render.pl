@@ -4,7 +4,7 @@ sub readtext { open my $f,'<',$_[0] or die $!; local $/; <$f> }
 sub writefile { open my $f,'>',$_[0] or die $!; print $f $_[1] }
 my $module='selfhost/packages/semantics/src/AshesCompiler/Semantics/StructuralDroppers.ash';
 my $candidate=$ARGV[0] // $module;
-my $baseline=qx(git show c0e23905:$module); die 'baseline missing' if !$baseline;
+my $baseline=readtext('selfhost/tests/dropper-worklist-ir/FrozenStructuralDroppers.ash.inc');
 for my $flavor (qw(baseline candidate)) {
     my $out="work/dropper-worklist-ir-$flavor"; make_path($out);
     my $dropper=$flavor eq 'baseline' ? $baseline : readtext($candidate);

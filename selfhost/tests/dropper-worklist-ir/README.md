@@ -7,7 +7,9 @@ bash selfhost/tests/dropper-worklist-ir/validate.sh /absolute/path/to/ashes
 ```
 
 An optional second argument selects a candidate `StructuralDroppers.ash` from a
-different worktree. The renderer freezes the baseline at `c0e23905` and builds
+different worktree. The checked-in `FrozenStructuralDroppers.ash.inc` preserves
+the baseline from `c0e23905`, so shallow/fresh clones need no historical Git object.
+The renderer builds
 coherent baseline/candidate probe modules: both copier modules and all test
 modules import the selected dropper module. Source SHA-256 files record the exact
 dropper copies. Generated projects and measurements stay under ignored `work/`.
