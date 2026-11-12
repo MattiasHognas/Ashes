@@ -937,25 +937,53 @@ no tracing garbage collector and no ownership syntax in the source language.
 ### Generic variant loop roots
 
 A fully resolved generic variant can use an owned RC loop slot when canonical
-ownership facts prove a changing tail-selfcall argument and all terminal exits
-return that same unshadowed parameter directly. This decision precedes persistent
-region specialization. Entry acquires an independent root; each back edge acquires
+ownership facts prove a changing tail-selfcall argument and its exit contract is
+safe. A direct return of that same unshadowed parameter is safe. So is a scalar
+result, a general-RC result normalized before parameter release, or an exhaustive
+unpoisoned proof that the result cannot reach the parameter at any depth. The
+concrete candidate is reserved before persistent-region specialization; reservation
+only declines that specialization, and final RC admission still requires the exit
+proof. Entry acquires an independent root; each back edge acquires
 all successor roots before releasing predecessors and iteration temporaries. The
 normalizer retains existing RC subtrees and only normalizes fresh arena cells, so
 this does not introduce a whole-map copy on each update.
 
 The contextual rule declines TMC, invariant/shadowed parameters, hidden evidence
-parameters, unresolved or inadmissible layouts, and aggregate or unknown terminal
-returns. In particular, a polymorphic tuple result can force arena demotion whose
+parameters, unresolved or inadmissible layouts, and unproven terminal returns.
+In particular, a polymorphic tuple result can force arena demotion whose
 unsupported list-field copy borrows from the released RC root. Such exits retain
 the previous placement until an independent returned-field ownership contract is
 proved. `GRC_NO_GENERICVARIANTLOOPRC=1` disables the rule; an unset or empty value
 leaves it enabled. This does not broaden context-free generic layout predicates.
+`GRC_NO_UNREACHEDGENERICLOOPRC=1` disables the additional exit proofs and early
+reservation while preserving the original direct-root rule.
 
 The exact nested-map accumulator regression is flat under unchanged stage 1 at
 two round counts, so this stage-0 placement correction has no stage-1 mirror.
 That exemption is limited to this loop: the larger resource-query fixture still
 has pre-existing stage-1 growth, measured separately from candidate regressions.
+
+The visited-map regression separately checks a map of path lists while the pending
+work list releases its old references. Its scalar-result and owned-tuple-result loops
+are flat at two counts under unchanged stage 1 when constructor heads are built directly. This is a scoped
+exemption for generic-loop placement, not for the separate TMC retain correction.
+
+### TMC constructor heads discharge copied field retains
+
+An arena constructor used as a tail-modulo-constructor list head can already hold
+protective RC retains for its fields. Immediate normalization gives the RC head
+its own references, but the discarded arena shell has no destructor to discharge
+the earlier retains. Both stages use existing construction provenance to collect
+only single-use retains stored in that arena head or its arena children, then
+release them after normalization has acquired its own references. RC-allocated
+heads are excluded. `GRC_NO_TMCCONSTRUCTORHEADRETAINS=1` disables this correction
+in stage 0; empty or unset leaves it enabled.
+
+The exact path-worklist template leaked in stage 1, so the matching
+`ownContractHeadForTmcCell` correction is required. The shared-query fixtures also
+exposed an unannotated visited-map reducer failure; it remains a separate coverage
+limitation, preserved under `selfhost/tests/shared-query-rc-regressions`, and is
+not claimed fixed by annotating the regression's loop parameters.
 
 ### Generic call argument representation
 

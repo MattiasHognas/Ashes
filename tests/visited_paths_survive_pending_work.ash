@@ -1,0 +1,59 @@
+// expect: 2000
+import Ashes.Collection.Map
+type Shape =
+    | Named(Int, Str, List(Shape))
+    | Leaf(Int)
+
+type Path =
+    | byId: MapTree(Int, MapTree(Str, Int))
+    | names: List(Shape)
+
+type Work =
+    | Visit(Shape, Path)
+
+let recursive prepend types path pending =
+    match types with
+        | [] -> pending
+        | head :: rest -> Visit(head)(path) :: prepend(rest)(path)(pending)
+
+let recursive count paths =
+    match paths with
+        | [] -> 0
+        | path :: rest -> Ashes.Collection.List.length(path.names) + count(rest)
+
+let recursive consume (work: List(Work)) (visited: MapTree(Int, List(Path))) =
+    match work with
+        | [] ->
+            match Ashes.Collection.Map.getInt(0)(visited) with
+                | None -> 0
+                | Some(paths) -> count(paths)
+        | Visit(shape, path) :: rest ->
+            let bucket =
+                match Ashes.Collection.Map.getInt(0)(visited) with
+                    | None -> []
+                    | Some(paths) -> paths
+            in
+                match shape with
+                    | Named(_, _, _) ->
+                        visited
+                        |> Ashes.Collection.Map.setInt(0)(path :: bucket)
+                        |> consume(Visit(Leaf(1))(path) :: rest)
+                    | Leaf(_) -> consume(rest)(visited)
+
+let fresh round =
+    (let a = Named(round)("A")([])
+    in
+        let byName = Ashes.Collection.Map.setStr("A")(round)(Ashes.Collection.Map.empty)
+        in
+            let path = Path(byId = Ashes.Collection.Map.setInt(round)(byName)(Ashes.Collection.Map.empty), names = [a])
+            in consume([Visit(a)(path), Visit(a)(path)])(Ashes.Collection.Map.empty))
+
+let recursive repeat remaining total =
+    if remaining == 0
+    then
+        total
+        |> Ashes.Text.fromInt
+        |> Ashes.IO.print
+    else repeat(remaining - 1)(total + fresh(remaining))
+
+repeat(1000)(0)

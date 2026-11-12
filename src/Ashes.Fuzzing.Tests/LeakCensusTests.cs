@@ -266,6 +266,14 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task CopiedGenericEnumArgumentKeepsItsRepresentation()
         => VerifyPlateauAndPoison("leak.copied-generic-enum-argument");
 
+    [Test]
+    public Task NormalizedConstructorHeadsReleaseTheirFieldRetains()
+        => VerifyPlateauAndPoison("leak.tmc-constructor-head-retains");
+
+    [Test]
+    public Task VisitedGenericMapsOwnPathsAfterPendingWorkDrops()
+        => VerifyPlateauAndPoison("leak.visited-generic-map-owner");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())

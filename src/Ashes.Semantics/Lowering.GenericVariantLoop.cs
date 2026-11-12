@@ -4,6 +4,14 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    // Keep a concrete changing variant available for RC placement while the result
+    // type is still being resolved. Reservation only declines region specialization;
+    // the later admission must independently prove the exit contract.
+    private bool ReserveGenericVariantLoopRoot(TcoContext tco, Binding.Local local)
+        => string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_UNREACHEDGENERICLOOPRC"))
+            && tco.ParamFacts.TryGetValue(local.Slot, out TcoParamStaticFacts? facts)
+            && IsGeneralRcGenericVariantLoopParameter(tco, facts, local.T, requireExitContract: false);
+
     // A changing, fully normalizable generic variant needs an owned loop root just
     // like a monomorphic variant. Decide before reuse admission: an arena update
     // may otherwise borrow an iteration's RC children and prevent their release.
@@ -11,7 +19,8 @@ public sealed partial class Lowering
     private bool IsGeneralRcGenericVariantLoopParameter(
         TcoContext tco,
         TcoParamStaticFacts facts,
-        TypeRef parameterType)
+        TypeRef parameterType,
+        bool requireExitContract = true)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_TCO") is not null
@@ -32,7 +41,7 @@ public sealed partial class Lowering
             || tco.OwnershipFunction is not { } function
             || GetOwnershipSummary(function) is not { } summary
             || tco.Body is null
-            || !GenericVariantReturnsOwnedRoot(tco.Body, tco, facts.ParamName, new HashSet<string>(StringComparer.Ordinal)))
+            || (requireExitContract && !GenericVariantHasSafeExit(tco, summary, facts.ParamName)))
         {
             return false;
         }
@@ -49,9 +58,38 @@ public sealed partial class Lowering
         return false;
     }
 
+    private bool GenericVariantHasSafeExit(TcoContext tco, FunctionOwnershipSummary summary, string parameter)
+    {
+        if (tco.Body is not null
+            && GenericVariantReturnsOwnedRoot(tco.Body, tco, parameter, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_UNREACHEDGENERICLOOPRC")))
+        {
+            return false;
+        }
+
+        // Scalars cannot keep this root alive. A general-RC result acquires its
+        // own graph before loop-owner release; use the same admission predicate
+        // as result normalization rather than inferring ownership from tuple shape.
+        if (tco.ResultType is { } resultType
+            && (CanArenaReset(resultType) || IsGeneralRcValueType(resultType)))
+        {
+            return true;
+        }
+
+        // Otherwise require an exhaustive, unpoisoned reach proof: an arena
+        // result is safe only when no path from it can refer to this parameter.
+        return !summary.ResultPoisoned
+            && summary.ResultReachFacts.ReachEnumerated
+            && !summary.ResultReaches(parameter);
+    }
+
     // This is an exit contract, not another back-edge classifier. Canonical structural
-    // facts above prove the tail edges. Refuse aggregate/unknown exits: arena demotion
-    // of a generic map can borrow unsupported list fields from the released RC root.
+    // facts above prove the tail edges. This direct-root case remains separate from
+    // the independently owned-result and complete nonreach proofs above.
     private bool GenericVariantReturnsOwnedRoot(
         Expr body, TcoContext tco, string parameter, HashSet<string> shadowed)
     {

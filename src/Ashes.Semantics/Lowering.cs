@@ -10340,6 +10340,7 @@ public sealed partial class Lowering
             if (_scopes.Peek().TryGetValue(accName, out var accB)
                 && accB is Binding.Local accL
                 && !tco.IsRuntimeManagedSlot(accL.Slot)
+                && !ReserveGenericVariantLoopRoot(tco, accL)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
                 && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is { } accumulatorType
@@ -18851,7 +18852,23 @@ public sealed partial class Lowering
             return head;
         }
 
+        // A constructor built in this function may already hold protective RC
+        // field retains. Its arena shell cannot release them, while this immediate
+        // normalization acquires independent references for the new RC head.
+        // Reuse the construction provenance proof: only single-use retains stored
+        // in this arena constructor (or its arena children) can be discharged.
+        List<(int Temp, TypeRef Type)> retains = [];
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_TMCCONSTRUCTORHEADRETAINS"))
+            && IsArenaCell(head.Temp))
+        {
+            CollectRetainsHeldByCell(head.Temp, named, retains, []);
+        }
+
         int ownedTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, Prune(head.Type));
+        foreach ((int temp, TypeRef type) in retains)
+        {
+            EmitRuntimeManagedChildDrop(temp, type);
+        }
         MarkRuntimeManagedTemp(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
     }

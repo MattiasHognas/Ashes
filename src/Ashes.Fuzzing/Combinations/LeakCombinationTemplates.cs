@@ -262,6 +262,8 @@ internal static class LeakCombinationTemplates
         registry.Register(new ArenaCurryBorrowTemplate());
         registry.Register(new NestedGenericMapAccumulatorTemplate());
         registry.Register(new CopiedGenericEnumArgumentTemplate());
+        registry.Register(new TmcConstructorHeadRetainsTemplate());
+        registry.Register(new VisitedGenericMapOwnerTemplate());
     }
 }
 

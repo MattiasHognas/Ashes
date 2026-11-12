@@ -34021,11 +34021,17 @@ let ownContractHeadForTmcCell (request: ConsumerRequest) (headExpression: Expr) 
                     then
                         match generalCopyPlanOf(named)(state) with
                             | Some(plan) ->
-                                match emitGuardedDeepCopy(temp)(plan)(state) with
-                                    | (copied, ownedTemp) ->
-                                        copied
-                                        |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
-                                        |> success(ownedTemp)(semanticType)
+                                let heldRetains =
+                                    if isArenaCell(temp)(state.reversedInstructions)
+                                    then retainsHeldPastTheCopy(temp)([])(state.reversedInstructions)
+                                    else []
+                                in
+                                    match emitGuardedDeepCopy(temp)(plan)(state) with
+                                        | (copied, ownedTemp) ->
+                                            copied
+                                            |> emitHeldRetainReleases(heldRetains)(semanticType)
+                                            |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                                            |> success(ownedTemp)(semanticType)
                             | None -> lowered
                     else lowered
                 | _ -> lowered
