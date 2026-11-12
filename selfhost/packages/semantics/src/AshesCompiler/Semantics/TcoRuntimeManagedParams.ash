@@ -666,15 +666,22 @@ let recursive shapeIsConsedTailArgument (structural: Expr) (index: Int) (shadowe
                 in (thenConsed || shapeIsOwnedConsumedTail(thenBranch)(index)(shadowed)(tailOwners)(parameters)) && (elseConsed || shapeIsOwnedConsumedTail(elseBranch)(index)(shadowed)(tailOwners)(parameters)) && (thenConsed || elseConsed)
         | _ -> shapeIsConsedTail(structural)(index)(shadowed)(tailOwners)(parameters)
 
-// Per parameter position, whether every self-call so far passed the parameter's consumed tail or a
-// cons chain onto it, and whether one passed the chain, stage 0's `ConsedTailEdges` and
-// `AnyConsedTailEdge`.
+// Per parameter position, whether every self-call so far passed the parameter's consumed tail,
+// a proven cons onto it, or a helper call's refill. At least one proven consed-tail edge is still
+// required before this becomes a choice accumulator; a call alone proves no ownership shape.
+// This mirrors stage 0's RecordConsedTailEdge / GRC_NO_CONSEDTAILCALLREFILL rule.
 let recursive shapeObserveConsedTails (arguments: List(Expr)) (index: Int) (shadowed: List(Str)) (tailOwners: List((Str, Int))) (letValues: List((Str, Expr))) (parameters: List(Str)) (consedTails: List((Bool, Bool))) =
     match (arguments, consedTails) with
         | (argument :: restArguments, (everyEdge, anyConsed) :: restConsed) ->
-            (let consed =
-                shapeIsConsedTailArgument(shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters))(index)(shadowed)(tailOwners)(parameters)
-            in (everyEdge && (consed || shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters) == TcoConsumedTailShape), anyConsed || consed)) :: shapeObserveConsedTails(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restConsed)
+            (let structural = shapeStructuralArgument(argument)(shadowed)(tailOwners)(letValues)(parameters)
+            in
+                let consed = shapeIsConsedTailArgument(structural)(index)(shadowed)(tailOwners)(parameters)
+                in
+                    let refill =
+                        match shapeUnspan(structural) with
+                            | ExprCall(_function, _argument, _sugar, _layout) -> true
+                            | _ -> false
+                    in (everyEdge && (consed || refill || shapeOfArgument(argument)(index)(shadowed)(tailOwners)(parameters) == TcoConsumedTailShape), anyConsed || consed)) :: shapeObserveConsedTails(restArguments)(index + 1)(shadowed)(tailOwners)(letValues)(parameters)(restConsed)
         | _ -> consedTails
 
 let recursive shapeCallSpine (expression: Expr) (arguments: List(Expr)) =

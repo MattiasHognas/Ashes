@@ -103,13 +103,22 @@ let recursive removeInt target list =
             then removeInt(target)(tail)
             else head :: removeInt(target)(tail)
 
-let recursive lookupOffset key map =
+// Label names and numbered slots must not share a constrained generic lookup during bootstrap.
+let recursive lookupLabelPosition (key: Str) (entries: List((Str, Int))) =
+    match entries with
+        | [] -> None
+        | (candidate, position) :: tail ->
+            if candidate == key
+            then Some(position)
+            else lookupLabelPosition(key)(tail)
+
+let recursive lookupSlotOffset (key: Int) (map: List((Int, Int))) =
     match map with
         | [] -> None
         | (k, v) :: tail ->
             if k == key
             then Some(v)
-            else lookupOffset(key)(tail)
+            else lookupSlotOffset(key)(tail)
 
 let getDefinedTemps inst =
     match inst with
@@ -615,7 +624,7 @@ let recursive checkBackwardJumps instructions labelPositions index =
             in
                 match target with
                     | Some(t) ->
-                        match lookupOffset(t)(labelPositions) with
+                        match lookupLabelPosition(t)(labelPositions) with
                             | Some(pos) ->
                                 if pos <= index
                                 then true
@@ -884,7 +893,7 @@ let recursive restoreLiveTemps temps tempToSlotOffset stateStructTemp clearedCon
     match temps with
         | [] -> (reverse(acc), [])
         | t :: tail ->
-            match lookupOffset(t)(tempToSlotOffset) with
+            match lookupSlotOffset(t)(tempToSlotOffset) with
                 | Some(offset) ->
                     let loadInst = IrInstruction(instruction = LoadMemOffset(t)(stateStructTemp)(offset), location = None)
                     in
@@ -898,7 +907,7 @@ let recursive restoreLiveLocals locals localToSlotOffset stateStructTemp cleared
     match locals with
         | [] -> (reverse(acc), currentTemp)
         | local :: tail ->
-            match lookupOffset(local)(localToSlotOffset) with
+            match lookupSlotOffset(local)(localToSlotOffset) with
                 | Some(offset) ->
                     let loadTemp = currentTemp + 1
                     in
@@ -955,7 +964,7 @@ let recursive saveLiveTemps temps tempToSlotOffset stateStructTemp acc =
     match temps with
         | [] -> (reverse(acc), [])
         | t :: tail ->
-            match lookupOffset(t)(tempToSlotOffset) with
+            match lookupSlotOffset(t)(tempToSlotOffset) with
                 | Some(offset) ->
                     let storeInst = IrInstruction(instruction = StoreMemOffset(stateStructTemp)(offset)(t), location = None)
                     in
@@ -967,7 +976,7 @@ let recursive saveLiveLocals locals localToSlotOffset stateStructTemp currentTem
     match locals with
         | [] -> (reverse(acc), currentTemp)
         | local :: tail ->
-            match lookupOffset(local)(localToSlotOffset) with
+            match lookupSlotOffset(local)(localToSlotOffset) with
                 | Some(offset) ->
                     let loadTemp = currentTemp + 1
                     in
@@ -1033,7 +1042,7 @@ let recursive emitStateSegmentAux segment (stateIdx: Int) liveAcross liveLocalsA
                 | Return(source) ->
                     let storeRes = IrInstruction(instruction = StoreMemOffset(stateStructTemp)(taskResultSlotOffset)(source), location = loc)
                     in
-                        match match lookupOffset(source)(tempToSlotOffset) with
+                        match match lookupSlotOffset(source)(tempToSlotOffset) with
                             | Some(transferredOffset) ->
                                 let clearedConst = currentTemp + 1
                                 in

@@ -18,7 +18,8 @@ import Ashes.Number.UInt
 export (
     type CoreLlvmTypes(..),
     value coreLlvmTypes,
-    value lookupIndexed,
+    value lookupIndexedInt,
+    value lookupIndexedStr,
     value findIndexed,
     value lookupIndexedAll,
     value emitStringParts,
@@ -99,16 +100,29 @@ let recursive countBound env total =
         | [] -> total
         | _entry :: rest -> countBound(rest)(total + 1)
 
-let recursive lookupIndexedIn key env full =
+// Concrete keys keep comparison and diagnostic formatting independent of deferred trait evidence.
+// The values remain polymorphic: slots, labels and globals carry different LLVM handle types.
+let recursive lookupIndexedIntIn (key: Int) env full =
     match env with
         | [] ->
             Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(countBound(full)(0)))
         | (boundKey, value) :: rest ->
             if boundKey == key
             then value
-            else lookupIndexedIn(key)(rest)(full)
+            else lookupIndexedIntIn(key)(rest)(full)
 
-let lookupIndexed key env = lookupIndexedIn(key)(env)(env)
+let lookupIndexedInt (key: Int) env = lookupIndexedIntIn(key)(env)(env)
+
+let recursive lookupIndexedStrIn (key: Str) env full =
+    match env with
+        | [] ->
+            Ashes.IO.panic("codegen: unknown index " + Ashes.Trait.Show.show(key) + " bound=" + Ashes.Text.fromInt(countBound(full)(0)))
+        | (boundKey, value) :: rest ->
+            if boundKey == key
+            then value
+            else lookupIndexedStrIn(key)(rest)(full)
+
+let lookupIndexedStr (key: Str) env = lookupIndexedStrIn(key)(env)(env)
 
 let recursive findIndexed key env =
     match env with
@@ -120,10 +134,10 @@ let recursive findIndexed key env =
 
 // Every key's value, in the keys' own order: an instruction carrying a list of operand temps
 // resolves them all at once.
-let recursive lookupIndexedAll keys env =
+let recursive lookupIndexedAll (keys: List(Int)) env =
     match keys with
         | [] -> []
-        | key :: rest -> lookupIndexed(key)(env) :: lookupIndexedAll(rest)(env)
+        | key :: rest -> lookupIndexedInt(key)(env) :: lookupIndexedAll(rest)(env)
 
 // A `Str`/`Bytes` value is either owned (`[len:i64][bytes...]`, bytes inline at `ref + 8`) or a
 // view (`[len|VIEW:i64][backingBytesAddr:i64]`, bit 63 of the length word set and the byte address
@@ -770,7 +784,7 @@ let memOffsetPtr builder i64 i8 ptrType baseRef offsetBytes name =
     gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(baseRef)(ptrType)(name + "_base"))(offsetBytes)(name)
 
 // Sums every part's own `len` field into one `i64` add chain. `partRefs` arrives already resolved
-// to LLVM values, never raw `IrTemp`s needing a `lookupIndexed` lookup in here — see the
+// to LLVM values, never raw `IrTemp`s needing a `lookupIndexedInt` lookup in here — see the
 // `ConcatStr`/`ConcatStrN` cases in `codegenInstructionKind` below for why resolution happens at
 // their own call site instead of inside this function. Safe to sum lengths BEFORE any allocation
 // happens (unlike a naive single-pass copy) because `partRefs` is a compile-time-fixed list

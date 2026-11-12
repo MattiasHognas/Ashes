@@ -1251,7 +1251,7 @@ public sealed partial class Lowering
         // Running lifetime placement over that IR cannot affect those elaborations.
         return _collectInferredTraitElaboration
             ? loweredProgram
-            : PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
+            : PlaceWithArenaCurryBorrows(loweredProgram);
     }
 
     private void FinishEntryInference(TypeRef resultType)
@@ -10340,6 +10340,7 @@ public sealed partial class Lowering
             if (_scopes.Peek().TryGetValue(accName, out var accB)
                 && accB is Binding.Local accL
                 && !tco.IsRuntimeManagedSlot(accL.Slot)
+                && !ReserveGenericVariantLoopRoot(tco, accL)
                 && Lookup(funcName) is { } funcBinding
                 && _specializableFunctions.TryGetValue(funcName, out var funcSpec)
                 && NthCurriedArgType(Prune(funcBinding.Type), funcSpec.ArgCount - 1) is { } accumulatorType
@@ -13371,6 +13372,7 @@ public sealed partial class Lowering
         AddPendingTcoResetSlots(slots, info.RuntimeManagedParamActiveSlots);
         AddPendingTcoResetSlots(slots, info.RuntimeManagedClosureActiveSlots);
         AddPendingTcoResetSlots(slots, info.IterationOwnedDrops.Select(owned => owned.Slot));
+        AddPendingTcoResetSlots(slots, info.IterationOwnedDrops.Select(owned => owned.ExcludedDropFieldsTransferFlagSlot));
         AddPendingTcoResetSlots(slots, info.ArgResvStartSlots);
         AddPendingTcoResetSlots(slots, info.ArgResvEndSlots);
         AddPendingTcoResetSlots(slots,
@@ -14921,19 +14923,10 @@ public sealed partial class Lowering
         // to-space/blob region itself before the call — immune to an ordinary RestoreArenaState
         // reset, unlike a plain RC allocation, which shares the arena's own reclaimable cursor and
         // would otherwise dangle once the caller's own enclosing scope reclaims it.
-        bool calleeParameterIsGeneric = IsCalleeParameterQuantifiedInScheme(rootExpr, i);
-        if (calleeParameterIsGeneric)
-        {
-            TypeRef prunedArgType = Prune(argType);
-            if (IsToSpaceCopySafeType(prunedArgType))
-            {
-                argTemp = OwnsGenericStringArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
-                    || OwnsGenericAdtArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
-                    || OwnsGenericListArgument(prunedArgType, funType, collectedArgs.Count - 1 - i)
-                    ? EmitHandedOverGenericStringArgument(argTemp, prunedArgType, consumedRuntimeArguments)
-                    : EmitDeepCopyToSpace(argTemp, prunedArgType);
-            }
-        }
+        (int preparedArgumentTemp, bool copiedToSpace) = PrepareGenericCallArgument(
+            rootExpr, collectedArgs[i], i, funType, collectedArgs.Count - 1 - i,
+            argTemp, argType, consumedRuntimeArguments);
+        argTemp = preparedArgumentTemp;
 
         // The applied arrow's capabilities happen here: record them in the ambient row.
         using (PushDiagnosticSpan(GetSpan(call)))
@@ -14954,6 +14947,17 @@ public sealed partial class Lowering
             && i == collectedArgs.Count - 1
             && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, resultType, out _)
             && ResultOwnershipReadAtRunTime(rootExpr, collectedArgs.Count, resultType);
+        if (copiedToSpace && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_TOSPACEARGUMENTREPRESENTATION")))
+        {
+            currentTemp = ApplyToSpaceArgument(
+                rootExpr, currentTemp, argTemp, needsResultOwnership,
+                RequestsArenaResult(funType.Ret)
+                    || (i == collectedArgs.Count - 1 && RequestsArenaResultFromUnknownCallee(rootExpr, collectedArgs.Count, resultType, needsResultOwnership)),
+                i == collectedArgs.Count - 1 ? CalleeTupleResultParts(rootExpr, collectedArgs.Count, resultType) : null,
+                ref runtimeManagedResultFlagTemp);
+            return;
+        }
+
         currentTemp = LowerAppliedClosureCall(
             rootExpr, collectedArgs[i], SummaryParameterIndex(collectedArgs, i),
             needsResultOwnership,
@@ -16981,6 +16985,11 @@ public sealed partial class Lowering
         {
             _arenaResultRequestingCalls.Add(renamed);
         }
+
+        if (_curryStageCallLabels.Remove(original, out string? stageLabel))
+        {
+            _curryStageCallLabels[renamed] = stageLabel;
+        }
     }
 
     private void SpliceDeferredPlaceholders(IReadOnlyList<IrInst> original, Action<IrInst> emit)
@@ -18569,6 +18578,7 @@ public sealed partial class Lowering
             ResolveSourceLocation(AstSpans.GetOrDefault(cons)),
             request);
         RecordLateCopiedCellDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
+        RecordCallArgumentCellOwnerDuplicates(cons, cellTemp, (lateHeadDuplicate, head.Type), (lateTailDuplicate, tailType));
         KeepLoopResultFieldCellHeadDuplicateOwned(cons, cellTemp, lateHeadDuplicate, head.Type);
         NoteListHeadCell(cons, head, tailTemp, cellTemp);
         return (cellTemp, cellType);
@@ -18842,7 +18852,23 @@ public sealed partial class Lowering
             return head;
         }
 
+        // A constructor built in this function may already hold protective RC
+        // field retains. Its arena shell cannot release them, while this immediate
+        // normalization acquires independent references for the new RC head.
+        // Reuse the construction provenance proof: only single-use retains stored
+        // in this arena constructor (or its arena children) can be discharged.
+        List<(int Temp, TypeRef Type)> retains = [];
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_TMCCONSTRUCTORHEADRETAINS"))
+            && IsArenaCell(head.Temp))
+        {
+            CollectRetainsHeldByCell(head.Temp, named, retains, []);
+        }
+
         int ownedTemp = EmitRuntimeManagedTcoDeepCopy(head.Temp, Prune(head.Type));
+        foreach ((int temp, TypeRef type) in retains)
+        {
+            EmitRuntimeManagedChildDrop(temp, type);
+        }
         MarkRuntimeManagedTemp(ownedTemp);
         return CreateLoweredValue(ownedTemp, head.Type);
     }

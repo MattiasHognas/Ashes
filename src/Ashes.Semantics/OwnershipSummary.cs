@@ -205,8 +205,8 @@ internal enum TcoSelfCallArgumentShape
     /// rather than shrinking via pattern-extraction).
     GrownCons,
 
-    /// No single shape above holds at every self-recursive call site, or the function has no
-    /// self-recursive call site to classify from at all.
+    /// No single shape above holds at every classified tail self-call site. The producer
+    /// returns no parameter facts when there are no such sites.
     Mixed,
 }
 

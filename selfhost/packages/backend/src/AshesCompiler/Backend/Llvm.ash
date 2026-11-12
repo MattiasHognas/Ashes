@@ -56,6 +56,7 @@ export (
     value buildAShr,
     value functionType,
     value addFunction,
+    value getNamedFunction,
     value appendBasicBlock,
     value constInt,
     value constNull,
@@ -141,8 +142,10 @@ export (
     value buildUnreachable,
     value getInlineAsm,
     value buildAlloca,
+    value buildArrayAlloca,
     value buildEntryAlloca,
     value builderModule,
+    value builderFunction,
     value buildStore,
     value buildLoad,
     value setVolatile,
@@ -190,6 +193,7 @@ external LLVMIntTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMIntType
 external LLVMBuildAShr(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAShr@libLLVM.so"
 external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef = "LLVMFunctionType@libLLVM.so"
 external LLVMAddFunction(LLVMModuleRef, Str, LLVMTypeRef) -> LLVMValueRef = "LLVMAddFunction@libLLVM.so"
+external LLVMGetNamedFunction(LLVMModuleRef, Str) -> LLVMValueRef = "LLVMGetNamedFunction@libLLVM.so"
 external LLVMAppendBasicBlockInContext(LLVMContextRef, LLVMValueRef, Str) -> LLVMBasicBlockRef = "LLVMAppendBasicBlockInContext@libLLVM.so"
 external LLVMConstInt(LLVMTypeRef, u64, Bool) -> LLVMValueRef = "LLVMConstInt@libLLVM.so"
 external LLVMConstNull(LLVMTypeRef) -> LLVMValueRef = "LLVMConstNull@libLLVM.so"
@@ -266,6 +270,7 @@ external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMB
 external LLVMBuildUnreachable(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildUnreachable@libLLVM.so"
 external LLVMGetInlineAsm(LLVMTypeRef, Str, u64, Str, u64, Bool, Bool, u32, Bool) -> LLVMValueRef = "LLVMGetInlineAsm@libLLVM.so"
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
+external LLVMBuildArrayAlloca(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildArrayAlloca@libLLVM.so"
 external LLVMGetInsertBlock(LLVMBuilderRef) -> LLVMBasicBlockRef = "LLVMGetInsertBlock@libLLVM.so"
 external LLVMGetBasicBlockParent(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetBasicBlockParent@libLLVM.so"
 external LLVMGetGlobalParent(LLVMValueRef) -> LLVMModuleRef = "LLVMGetGlobalParent@libLLVM.so"
@@ -313,6 +318,8 @@ let intType context (bits: u32) = LLVMIntTypeInContext(context)(bits)
 let buildAShr builder lhs rhs name = LLVMBuildAShr(builder)(lhs)(rhs)(name)
 
 let addFunction module_ name type_ = LLVMAddFunction(module_)(name)(type_)
+
+let getNamedFunction module_ name = LLVMGetNamedFunction(module_)(name)
 
 let appendBasicBlock context function name = LLVMAppendBasicBlockInContext(context)(function)(name)
 
@@ -571,9 +578,16 @@ let getInlineAsm functionType asmString constraints hasSideEffects isAlignStack 
 // with `buildLoad` after the arms rejoin.
 let buildAlloca builder type_ name = LLVMBuildAlloca(builder)(type_)(name)
 
+let buildArrayAlloca builder type_ count name = LLVMBuildArrayAlloca(builder)(type_)(count)(name)
+
 let getInsertBlock builder = LLVMGetInsertBlock(builder)
 
 let getBasicBlockParent block = LLVMGetBasicBlockParent(block)
+
+let builderFunction builder =
+    builder
+    |> getInsertBlock
+    |> getBasicBlockParent
 
 // The module owning the function the builder is positioned in.
 let builderModule builder =

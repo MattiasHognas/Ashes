@@ -8,8 +8,8 @@ public sealed partial class Lowering
     /// The runtime-managed children an arena aggregate built as a call's argument retained, because
     /// the callee's result may reach the argument: they are released once the call's result holds
     /// its own references (a scalar, or a result normalized onto the reference-counted heap), since
-    /// the arena aggregate itself is never released. Only retains in the argument's entry block are
-    /// collected, so each dominates the release after the call.
+    /// the arena aggregate itself is never released. Retains are collected only after every
+    /// earlier branch in the argument has rejoined, so each dominates the release after the call.
     /// </summary>
     private sealed class CallArgumentRetainFrame(List<IrInst> body)
     {
@@ -23,7 +23,7 @@ public sealed partial class Lowering
 
         public int ArgumentStart { get; set; }
 
-        // The pattern-owner duplicates an arena tuple of an argument stored, each with whether the
+        // The pattern-owner duplicates an arena aggregate of an argument stored, each with whether the
         // callee's result may reach the argument it was taken for.
         public List<(int Temp, TypeRef Type, bool ResultMayReach)> PatternOwnerDuplicates { get; } = [];
     }
@@ -61,7 +61,8 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Records a retain an arena aggregate child took while a call argument is lowered: a real
-    /// runtime retain emitted into the frame's own function, before any branch of the argument. A
+    /// runtime retain emitted into the frame's own function after any earlier argument branches
+    /// have rejoined. A
     /// loop parameter's retain marker (<paramref name="pendingSlot"/> its slot) is recorded too: it
     /// becomes a real retain once the parameter is placed on the reference-counted heap, and its
     /// release after the call is guarded by a flag zeroed where the parameter stays in the arena.
@@ -80,16 +81,61 @@ public sealed partial class Lowering
             return false;
         }
 
-        for (int i = frame.ArgumentStart; i < _inst.Count; i++)
+        if (!CallArgumentRetainDominatesCompletion(_inst, frame.ArgumentStart))
         {
-            if (_inst[i] is IrInst.Label)
-            {
-                return false;
-            }
+            return false;
         }
 
         frame.Retains.Add((retainedTemp, Prune(elementType), retain.RuntimeManaged ? -1 : pendingSlot));
         return true;
+    }
+
+    // A completed nested call may have emitted normalizer branches before this retain.
+    // A branch targeting an un-emitted label can still bypass it, so reject such open paths.
+    // This replaces the old label scan; it does not infer ownership from a branch condition.
+    private static bool CallArgumentRetainDominatesCompletion(IReadOnlyList<IrInst> instructions, int start)
+    {
+        HashSet<string> defined = new(StringComparer.Ordinal);
+        HashSet<string> open = new(StringComparer.Ordinal);
+        bool completedRegions = Environment.GetEnvironmentVariable("GRC_NO_ARGRETCLOSEDREGION") is null;
+        for (int index = start; index < instructions.Count; index++)
+        {
+            switch (instructions[index])
+            {
+                case IrInst.Label label:
+                    if (!completedRegions)
+                    {
+                        return false;
+                    }
+
+                    defined.Add(label.Name);
+                    open.Remove(label.Name);
+                    break;
+                case IrInst.Jump jump when !defined.Contains(jump.Target):
+                    open.Add(jump.Target);
+                    break;
+                case IrInst.JumpIfFalse branch when !defined.Contains(branch.Target):
+                    open.Add(branch.Target);
+                    break;
+                case IrInst.SwitchTag branch:
+                    foreach ((_, string target) in branch.Cases)
+                    {
+                        if (!defined.Contains(target))
+                        {
+                            open.Add(target);
+                        }
+                    }
+
+                    if (!defined.Contains(branch.DefaultLabel))
+                    {
+                        open.Add(branch.DefaultLabel);
+                    }
+
+                    break;
+            }
+        }
+
+        return open.Count == 0;
     }
 
     /// <summary>
@@ -141,6 +187,41 @@ public sealed partial class Lowering
 
     private static bool RecordsPendingParameterRetain(int pendingSlot)
         => pendingSlot >= 0 && Environment.GetEnvironmentVariable("GRC_NO_ARGRETMARKER") is null;
+
+    // Like an arena tuple argument, an arena cons does not release the pattern-owner
+    // references stored in it. Keep them until the completed call owns its result.
+    private void RecordCallArgumentCellOwnerDuplicates(
+        Expr.Cons cons, int cellTemp, (int Temp, TypeRef Type) head, (int Temp, TypeRef Type) tail)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_ARGUMENTCELLOWNERDUP") is not null
+            || head.Temp < 0 && tail.Temp < 0
+            || IsRuntimeManagedResultTemp(cellTemp)
+            || IsBackEdgeCopiedCell(cons)
+            || _backEdgeLateCopiedCells.Contains(cons)
+            || _backEdgeRecordFieldCells.Contains(cons)
+            || _callArgumentRetainFrame is not { } frame
+            || !ReferenceEquals(frame.Body, _inst))
+        {
+            return;
+        }
+
+        for (int i = frame.ArgumentStart; i < _inst.Count; i++)
+        {
+            if (_inst[i] is IrInst.Label)
+            {
+                return;
+            }
+        }
+
+        if (head.Temp >= 0)
+        {
+            frame.PatternOwnerDuplicates.Add((head.Temp, Prune(head.Type), frame.Collecting));
+        }
+        if (tail.Temp >= 0)
+        {
+            frame.PatternOwnerDuplicates.Add((tail.Temp, Prune(tail.Type), frame.Collecting));
+        }
+    }
 
     /// <summary>
     /// An arena aggregate that retained a child of the contract's own types for the scopes it

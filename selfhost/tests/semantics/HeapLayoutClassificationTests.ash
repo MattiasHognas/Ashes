@@ -630,6 +630,64 @@ let testResourceNestedInSharedIdRecordIsDetected unit =
         |> capabilityContainsResource
         |> test.assertEqual(true))
 
+let admissibilityProjection (child: HeapLayoutChild) = (child.childType, child.dropKind)
+
+let minimalViewMatchesFull semanticType environment =
+    (let full = classifyHeapLayout(semanticType)(environment)
+    in
+        let minimal = classifyHeapAdmissibility(semanticType)(environment)
+        in
+            let shallow =
+                match full with
+                    | HeapLayoutFacts { structuralCopy = ShallowCopy } -> true
+                    | _ -> false
+            in classifyHeapOwnedChildrenDroppable(semanticType)(environment) == full.ownedChildrenDroppable && full.containsResource == minimal.containsResource && full.containsUnresolvedType == minimal.containsUnresolvedType && Ashes.Collection.List.map(admissibilityProjection)(full.children) == minimal.children && classifyHeapShallowCopy(semanticType)(environment) == shallow)
+
+let recursive allMinimalViewsMatch types environment =
+    match types with
+        | [] -> true
+        | head :: rest -> minimalViewMatchesFull(head)(environment) && allMinimalViewsMatch(rest)(environment)
+
+let testMinimalAdmissibilityMatchesFullClassification unit =
+    (let environment =
+        Unit
+        |> heapLayoutTestEnvironment
+        |> addInferenceZeroCostTypeDefinition(2000)("ScalarWrapper")([])(SemInt)
+        |> addInferenceZeroCostTypeDefinition(2002)("StringWrapper")([])(SemString)
+    in
+        [
+            SemInt,
+            SemBool,
+            SemFloat,
+            SemRune,
+            SemNever,
+            SemUInt(32),
+            SemString,
+            SemBytes,
+            SemBigInt,
+            SemFunction(SemInt)(SemInt)(None),
+            SemOpaque("Handle"),
+            SemOpaque("View"),
+            SemVariable(700),
+            SemParameter(701)("a"),
+            SemList(SemString),
+            SemTuple([SemInt, SemOpaque("View"), SemString]),
+            SemNamed(2000)("ScalarWrapper")([]),
+            SemNamed(2002)("StringWrapper")([]),
+            SemNamed(2003)("Unknown")([]),
+            SemNamed(2001)("Phantom")([SemVariable(702)]),
+            namedTypeAt("Some")([SemInt])(environment),
+            namedTypeAt("Some")([SemString])(environment),
+            namedTypeAt("Some")([SemVariable(703)])(environment),
+            namedTypeAt("Wrap")([])(environment),
+            namedTypeAt("Cons")([])(environment),
+            namedTypeAt("Point")([])(environment),
+            namedTypeAt("Named")([])(environment),
+            namedTypeAt("Call")([])(environment)
+        ]
+        |> (given (types) -> allMinimalViewsMatch(types)(environment))
+        |> test.assertEqual(true))
+
 let runHeapLayoutClassificationTests unit =
     unit
     |> testScalarIsNeverOwned
@@ -654,4 +712,5 @@ let runHeapLayoutClassificationTests unit =
     |> testSharedSymbolIdTypesAreToldApartByName
     |> testNestedRecordWithSharedIdIsRecordReusable
     |> testResourceNestedInSharedIdRecordIsDetected
+    |> testMinimalAdmissibilityMatchesFullClassification
     |> reportSuccess

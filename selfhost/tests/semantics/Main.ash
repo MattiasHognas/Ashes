@@ -69,8 +69,15 @@ import ReuseResetSafetyTests
 import ReuseFunctionSpecializationTests
 import ExplainReportTests
 import TaglessAdtLayoutTests
+import TaglessConstructorIndexTests
 import StructuralDroppersTests
+import DropperAdmissibilityProjectionTests
+import DropperViewTests
+import DropperViewCacheTests
 import ResultReachTests
+import ArgumentTypeContainmentTests
+import TypeGraphSearchTests
+import TypeGraphIndexTests
 import ResultReachSummariesTests
 import TcoOwnershipRulesTests
 import PatternBindingOwnershipTests
@@ -80,6 +87,11 @@ import LoweringDiagnosticsTests
 import QualifiedShippedReferencesTests
 let run unit =
     Unit
+    |> ArgumentTypeContainmentTests.runArgumentTypeContainmentTests
+    |> TypeGraphSearchTests.runTypeGraphSearchTests
+    |> TypeGraphIndexTests.runTypeGraphIndexTests
+    |> TypeGraphIndexTests.runTypeGraphPointerIndexTests
+    |> TypeGraphIndexTests.runTypeGraphCollisionTests
     |> UnificationTests.runUnificationTests
     |> (given (_) -> TypeSchemeTests.runTypeSchemeTests(Unit))
     |> (given (_) -> TypeInferenceTests.runTypeInferenceTests(Unit))
@@ -146,7 +158,11 @@ let run unit =
     |> (given (_) -> ReuseFunctionSpecializationTests.runReuseFunctionSpecializationTests(Unit))
     |> (given (_) -> ExplainReportTests.runExplainReportTests(Unit))
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
+    |> (given (_) -> TaglessConstructorIndexTests.runTaglessConstructorIndexTests(Unit))
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
+    |> (given (_) -> DropperAdmissibilityProjectionTests.runDropperAdmissibilityProjectionTests(Unit))
+    |> (given (_) -> DropperViewTests.runDropperViewTests(Unit))
+    |> (given (_) -> DropperViewCacheTests.runDropperViewCacheTests(Unit))
     |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
     |> (given (_) -> ResultReachTests.runResultReachTests(Unit))
     |> (given (_) -> ResultReachSummariesTests.runResultReachSummariesTests(Unit))

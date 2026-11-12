@@ -67,9 +67,20 @@ let rejectInvalidTypeResolution unit =
                 | TypeResolutionResult { semanticType = SemNever, error = Some(UnknownTypeName("Missing")) } -> Unit
                 | _ -> test.fail("unknown type names should be rejected"))
 
+let expectRuntimePointers unit =
+    (let context = emptyTypeResolutionContext(Unit)
+    in
+        match semanticRuntimeRepresentation(SemPointer(SemOpaque("Handle")))(context) with
+            | SemPointer(SemOpaque("Handle")) ->
+                match semanticRuntimeRepresentation(SemPointer(SemPointer(SemOpaque("Handle"))))(context) with
+                    | SemPointer(SemPointer(SemOpaque("Handle"))) -> Unit
+                    | _ -> test.fail("runtime representation must preserve both pointer wrappers")
+            | _ -> test.fail("runtime representation must preserve its pointer wrapper"))
+
 let runTypeResolutionTests unit =
     unit
     |> expectBasicTypeResolution
     |> expectParameterizedTypeResolution
     |> rejectInvalidTypeResolution
+    |> expectRuntimePointers
     |> (given (_) -> Ashes.IO.print("all self-hosted type resolution tests passed"))

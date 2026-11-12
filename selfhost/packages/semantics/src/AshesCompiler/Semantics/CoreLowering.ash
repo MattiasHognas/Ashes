@@ -10,8 +10,10 @@
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
+import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
+import AshesCompiler.Semantics.ArgumentTypeContainment.mayContainArgumentType
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
@@ -55,10 +57,13 @@ import AshesCompiler.Semantics.TypeResolution.addTypeDefinition
 import AshesCompiler.Semantics.TypeResolution.emptyTypeResolutionContext
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.HeapLayoutClassification
+import AshesCompiler.Semantics.TypeGraphIndex
+import AshesCompiler.Semantics.AdmissibilityCache
 import AshesCompiler.Semantics.HelperInlining.isInlinableHelperValue
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionLocals
+import AshesCompiler.Semantics.IrInstructionTemps.mapInstructionTemps
 import AshesCompiler.Semantics.StateMachineTransform.getDefinedTemps
 import AshesCompiler.Semantics.StateMachineTransform.getUsedTemps
 import AshesCompiler.Semantics.ValueFlowSlots.localSlotsReachingTemp
@@ -82,7 +87,7 @@ import AshesCompiler.Semantics.ResultReachSummaries.expressionReachSummaries
 import AshesCompiler.Semantics.ResultReachSummaries.lambdaIdentityOf
 import AshesCompiler.Semantics.ResultReachSummaries.singleFunctionReach
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
-import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
+import AshesCompiler.Semantics.ProgramParameterOwnershipIndex
 import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
 import AshesCompiler.Semantics.OwnershipInference.programSoleNullaryConstructors
 import AshesCompiler.Semantics.OwnershipInference.MoveCallSite
@@ -227,6 +232,65 @@ type CoreConstructorLayout =
     | isZeroCost: Bool
     | tagless: Bool
     deriving {Eq, Show}
+
+let recursive schemeResultName (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_, result, _) -> schemeResultName(result)
+        | SemNamed(_, name, _) -> Some(name)
+        | _ -> None
+
+let layoutResultName (layout: CoreConstructorLayout) =
+    match layout with
+        | CoreConstructorLayout { scheme = TypeScheme { body = body } } -> schemeResultName(body)
+
+// Raw constructor declarations are indexed once per layout environment. Queries still instantiate
+// and resolve their fields against the current inference state.
+type CoreConstructorLookupIndex =
+    | byConstructor: MapTree(Str, CoreConstructorLayout)
+    | byResult: MapTree(Str, List(CoreConstructorLayout))
+    | byField: MapTree(Str, List(CoreConstructorLayout))
+
+let lookupFirstConstructor (name: Str) (index: CoreConstructorLookupIndex) = Ashes.Collection.Map.getStr(name)(index.byConstructor)
+
+let lookupResultConstructors (name: Str) (index: CoreConstructorLookupIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.byResult) with
+        | Some(layouts) -> layouts
+        | None -> []
+
+let lookupFieldConstructors (name: Str) (index: CoreConstructorLookupIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.byField) with
+        | Some(layouts) -> layouts
+        | None -> []
+
+let recursive constructorFieldNameOccurs (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | head :: rest -> head == name || constructorFieldNameOccurs(name)(rest)
+
+let recursive indexConstructorFields (layout: CoreConstructorLayout) (names: List(Str)) (index: CoreConstructorLookupIndex) =
+    match names with
+        | [] -> index
+        | name :: rest ->
+            if constructorFieldNameOccurs(name)(rest)
+            then indexConstructorFields(layout)(rest)(index)
+            else
+                let updated = index with byField = Ashes.Collection.Map.setStr(name)(layout :: lookupFieldConstructors(name)(index))(index.byField)
+                in indexConstructorFields(layout)(rest)(updated)
+
+let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
+    match layouts with
+        | [] -> index
+        | layout :: rest ->
+            let named = indexConstructorFields(layout)(layout.fieldNames)((index with byConstructor = Ashes.Collection.Map.setStr(layout.name)(layout)(index.byConstructor)))
+            in
+                match layoutResultName(layout) with
+                    | None -> collectConstructorLookupIndex(rest)(named)
+                    | Some(resultName) ->
+                        let updated = named with byResult = Ashes.Collection.Map.setStr(resultName)(layout :: lookupResultConstructors(resultName)(named))(named.byResult)
+                        in collectConstructorLookupIndex(rest)(updated)
+
+let constructorLookupIndex (layouts: List(CoreConstructorLayout)) =
+    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty))
 
 type CoreBindingLocation =
     | CoreLocal(Int)
@@ -562,9 +626,77 @@ type CoreTakenOverSettle =
     | settleCallee: Str
     | settleKind: CoreSettleKind
 
+// Prepared function lookup indexes: declaration-first candidates and newest registered refs.
+type CoreSpecializationCandidate =
+    | parameters: List(Str)
+    | value: Expr
+
+type CoreTopLevelFunctionReference =
+    | label: Str
+    | scheme: TypeScheme
+
+let recursive specializationCandidateIndexInto (candidates: List((Str, List(Str), Expr))) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match candidates with
+        | [] -> index
+        | (name, parameters, value) :: rest ->
+            match Ashes.Collection.Map.getStr(name)(index) with
+                | Some(_earlier) -> specializationCandidateIndexInto(rest)(index)
+                | None ->
+                    index
+                    |> Ashes.Collection.Map.setStr(name)(CoreSpecializationCandidate(parameters = parameters, value = value))
+                    |> specializationCandidateIndexInto(rest)
+
+let specializationCandidateIndex candidates = specializationCandidateIndexInto(candidates)(Ashes.Collection.Map.empty)
+
+let lookupSpecializationCandidate (name: Str) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreSpecializationCandidate { parameters = parameters, value = value }) -> Some((parameters, value))
+        | None -> None
+
+let specializationCandidateArity (name: Str) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreSpecializationCandidate { parameters = parameters, value = value }) ->
+            value
+            |> specializationArity(parameters)
+            |> Some
+        | None -> None
+
+let specializationCandidateValueOf (name: Str) (index: MapTree(Str, CoreSpecializationCandidate)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreSpecializationCandidate { value = value }) -> Some(value)
+        | None -> None
+
+let registerFunctionReference (name: Str) (label: Str) (scheme: TypeScheme) (index: MapTree(Str, CoreTopLevelFunctionReference)) = Ashes.Collection.Map.setStr(name)(CoreTopLevelFunctionReference(label = label, scheme = scheme))(index)
+
+let lookupTopLevelFunctionRef (name: Str) (index: MapTree(Str, CoreTopLevelFunctionReference)) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(CoreTopLevelFunctionReference { label = label, scheme = scheme }) -> Some((label, scheme))
+        | None -> None
+
+// End prepared function lookup indexes.
+// Completed context-free facts belong to this coverage environment and graph lineage.
+// Dropper synthesis uses a separately renumbered environment and its own context.
+type CoreHeapQueryFacts =
+    | copyPlan: Maybe(HeapCopyPlanFacts)
+    | admissibility: Maybe(HeapAdmissibilityFacts)
+    | shallowCopy: Maybe(Bool)
+    | children: Maybe(List(HeapLayoutChild))
+    | childTypes: Maybe(List(SemanticType))
+
+type CoreHeapQueryContext =
+    | graphIndex: TypeGraphIndex
+    | facts: MapTree(Int, CoreHeapQueryFacts)
+
+let emptyCoreHeapQueryFacts = CoreHeapQueryFacts(copyPlan = None, admissibility = None, shallowCopy = None, children = None, childTypes = None)
+
+let emptyCoreHeapQueryContext environment = CoreHeapQueryContext(graphIndex = emptyTypeGraphIndex(environment), facts = Ashes.Collection.Map.empty)
+
 type CoreProgramState =
     | constructorLayouts: List(CoreConstructorLayout)
+    | constructorIndex: CoreConstructorLookupIndex
     | coverageTypes: TypeEnvironment
+    | coverageEnvironmentVersion: Int
+    | heapQueryContext: CoreHeapQueryContext
     | dropperTypes: DropperTypes
     | builtinLayouts: List(CoreBuiltinLayout)
     | externalLayouts: List(CoreExternalFunctionLayout)
@@ -627,7 +759,9 @@ type CoreProgramState =
     | normalizableRecordTypes: MapTree(Str, Bool)
     | reachByIdentity: MapTree(Str, ReachSummary)
     | reachByName: MapTree(Str, ReachSummary)
-    | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
+    // Query-only argument reach answers, frozen with the selected function summaries.
+    | callReachByKey: MapTree(Str, PreparedCallReach)
+    | programParameterOwnership: ProgramParameterOwnershipIndex
     | dropperLabels: DropperLabelCache
     | resultRcEligibility: Maybe(MapTree(Str, Bool))
     // Per argument-free named type of the program: whether it is admissible to the general contract and
@@ -648,11 +782,13 @@ type CoreProgramState =
     // for; and stage 0's `_specializingLinearParam`, the parameter the specialization being
     // generated treats as a linear reuse root, consumed by the lambda that binds it.
     | specializationCandidates: List((Str, List(Str), Expr))
+    | specializationCandidateByName: MapTree(Str, CoreSpecializationCandidate)
     // Stage 0's `_topLevelFunctionRefs`: each top-level `let` whose lambda captured nothing, by
     // name with its code label and generalized scheme, so a body spliced into a scope that never
     // captured it (an inlined helper) can rebuild its closure from the label with a null
     // environment.
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
+    | topLevelFunctionRefByName: MapTree(Str, CoreTopLevelFunctionReference)
     // The standard trait environment with the program's own implementations registered, the
     // evidence a trait-mapped operator at a concrete operand type resolves against.
     | traitEnvironment: TypeEnvironment
@@ -673,6 +809,7 @@ type CoreProgramState =
     | provenSiblingCallResults: MapTree(Str, SemanticType)
 
 type CoreFunctionState =
+    | admissibilityAnswers: List((SemanticType, Bool))
     | deferredLabelNext: Int
     | deferredLabelGroups: List((Int, Int))
     | nextStringId: Int
@@ -882,7 +1019,7 @@ type CoreTcoState =
     | runtimeNormalizedArgumentLabels: List(Str)
     | recursiveGroupNames: List(Str)
     | tcoLoop: Maybe(CoreTcoLoop)
-    | functionReturnedClosureLabels: List((Str, Str))
+    | functionReturnedClosureLabels: MapTree(Str, Str)
     // The parameter of the plain function being lowered whose body returns it on some arms and
     // a fresh value on the others (stage 0's `_passthroughParameter`): its name, its slot, and
     // its type. The arm returning it copies it into an owned reference-counted graph.
@@ -941,6 +1078,7 @@ type CoreTcoState =
     | callArgumentRecordRetains: List((Int, Int, SemanticType))
     | collectingCallArgumentRetains: Bool
     | callArgumentLabelStart: Int
+    | callArgumentFrameActive: Bool
 
 type CoreReuseState =
     | reuseTransferredNames: List(Str)
@@ -1027,13 +1165,33 @@ type CoreLoweringState =
     | tcoState: CoreTcoState
     | reuseState: CoreReuseState
 
+// Branch helpers below construct and match this private record; declare it before those uses
+// so sequential module stitching can resolve its constructor name.
+type LoweredCoreValue =
+    | state: CoreLoweringState
+    | temp: Int
+    | semanticType: SemanticType
+    | error: Maybe(CoreLoweringError)
+
+let clearAdmissibilityAnswers (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with admissibilityAnswers = []))
+
 let stateConstructorLayouts (state: CoreLoweringState) =
     (let group = state.programState
     in group.constructorLayouts)
 
 let withStateConstructorLayouts value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with constructorLayouts = value))
+    in clearAdmissibilityAnswers((state with programState = (group with constructorLayouts = value, constructorIndex = constructorLookupIndex(value)))))
+
+let stateConstructorsOfType (name: Str) (state: CoreLoweringState) =
+    (let group = state.programState
+    in lookupResultConstructors(name)(group.constructorIndex))
+
+let stateConstructorsOfField (name: Str) (state: CoreLoweringState) =
+    (let group = state.programState
+    in lookupFieldConstructors(name)(group.constructorIndex))
 
 let stateCoverageTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1041,7 +1199,105 @@ let stateCoverageTypes (state: CoreLoweringState) =
 
 let withStateCoverageTypes value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with coverageTypes = value))
+    in clearAdmissibilityAnswers((state with programState = (group with coverageTypes = value, coverageEnvironmentVersion = group.coverageEnvironmentVersion + 1, heapQueryContext = emptyCoreHeapQueryContext(value)))))
+
+let stateHeapQueryContext (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.heapQueryContext)
+
+let withStateHeapQueryContext context (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with heapQueryContext = context))
+
+let coreHeapQueryFacts semanticType (state: CoreLoweringState) =
+    (let context = stateHeapQueryContext(state)
+    in
+        match typeGraphLookupNode(semanticType)(context.graphIndex) with
+            | None -> emptyCoreHeapQueryFacts
+            | Some(node) ->
+                match Ashes.Collection.Map.getInt(node.nodeId)(context.facts) with
+                    | Some(facts) -> facts
+                    | None -> emptyCoreHeapQueryFacts)
+
+let queryCoreCopyPlan (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let context = stateHeapQueryContext(state)
+    in
+        match typeGraphNode(semanticType)(context.graphIndex) with
+            | (node, graphIndex) ->
+                let previous =
+                    match Ashes.Collection.Map.getInt(node.nodeId)(context.facts) with
+                        | Some(facts) -> facts
+                        | None -> emptyCoreHeapQueryFacts
+                in
+                    match previous.copyPlan with
+                        | Some(answer) -> (answer, withStateHeapQueryContext((context with graphIndex = graphIndex))(state))
+                        | None ->
+                            match classifyHeapCopyPlanIndexed(semanticType)(graphIndex) with
+                                | (answer, discovered) -> (answer, withStateHeapQueryContext((context with graphIndex = discovered, facts = Ashes.Collection.Map.setInt(node.nodeId)((previous with copyPlan = Some(answer)))(context.facts)))(state)))
+
+let queryCoreAdmissibility (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let context = stateHeapQueryContext(state)
+    in
+        match typeGraphNode(semanticType)(context.graphIndex) with
+            | (node, graphIndex) ->
+                let previous =
+                    match Ashes.Collection.Map.getInt(node.nodeId)(context.facts) with
+                        | Some(facts) -> facts
+                        | None -> emptyCoreHeapQueryFacts
+                in
+                    match previous.admissibility with
+                        | Some(answer) -> (answer, withStateHeapQueryContext((context with graphIndex = graphIndex))(state))
+                        | None ->
+                            match classifyHeapAdmissibilityIndexed(semanticType)(graphIndex) with
+                                | (answer, discovered) -> (answer, withStateHeapQueryContext((context with graphIndex = discovered, facts = Ashes.Collection.Map.setInt(node.nodeId)((previous with admissibility = Some(answer)))(context.facts)))(state)))
+
+let queryCoreShallowCopy (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let context = stateHeapQueryContext(state)
+    in
+        match typeGraphNode(semanticType)(context.graphIndex) with
+            | (node, graphIndex) ->
+                let previous =
+                    match Ashes.Collection.Map.getInt(node.nodeId)(context.facts) with
+                        | Some(facts) -> facts
+                        | None -> emptyCoreHeapQueryFacts
+                in
+                    match previous.shallowCopy with
+                        | Some(answer) -> (answer, withStateHeapQueryContext((context with graphIndex = graphIndex))(state))
+                        | None ->
+                            match classifyHeapShallowCopyIndexed(semanticType)(graphIndex) with
+                                | (answer, discovered) -> (answer, withStateHeapQueryContext((context with graphIndex = discovered, facts = Ashes.Collection.Map.setInt(node.nodeId)((previous with shallowCopy = Some(answer)))(context.facts)))(state)))
+
+let queryCoreChildren (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let context = stateHeapQueryContext(state)
+    in
+        match typeGraphNode(semanticType)(context.graphIndex) with
+            | (node, graphIndex) ->
+                let previous =
+                    match Ashes.Collection.Map.getInt(node.nodeId)(context.facts) with
+                        | Some(facts) -> facts
+                        | None -> emptyCoreHeapQueryFacts
+                in
+                    match previous.children with
+                        | Some(answer) -> (answer, withStateHeapQueryContext((context with graphIndex = graphIndex))(state))
+                        | None ->
+                            match classifyHeapChildrenIndexed(semanticType)(graphIndex) with
+                                | (answer, discovered) -> (answer, withStateHeapQueryContext((context with graphIndex = discovered, facts = Ashes.Collection.Map.setInt(node.nodeId)((previous with children = Some(answer)))(context.facts)))(state)))
+
+let queryCoreChildTypes (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let context = stateHeapQueryContext(state)
+    in
+        match typeGraphNode(semanticType)(context.graphIndex) with
+            | (node, graphIndex) ->
+                let previous =
+                    match Ashes.Collection.Map.getInt(node.nodeId)(context.facts) with
+                        | Some(facts) -> facts
+                        | None -> emptyCoreHeapQueryFacts
+                in
+                    match previous.childTypes with
+                        | Some(answer) -> (answer, withStateHeapQueryContext((context with graphIndex = graphIndex))(state))
+                        | None ->
+                            match classifyHeapChildTypesIndexed(semanticType)(graphIndex) with
+                                | (answer, discovered) -> (answer, withStateHeapQueryContext((context with graphIndex = discovered, facts = Ashes.Collection.Map.setInt(node.nodeId)((previous with childTypes = Some(answer)))(context.facts)))(state)))
 
 let stateDropperTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1050,6 +1306,13 @@ let stateDropperTypes (state: CoreLoweringState) =
 let withStateDropperTypes value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with dropperTypes = value))
+
+// A synthesis returns graph nodes and completed views for the same prepared environment.
+// Carry both so subsequent requests reuse exact types and their context-free facts.
+let withStateDropperContext value (state: CoreLoweringState) =
+    (let types = stateDropperTypes(state)
+    in
+        withStateDropperTypes(withDropperQueryContext(value)(types))(state))
 
 let stateBuiltinLayouts (state: CoreLoweringState) =
     (let group = state.programState
@@ -1256,13 +1519,17 @@ let withStateReachByName value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with reachByName = value))
 
+let withStateCallReachByKey value (state: CoreLoweringState) =
+    (let group = state.programState
+    in state with programState = (group with callReachByKey = value))
+
 let stateProgramParameterOwnership (state: CoreLoweringState) =
     (let group = state.programState
     in group.programParameterOwnership)
 
 let withStateProgramParameterOwnership value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with programParameterOwnership = value))
+    in state with programState = (group with programParameterOwnership = indexProgramParameterOwnership(value)))
 
 let stateLetLambdas (state: CoreLoweringState) =
     (let group = state.programState
@@ -1296,13 +1563,13 @@ let withStateLetLambdaIdentities value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with letLambdaIdentities = value))
 
-let stateTopLevelFunctionRefs (state: CoreLoweringState) =
+let stateTopLevelFunctionRefIndex (state: CoreLoweringState) =
     (let group = state.programState
-    in group.topLevelFunctionRefs)
+    in group.topLevelFunctionRefByName)
 
-let withStateTopLevelFunctionRefs value (state: CoreLoweringState) =
+let withRegisteredTopLevelFunctionRef name label scheme (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with topLevelFunctionRefs = value))
+    in state with programState = (group with topLevelFunctionRefs = (name, label, scheme) :: group.topLevelFunctionRefs, topLevelFunctionRefByName = registerFunctionReference(name)(label)(scheme)(group.topLevelFunctionRefByName)))
 
 let stateInlinableHelpers (state: CoreLoweringState) =
     (let group = state.programState
@@ -1316,9 +1583,13 @@ let stateSpecializationCandidates (state: CoreLoweringState) =
     (let group = state.programState
     in group.specializationCandidates)
 
+let stateSpecializationCandidateIndex (state: CoreLoweringState) =
+    (let group = state.programState
+    in group.specializationCandidateByName)
+
 let withStateSpecializationCandidates value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with specializationCandidates = value))
+    in state with programState = (group with specializationCandidates = value, specializationCandidateByName = specializationCandidateIndex(value)))
 
 let stateGeneralRcOwnedResultLabels (state: CoreLoweringState) =
     (let group = state.programState
@@ -1342,7 +1613,7 @@ let stateHeapLayoutFactsByType (state: CoreLoweringState) =
 
 let withStateHeapLayoutFactsByType value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with heapLayoutFactsByType = value))
+    in clearAdmissibilityAnswers((state with programState = (group with heapLayoutFactsByType = value))))
 
 let stateNormalizableRecordTypes (state: CoreLoweringState) =
     (let group = state.programState
@@ -1368,6 +1639,11 @@ let withStateDropperLabels value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with dropperLabels = value))
 
+let withStateDropperResult cache queryContext state =
+    state
+    |> withStateDropperContext(queryContext)
+    |> withStateDropperLabels(cache)
+
 let stateClosureDropperLabels (state: CoreLoweringState) =
     (let group = state.programState
     in group.closureDropperLabels)
@@ -1390,7 +1666,7 @@ let stateGeneralRcTypeFacts (state: CoreLoweringState) =
 
 let withStateGeneralRcTypeFacts value (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with generalRcTypeFacts = value))
+    in clearAdmissibilityAnswers((state with programState = (group with generalRcTypeFacts = value))))
 
 let withStateContractRecordFacts value (state: CoreLoweringState) =
     (let group = state.programState
@@ -1463,7 +1739,7 @@ let statePendingOperatorDefaults (state: CoreLoweringState) =
 
 let withStatePendingOperatorDefaults value (state: CoreLoweringState) =
     (let group = state.functionState
-    in state with functionState = (group with pendingOperatorDefaults = value))
+    in state with functionState = (group with pendingOperatorDefaults = value, admissibilityAnswers = []))
 
 let stateEnclosingBindings (state: CoreLoweringState) =
     (let group = state.functionState
@@ -1495,7 +1771,7 @@ let stateSealedOperatorDefaults (state: CoreLoweringState) =
 
 let withStateSealedOperatorDefaults value (state: CoreLoweringState) =
     (let group = state.functionState
-    in state with functionState = (group with sealedOperatorDefaults = value))
+    in state with functionState = (group with sealedOperatorDefaults = value, admissibilityAnswers = []))
 
 let statePendingSourceFunction (state: CoreLoweringState) =
     (let group = state.functionState
@@ -2180,6 +2456,10 @@ let stateCallArgumentLabelStart (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.callArgumentLabelStart)
 
+let stateCallArgumentFrameActive (state: CoreLoweringState) =
+    (let group = state.tcoState
+    in group.callArgumentFrameActive)
+
 let stateTcoParameterRetainSites (state: CoreLoweringState) =
     (let group = state.tcoState
     in group.tcoParameterRetainSites)
@@ -2468,12 +2748,6 @@ let withStateInliningInProgress value (state: CoreLoweringState) =
     (let group = state.reuseState
     in state with reuseState = (group with inliningInProgress = value))
 
-type LoweredCoreValue =
-    | state: CoreLoweringState
-    | temp: Int
-    | semanticType: SemanticType
-    | error: Maybe(CoreLoweringError)
-
 type FreshTemp =
     | state: CoreLoweringState
     | temp: Int
@@ -2698,8 +2972,7 @@ let recursive constructorInferenceDefinitionsFromLayouts layouts =
 // there, and their field groups, which the layout classifiers answer from.
 let extendCoverageEnvironment (environment: TypeEnvironment) layouts =
     (let definitions = constructorInferenceDefinitionsFromLayouts(layouts)
-    in
-        environment with constructors = append(environment.constructors)(definitions), constructorFieldGroups = append(environment.constructorFieldGroups)(heapConstructorFieldGroups(definitions)))
+    in heapExtendConstructorEnvironment(environment)(definitions))
 
 let recursive schemeResultType (semanticType: SemanticType) =
     match semanticType with
@@ -2746,207 +3019,215 @@ let coverageEnvironmentOf layouts =
     extendCoverageEnvironment(emptyTypeEnvironment(Unit))(layouts)
 
 let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
-    CoreLoweringState(
-        reversedInstructions = [],
-        functions = [],
-        bindings = [],
-        externalFunctions = externalFunctions,
-        externalOpaqueTypes = externalOpaqueTypes,
-        nextTemp = 0,
-        nextLocal = 0,
-        nextLambdaId = 0,
-        nextLabelId = 0,
-        stringLiterals = [],
-        // Starts past `standardBuiltinLayouts`' own reserved ids (see
-        // `reservedBuiltinTypeVariableCount`'s own comment) rather than `0` — even a caller
-        // passing empty `constructorLayouts`/`builtinLayouts` gets this, harmlessly: it just means
-        // this compilation's fresh-variable numbering never mints those specific low ids, not that
-        // anything is missing.
-        typeSupply = TypeVariableSupply(nextId = reservedBuiltinTypeVariableCount),
-        substitution = Ashes.Collection.Map.empty,
-        currentSpan = None,
-        consumerRequest = emptyConsumerRequest,
-        runtimeTemps = Ashes.Collection.Map.empty,
-        reuseTokens = [],
-        valuePlacements = [],
-        joinRepresentations = [],
-        borrowedCalls = [],
-        programState = CoreProgramState(
-            constructorLayouts = constructorLayouts,
-            coverageTypes = coverageEnvironmentOf(constructorLayouts),
-            heapLayoutFactsByType = constructorLayouts
-            |> coverageEnvironmentOf
-            |> heapLayoutFactsTableFor(constructorLayouts),
-            dropperTypes = constructorLayouts
-            |> constructorInferenceDefinitionsFromLayouts
-            |> prepareDropperTypes,
-            builtinLayouts = builtinLayouts,
-            externalLayouts = externalLayouts,
-            declaredTypeNames = Ashes.Collection.Map.empty,
-            typeAliases = Ashes.Collection.Map.empty,
-            capabilityLayouts = capabilityLayouts,
-            staticProviders = staticProviders,
-            capabilityGlobalCount = capabilityGlobalCount,
-            capabilityOperationSchemes = [],
-            sourceContext = None,
-            topLevelNames = Ashes.Collection.Map.empty,
-            letLambdas = [],
-            letLambdasByName = Ashes.Collection.Map.empty,
-            moveFunctionTable = [],
-            moveCallSites = [],
-            moveNullaryConstructors = [],
-            liveHandlerFunctions = Ashes.Collection.Map.empty,
-            entryRunsUnderLiveHandlerPost = false,
-            anyRunsUnderLiveHandlerPost = false,
-            patternOwnerSites = [],
-            cellMarkerSlots = [],
-            tupleBinderParameters = [],
-            bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
-            generalRcOwnedResultLabels = [],
-            discardedResultSpans = [],
-            tupleResultPartLabels = Ashes.Collection.Map.empty,
-            normalizableRecordTypes = Ashes.Collection.Map.empty,
-            letLambdaLabels = Ashes.Collection.Map.empty,
-            letLambdaIdentities = Ashes.Collection.Map.empty,
-            reachSummaries = [],
-            reachRegistry = None,
-            reachTable = Ashes.Collection.Map.empty,
-            reachByIdentity = Ashes.Collection.Map.empty,
-            reachByName = Ashes.Collection.Map.empty,
-            programParameterOwnership = [],
-            dropperLabels = emptyDropperLabelCache,
-            resultRcEligibility = None,
-            generalRcTypeFacts = Ashes.Collection.Map.empty,
-            contractRecordFacts = Ashes.Collection.Map.empty,
-            inlinableHelpers = [],
-            specializationCandidates = [],
-            topLevelFunctionRefs = [],
-            traitEnvironment = standardLoweringTraitEnvironment,
-            traitMethodLabels = Ashes.Collection.Map.empty,
-            closureDropperLabels = [],
-            provenTraitGoals = Ashes.Collection.Map.empty,
-            provenSiblingCallResults = Ashes.Collection.Map.empty
-        ),
-        functionState = CoreFunctionState(
-            deferredLabelNext = deferredLabelBase,
-            deferredLabelGroups = [],
-            nextStringId = 0,
-            currentItem = 0,
-            pendingStackClosure = false,
-            runtimeAdtRequested = false,
-            pendingOperatorDefaults = [],
-            enclosingBindings = [],
-            letBoundFunctionLabels = [],
-            inlineTypeVariables = [],
-            sealedOperatorDefaults = [],
-            pendingSourceFunction = None,
-            activeFunctionOrigin = None,
-            underLiveHandlerPost = false,
-            handlerArmOwnResult = false,
-            pendingClosureNormalizers = [],
-            resourceStates = [],
-            recursiveDeclarationSpan = None,
-            recursiveMemberStarts = [],
-            activeTraitMethods = [],
-            activeTypeParameters = [],
-            pendingTraitGoals = [],
-            pendingSiblingCallResults = [],
-            traitGoalsPinned = false
-        ),
-        ownerState = CoreOwnerState(
-            retiredLocals = [],
-            backEdgeDummyTemps = [],
-            reuseResultTemps = [],
-            patternOwnerCopyTemps = [],
-            releasedPatternOwnerDuplicates = [],
-            runtimeOwners = [],
-            borrowedOwners = [],
-            pendingBorrowedOwners = [],
-            patternOwnerResultTemps = [],
-            ownerReleasePlans = [],
-            generalRcOwnedSlots = [],
-            generalRcPredecessorSlots = [],
-            generalRcSlotBinders = [],
-            generalRcPredecessorOwners = [],
-            generalRcFreshSlots = [],
-            generalRcHandedOverPartsSlots = [],
-            generalRcPartDuplicateSlots = [],
-            loopResultPartDuplicates = [],
-            takenOverConsumers = [],
-            takenOverRecordNames = [],
-            takenOverSlotSources = [],
-            spineFreedSpans = [],
-            ownFieldRetainedParameters = [],
-            ownFieldPendingParameters = [],
-            generalRcBranches = [],
-            generalRcSlotBranches = [],
-            generalRcFinishedResult = None,
-            closedProducerChain = None,
-            pendingOwnerPlan = None,
-            unresolvedCallResults = [],
-            resolvingCallsAgain = false,
-            runtimeOwnerAliases = [],
-            pendingRuntimeArgumentFlags = [],
-            genericDeepCopiedListTemps = [],
-            ownedReferenceJoins = [],
-            retainedArmJoins = []
-        ),
-        tcoState = CoreTcoState(
-            tcoParameterRetainSites = [],
-            arenaParameterCopies = [],
-            borrowedScrutineeCells = [],
-            transientFlagClears = [],
-            backEdgeArgumentSlot = None,
-            lateCopiedCellHeads = [],
-            arenaSuccessorLetLoop = None,
-            arenaSuccessorJoin = None,
-            affineAppendContext = None,
-            affineAppendReservation = None,
-            recursiveProducerResultSlots = [],
-            normalizedAlwaysReturnedParameter = None,
-            normalizedParameterCloned = false,
-            runtimeNormalizedArgumentLabels = [],
-            recursiveGroupNames = [],
-            tcoLoop = None,
-            functionReturnedClosureLabels = [],
-            passthroughParameter = None,
-            loweringBodyLabel = "",
-            predictedRuntimeManagedResultLabels = [],
-            curryStage = None,
-            tcoLoopFrame = None,
-            tmcActivatedLabels = [],
-            pendingTcoResets = [],
-            pendingCallCopyOuts = [],
-            pendingTakenOverSettles = [],
-            takenOverHeldResults = [],
-            takenOverCallArguments = [],
-            settledBehindCopySpans = [],
-            withdrawnTuplePartsRequests = [],
-            listHeadCells = [],
-            selfResultDeferredNames = [],
-            siblingResultOpenNames = [],
-            selfCallResultUnifications = [],
-            callArgumentRecordRetains = [],
-            collectingCallArgumentRetains = false,
-            callArgumentLabelStart = 0
-        ),
-        reuseState = CoreReuseState(
-            reuseTransferredNames = [],
-            reuseEnabled = true,
-            linearReuseNames = [],
-            directReuseCandidates = [],
-            inliningInProgress = [],
-            reuseSpecializations = [],
-            specializingLinearParam = None,
-            specializingInProgress = [],
-            specializationFreshInputs = None,
-            stackAllocateConstructor = false,
-            linearSpecializationAccumulators = [],
-            routedSpecializationAccumulators = [],
-            specializingReuseLabel = None,
-            fullyReusingCallees = []
-        )
-    )
+    (let coverageEnvironment = coverageEnvironmentOf(constructorLayouts)
+    in
+        CoreLoweringState(
+            reversedInstructions = [],
+            functions = [],
+            bindings = [],
+            externalFunctions = externalFunctions,
+            externalOpaqueTypes = externalOpaqueTypes,
+            nextTemp = 0,
+            nextLocal = 0,
+            nextLambdaId = 0,
+            nextLabelId = 0,
+            stringLiterals = [],
+            // Starts past `standardBuiltinLayouts`' own reserved ids (see
+            // `reservedBuiltinTypeVariableCount`'s own comment) rather than `0` — even a caller
+            // passing empty `constructorLayouts`/`builtinLayouts` gets this, harmlessly: it just means
+            // this compilation's fresh-variable numbering never mints those specific low ids, not that
+            // anything is missing.
+            typeSupply = TypeVariableSupply(nextId = reservedBuiltinTypeVariableCount),
+            substitution = Ashes.Collection.Map.empty,
+            currentSpan = None,
+            consumerRequest = emptyConsumerRequest,
+            runtimeTemps = Ashes.Collection.Map.empty,
+            reuseTokens = [],
+            valuePlacements = [],
+            joinRepresentations = [],
+            borrowedCalls = [],
+            programState = CoreProgramState(
+                constructorLayouts = constructorLayouts,
+                constructorIndex = constructorLookupIndex(constructorLayouts),
+                coverageTypes = coverageEnvironment,
+                coverageEnvironmentVersion = 0,
+                heapQueryContext = emptyCoreHeapQueryContext(coverageEnvironment),
+                heapLayoutFactsByType = coverageEnvironment |> heapLayoutFactsTableFor(constructorLayouts),
+                dropperTypes = constructorLayouts
+                |> constructorInferenceDefinitionsFromLayouts
+                |> prepareDropperTypes,
+                builtinLayouts = builtinLayouts,
+                externalLayouts = externalLayouts,
+                declaredTypeNames = Ashes.Collection.Map.empty,
+                typeAliases = Ashes.Collection.Map.empty,
+                capabilityLayouts = capabilityLayouts,
+                staticProviders = staticProviders,
+                capabilityGlobalCount = capabilityGlobalCount,
+                capabilityOperationSchemes = [],
+                sourceContext = None,
+                topLevelNames = Ashes.Collection.Map.empty,
+                letLambdas = [],
+                letLambdasByName = Ashes.Collection.Map.empty,
+                moveFunctionTable = [],
+                moveCallSites = [],
+                moveNullaryConstructors = [],
+                liveHandlerFunctions = Ashes.Collection.Map.empty,
+                entryRunsUnderLiveHandlerPost = false,
+                anyRunsUnderLiveHandlerPost = false,
+                patternOwnerSites = [],
+                cellMarkerSlots = [],
+                tupleBinderParameters = [],
+                bodyRuntimeManagedByLabel = Ashes.Collection.Map.empty,
+                generalRcOwnedResultLabels = [],
+                discardedResultSpans = [],
+                tupleResultPartLabels = Ashes.Collection.Map.empty,
+                normalizableRecordTypes = Ashes.Collection.Map.empty,
+                letLambdaLabels = Ashes.Collection.Map.empty,
+                letLambdaIdentities = Ashes.Collection.Map.empty,
+                reachSummaries = [],
+                reachRegistry = None,
+                reachTable = Ashes.Collection.Map.empty,
+                reachByIdentity = Ashes.Collection.Map.empty,
+                reachByName = Ashes.Collection.Map.empty,
+                callReachByKey = Ashes.Collection.Map.empty,
+                programParameterOwnership = Ashes.Collection.Map.empty,
+                dropperLabels = emptyDropperLabelCache,
+                resultRcEligibility = None,
+                generalRcTypeFacts = Ashes.Collection.Map.empty,
+                contractRecordFacts = Ashes.Collection.Map.empty,
+                inlinableHelpers = [],
+                specializationCandidates = [],
+                specializationCandidateByName = Ashes.Collection.Map.empty,
+                topLevelFunctionRefs = [],
+                topLevelFunctionRefByName = Ashes.Collection.Map.empty,
+                traitEnvironment = standardLoweringTraitEnvironment,
+                traitMethodLabels = Ashes.Collection.Map.empty,
+                closureDropperLabels = [],
+                provenTraitGoals = Ashes.Collection.Map.empty,
+                provenSiblingCallResults = Ashes.Collection.Map.empty
+            ),
+            functionState = CoreFunctionState(
+                admissibilityAnswers = [],
+                deferredLabelNext = deferredLabelBase,
+                deferredLabelGroups = [],
+                nextStringId = 0,
+                currentItem = 0,
+                pendingStackClosure = false,
+                runtimeAdtRequested = false,
+                pendingOperatorDefaults = [],
+                enclosingBindings = [],
+                letBoundFunctionLabels = [],
+                inlineTypeVariables = [],
+                sealedOperatorDefaults = [],
+                pendingSourceFunction = None,
+                activeFunctionOrigin = None,
+                underLiveHandlerPost = false,
+                handlerArmOwnResult = false,
+                pendingClosureNormalizers = [],
+                resourceStates = [],
+                recursiveDeclarationSpan = None,
+                recursiveMemberStarts = [],
+                activeTraitMethods = [],
+                activeTypeParameters = [],
+                pendingTraitGoals = [],
+                pendingSiblingCallResults = [],
+                traitGoalsPinned = false
+            ),
+            ownerState = CoreOwnerState(
+                retiredLocals = [],
+                backEdgeDummyTemps = [],
+                reuseResultTemps = [],
+                patternOwnerCopyTemps = [],
+                releasedPatternOwnerDuplicates = [],
+                runtimeOwners = [],
+                borrowedOwners = [],
+                pendingBorrowedOwners = [],
+                patternOwnerResultTemps = [],
+                ownerReleasePlans = [],
+                generalRcOwnedSlots = [],
+                generalRcPredecessorSlots = [],
+                generalRcSlotBinders = [],
+                generalRcPredecessorOwners = [],
+                generalRcFreshSlots = [],
+                generalRcHandedOverPartsSlots = [],
+                generalRcPartDuplicateSlots = [],
+                loopResultPartDuplicates = [],
+                takenOverConsumers = [],
+                takenOverRecordNames = [],
+                takenOverSlotSources = [],
+                spineFreedSpans = [],
+                ownFieldRetainedParameters = [],
+                ownFieldPendingParameters = [],
+                generalRcBranches = [],
+                generalRcSlotBranches = [],
+                generalRcFinishedResult = None,
+                closedProducerChain = None,
+                pendingOwnerPlan = None,
+                unresolvedCallResults = [],
+                resolvingCallsAgain = false,
+                runtimeOwnerAliases = [],
+                pendingRuntimeArgumentFlags = [],
+                genericDeepCopiedListTemps = [],
+                ownedReferenceJoins = [],
+                retainedArmJoins = []
+            ),
+            tcoState = CoreTcoState(
+                tcoParameterRetainSites = [],
+                arenaParameterCopies = [],
+                borrowedScrutineeCells = [],
+                transientFlagClears = [],
+                backEdgeArgumentSlot = None,
+                lateCopiedCellHeads = [],
+                arenaSuccessorLetLoop = None,
+                arenaSuccessorJoin = None,
+                affineAppendContext = None,
+                affineAppendReservation = None,
+                recursiveProducerResultSlots = [],
+                normalizedAlwaysReturnedParameter = None,
+                normalizedParameterCloned = false,
+                runtimeNormalizedArgumentLabels = [],
+                recursiveGroupNames = [],
+                tcoLoop = None,
+                functionReturnedClosureLabels = Ashes.Collection.Map.empty,
+                passthroughParameter = None,
+                loweringBodyLabel = "",
+                predictedRuntimeManagedResultLabels = [],
+                curryStage = None,
+                tcoLoopFrame = None,
+                tmcActivatedLabels = [],
+                pendingTcoResets = [],
+                pendingCallCopyOuts = [],
+                pendingTakenOverSettles = [],
+                takenOverHeldResults = [],
+                takenOverCallArguments = [],
+                settledBehindCopySpans = [],
+                withdrawnTuplePartsRequests = [],
+                listHeadCells = [],
+                selfResultDeferredNames = [],
+                siblingResultOpenNames = [],
+                selfCallResultUnifications = [],
+                callArgumentRecordRetains = [],
+                collectingCallArgumentRetains = false,
+                callArgumentLabelStart = 0,
+                callArgumentFrameActive = false
+            ),
+            reuseState = CoreReuseState(
+                reuseTransferredNames = [],
+                reuseEnabled = true,
+                linearReuseNames = [],
+                directReuseCandidates = [],
+                inliningInProgress = [],
+                reuseSpecializations = [],
+                specializingLinearParam = None,
+                specializingInProgress = [],
+                specializationFreshInputs = None,
+                stackAllocateConstructor = false,
+                linearSpecializationAccumulators = [],
+                routedSpecializationAccumulators = [],
+                specializingReuseLabel = None,
+                fullyReusingCallees = []
+            )
+        ))
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
 
@@ -3064,7 +3345,7 @@ let withNextLocal nextLocal (state: CoreLoweringState) = state with nextLocal = 
 
 let withTypeSupply typeSupply (state: CoreLoweringState) = state with typeSupply = typeSupply
 
-let withSubstitution substitution (state: CoreLoweringState) = state with substitution = substitution
+let withSubstitution substitution (state: CoreLoweringState) = clearAdmissibilityAnswers((state with substitution = substitution))
 
 let withNextLambdaId nextLambdaId (state: CoreLoweringState) = state with nextLambdaId = nextLambdaId
 
@@ -3568,7 +3849,10 @@ let bindType left right state =
             |> resolveType(state)
             |> unify(resolveType(state)(left)) with
                 | UnificationResult { substitution = added, error = None } ->
-                    (withSubstitution(extendSubstitutionMap(added)(existing))(state), None)
+                    match added with
+                        | [] -> (state, None)
+                        | _ ->
+                            (withSubstitution(extendSubstitutionMap(added)(existing))(state), None)
                 | UnificationResult { error = Some(error) } ->
                     (state, state
                     |> mismatchSiteOf
@@ -3745,7 +4029,10 @@ let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List
 // function's label, so a saturated spine can be followed to the innermost body it reaches.
 let recordReturnedClosureLabel (label: Str) (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) (state: CoreLoweringState) =
     match returnedClosureLabelOf(bodyTemp)(reversedInstructions) with
-        | Some(returned) -> withStateFunctionReturnedClosureLabels((label, returned) :: stateFunctionReturnedClosureLabels(state))(state)
+        | Some(returned) ->
+            withStateFunctionReturnedClosureLabels(state
+            |> stateFunctionReturnedClosureLabels
+            |> Ashes.Collection.Map.setStr(label)(returned))(state)
         | None -> state
 
 // Whether a lifted function normalizes its argument into an owned value at entry, so its closure
@@ -3982,7 +4269,12 @@ let recursive findConstructorLayout (name: Str) (layouts: List(CoreConstructorLa
 
 let constructorLayout name state =
     match state with
-        | CoreLoweringState { programState = CoreProgramState { constructorLayouts = layouts } } -> findConstructorLayout(name)(layouts)
+        | CoreLoweringState { programState = CoreProgramState { constructorIndex = index } } -> lookupFirstConstructor(name)(index)
+
+let constructorNameKnown (name: Str) (state: CoreLoweringState) =
+    match constructorLayout(name)(state) with
+        | Some(_layout) -> true
+        | None -> false
 
 let recursive findBuiltinLayout moduleName memberName layouts =
     match layouts with
@@ -4075,8 +4367,9 @@ let recursive findRecordLayout (typeName: Str) (layouts: List(CoreConstructorLay
         | _layout :: tail -> findRecordLayout(typeName)(tail)
 
 let recordLayout typeName state =
-    match state with
-        | CoreLoweringState { programState = CoreProgramState { constructorLayouts = layouts } } -> findRecordLayout(typeName)(layouts)
+    state
+    |> stateConstructorsOfType(typeName)
+    |> findRecordLayout(typeName)
 
 let failedCoreValues state error =
     LoweredCoreValues(
@@ -4205,7 +4498,7 @@ let runtimeManagedAdtTypeName (name: Str) =
 // (string, bytes, big integer, list, tuple, closure, or a declared type, seen through a zero-cost
 // wrapper to its payload) is owned; copy types and unresolved type variables are not. A zero-cost
 // wrapper whose payload is a type variable erases to that variable and so counts as not owned.
-let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreConstructorLayout)) =
+let recursive ownedTypeNameOf (semanticType: SemanticType) (index: CoreConstructorLookupIndex) =
     match semanticType with
         | SemString -> Some("String")
         | SemBytes -> Some("Bytes")
@@ -4214,20 +4507,24 @@ let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreCo
         | SemTuple(_elements) -> Some("Tuple")
         | SemFunction(_parameter, _result, _row) -> Some("Function")
         | SemNamed(_symbolId, name, _arguments) ->
-            match zeroCostPayloadType(name)(layouts) with
-                | Some(payload) -> ownedTypeNameOf(payload)(layouts)
+            match index
+            |> lookupResultConstructors(name)
+            |> zeroCostPayloadType(name) with
+                | Some(payload) -> ownedTypeNameOf(payload)(index)
                 | None ->
                     name
                     |> runtimeManagedAdtTypeName
                     |> Some
         | _ -> None
 
+let stateOwnedTypeNameOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let group = state.programState
+    in ownedTypeNameOf(semanticType)(group.constructorIndex))
+
 // The type name a pattern owner releases under: its owned type name, or stage 0's
 // `PatternBinding` for a binding whose type is a copy type or still unresolved.
 let patternOwnerTypeName (resolved: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> stateConstructorLayouts
-    |> ownedTypeNameOf(resolved) with
+    match state |> stateOwnedTypeNameOf(resolved) with
         | Some(typeName) -> typeName
         | None -> "PatternBinding"
 
@@ -4264,9 +4561,7 @@ let resourceTypeNameOf (semanticType: SemanticType) (state: CoreLoweringState) =
             then Some(name)
             else None
         | other ->
-            match state
-            |> stateConstructorLayouts
-            |> ownedTypeNameOf(other) with
+            match state |> stateOwnedTypeNameOf(other) with
                 | Some(typeName) ->
                     if isResourceTypeName(typeName)
                     then Some(typeName)
@@ -4476,7 +4771,7 @@ let registeredTopLevelName (name: Str) (names: MapTree(Str, Bool)) =
 let provenParameterOwnership (callee: Str) (parameters: List(Str)) (ownership: List((Str, ParameterOwnership))) (state: CoreLoweringState) =
     match state
     |> stateProgramParameterOwnership
-    |> lookupProgramParameterOwnership(callee) with
+    |> lookupIndexedProgramParameterOwnership(callee) with
         | Some(proven) ->
             if registeredTopLevelName(callee)(stateTopLevelNames(state)) && sameParameterNames(proven)(parameters)
             then overlayProvenBorrows(proven)(ownership)
@@ -4701,17 +4996,15 @@ let emitBorrowedRead temp semanticType state =
 // A pattern owner's read borrows whatever its type (stage 0's `LowerVar` borrows every binding
 // it finds an ownership entry for); any other owned binding borrows once its type is heap-represented.
 let finishOwnedRead ownedRead (patternOwner: Bool) temp semanticType state =
-    match state with
-        | CoreLoweringState { programState = CoreProgramState { constructorLayouts = layouts } } ->
-            if patternOwner
-            then emitBorrowedRead(temp)(semanticType)(state)
-            else
-                if ownedRead
-                then
-                    match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
-                        | Some(_typeName) -> emitBorrowedRead(temp)(semanticType)(state)
-                        | None -> success(temp)(semanticType)(state)
-                else success(temp)(semanticType)(state)
+    if patternOwner
+    then emitBorrowedRead(temp)(semanticType)(state)
+    else
+        if ownedRead
+        then
+            match stateOwnedTypeNameOf(resolveType(state)(semanticType))(state) with
+                | Some(_typeName) -> emitBorrowedRead(temp)(semanticType)(state)
+                | None -> success(temp)(semanticType)(state)
+        else success(temp)(semanticType)(state)
 
 // A pattern binding of the arm that published a reuse token reads the cell the token released:
 // stage 0 aliases such a binding to the dead scrutinee owner, whose read no longer borrows.
@@ -4968,7 +5261,7 @@ let registerTopLevelFunctionRef (name: Str) (valueTemp: Int) (scheme: TypeScheme
     if inProgramEntryFrame(state)
     then
         match emptyEnvironmentClosureLabel(valueTemp)(state.reversedInstructions) with
-            | Some(label) -> withStateTopLevelFunctionRefs((name, label, scheme) :: stateTopLevelFunctionRefs(state))(state)
+            | Some(label) -> withRegisteredTopLevelFunctionRef(name)(label)(scheme)(state)
             | None -> state
     else state
 
@@ -5109,10 +5402,7 @@ let loweredValueOwnedTypeName lowered =
                     if isDeclaredResourceName(name)(state)
                     then Some(name)
                     else None
-                | resolved ->
-                    state
-                    |> stateConstructorLayouts
-                    |> ownedTypeNameOf(resolved)
+                | resolved -> state |> stateOwnedTypeNameOf(resolved)
         | _ -> None
 
 let coverageEnvironment (state: CoreLoweringState) = stateCoverageTypes(state)
@@ -5154,6 +5444,63 @@ let heapFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
                 |> coverageEnvironment
                 |> classifyHeapLayout(resolved))
 
+// Keep settled monomorphic answers authoritative; uncached types need only the shallow-copy
+// decision here, rather than every recursive heap-layout fact.
+let cachedCoreShallowCopy semanticType (state: CoreLoweringState) =
+    (let facts = coreHeapQueryFacts(semanticType)(state)
+    in
+        match facts.shallowCopy with
+            | Some(answer) -> answer
+            | None ->
+                state
+                |> stateCoverageTypes
+                |> classifyHeapShallowCopy(semanticType))
+
+let heapShallowCopyOfIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> (facts.structuralCopy == ShallowCopy, state)
+                    | None -> queryCoreShallowCopy(resolved)(state)
+            | _ -> queryCoreShallowCopy(resolved)(state))
+
+// Pure readers reuse completed views; stateful consumers retain cold query updates.
+let heapShallowCopyOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> facts.structuralCopy == ShallowCopy
+                    | None -> cachedCoreShallowCopy(resolved)(state)
+            | _ -> cachedCoreShallowCopy(resolved)(state))
+
+// Preserve the same settled monomorphic cache answer as heapFactsOf. An uncached resource
+// query needs only the resource walk, not unrelated copy/drop layout classification.
+let heapResourceOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> facts.containsResource
+                    | None ->
+                        state
+                        |> coverageEnvironment
+                        |> classifyHeapResource(resolved)
+            | _ ->
+                state
+                |> coverageEnvironment
+                |> classifyHeapResource(resolved))
+
 let recursive lookupOwnerReleasePlan (slot: Int) (plans: List((Int, SemanticType, OwnedReleasePlan))) =
     match plans with
         | [] -> None
@@ -5189,7 +5536,7 @@ let spliceInlineRelease (synthesis: InlineReleaseSynthesis) (state: CoreLowering
             (state with nextTemp = nextTemp, nextLocal = nextLocal, functions = append(synthesized
             |> map(locateSynthesizedFunction(state))
             |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)
-            |> withStateDropperLabels(cache)
+            |> withStateDropperResult(cache)(synthesis.queryContext)
             |> emitSplicedInstructions(instructions)
 
 // The scope-exit release of a runtime-managed owner whose release reaches past its own cell —
@@ -5200,16 +5547,18 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
     match state
     |> stateOwnerReleasePlans
     |> lookupOwnerReleasePlan(ownerSlot) with
-        | None -> None
+        | None ->
+            let types = stateDropperTypes(state)
+            in (None, dropperQueryContextOf(types))
         | Some((semanticType, plan)) ->
             match state with
-                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                        | None -> None
-                        | Some(synthesis) ->
-                            state
+                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+                    match synthesizeOwnedAggregateReleaseIndexed(loadTemp)(resolveType(state)(semanticType))(plan)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                        | (None, queryContext) -> (None, queryContext)
+                        | (Some(synthesis), queryContext) ->
+                            (state
                             |> spliceInlineRelease(synthesis)
-                            |> Some
+                            |> Some, queryContext)
 
 let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: CoreLoweringState) =
     if typeName == "Function"
@@ -5217,9 +5566,11 @@ let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: Core
         emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
     else
         match (runtimeOwner, emitInlineOwnerRelease(loadTemp)(ownerSlot)(loaded)) with
-            | (true, Some(released)) -> released
-            | _ ->
-                emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner)(false)(None))(loaded)
+            | (true, (Some(released), _queryContext)) -> released
+            | (_runtimeOwner, (_release, queryContext)) ->
+                loaded
+                |> withStateDropperContext(queryContext)
+                |> emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner)(false)(None))
 
 // The lexical release of an owned `let` binding at its scope exit, stage 0's
 // `EmitOwnedValueDrop`: the owner is loaded back and released with an `RcDrop` naming its slot,
@@ -5238,12 +5589,6 @@ let emitOwnedLetRelease typeName ownerSlot state =
                         loadState
                         |> emit(LoadLocal(loadTemp)(ownerSlot))
                         |> emitOwnerDrop(typeName)(ownerSlot)(loadTemp)(runtimeOwner == Some(true))
-
-let recursive schemeResultName (semanticType: SemanticType) =
-    match semanticType with
-        | SemFunction(_, result, _) -> schemeResultName(result)
-        | SemNamed(_, name, _) -> Some(name)
-        | _ -> None
 
 let emitRestoreAndReclaim cursorSlot endSlot preRestoreSlot state =
     state
@@ -5275,7 +5620,7 @@ let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) 
                 |> containsInt(id))
         | SemNamed(_symbolId, name, _arguments) ->
             match state
-            |> stateConstructorLayouts
+            |> stateConstructorsOfType(name)
             |> zeroCostPayloadType(name) with
                 | Some(payload) ->
                     payload
@@ -5401,10 +5746,6 @@ type ScopeCopyOut =
     | ShallowScopeCopyOut(Int)
     | ListScopeCopyOut
 
-let layoutResultName layout =
-    match layout with
-        | CoreConstructorLayout { scheme = TypeScheme { body = body } } -> schemeResultName(body)
-
 let recursive firstLayoutOfType (name: Str) (layouts: List(CoreConstructorLayout)) =
     match layouts with
         | [] -> None
@@ -5417,7 +5758,7 @@ let recursive firstLayoutOfType (name: Str) (layouts: List(CoreConstructorLayout
 // tagless.
 let shallowAdtCopySizeBytes (name: Str) (state: CoreLoweringState) =
     match state
-    |> stateConstructorLayouts
+    |> stateConstructorsOfType(name)
     |> firstLayoutOfType(name) with
         | Some(CoreConstructorLayout { tagless = tagless } as layout) ->
             layout
@@ -5425,28 +5766,32 @@ let shallowAdtCopySizeBytes (name: Str) (state: CoreLoweringState) =
             |> adtAllocationSizeBytes(tagless)
         | None -> adtAllocationSizeBytes(false)(0)
 
-let scopeCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
+// The copy is reference-counted, or an arena copy where the function may run under a live handler
+// post (stage 0's `normalizeToRuntimeOwnership`).
+let scopeCopyOutOfIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
-        | SemString -> Some(ShallowScopeCopyOut(-1))
-        | SemBytes -> Some(ShallowScopeCopyOut(-1))
+        | SemString -> (Some(ShallowScopeCopyOut(-1)), state)
+        | SemBytes -> (Some(ShallowScopeCopyOut(-1)), state)
         | SemList(element) ->
             if element
             |> resolveType(state)
             |> canArenaResetLayout
-            then Some(ListScopeCopyOut)
-            else None
+            then (Some(ListScopeCopyOut), state)
+            else (None, state)
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match heapFactsOf(named)(state) with
-                | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
-                    state
+            match heapShallowCopyOfIndexed(named)(state) with
+                | (true, queried) ->
+                    (queried
                     |> shallowAdtCopySizeBytes(name)
                     |> ShallowScopeCopyOut
-                    |> Some
-                | _ -> None
-        | _ -> None
+                    |> Some, queried)
+                | (false, queried) -> (None, queried)
+        | _ -> (None, state)
 
-// The copy is reference-counted, or an arena copy where the function may run under a live handler
-// post (stage 0's `normalizeToRuntimeOwnership`).
+let scopeCopyOutOf semanticType state =
+    match scopeCopyOutOfIndexed(semanticType)(state) with
+        | (answer, _queried) -> answer
+
 let scopeCopyOutInstruction copyOut (runtime: Bool) copyTemp resultTemp =
     (let purpose =
         if runtime
@@ -5978,12 +6323,9 @@ let canRuntimeManageRecursiveCopyAdt (semanticType: SemanticType) (state: CoreLo
     |> namedTypeNameOf with
         | None -> false
         | Some(name) ->
-            match state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name) with
+            match state |> stateConstructorsOfType(name) with
                 | [] -> false
-                | first :: _rest as layouts ->
-                    isBuiltinTypeName(name) == false && layoutIsGeneric(first) == false && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(semanticType)(state)) == false && allConstructorsScalarOrSelf(layouts)(name)(state)(false)
+                | first :: _rest as layouts -> isBuiltinTypeName(name) == false && layoutIsGeneric(first) == false && isResourceTypeNameIn(name)(state) == false && heapResourceOf(semanticType)(state) == false && allConstructorsScalarOrSelf(layouts)(name)(state)(false)
 
 // Stage 0's `IsFreshConstructorTree`: a constructor application of `typeName` whose every
 // non-scalar field is itself such a tree.
@@ -6017,9 +6359,7 @@ let canRuntimeManageGenericCopyAdtApplication (layout: CoreConstructorLayout) (a
             match namedTypeNameOf(resultType) with
                 | None -> false
                 | Some(name) ->
-                    layoutIsGeneric(layout) && length(state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && allGenericCopyFields(arguments)(fieldTypes)(state)
+                    layoutIsGeneric(layout) && length(state |> stateConstructorsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && allGenericCopyFields(arguments)(fieldTypes)(state)
 
 let freshHeapChildFieldSupported (argument: Expr) (fieldType: SemanticType) (state: CoreLoweringState) =
     match (resolveType(state)(fieldType), unspanArgument(argument)) with
@@ -6046,9 +6386,7 @@ let canRuntimeManageFreshHeapChildAdtApplication (layout: CoreConstructorLayout)
             match namedTypeNameOf(resultType) with
                 | None -> false
                 | Some(name) ->
-                    length(state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && factsContainResource(heapFactsOf(resultType)(state)) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
+                    length(state |> stateConstructorsOfType(name)) == 1 && isResourceTypeNameIn(name)(state) == false && heapResourceOf(resultType)(state) == false && allFreshHeapChildFields(arguments)(fieldTypes)(state)(false)
 
 // A fresh constructor tree of a recursive-copy type.
 let isFreshRecursiveCopyTree (expression: Expr) (resultType: SemanticType) (state: CoreLoweringState) =
@@ -6163,20 +6501,14 @@ let isSelfFunnelArm (expression: Expr) (state: CoreLoweringState) =
                 | (ExprVar(name), applied) -> name == selfName && applied == arity
                 | _ -> false
 
-// An arm that never reaches its join: every path through it is a tail self call, whose back edge
-// jumps away. Stage 0 records such a call's value, and a join of nothing else, as ownership neutral.
-let recursive armNeverReachesJoin (expression: Expr) (state: CoreLoweringState) =
-    match expression with
-        | ExprAt(_span, inner) -> armNeverReachesJoin(inner)(state)
-        | ExprIf(_condition, thenBranch, elseBranch) -> armNeverReachesJoin(thenBranch)(state) && armNeverReachesJoin(elseBranch)(state)
-        | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> armNeverReachesJoin(body)(state)
-        | ExprMatch(_scrutinee, [], _position) -> false
-        | ExprMatch(_scrutinee, arms, _position) -> everyArmNeverReachesJoin(arms)(state)
-        | other -> isSelfFunnelArm(other)(state)
-and everyArmNeverReachesJoin (arms: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
-    match arms with
-        | [] -> true
-        | (_pattern, body, _guard) :: rest -> armNeverReachesJoin(body)(state) && everyArmNeverReachesJoin(rest)(state)
+// Only an emitted back edge proves an arm cannot reach its join. A syntactic self call can
+// remain a CallClosure in a curried helper and return a value owned by a local result slot.
+// Treating that call as unreachable would let a fresh sibling give the join false ownership.
+// Like stage 0's IsOwnershipNeutralTemp, this fact follows the lowered value, not the AST.
+let armNeverReachesJoin (temp: Int) (state: CoreLoweringState) =
+    state
+    |> stateBackEdgeDummyTemps
+    |> containsInt(temp)
 
 let recursive patternFactsNamed (name: Str) (facts: List(PatternBindingFact)) =
     match facts with
@@ -6669,10 +7001,27 @@ let finishLiftedFunction label origin bodyState =
                 |> (given (current: CoreLoweringState) ->
                     withStateSealedOperatorDefaults(sealOperatorDefaults(label)(pending)(sealed))(current))
 
+// A function frame inherits these environments. Only top-level type declarations
+// replace them. restoreOuterFrame receives a descendant body, so equal versions
+// mean no replacement along that lineage; they do not identify independent states.
+// A changed version must not carry either graph lineage back out.
+let restoreHeapQueryContexts (body: CoreLoweringState) (outer: CoreLoweringState) =
+    (let innerProgram = body.programState
+    in
+        let outerProgram = outer.programState
+        in
+            if innerProgram.coverageEnvironmentVersion == outerProgram.coverageEnvironmentVersion
+            then
+                outer
+                |> withStateHeapQueryContext(innerProgram.heapQueryContext)
+                |> withStateDropperContext(dropperQueryContextOf(innerProgram.dropperTypes))
+            else outer)
+
 let restoreOuterFrame outer bodyState =
     match bodyState with
         | CoreLoweringState { functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, stringLiterals = stringLiterals, typeSupply = typeSupply, substitution = substitution, functionState = CoreFunctionState { nextStringId = nextStringId, sealedOperatorDefaults = sealedOperatorDefaults }, tcoState = CoreTcoState { runtimeNormalizedArgumentLabels = normalizedLabels } } ->
             outer
+            |> restoreHeapQueryContexts(bodyState)
             |> (given (current: CoreLoweringState) -> current with functions = functions)
             |> (given (current: CoreLoweringState) -> withStateRuntimeNormalizedArgumentLabels(normalizedLabels)(current))
             |> (given (current: CoreLoweringState) -> current with nextLambdaId = nextLambdaId)
@@ -6684,7 +7033,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> withStateNextStringId(nextStringId)(current))
             |> (given (current: CoreLoweringState) -> current with stringLiterals = stringLiterals)
             |> (given (current: CoreLoweringState) -> current with typeSupply = typeSupply)
-            |> (given (current: CoreLoweringState) -> current with substitution = substitution)
+            |> withSubstitution(substitution)
             |> (given (current: CoreLoweringState) -> withStateSealedOperatorDefaults(sealedOperatorDefaults)(current))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingClosureNormalizers(statePendingClosureNormalizers(bodyState))(current))
@@ -6771,7 +7120,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> withStateEnclosingBindings(state.bindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
@@ -6987,9 +7336,11 @@ let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLower
                     match unlocatedInstruction(LoadLocal(temp)(slot))(tempState) with
                         | loaded ->
                             emitResolvedOwnedDrops(rest)((match emitInlineOwnerRelease(temp)(slot)((loaded with currentSpan = None)) with
-                                | Some(released) -> released with currentSpan = loaded.currentSpan
-                                | None ->
-                                    unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))(loaded)))
+                                | (Some(released), _queryContext) -> released with currentSpan = loaded.currentSpan
+                                | (None, queryContext) ->
+                                    loaded
+                                    |> withStateDropperContext(queryContext)
+                                    |> unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))))
 
 let recursive argumentsSurviveReset (types: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -7108,135 +7459,384 @@ let recordedGeneralRcTypeFacts (name: Str) (state: CoreLoweringState) =
     |> stateGeneralRcTypeFacts
     |> Ashes.Collection.Map.getStr(name)
 
-let recursive isGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+let admissibilityChildOf (child: HeapLayoutChild) = (child.childType, child.dropKind)
+
+// Reuse settled monomorphic facts without reclassifying them. Generic and uncached types ask
+// only for the containment and child-drop view, avoiding unrelated copy/reuse graph walks.
+let cachedCoreAdmissibility semanticType (state: CoreLoweringState) =
+    (let facts = coreHeapQueryFacts(semanticType)(state)
+    in
+        match facts.admissibility with
+            | Some(answer) -> answer
+            | None ->
+                state
+                |> stateCoverageTypes
+                |> classifyHeapAdmissibility(semanticType))
+
+let heapAdmissibilityOfIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> (HeapAdmissibilityFacts(containsResource = facts.containsResource, containsUnresolvedType = facts.containsUnresolvedType, children = map(admissibilityChildOf)(facts.children)), state)
+                    | None -> queryCoreAdmissibility(resolved)(state)
+            | _ -> queryCoreAdmissibility(resolved)(state))
+
+// Pure readers reuse completed views; stateful consumers retain cold query updates.
+let heapAdmissibilityOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> HeapAdmissibilityFacts(containsResource = facts.containsResource, containsUnresolvedType = facts.containsUnresolvedType, children = map(admissibilityChildOf)(facts.children))
+                    | None -> cachedCoreAdmissibility(resolved)(state)
+            | _ -> cachedCoreAdmissibility(resolved)(state))
+
+type GeneralRcAdmissibilityWork =
+    | VisitAdmissibilityType(SemanticType, Bool)
+    | CheckAdmissibilityChild(SemanticType, HeapChildDropKind)
+
+let recursive prependAdmissibilityTypes types allowRootCache pending =
+    match types with
+        | [] -> pending
+        | head :: rest -> VisitAdmissibilityType(head)(allowRootCache) :: prependAdmissibilityTypes(rest)(allowRootCache)(pending)
+
+let recursive prependAdmissibilityChildren children pending =
+    match children with
+        | [] -> pending
+        | (childType, dropKind) :: rest -> CheckAdmissibilityChild(childType)(dropKind) :: prependAdmissibilityChildren(rest)(pending)
+
+// Visited belongs to this whole universal query. Every expanded named type's children
+// remain pending; encountering it again never stores an independently reusable true fact.
+// Existing recursion keys can identify distinct types. Sharing a key across siblings
+// then falls back to the original path-only walk rather than changing its answers.
+let recursive admissibilityVisitStatus semanticType visited =
+    match visited with
+        | [] -> Some(false)
+        | previous :: rest ->
+            if containsType(semanticType)([previous])
+            then
+                if semanticType == previous
+                then Some(true)
+                else None
+            else admissibilityVisitStatus(semanticType)(rest)
+
+let recursive originalGeneralRcAdmissibleIndexed (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
-        | SemString -> true
-        | SemBytes -> true
-        | SemBigInt -> true
-        | SemList(element) -> isGeneralRcAdmissible(element)(path)(state)
-        | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(state)
+        | SemString -> (true, state)
+        | SemBytes -> (true, state)
+        | SemBigInt -> (true, state)
+        | SemList(element) -> originalGeneralRcAdmissibleIndexed(element)(path)(state)
+        | SemTuple(elements) -> originalAllGeneralRcAdmissibleIndexed(elements)(path)(state)
         | SemNamed(_symbolId, name, arguments) as named ->
             match (path, arguments, recordedGeneralRcTypeFacts(name)(state)) with
-                | ([], [], Some((admissible, _reaches))) -> admissible
+                | ([], [], Some((admissible, _reaches))) -> (admissible, state)
                 | _ ->
                     if resultSurvivesReset(named)(state)
-                    then true
+                    then (true, state)
                     else
                         if name == "Task" || containsType(named)(path)
-                        then name != "Task"
+                        then (name != "Task", state)
                         else
-                            match (state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
-                                | ([], _facts) -> false
-                                | (_layouts, HeapLayoutFacts { containsResource = true }) -> false
-                                | (_layouts, HeapLayoutFacts { containsUnresolvedType = true }) -> false
-                                | (_layouts, HeapLayoutFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(named :: path)(state)
-        | resolved -> resultSurvivesReset(resolved)(state)
-and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
+                            match heapAdmissibilityOfIndexed(named)(state) with
+                                | (facts, queried) ->
+                                    match (stateConstructorsOfType(name)(queried), facts) with
+                                        | ([], _facts) -> (false, queried)
+                                        | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> (false, queried)
+                                        | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (false, queried)
+                                        | (_layouts, HeapAdmissibilityFacts { children = children }) -> originalAllChildrenGeneralRcAdmissibleIndexed(children)(named :: path)(queried)
+        | resolved -> (resultSurvivesReset(resolved)(state), state)
+and originalAllGeneralRcAdmissibleIndexed (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
-        | [] -> true
-        | semanticType :: rest -> isGeneralRcAdmissible(semanticType)(path)(state) && allGeneralRcAdmissible(rest)(path)(state)
-and allChildrenGeneralRcAdmissible (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
+        | [] -> (true, state)
+        | semanticType :: rest ->
+            match originalGeneralRcAdmissibleIndexed(semanticType)(path)(state) with
+                | (false, queried) -> (false, queried)
+                | (true, queried) -> originalAllGeneralRcAdmissibleIndexed(rest)(path)(queried)
+and originalAllChildrenGeneralRcAdmissibleIndexed (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (state: CoreLoweringState) =
     match children with
-        | [] -> true
-        | HeapLayoutChild { dropKind = DropClosure } :: _rest -> false
-        | HeapLayoutChild { dropKind = UnsupportedChildDrop } :: _rest -> false
-        | HeapLayoutChild { childType = childType } :: rest -> isGeneralRcAdmissible(childType)(path)(state) && allChildrenGeneralRcAdmissible(rest)(path)(state)
+        | [] -> (true, state)
+        | (_childType, DropClosure) :: _rest -> (false, state)
+        | (_childType, UnsupportedChildDrop) :: _rest -> (false, state)
+        | (childType, _dropKind) :: rest ->
+            match originalGeneralRcAdmissibleIndexed(childType)(path)(state) with
+                | (false, queried) -> (false, queried)
+                | (true, queried) -> originalAllChildrenGeneralRcAdmissibleIndexed(rest)(path)(queried)
+
+let recursive searchGeneralRcAdmissibilityIndexed pending visited state =
+    match pending with
+        | [] -> (Some(true), state)
+        | CheckAdmissibilityChild(_childType, DropClosure) :: _rest -> (Some(false), state)
+        | CheckAdmissibilityChild(_childType, UnsupportedChildDrop) :: _rest -> (Some(false), state)
+        | CheckAdmissibilityChild(childType, _dropKind) :: rest -> searchGeneralRcAdmissibilityIndexed(VisitAdmissibilityType(childType)(false) :: rest)(visited)(state)
+        | VisitAdmissibilityType(semanticType, allowRootCache) :: rest ->
+            match resolveType(state)(semanticType) with
+                | SemString -> searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                | SemBytes -> searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                | SemBigInt -> searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                | SemList(element) -> searchGeneralRcAdmissibilityIndexed(VisitAdmissibilityType(element)(allowRootCache) :: rest)(visited)(state)
+                | SemTuple(elements) ->
+                    searchGeneralRcAdmissibilityIndexed(prependAdmissibilityTypes(elements)(allowRootCache)(rest))(visited)(state)
+                | SemNamed(_symbolId, name, arguments) as named ->
+                    match (allowRootCache, arguments, recordedGeneralRcTypeFacts(name)(state)) with
+                        | (true, [], Some((admissible, _reaches))) ->
+                            if admissible
+                            then searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                            else (Some(false), state)
+                        | _ ->
+                            if resultSurvivesReset(named)(state)
+                            then searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                            else
+                                if name == "Task"
+                                then (Some(false), state)
+                                else
+                                    match admissibilityVisitStatus(named)(visited) with
+                                        | None -> (None, state)
+                                        | Some(true) -> searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                                        | Some(false) ->
+                                            match heapAdmissibilityOfIndexed(named)(state) with
+                                                | (facts, queried) ->
+                                                    match (stateConstructorsOfType(name)(queried), facts) with
+                                                        | ([], _facts) -> (Some(false), queried)
+                                                        | (_layouts, HeapAdmissibilityFacts { containsResource = true }) -> (Some(false), queried)
+                                                        | (_layouts, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (Some(false), queried)
+                                                        | (_layouts, HeapAdmissibilityFacts { children = children }) ->
+                                                            searchGeneralRcAdmissibilityIndexed(prependAdmissibilityChildren(children)(rest))(named :: visited)(queried)
+                | resolved ->
+                    if resultSurvivesReset(resolved)(state)
+                    then searchGeneralRcAdmissibilityIndexed(rest)(visited)(state)
+                    else (Some(false), state)
+
+let queryGeneralRcAdmissibilityIndexed (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match searchGeneralRcAdmissibilityIndexed([VisitAdmissibilityType(semanticType)(path == [])])(path)(state) with
+        | (Some(answer), queried) -> (answer, queried)
+        | (None, queried) -> originalGeneralRcAdmissibleIndexed(semanticType)(path)(queried)
+
+let isGeneralRcAdmissibleIndexed (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+    match path with
+        | [] ->
+            let group = state.functionState
+            in
+                match lookupAdmissibilityAnswer(resolveType(state)(semanticType))(group.admissibilityAnswers) with
+                    | Some(answer) -> (answer, state)
+                    | None -> queryGeneralRcAdmissibilityIndexed(semanticType)(path)(state)
+        | _ -> queryGeneralRcAdmissibilityIndexed(semanticType)(path)(state)
+
+// Compatibility readers expose the answer; lowering transitions use the indexed
+// entry points so the same engine's completed views persist across requests.
+let originalGeneralRcAdmissible semanticType path state =
+    match originalGeneralRcAdmissibleIndexed(semanticType)(path)(state) with
+        | (answer, _queried) -> answer
+
+let searchGeneralRcAdmissibility pending visited state =
+    match searchGeneralRcAdmissibilityIndexed(pending)(visited)(state) with
+        | (answer, _queried) -> answer
+
+let queryGeneralRcAdmissibility semanticType path state =
+    match queryGeneralRcAdmissibilityIndexed(semanticType)(path)(state) with
+        | (answer, _queried) -> answer
+
+let isGeneralRcAdmissible semanticType path state =
+    match isGeneralRcAdmissibleIndexed(semanticType)(path)(state) with
+        | (answer, _queried) -> answer
+
+let prepareGeneralRcAdmissibility semanticType (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        if !concreteAdmissibilityType(resolved)
+        then state
+        else
+            let group = state.functionState
+            in
+                match lookupAdmissibilityAnswer(resolved)(group.admissibilityAnswers) with
+                    | Some(_answer) -> state
+                    | None ->
+                        match queryGeneralRcAdmissibilityIndexed(resolved)([])(state) with
+                            | (answer, queried) -> queried with functionState = (group with admissibilityAnswers = rememberAdmissibilityAnswer(resolved)(answer)(group.admissibilityAnswers)))
 
 let recursive anyChildSurvivesNoReset (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
     match children with
         | [] -> false
         | HeapLayoutChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyChildSurvivesNoReset(rest)(state)
 
-let recursive copyPlanOf (general: Bool) (semanticType: SemanticType) (state: CoreLoweringState) =
+// A settled monomorphic layout remains authoritative, including inferred contract flags.
+// Only an uncached copy-plan query computes the narrower view from the environment.
+let cachedCoreCopyPlan semanticType (state: CoreLoweringState) =
+    (let facts = coreHeapQueryFacts(semanticType)(state)
+    in
+        match facts.copyPlan with
+            | Some(answer) -> answer
+            | None ->
+                state
+                |> stateCoverageTypes
+                |> classifyHeapCopyPlan(semanticType))
+
+let heapCopyPlanFactsOfIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> (projectHeapCopyPlanFacts(facts), state)
+                    | None -> queryCoreCopyPlan(resolved)(state)
+            | _ -> queryCoreCopyPlan(resolved)(state))
+
+// Pure readers reuse completed views; stateful consumers retain cold query updates.
+let heapCopyPlanFactsOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> projectHeapCopyPlanFacts(facts)
+                    | None -> cachedCoreCopyPlan(resolved)(state)
+            | _ -> cachedCoreCopyPlan(resolved)(state))
+
+let runtimeManagedCopyPlanLayout (facts: HeapCopyPlanFacts) = facts.runtimeRecordAdtSupported || facts.runtimeOwnedChildAdtSupported || facts.runtimeTcoOwnedChildAdtSupported || facts.runtimePositionalAdtSupported
+
+let recursive ownedCopyPlanChildren (constructorName: Str) (children: List(HeapCopyPlanChild)) =
+    match children with
+        | [] -> []
+        | HeapCopyPlanChild { dropKind = NoChildDrop } :: rest -> ownedCopyPlanChildren(constructorName)(rest)
+        | HeapCopyPlanChild { constructorName = Some(name), fieldIndex = index, childType = childType } :: rest ->
+            if name == constructorName
+            then (index, childType) :: ownedCopyPlanChildren(constructorName)(rest)
+            else ownedCopyPlanChildren(constructorName)(rest)
+        | _ :: rest -> ownedCopyPlanChildren(constructorName)(rest)
+
+let recursive anyCopyPlanChildSurvivesNoReset (children: List(HeapCopyPlanChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> false
+        | HeapCopyPlanChild { childType = childType } :: rest -> !resultSurvivesReset(childType)(state) || anyCopyPlanChildSurvivesNoReset(rest)(state)
+
+let recursive copyPlanOfIndexed (general: Bool) (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
-        | SemString -> Some(LeafArgumentCopy(-1))
-        | SemBytes -> Some(LeafArgumentCopy(-1))
-        | SemBigInt -> Some(LeafArgumentCopy(bigIntCopySizeBytes))
+        | SemString -> (Some(LeafArgumentCopy(-1)), state)
+        | SemBytes -> (Some(LeafArgumentCopy(-1)), state)
+        | SemBigInt -> (Some(LeafArgumentCopy(bigIntCopySizeBytes)), state)
         | SemList(element) ->
             match listHeadCopyKindOf(element)(state) with
-                | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
+                | Some(headCopy) -> (Some(ListHeadArgumentCopy(headCopy)), state)
                 | None ->
-                    match copyPlanOf(general)(element)(state) with
-                        | Some(elementPlan) -> Some(ListDeepArgumentCopy(elementPlan))
-                        | None -> None
+                    match copyPlanOfIndexed(general)(element)(state) with
+                        | (Some(elementPlan), queried) -> (Some(ListDeepArgumentCopy(elementPlan)), queried)
+                        | (None, queried) -> (None, queried)
         | SemTuple(elements) ->
-            match copyPlansOf(general)(elements)(state) with
-                | Some(plans) -> Some(TupleArgumentCopy(plans))
-                | None -> None
+            match copyPlansOfIndexed(general)(elements)(state) with
+                | (Some(plans), queried) -> (Some(TupleArgumentCopy(plans)), queried)
+                | (None, queried) -> (None, queried)
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match heapFactsOf(named)(state) with
-                | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
-                    state
+            match heapCopyPlanFactsOfIndexed(named)(state) with
+                | (HeapCopyPlanFacts { shallowCopy = true }, queried) ->
+                    (queried
                     |> shallowAdtCopySizeBytes(name)
                     |> ShallowAdtArgumentCopy
-                    |> Some
-                | HeapLayoutFacts { children = children } as facts ->
-                    if runtimeManagedAdtLayout(facts)
+                    |> Some, queried)
+                | (HeapCopyPlanFacts { children = children } as facts, queried) ->
+                    if runtimeManagedCopyPlanLayout(facts)
                     then
-                        let layouts =
-                            state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name)
+                        let layouts = stateConstructorsOfType(name)(queried)
                         in
-                            if isInlineCopiedContractRecord(named)(layouts)(facts)(state)
-                            then Some(NormalizerArgumentCopy(named))
-                            else adtCopyPlanOfWith(general)(layouts)(children)(state)
+                            match isInlineCopiedContractRecordIndexed(named)(layouts)(facts)(queried) with
+                                | (true, classified) -> (Some(NormalizerArgumentCopy(named)), classified)
+                                | (false, classified) -> adtCopyPlanOfWithIndexed(general)(layouts)(children)(classified)
                     else
-                        // Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type no
-                        // inline copy expresses is copied by its synthesized helper.
-                        if general && isGeneralRcAdmissible(named)([])(state)
-                        then Some(NormalizerArgumentCopy(named))
-                        else None
+                        if general
+                        then
+                            match isGeneralRcAdmissibleIndexed(named)([])(queried) with
+                                | (true, classified) -> (Some(NormalizerArgumentCopy(named)), classified)
+                                | (false, classified) -> (None, classified)
+                        else (None, queried)
         | resolved ->
             if resultSurvivesReset(resolved)(state)
-            then Some(ScalarArgumentCopy)
-            else None
-and copyPlansOf (general: Bool) (types: List(SemanticType)) (state: CoreLoweringState) =
+            then (Some(ScalarArgumentCopy), state)
+            else (None, state)
+and copyPlansOfIndexed (general: Bool) (types: List(SemanticType)) (state: CoreLoweringState) =
     match types with
-        | [] -> Some([])
+        | [] -> (Some([]), state)
         | semanticType :: rest ->
-            match (copyPlanOf(general)(semanticType)(state), copyPlansOf(general)(rest)(state)) with
-                | (Some(plan), Some(plans)) -> Some(plan :: plans)
-                | _ -> None
-and childCopyPlansOfWith (general: Bool) (children: List((Int, SemanticType))) (state: CoreLoweringState) =
+            match copyPlanOfIndexed(general)(semanticType)(state) with
+                | (plan, queried) ->
+                    match copyPlansOfIndexed(general)(rest)(queried) with
+                        | (plans, completed) ->
+                            match (plan, plans) with
+                                | (Some(head), Some(tail)) -> (Some(head :: tail), completed)
+                                | _ -> (None, completed)
+and childCopyPlansOfWithIndexed (general: Bool) (children: List((Int, SemanticType))) (state: CoreLoweringState) =
     match children with
-        | [] -> Some([])
+        | [] -> (Some([]), state)
         | (index, childType) :: rest ->
-            match (copyPlanOf(general)(childType)(state), childCopyPlansOfWith(general)(rest)(state)) with
-                | (Some(plan), Some(plans)) -> Some((index, plan) :: plans)
-                | _ -> None
-and constructorCopyPlansOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+            match copyPlanOfIndexed(general)(childType)(state) with
+                | (plan, queried) ->
+                    match childCopyPlansOfWithIndexed(general)(rest)(queried) with
+                        | (plans, completed) ->
+                            match (plan, plans) with
+                                | (Some(head), Some(tail)) -> (Some((index, head) :: tail), completed)
+                                | _ -> (None, completed)
+and constructorCopyPlansOfWithIndexed (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapCopyPlanChild)) (state: CoreLoweringState) =
     match layouts with
-        | [] -> Some([])
+        | [] -> (Some([]), state)
         | (CoreConstructorLayout { name = constructorName, tag = tag, tagless = tagless } as layout) :: rest ->
-            match (childCopyPlansOfWith(general)(ownedConstructorChildren(constructorName)(children))(state), constructorCopyPlansOfWith(general)(rest)(children)(state)) with
-                | (Some(plans), Some(restPlans)) -> Some((tag, layoutAllocationSizeBytes(layout), tagless, plans) :: restPlans)
-                | _ -> None
-and adtCopyPlanOfWith (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
-    match constructorCopyPlansOfWith(general)(layouts)(children)(state) with
-        | Some(single :: []) -> Some(ConstructorArgumentCopy(single))
-        | Some([]) -> None
-        | Some(plans) -> Some(SwitchArgumentCopy(plans))
-        | None -> None
-// Stage 0's `IsInlineCopiedContractRecord`: a record the entry normalization re-establishes (one
-// constructor, an inline copy, an arena deep copy) with a heap child, that the owned-child and
-// recursive-copy paths do not manage. It joins the ownership contract and is copied by its
-// synthesized normalization helper, one call per site instead of its whole graph. An
-// argument-free type is answered from the table the program's start recorded: classifying one
-// walks its children's copy plans, which ask the same of every record nested in it.
-and isInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+            match childCopyPlansOfWithIndexed(general)(ownedCopyPlanChildren(constructorName)(children))(state) with
+                | (plans, queried) ->
+                    match constructorCopyPlansOfWithIndexed(general)(rest)(children)(queried) with
+                        | (restPlans, completed) ->
+                            match (plans, restPlans) with
+                                | (Some(head), Some(tail)) -> (Some((tag, layoutAllocationSizeBytes(layout), tagless, head) :: tail), completed)
+                                | _ -> (None, completed)
+and adtCopyPlanOfWithIndexed (general: Bool) (layouts: List(CoreConstructorLayout)) (children: List(HeapCopyPlanChild)) (state: CoreLoweringState) =
+    match constructorCopyPlansOfWithIndexed(general)(layouts)(children)(state) with
+        | (Some(single :: []), queried) -> (Some(ConstructorArgumentCopy(single)), queried)
+        | (Some([]), queried) -> (None, queried)
+        | (Some(plans), queried) -> (Some(SwitchArgumentCopy(plans)), queried)
+        | (None, queried) -> (None, queried)
+and isInlineCopiedContractRecordIndexed (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapCopyPlanFacts) (state: CoreLoweringState) =
     match recordedContractRecord(named)(state) with
-        | Some(answer) -> answer
-        | None -> classifyInlineCopiedContractRecord(named)(layouts)(facts)(state)
-and classifyInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+        | Some(answer) -> (answer, state)
+        | None -> classifyCopyPlanContractRecordIndexed(named)(layouts)(facts)(state)
+and classifyCopyPlanContractRecordIndexed (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapCopyPlanFacts) (state: CoreLoweringState) =
     match (layouts, facts) with
-        | (_layout :: [], HeapLayoutFacts { runtimeOwnedChildAdtSupported = false, arenaDeepCopySupported = true, children = children }) ->
-            anyChildSurvivesNoReset(children)(state) && !canRuntimeManageRecursiveCopyAdt(named)(state) && (match adtCopyPlanOfWith(false)(layouts)(children)(state) with
-                | Some(_plan) -> true
-                | None -> false)
-        | _ -> false
+        | (_layout :: [], HeapCopyPlanFacts { runtimeOwnedChildAdtSupported = false, arenaDeepCopySupported = true, children = children }) ->
+            if anyCopyPlanChildSurvivesNoReset(children)(state) && !canRuntimeManageRecursiveCopyAdt(named)(state)
+            then
+                match adtCopyPlanOfWithIndexed(false)(layouts)(children)(state) with
+                    | (Some(_plan), queried) -> (true, queried)
+                    | (None, queried) -> (false, queried)
+            else (false, state)
+        | _ -> (false, state)
+
+let argumentCopyPlanOfIndexed semanticType state = copyPlanOfIndexed(false)(semanticType)(state)
+
+let generalCopyPlanOfIndexed semanticType state = copyPlanOfIndexed(true)(semanticType)(state)
+
+let copyPlanOf general semanticType state =
+    match copyPlanOfIndexed(general)(semanticType)(state) with
+        | (answer, _queried) -> answer
+
+let constructorCopyPlansOfWith general layouts children state =
+    match constructorCopyPlansOfWithIndexed(general)(layouts)(children)(state) with
+        | (answer, _queried) -> answer
+
+let adtCopyPlanOfWith general layouts children state =
+    match adtCopyPlanOfWithIndexed(general)(layouts)(children)(state) with
+        | (answer, _queried) -> answer
+
+let classifyCopyPlanContractRecord named layouts facts state =
+    match classifyCopyPlanContractRecordIndexed(named)(layouts)(facts)(state) with
+        | (answer, _queried) -> answer
+
+let classifyInlineCopiedContractRecord (named: SemanticType) (layouts: List(CoreConstructorLayout)) (facts: HeapLayoutFacts) (state: CoreLoweringState) =
+    classifyCopyPlanContractRecord(named)(layouts)(projectHeapCopyPlanFacts(facts))(state)
 
 // The copy of a value into the reference-counted heap by the inline copies alone, which is also
 // how the placement rules ask whether a type has one.
@@ -7246,9 +7846,77 @@ let argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
 // inline copies do not express, stage 0's `EmitRuntimeManagedTcoDeepCopy` in full.
 let generalCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) = copyPlanOf(true)(semanticType)(state)
 
-let heapChildrenOfNamed (named: SemanticType) (state: CoreLoweringState) =
-    match heapFactsOf(named)(state) with
-        | HeapLayoutFacts { children = children } -> children
+let cachedCoreChildren semanticType (state: CoreLoweringState) =
+    (let facts = coreHeapQueryFacts(semanticType)(state)
+    in
+        match facts.children with
+            | Some(answer) -> answer
+            | None ->
+                state
+                |> stateCoverageTypes
+                |> classifyHeapChildren(semanticType))
+
+let heapChildrenOfNamedIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> (facts.children, state)
+                    | None -> queryCoreChildren(resolved)(state)
+            | _ -> queryCoreChildren(resolved)(state))
+
+// Pure readers reuse completed views; stateful consumers retain cold query updates.
+let heapChildrenOfNamed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) -> facts.children
+                    | None -> cachedCoreChildren(resolved)(state)
+            | _ -> cachedCoreChildren(resolved)(state))
+
+let cachedCoreChildTypes semanticType (state: CoreLoweringState) =
+    (let facts = coreHeapQueryFacts(semanticType)(state)
+    in
+        match facts.childTypes with
+            | Some(answer) -> answer
+            | None ->
+                state
+                |> stateCoverageTypes
+                |> classifyHeapChildTypes(semanticType))
+
+let heapChildTypesOfNamedIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) ->
+                        (map(given (child: HeapLayoutChild) -> child.childType)(facts.children), state)
+                    | None -> queryCoreChildTypes(resolved)(state)
+            | _ -> queryCoreChildTypes(resolved)(state))
+
+// Pure readers reuse completed views; stateful consumers retain cold query updates.
+let heapChildTypesOfNamed (semanticType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(semanticType)
+    in
+        match resolved with
+            | SemNamed(_symbolId, name, []) ->
+                match state
+                |> stateHeapLayoutFactsByType
+                |> Ashes.Collection.Map.getStr(name) with
+                    | Some(facts) ->
+                        map(given (child: HeapLayoutChild) -> child.childType)(facts.children)
+                    | None -> cachedCoreChildTypes(resolved)(state)
+            | _ -> cachedCoreChildTypes(resolved)(state))
 
 // The cell-by-cell copy of a named type written inline, a record of the contract's types included:
 // stage 0's constructor deep copy, which the normalization helper's body and a successor built at
@@ -7256,9 +7924,9 @@ let heapChildrenOfNamed (named: SemanticType) (state: CoreLoweringState) =
 let inlineAdtCopyPlanOf (named: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(named) with
         | SemNamed(_symbolId, name, _arguments) as resolved ->
-            adtCopyPlanOfWith(false)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name))(heapChildrenOfNamed(resolved)(state))(state)
+            adtCopyPlanOfWith(false)(state |> stateConstructorsOfType(name))(state
+            |> heapChildrenOfNamed(resolved)
+            |> projectHeapCopyPlanChildren)(state)
         | _ -> None
 
 // Stage 0's `EmitRuntimeManagedTcoParamCopy` and `EmitRuntimeManagedTcoDeepCopy`: the copy of a value
@@ -7276,42 +7944,58 @@ let contractRecordAnswer (named: SemanticType) (name: Str) (facts: HeapLayoutFac
     match facts with
         | HeapLayoutFacts { structuralCopy = ShallowCopy } -> false
         | _ ->
-            runtimeManagedAdtLayout(facts) && classifyInlineCopiedContractRecord(named)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name))(facts)(state)
+            runtimeManagedAdtLayout(facts) && classifyInlineCopiedContractRecord(named)(state |> stateConstructorsOfType(name))(facts)(state)
 
 // Stage 0's `IsGeneralRcNamedType`: a named type the contract governs, one only the normalization
 // helper expresses, that owns a heap child, and that the recursive-copy path does not already
 // manage on its own terms.
-let isGeneralRcNamedType (named: SemanticType) (state: CoreLoweringState) =
-    match generalCopyPlanOf(named)(state) with
-        | Some(NormalizerArgumentCopy(_type)) ->
-            programMayRunUnderLiveHandlerPost(state) == false && !canRuntimeManageRecursiveCopyAdt(named)(state) && anyChildSurvivesNoReset(heapChildrenOfNamed(named)(state))(state)
-        | _ -> false
+let isGeneralRcNamedTypeIndexed (named: SemanticType) (state: CoreLoweringState) =
+    match generalCopyPlanOfIndexed(named)(state) with
+        | (Some(NormalizerArgumentCopy(_type)), queried) ->
+            if programMayRunUnderLiveHandlerPost(queried) == false && !canRuntimeManageRecursiveCopyAdt(named)(queried)
+            then
+                match heapChildrenOfNamedIndexed(named)(queried) with
+                    | (children, completed) -> (anyChildSurvivesNoReset(children)(completed), completed)
+            else (false, queried)
+        | (_plan, queried) -> (false, queried)
 
-// Stage 0's `ReachesGeneralRcNamedType`.
-let recursive reachesGeneralRcNamedType (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
+let recursive reachesGeneralRcNamedTypeIndexed (semanticType: SemanticType) (path: List(SemanticType)) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
-        | SemList(element) -> reachesGeneralRcNamedType(element)(path)(state)
-        | SemTuple(elements) -> anyReachesGeneralRcNamedType(elements)(path)(state)
+        | SemList(element) -> reachesGeneralRcNamedTypeIndexed(element)(path)(state)
+        | SemTuple(elements) -> anyReachesGeneralRcNamedTypeIndexed(elements)(path)(state)
         | SemNamed(_symbolId, name, arguments) as named ->
             match (path, arguments, recordedGeneralRcTypeFacts(name)(state)) with
-                | ([], [], Some((_admissible, reaches))) -> reaches
+                | ([], [], Some((_admissible, reaches))) -> (reaches, state)
                 | _ ->
-                    isGeneralRcNamedType(named)(state) || !containsType(named)(path) && anyChildReachesGeneralRcNamedType(heapChildrenOfNamed(named)(state))(named :: path)(state)
-        | _ -> false
-and anyReachesGeneralRcNamedType (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
+                    match isGeneralRcNamedTypeIndexed(named)(state) with
+                        | (true, queried) -> (true, queried)
+                        | (false, queried) ->
+                            if containsType(named)(path)
+                            then (false, queried)
+                            else
+                                match heapChildTypesOfNamedIndexed(named)(queried) with
+                                    | (children, completed) -> anyReachesGeneralRcNamedTypeIndexed(children)(named :: path)(completed)
+        | _ -> (false, state)
+and anyReachesGeneralRcNamedTypeIndexed (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
-        | [] -> false
-        | semanticType :: rest -> reachesGeneralRcNamedType(semanticType)(path)(state) || anyReachesGeneralRcNamedType(rest)(path)(state)
-and anyChildReachesGeneralRcNamedType (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match children with
-        | [] -> false
-        | HeapLayoutChild { childType = childType } :: rest -> reachesGeneralRcNamedType(childType)(path)(state) || anyChildReachesGeneralRcNamedType(rest)(path)(state)
+        | [] -> (false, state)
+        | semanticType :: rest ->
+            match reachesGeneralRcNamedTypeIndexed(semanticType)(path)(state) with
+                | (true, queried) -> (true, queried)
+                | (false, queried) -> anyReachesGeneralRcNamedTypeIndexed(rest)(path)(queried)
 
-// Both walks' answers for every argument-free type the program declares whose layout facts are
-// settled (no unresolved type left for inference to close), so a question asked at a call site reads
-// them instead of walking the type's graph again.
+let isGeneralRcNamedType named state =
+    match isGeneralRcNamedTypeIndexed(named)(state) with
+        | (answer, _queried) -> answer
+
+let reachesGeneralRcNamedType semanticType path state =
+    match reachesGeneralRcNamedTypeIndexed(semanticType)(path)(state) with
+        | (answer, _queried) -> answer
+
+let anyReachesGeneralRcNamedType types path state =
+    match anyReachesGeneralRcNamedTypeIndexed(types)(path)(state) with
+        | (answer, _queried) -> answer
+
 let recursive generalRcTypeFactsOf (types: List((Str, SemanticType))) (state: CoreLoweringState) (table: MapTree(Str, (Bool, Bool))) =
     match types with
         | [] -> table
@@ -7771,9 +8455,9 @@ and synthesizeAdtNormalizer (named: SemanticType) (state: CoreLoweringState) =
 and emitNormalizerAdtCopy (sourceTemp: Int) (named: SemanticType) (state: CoreLoweringState) =
     match named with
         | SemNamed(_symbolId, name, _arguments) ->
-            match constructorCopyPlansOfWith(true)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name))(heapChildrenOfNamed(named)(state))(state) with
+            match constructorCopyPlansOfWith(true)(state |> stateConstructorsOfType(name))(state
+            |> heapChildrenOfNamed(named)
+            |> projectHeapCopyPlanChildren)(state) with
                 | Some(single :: []) -> emitConstructorDeepCopy(sourceTemp)(single)(state)
                 | Some(_first :: _rest as plans) -> emitAdtSwitchDeepCopyWith("rcnorm_ctor")("rcnorm_end")(sourceTemp)(plans)(state)
                 | _ -> (state, sourceTemp)
@@ -7974,17 +8658,12 @@ let recursive hasBoundedCopy (semanticType: SemanticType) (path: List(SemanticTy
             if containsType(named)(path)
             then false
             else
-                match heapFactsOf(named)(state) with
-                    | HeapLayoutFacts { children = children } -> allChildrenBoundedCopies(children)(named :: path)(state)
+                allBoundedCopies(heapChildTypesOfNamed(named)(state))(named :: path)(state)
         | _ -> true
 and allBoundedCopies (types: List(SemanticType)) (path: List(SemanticType)) (state: CoreLoweringState) =
     match types with
         | [] -> true
         | semanticType :: rest -> hasBoundedCopy(semanticType)(path)(state) && allBoundedCopies(rest)(path)(state)
-and allChildrenBoundedCopies (children: List(HeapLayoutChild)) (path: List(SemanticType)) (state: CoreLoweringState) =
-    match children with
-        | [] -> true
-        | HeapLayoutChild { childType = childType } :: rest -> hasBoundedCopy(childType)(path)(state) && allChildrenBoundedCopies(rest)(path)(state)
 
 // Whether a loop can place a list of this element on the reference-counted heap, as
 // `tcoListElementSupported` answers.
@@ -8009,35 +8688,51 @@ and anyUnresolvedLayout (types: List(SemanticType)) (state: CoreLoweringState) =
 
 // Stage 0's `GetCallCopyOutKind`: the scope copy-outs plus the list results whose elements are
 // strings or scalar lists.
-let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
-    match scopeCopyOutOf(semanticType)(state) with
-        | Some(ShallowScopeCopyOut(staticSizeBytes)) -> Some(ShallowCallCopyOut(staticSizeBytes))
-        | Some(ListScopeCopyOut) -> Some(ListCallCopyOut(InlineListHead))
-        | None ->
-            match resolveType(state)(semanticType) with
-                | SemList(element) ->
-                    match element
-                    |> resolveType(state)
-                    |> listHeadCopyOf with
-                        | Some(headCopy) -> Some(ListCallCopyOut(headCopy))
-                        | None -> None
-                | _ -> None
-
 // Stage 0's `IsGeneralRcValueType`: a resolved type that reaches a named type only the
 // normalization helper expresses and has no fixed copy-out. A value of it follows the contract:
 // passed borrowed, returned owned. A reuse specialization keeps its values in the persistent
 // region and takes no part in it, nor does a program where a function may run under a
 // live handler post.
-let isGeneralRcValueType (semanticType: SemanticType) (state: CoreLoweringState) =
-    match (stateSpecializationFreshInputs(state), callCopyOutOf(semanticType)(state)) with
-        | (None, None) -> programMayRunUnderLiveHandlerPost(state) == false && !resultSurvivesReset(semanticType)(state) && isGeneralRcAdmissible(semanticType)([])(state) && reachesGeneralRcNamedType(semanticType)([])(state)
-        | _ -> false
-
 // Stage 0's `IsCallResultAccumulatorElement`: an accumulator a self-call replaces with a call's
 // result holds the contract's values (resolved, as stage 0's `IsGeneralRcValueType` asks) or any
 // other heap element the loop can place, a list inside it included: its arena cells would otherwise
 // keep values the iteration owns with no owner left to release them. An arena sibling that may
 // receive such an inner list blocks the accumulator (`siblingReceivesAccumulatorPart`).
+let callCopyOutOfIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    match scopeCopyOutOfIndexed(semanticType)(state) with
+        | (Some(ShallowScopeCopyOut(staticSizeBytes)), queried) -> (Some(ShallowCallCopyOut(staticSizeBytes)), queried)
+        | (Some(ListScopeCopyOut), queried) -> (Some(ListCallCopyOut(InlineListHead)), queried)
+        | (None, queried) ->
+            match resolveType(queried)(semanticType) with
+                | SemList(element) ->
+                    match element
+                    |> resolveType(queried)
+                    |> listHeadCopyOf with
+                        | Some(headCopy) -> (Some(ListCallCopyOut(headCopy)), queried)
+                        | None -> (None, queried)
+                | _ -> (None, queried)
+
+let isGeneralRcValueTypeIndexed (semanticType: SemanticType) (state: CoreLoweringState) =
+    match callCopyOutOfIndexed(semanticType)(state) with
+        | (copyOut, queried) ->
+            match (stateSpecializationFreshInputs(queried), copyOut) with
+                | (None, None) ->
+                    if programMayRunUnderLiveHandlerPost(queried) == false && !resultSurvivesReset(semanticType)(queried)
+                    then
+                        match isGeneralRcAdmissibleIndexed(semanticType)([])(queried) with
+                            | (false, classified) -> (false, classified)
+                            | (true, classified) -> reachesGeneralRcNamedTypeIndexed(semanticType)([])(classified)
+                    else (false, queried)
+                | _ -> (false, queried)
+
+let callCopyOutOf semanticType state =
+    match callCopyOutOfIndexed(semanticType)(state) with
+        | (answer, _queried) -> answer
+
+let isGeneralRcValueType semanticType state =
+    match isGeneralRcValueTypeIndexed(semanticType)(state) with
+        | (answer, _queried) -> answer
+
 let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcValueType(element)(state) && !containsUnresolvedLayout(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state)
 
 // A list placed on the reference-counted heap as an accumulator rebuild is normalized and released
@@ -8166,9 +8861,9 @@ let structuralComponentTypes (semanticType: SemanticType) =
 let namedTypeFieldTypesAs (instantiated: Bool) (name: Str) (arguments: List(SemanticType)) (state: CoreLoweringState) =
     if instantiated
     then
-        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorLayouts(state))(state)([])
+        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorsOfType(name)(state))(state)([])
     else
-        match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+        match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
             | (_found, fieldTypes) -> fieldTypes
 
 // Stage 0's `ContainsBytesLayout`: whether a value of the type may hold Bytes, through its
@@ -8284,7 +8979,7 @@ let spliceInlineReleaseWith emitter (synthesis: InlineReleaseSynthesis) (state: 
             (state with nextTemp = nextTemp, nextLocal = nextLocal, functions = append(synthesized
             |> map(locateSynthesizedFunction(state))
             |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)
-            |> withStateDropperLabels(cache)
+            |> withStateDropperResult(cache)(synthesis.queryContext)
             |> emitSplicedInstructionsWith(emitter)(instructions)
 
 // The inline `rcdrop_list` walk of a runtime-managed list whose cells may be shared, stage 0's
@@ -8292,12 +8987,12 @@ let spliceInlineReleaseWith emitter (synthesis: InlineReleaseSynthesis) (state: 
 // shared cell is only decremented.
 let emitInlineListRelease emitter (listTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeOwnedAggregateRelease(listTemp)(elementType
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+            match synthesizeOwnedAggregateReleaseIndexed(listTemp)(elementType
             |> resolveType(state)
             |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                | None -> state
-                | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
+                | (None, queryContext) -> withStateDropperContext(queryContext)(state)
+                | (Some(synthesis), _queryContext) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
 
 // The list release under the slot's active flag (stage 0's `EmitRuntimeManagedTcoParamDropIfActive`
 // and the guarded predecessor drop): skipped when the slot holds no reference of its own.
@@ -8333,11 +9028,13 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
         | SemList(element) -> emitInlineListRelease(emitter)(valueTemp)(element)(state)
         | SemNamed(_symbolId, name, _arguments) as named ->
             match state with
-                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                        | None ->
-                            emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
-                        | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
+                | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+                    match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                        | (None, queryContext) ->
+                            state
+                            |> withStateDropperContext(queryContext)
+                            |> emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))
+                        | (Some(synthesis), _queryContext) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
         | SemTuple(elements) as tuple ->
             if allScalarElements(elements)(state)
             then
@@ -8426,10 +9123,10 @@ let tcoAdtCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
 let ownedChildrenOfNamed (semanticType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) as named ->
-            match (state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name), heapFactsOf(named)(state)) with
-                | (CoreConstructorLayout { name = constructorName } :: [], HeapLayoutFacts { children = children }) -> ownedConstructorChildren(constructorName)(children)
+            match state |> stateConstructorsOfType(name) with
+                | CoreConstructorLayout { name = constructorName } :: [] ->
+                    match heapFactsOf(named)(state) with
+                        | HeapLayoutFacts { children = children } -> ownedConstructorChildren(constructorName)(children)
                 | _ -> []
         | _ -> []
 
@@ -8618,6 +9315,24 @@ let synthesizeClosureDropper (owned: List((Int, Str, SemanticType))) (state: Cor
                                                                 lifetimesPlaced = false
                                                             ) :: functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, programState = programState), label))
 
+let classifyClosureCaptureLayout (resolved: SemanticType) (state: CoreLoweringState) =
+    (let facts =
+        state
+        |> coverageEnvironment
+        |> classifyHeapCopyPlan(resolved)
+    in facts.runtimeRecordAdtSupported || facts.runtimeOwnedChildAdtSupported)
+
+// A cached Boolean query must not allocate copies of the cached child descriptors.
+let heapClosureCaptureLayoutOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(facts) -> facts.runtimeRecordAdtSupported || facts.runtimeOwnedChildAdtSupported
+                | None -> classifyClosureCaptureLayout(resolved)(state)
+        | resolved -> classifyClosureCaptureLayout(resolved)(state)
+
 // Stage 0's `CanRuntimeNormalizeClosureCapture`: a scalar, a string, bytes or big integer, a list
 // over scalars, and a named type that is not a resource and that the record or owned-child layout
 // manages.
@@ -8629,7 +9344,9 @@ let canNormalizeClosureCapture (resolved: SemanticType) (state: CoreLoweringStat
         | SemList(element) ->
             resultSurvivesReset(resolveType(state)(element))(state)
         | SemNamed(_symbolId, _name, _arguments) as named ->
-            !isResourceHandle(named)(state) && (recordAdtSupported(heapFactsOf(named)(state)) || ownedChildAdtSupported(heapFactsOf(named)(state)))
+            if isResourceHandle(named)(state)
+            then false
+            else heapClosureCaptureLayoutOf(named)(state)
         | scalar ->
             match scalarCaptureText(scalar) with
                 | Some(_text) -> true
@@ -8801,9 +9518,7 @@ let recursive expressionAt (index: Int) (expressions: List(Expr)) =
 let constructorFieldExpressionsOf (expression: Expr) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (resolveType(state)(semanticType), constructorApplicationOf(unspanArgument(expression))([])(state)) with
         | (SemNamed(_symbolId, name, _arguments), Some((CoreConstructorLayout { name = constructorName }, arguments))) ->
-            match state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name) with
+            match state |> stateConstructorsOfType(name) with
                 | CoreConstructorLayout { name = soleConstructor } :: [] ->
                     if soleConstructor == constructorName
                     then Some(arguments)
@@ -9241,28 +9956,16 @@ let recursive resetArgumentParameters (arguments: List(TcoResetArgument)) =
 // Stage 0's `CallResultMayContainArgumentType`: whether a value of the argument's type could be
 // reachable inside the result. An unresolved variable, a rigid type parameter, and a function value
 // (which can have captured anything) all answer yes, and a yes only ever keeps a handed-over reference
-// where it is, so erring this way leaks at worst. A named type is expanded once per type name on a
-// walk, which is what stops a recursive type unfolding forever; its type arguments are walked every
-// time regardless, so the same generic type at two instantiations still has both compared. A named
+// where it is, so erring this way leaks at worst. A named instantiation is expanded once per walk;
+// its type arguments are walked every time regardless. Non-regular recursive expansion at changing
+// arguments conservatively answers yes, while different sibling instantiations are searched. A named
 // type's fields are read at its instantiation (`instantiated`), so a field of its own type parameter
 // is the argument in its place; the loop placement's sibling question reads them as declared.
-let recursive typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match resolveType(state)(resultType) with
-        | SemVariable(_id) -> true
-        | SemParameter(_id, _name) -> true
-        | SemFunction(_parameter, _result, _row) -> true
-        | resolved ->
-            resolved == argumentType || anyTypeMayContainArgumentType(instantiated)(structuralComponentTypes(resolved))(argumentType)(expanded)(state) || (match resolved with
-                | SemNamed(_id, name, arguments) ->
-                    if containsName(name)(expanded)
-                    then false
-                    else
-                        anyTypeMayContainArgumentType(instantiated)(namedTypeFieldTypesAs(instantiated)(name)(arguments)(state))(argumentType)(name :: expanded)(state)
-                | _ -> false)
-and anyTypeMayContainArgumentType (instantiated: Bool) (candidates: List(SemanticType)) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
-    match candidates with
-        | [] -> false
-        | candidate :: rest -> typeMayContainArgumentType(instantiated)(candidate)(argumentType)(expanded)(state) || anyTypeMayContainArgumentType(instantiated)(rest)(argumentType)(expanded)(state)
+let typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) =
+    mayContainArgumentType(resolveType(state))(given (semanticType) ->
+        match semanticType with
+            | SemNamed(_id, name, arguments) -> namedTypeFieldTypesAs(instantiated)(name)(arguments)(state)
+            | _ -> [])(expanded)(resultType)(argumentType)
 
 let callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) = typeMayContainArgumentType(true)(resultType)(argumentType)(expanded)(state)
 
@@ -9368,7 +10071,7 @@ let recursive fieldTypeAlong (path: List((Int, Int))) (semanticType: SemanticTyp
     match (path, resolveType(state)(semanticType)) with
         | ([], _) -> Some(semanticType)
         | ((tag, index) :: rest, SemNamed(_symbolId, name, arguments)) ->
-            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorLayouts(state))(state) with
+            match constructorFieldTypeAt(name)(arguments)(tag)(index)(stateConstructorsOfType(name)(state))(state) with
                 | Some(fieldType) -> fieldTypeAlong(rest)(fieldType)(state)
                 | None -> None
         | _ -> None
@@ -10256,7 +10959,7 @@ let recursive compactionCopiesManagedList (arguments: List(TcoResetArgument)) (s
 // into the program once per type; answers the temp holding the clone.
 let emitTcoDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
 
@@ -10477,7 +11180,7 @@ let emitAdvancingCompactingTcoReset (frame: CoreTcoLoopFrame) (arguments: List(T
 
 let emitLocatedDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(IndependentClone) with
                 | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
 
@@ -10587,7 +11290,7 @@ let recursive copyTransferDuplicatedFields (cell: Int) (typeName: Str) (typeArgu
         | [] -> state
         | (fieldIndex, source) :: rest ->
             state
-            |> copyTransferDuplicatedField(cell)(tagless)(fieldIndex)(source)(constructorFieldTypeAt(typeName)(typeArguments)(tag)(fieldIndex)(stateConstructorLayouts(state))(state))
+            |> copyTransferDuplicatedField(cell)(tagless)(fieldIndex)(source)(constructorFieldTypeAt(typeName)(typeArguments)(tag)(fieldIndex)(stateConstructorsOfType(typeName)(state))(state))
             |> copyTransferDuplicatedFields(cell)(typeName)(typeArguments)(tag)(tagless)(rest)
 
 // Stage 0's `CopyTransferDuplicatedChildrenIntoArena`: an arena parameter's successor that is a
@@ -11186,7 +11889,7 @@ let recursive recordArenaCopyPlacements (instructions: List(IrInstructionKind)) 
 // The arena clone of a reference-counted result on its arena-result boundary, spliced in place.
 let emitArenaResultDeepCopy (sourceTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(sourceTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId)(ArenaResultBoundary) with
                 | (synthesis, resultTemp) ->
                     (state
@@ -11207,20 +11910,22 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
 // allocation.
 let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
-            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
-                | None ->
+        | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
+            match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                | (Some(synthesis), _queryContext) -> spliceInlineReleaseWith(emit)(synthesis)(state)
+                | (None, queryContext) ->
                     // A type only the normalization helper expresses is released through its own
                     // dropper even when no constructor owns a heap field, as stage 0's result
                     // drop routes it; any other single allocation is one typed drop.
-                    match generalCopyPlanOf(semanticType)(state) with
-                        | Some(NormalizerArgumentCopy(_named)) ->
-                            spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
-                        | _ ->
-                            emit(RcDrop(valueTemp)(semanticType
-                            |> resolveType(state)
-                            |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
+                    let queried = withStateDropperContext(queryContext)(state)
+                    in
+                        match generalCopyPlanOf(semanticType)(queried) with
+                            | Some(NormalizerArgumentCopy(_named)) ->
+                                spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(queried)(semanticType))(dropperTypesOf(queried))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(queried)
+                            | _ ->
+                                emit(RcDrop(valueTemp)(semanticType
+                                |> resolveType(queried)
+                                |> arenaResultDropTypeName)(-1)(true)(false)(None))(queried)
 
 let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
     match slots with
@@ -11338,17 +12043,11 @@ let recursive functionResultOf (semanticType: SemanticType) =
         | SemFunction(_argument, result, _row) -> functionResultOf(result)
         | other -> other
 
-let recursive returnedStageOf (label: Str) (pairs: List((Str, Str))) =
-    match pairs with
-        | [] -> None
-        | (stage, next) :: rest ->
-            if stage == label
-            then Some(next)
-            else returnedStageOf(label)(rest)
+let returnedStageOf (label: Str) (pairs: MapTree(Str, Str)) = Ashes.Collection.Map.getStr(label)(pairs)
 
 // Stage 0's `CurryChainReaches`: whether the function `label` is `current` or one of the curry
 // stages it returns.
-let recursive curryChainReaches (depth: Int) (current: Str) (label: Str) (pairs: List((Str, Str))) =
+let recursive curryChainReaches (depth: Int) (current: Str) (label: Str) (pairs: MapTree(Str, Str)) =
     if current == label
     then true
     else
@@ -12646,7 +13345,7 @@ let recursive collectWrappedResultConstructors (typeName: Str) (arguments: List(
 let wrappedResultConstructors (resultType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemNamed(_symbolId, name, arguments) ->
-            collectWrappedResultConstructors(name)(arguments)(stateConstructorLayouts(state))(state)([])
+            collectWrappedResultConstructors(name)(arguments)(stateConstructorsOfType(name)(state))(state)([])
         | _ -> []
 
 // Whether a call's ownership word forwards this function's own caller's request: the function's
@@ -13042,7 +13741,7 @@ let recursive soleConstructorFieldTypes (typeName: Str) (arguments: List(Semanti
 let releaseOwnedFieldsOfCopiedArenaRecord (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(bodyType) with
         | SemNamed(_symbolId, name, arguments) ->
-            match soleConstructorFieldTypes(name)(arguments)(stateConstructorLayouts(state))(None)(0)(state) with
+            match soleConstructorFieldTypes(name)(arguments)(stateConstructorsOfType(name)(state))(None)(0)(state) with
                 | Some(fieldTypes) ->
                     let cell = soleArenaRecordCellOf(bodyTemp)(state)
                     in
@@ -13720,7 +14419,9 @@ let linkCurryStage (label: Str) (parameter: Str) (state: CoreLoweringState) =
             then
                 state
                 |> withStateCurryStage(None)
-                |> withStateFunctionReturnedClosureLabels((stageLabel, label) :: stateFunctionReturnedClosureLabels(state))
+                |> withStateFunctionReturnedClosureLabels(state
+                |> stateFunctionReturnedClosureLabels
+                |> Ashes.Collection.Map.setStr(stageLabel)(label))
                 |> noteLetBoundCurryStage(stageLabel)(label)
             else withStateCurryStage(None)(state)
         | None -> state
@@ -14361,6 +15062,35 @@ let lowerLambdaParameterType annotation parameterType state =
                         | None -> (bound, None)
                         | Some(annotationType) -> bindType(parameterType)(annotationType)(bound)
 
+// Keep a binding's declared parameter types available while its lambda body is lowered.
+// Inference already checks the complete signature; ownership placement must see the same
+// callback result layout before deciding whether the call returns an owned value.
+let recursive annotateBindingLambdaChain (annotation: TypeExpr) (value: Expr) =
+    match (annotation, value) with
+        | (TypeAt(_span, inner), _) -> annotateBindingLambdaChain(inner)(value)
+        | (_, ExprAt(span, inner)) ->
+            inner
+            |> annotateBindingLambdaChain(annotation)
+            |> ExprAt(span)
+        | (TypeArrow(argument, result, _capabilities, _tail), ExprLambda(parameter, body, existing)) ->
+            ExprLambda(parameter)(annotateBindingLambdaChain(result)(body))(match existing with
+                | Some(_explicit) -> existing
+                | None -> Some(argument))
+        | _ -> value
+
+let bindingLambdaValue annotation value (state: CoreLoweringState) =
+    match annotation with
+        | None -> value
+        | Some(signature) ->
+            let expanded =
+                expandTypeAliases(stateTypeAliases(state))(32)(signature)
+            in
+                // Generic signatures need a member-local type-variable scope before their
+                // annotations can be shared across a mutually recursive lambda chain.
+                match annotationTypeVariableNames(expanded)([]) with
+                    | [] -> annotateBindingLambdaChain(expanded)(value)
+                    | _ -> value
+
 // A let-bound lambda's generated label is remembered under the let's name, so a call through the
 // name can consult the function's recorded body placement.
 let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
@@ -14724,15 +15454,17 @@ let shapeListElement (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop:
 // the cell's structural walk; a parameter of the contract's own types is normalized by its helper
 // (`tcoGeneralRcParameterPlacement`). Answers the resolved type and that name.
 let tcoNamedSlotCopy (named: SemanticType) (name: Str) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
-    match (layouts, heapFactsOf(named)(state)) with
-        | (_layout :: [], HeapLayoutFacts { structuralCopy = ShallowCopy }) -> Some((named, name))
-        | (_layout :: [], facts) ->
-            if runtimeManagedAdtLayout(facts)
-            then
-                match inlineAdtCopyPlanOf(named)(state) with
-                    | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
-                    | _ -> None
-            else None
+    match layouts with
+        | _layout :: [] ->
+            match heapFactsOf(named)(state) with
+                | HeapLayoutFacts { structuralCopy = ShallowCopy } -> Some((named, name))
+                | facts ->
+                    if runtimeManagedAdtLayout(facts)
+                    then
+                        match inlineAdtCopyPlanOf(named)(state) with
+                            | Some(ConstructorArgumentCopy(_constructorPlan)) -> Some((named, name))
+                            | _ -> None
+                    else None
         | _ -> None
 
 let recursive loopParameterNameAt (ordinal: Int) (names: List(Str)) =
@@ -14798,10 +15530,7 @@ let tcoAdtSlotCopy (ordinal: Int) (slot: Int) (shape: TcoArgumentShape) (loop: C
                     if isResourceHandle(named)(state)
                     then None
                     else
-                        let layouts =
-                            state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name)
+                        let layouts = state |> stateConstructorsOfType(name)
                         in
                             match tcoGeneralRcParameterPlacement(ordinal)(named)(layouts)(loop)(state) with
                                 | Some(true) -> Some((named, name))
@@ -15384,10 +16113,10 @@ let recursive patternOwnerAliases (instructions: List(IrInstruction)) (slot: Int
 // single allocation.
 let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    (label, withStateDropperLabels(nextCache)((state with functions = append(synthesized
+                | DropperSynthesis { label = label, cache = nextCache, queryContext = queryContext, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    (label, withStateDropperResult(nextCache)(queryContext)((state with functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
                     |> reverse)(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
@@ -15813,8 +16542,7 @@ let ownFieldKindOf (resultType: SemanticType) (state: CoreLoweringState) =
             else
                 let constructors =
                     state
-                    |> stateConstructorLayouts
-                    |> constructorLayoutsOfType(name)
+                    |> stateConstructorsOfType(name)
                     |> sortBy(given (left: CoreConstructorLayout) ->
                         given (right: CoreConstructorLayout) -> left.tag <= right.tag)
                     |> ownFieldConstructors(arguments)(state)
@@ -15850,9 +16578,7 @@ let recursive containsResolvedType (semanticType: SemanticType) (target: Semanti
                         if seenRecordHolderType(resolved)(seen)
                         then false
                         else
-                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state
-                            |> stateConstructorLayouts
-                            |> constructorLayoutsOfType(name))(target)(resolved :: seen)(state)
+                            anyContainsResolvedType(arguments)(target)(resolved :: seen)(state) || anyLayoutFieldContains(state |> stateConstructorsOfType(name))(target)(resolved :: seen)(state)
                     | _ -> false
 and anyContainsResolvedType (types: List(SemanticType)) (target: SemanticType) (seen: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -16705,10 +17431,10 @@ let reuseAccumulatorIsUnique (functionName: Str) (parameter: Str) (state: CoreLo
 // it advanced are kept.
 let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(0)(named)(dropperTypesOf(state))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
-                | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
-                    withStateDropperLabels(copierCache)((state with functions = append(synthesized
+                | (InlineReleaseSynthesis { cache = copierCache, queryContext = queryContext, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
+                    withStateDropperResult(copierCache)(queryContext)((state with functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
                     |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
@@ -16751,17 +17477,6 @@ let recursive nthCurriedArgumentType (functionType: SemanticType) (ordinal: Int)
             else nthCurriedArgumentType(resultType)(ordinal - 1)(state)
         | _ -> None
 
-let recursive specializationCandidateArity (callee: Str) (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> None
-        | (candidate, parameters, value) :: rest ->
-            if candidate == callee
-            then
-                value
-                |> specializationArity(parameters)
-                |> Some
-            else specializationCandidateArity(callee)(rest)
-
 // The accumulator type a specialization candidate is called at, read through the current
 // substitution: the argument a saturated call passes last (the parameter of a single-parameter
 // candidate, the worker's parameter of a nested-worker one), stage 0's
@@ -16769,7 +17484,7 @@ let recursive specializationCandidateArity (callee: Str) (candidates: List((Str,
 // it unique is `reusableSpecializationAccumulatorType`.
 let specializationAccumulatorTypeOf (callee: Str) (state: CoreLoweringState) =
     match (lookupBinding(callee)(state.bindings), state
-    |> stateSpecializationCandidates
+    |> stateSpecializationCandidateIndex
     |> specializationCandidateArity(callee)) with
         | (Some(CoreBinding { scheme = TypeScheme { body = body } }), Some(arity)) -> nthCurriedArgumentType(body)(arity - 1)(state)
         | _ -> None
@@ -16791,14 +17506,14 @@ let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLowerin
 let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match accumulatorType with
         | SemNamed(_symbolId, typeName, arguments) ->
-            match namedTypeConstructorFieldTypes(typeName)(stateConstructorLayouts(state))(state)(false)([]) with
+            match namedTypeConstructorFieldTypes(typeName)(stateConstructorsOfType(typeName)(state))(state)(false)([]) with
                 | (false, _fieldTypes) -> false
                 | (true, declaredFieldTypes) ->
                     let fieldTypes =
                         match arguments with
                             | [] -> declaredFieldTypes
                             | _ ->
-                                namedTypeInstantiatedFieldTypes(typeName)(arguments)(stateConstructorLayouts(state))(state)([])
+                                namedTypeInstantiatedFieldTypes(typeName)(arguments)(stateConstructorsOfType(typeName)(state))(state)([])
                     in
                         namedAccumulatorFieldsPersistent(typeName)(given (fieldType: SemanticType) -> specializationFieldRelocatable(fieldType)(state))(fieldTypes)
         | _ -> true
@@ -16866,24 +17581,16 @@ let recursive specializationRecursiveBody (callee: Str) (value: Expr) =
                 | _ -> (callee, value)
         | _ -> (callee, value)
 
-let recursive specializationCandidateValueOf (callee: Str) (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> None
-        | (candidate, _parameters, value) :: rest ->
-            if candidate == callee
-            then Some(value)
-            else specializationCandidateValueOf(callee)(rest)
-
 // Stage 0's `SpecializationRebuildsOnlyAPath`: the clone descends into at most one child of the
 // accumulator on any path, over a type whose constructors hold two or more children of their own
 // type, so its in-place pass rewrites one root-to-leaf path per call rather than the structure.
 let specializationRebuildsOnlyAPath (callee: Str) (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match resolveType(state)(accumulatorType) with
         | SemNamed(_id, typeName, _arguments) ->
-            if typeHasMultipleSelfFields(typeName)(stateConstructorLayouts(state))(state)
+            if typeHasMultipleSelfFields(typeName)(stateConstructorsOfType(typeName)(state))(state)
             then
                 match state
-                |> stateSpecializationCandidates
+                |> stateSpecializationCandidateIndex
                 |> specializationCandidateValueOf(callee) with
                     | Some(value) ->
                         match specializationRecursiveBody(callee)(value) with
@@ -17274,7 +17981,9 @@ let lowerFunctionBodyAgain (body: Expr) (prepare: CoreLoweringState -> CoreLower
 // call's result open at the call even when the body's own later use settles it, so the site keeps
 // its record for the group's pinned lowering.
 let restartedAgainst (entered: CoreLoweringState) (lowered: CoreLoweringState) =
-    withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))((entered with substitution = lowered.substitution, typeSupply = lowered.typeSupply))
+    (entered with typeSupply = lowered.typeSupply)
+    |> withSubstitution(lowered.substitution)
+    |> withStatePendingSiblingCallResults(statePendingSiblingCallResults(lowered))
 
 // A body lowered again because a call to a later group member resolved its result keeps its self
 // calls deferred as its first lowering did: stage 0 lowers the body once, with its own result still
@@ -17484,26 +18193,28 @@ let recursive nullaryConstructorCount (typeName: Str) (layouts: List(CoreConstru
                 | None -> nullaryConstructorCount(typeName)(rest)
 
 // The nullary constructors that are the only nullary constructor of their type.
-let recursive soleNullaryConstructorNames (layouts: List(CoreConstructorLayout)) (all: List(CoreConstructorLayout)) =
+let recursive soleNullaryConstructorNames (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
     match layouts with
         | [] -> []
         | (CoreConstructorLayout { name = name } as layout) :: rest ->
             match constructorResultName(layout) with
                 | Some(typeName) ->
-                    if constructorArity(layout) == 0 && nullaryConstructorCount(typeName)(all) == 1
-                    then name :: soleNullaryConstructorNames(rest)(all)
-                    else soleNullaryConstructorNames(rest)(all)
-                | None -> soleNullaryConstructorNames(rest)(all)
+                    if constructorArity(layout) == 0 && nullaryConstructorCount(typeName)(lookupResultConstructors(typeName)(index)) == 1
+                    then name :: soleNullaryConstructorNames(rest)(index)
+                    else soleNullaryConstructorNames(rest)(index)
+                | None -> soleNullaryConstructorNames(rest)(index)
 
 let provenanceConstructorsOf (state: CoreLoweringState) =
-    ProvenanceConstructors(
-        arities = state
-        |> stateConstructorLayouts
-        |> constructorAritiesOf,
-        soleNullary = state
-        |> stateConstructorLayouts
-        |> soleNullaryConstructorNames(stateConstructorLayouts(state))
-    )
+    (let group = state.programState
+    in
+        ProvenanceConstructors(
+            arities = state
+            |> stateConstructorLayouts
+            |> constructorAritiesOf,
+            soleNullary = state
+            |> stateConstructorLayouts
+            |> (given (layouts) -> soleNullaryConstructorNames(layouts)(group.constructorIndex))
+        ))
 
 // The functions the whole-program provenance fixpoint classifies: every function the reach
 // registry registered, under its key, with the registered parameters and innermost body (a
@@ -17545,6 +18256,22 @@ let resultRcEligibilityOf (state: CoreLoweringState) =
         | Some(eligibility) -> eligibility
         | None -> Ashes.Collection.Map.empty
 
+// Resolve the same completed function identity as calleeSummaryOf. Only an unregistered
+// fallback prepares its local reach at a call site.
+let preparedReachOfSummary (summary: ReachSummary) (state: CoreLoweringState) =
+    match summary with
+        | ReachSummary { function = ReachFunction { key = key, parameters = parameters }, reach = reach } ->
+            let group = state.programState
+            in
+                match Ashes.Collection.Map.getStr(key)(group.callReachByKey) with
+                    | Some(prepared) -> prepared
+                    | None -> prepareCallReach(parameters)(reach)
+
+let calleePreparedReach (callee: Str) (parameters: List(Str)) (reach: ResultReachState) (state: CoreLoweringState) =
+    match calleeSummaryOf(callee)(state) with
+        | Some(summary) -> preparedReachOfSummary(summary)(state)
+        | None -> prepareCallReach(parameters)(reach)
+
 // Stage 0's ownership summary of a let-bound callee: the whole-program result-reach summary of
 // the function recorded under the name, whose parameters and body are the registered ones (a
 // Map.set-shaped function's outer parameters plus its accumulator over the inner body); a callee
@@ -17582,6 +18309,7 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                                 parameters = parameters,
                                 ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                                 reach = reach,
+                                preparedReach = calleePreparedReach(callee)(parameters)(reach)(state),
                                 rcEligible = calleeRcEligible(callee)(state),
                                 argumentCount = length(spine.arguments)
                             ))
@@ -18052,25 +18780,29 @@ let argumentHandOffOf facts (selfCallee: Bool) index argument argumentType argum
         | (runtimeArgument, rootSlot, fresh) ->
             let calleeBorrows = calleeParameterBorrows(facts)(index)
             in
-                let contractBorrow = !calleeBorrows && (runtimeArgument || rootSlot != None || fresh) && isGeneralRcValueType(argumentType)(state)
-                in
-                    let keptWhole = !contractBorrow && keptWholeUnderOwnedResult(facts)(index)(argument)(argumentTemp)(resultNormalizedOwned)(state)
-                    in
-                        CoreArgumentHandOff(
-                            borrowsOnly = contractBorrow || calleeBorrows,
-                            borrowsForPlacement = contractBorrow || calleeBorrows || isVariableArgument(argument) && isGeneralRcValueType(argumentType)(state),
-                            fresh = fresh,
-                            runtimeArgument = runtimeArgument || rootSlot != None,
-                            mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state) || (patternBindingArgumentRootSlot(argument)(state) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(state)) && calleeResultReachesArgument(facts)(index),
-                            transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state),
-                            keptWholeUnderOwnedResult = keptWhole,
-                            normalizes = calleeNormalizesArgument(facts)(index)(state),
-                            borrowedReach = rootSlot != None && !selfCallee && calleeResultReachesArgument(facts)(index),
-                            cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
-                            pendingRootSlot = if runtimeArgument && !readsDemotedLoopList(argument)(state)
-                            then None
-                            else rootSlot
-                        )
+                match if !calleeBorrows && (runtimeArgument || rootSlot != None || fresh || isVariableArgument(argument))
+                then isGeneralRcValueTypeIndexed(argumentType)(state)
+                else (false, state) with
+                    | (contractValue, queried) ->
+                        let contractBorrow = !calleeBorrows && (runtimeArgument || rootSlot != None || fresh) && contractValue
+                        in
+                            let keptWhole = !contractBorrow && keptWholeUnderOwnedResult(facts)(index)(argument)(argumentTemp)(resultNormalizedOwned)(queried)
+                            in
+                                (CoreArgumentHandOff(
+                                    borrowsOnly = contractBorrow || calleeBorrows,
+                                    borrowsForPlacement = contractBorrow || calleeBorrows || isVariableArgument(argument) && contractValue,
+                                    fresh = fresh,
+                                    runtimeArgument = runtimeArgument || rootSlot != None,
+                                    mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(queried) || (patternBindingArgumentRootSlot(argument)(queried) != None || rootSlot != None && isBorrowedRetainableParameterType(argumentType)(queried)) && calleeResultReachesArgument(facts)(index),
+                                    transfers = !contractBorrow && !keptWhole && transfersFreshArgument(facts)(index)(argument)(argumentTemp)(queried),
+                                    keptWholeUnderOwnedResult = keptWhole,
+                                    normalizes = calleeNormalizesArgument(facts)(index)(queried),
+                                    borrowedReach = rootSlot != None && !selfCallee && calleeResultReachesArgument(facts)(index),
+                                    cannotBeKeptWhole = calleeResultCannotKeepArgumentWhole(facts)(index),
+                                    pendingRootSlot = if runtimeArgument && !readsDemotedLoopList(argument)(queried)
+                                    then None
+                                    else rootSlot
+                                ), queried)
 
 // The callee's `AcceptsRuntimeManagedArgument` bit, bit 62 of the closure's packed environment
 // size word, in a fresh flag temp.
@@ -18327,9 +19059,22 @@ let consumedArgumentsWith (context: CoreCallContext) (flagTemp: Int) (handOff: C
                     else consumed
                 | _ -> consumed
 
+// Settled monomorphic facts remain authoritative; a miss needs only the graph verdict.
 let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringState) =
-    match heapFactsOf(semanticType)(state) with
-        | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
+    match resolveType(state)(semanticType) with
+        | SemNamed(_symbolId, name, []) as resolved ->
+            match state
+            |> stateHeapLayoutFactsByType
+            |> Ashes.Collection.Map.getStr(name) with
+                | Some(facts) -> facts.ownedChildrenDroppable
+                | None ->
+                    state
+                    |> coverageEnvironment
+                    |> classifyHeapOwnedChildrenDroppable(resolved)
+        | resolved ->
+            state
+            |> coverageEnvironment
+            |> classifyHeapOwnedChildrenDroppable(resolved)
 
 // Stage 0's `IsConcretelyRuntimeManageableResultType`: a result type runtime RC holds — a
 // scalar, a string, `Bytes`, a `BigInt`, a list the runtime may own, a tuple the runtime-managed
@@ -18413,9 +19158,7 @@ let calleeVerifiedResultRuntimeManaged (context: CoreCallContext) (state: CoreLo
 // Stage 0's `IsNormalizableUncoveredRecord`: a single-constructor named type with no call copy-out
 // that the entry normalization's copy re-establishes.
 let classifyNormalizableUncoveredRecord (name: Str) (named: SemanticType) (state: CoreLoweringState) =
-    (match state
-    |> stateConstructorLayouts
-    |> constructorLayoutsOfType(name) with
+    (match state |> stateConstructorsOfType(name) with
         | _layout :: [] -> true
         | _ -> false) && hasCallCopyOut(named)(state) == false && (match (entryNormalizationPlanOf(named)(state), heapFactsOf(named)(state)) with
         | (Some(_plan), HeapLayoutFacts { arenaDeepCopySupported = true }) -> true
@@ -18777,7 +19520,9 @@ let copyGenericArgumentToSpace (context: CoreCallContext) (index: Int) (argument
                 match state with
                     | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
                         match synthesizeToSpaceCopy(argumentTemp)(resolveType(state)(argumentType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                            | (synthesis, resultTemp) -> (spliceInlineReleaseWith(emit)(synthesis)(state), resultTemp)
+                            | (synthesis, resultTemp) ->
+                                let copiedState = spliceInlineReleaseWith(emit)(synthesis)(state)
+                                in (recordBorrowedCall(resultTemp != argumentTemp)(resultTemp)(copiedState), resultTemp)
             else (state, argumentTemp)
         | None -> (state, argumentTemp)
 
@@ -18872,13 +19617,28 @@ let borrowedByReuseSpecialization (context: CoreCallContext) (arity: Int) (state
 // One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
 // the callee facts and the argument temp, the retain and the flags are emitted, and the call
 // follows.
-let applyCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
+// A copied argument lives in persistent non-RC storage. Source-binding ownership
+// cannot describe the replacement temp, even if that binding is an owned loop field.
+let toSpaceArgumentHandOff = CoreArgumentHandOff(borrowsOnly = true, borrowsForPlacement = true, fresh = false, runtimeArgument = false, mayReach = false, transfers = false, keptWholeUnderOwnedResult = false, normalizes = false, borrowedReach = false, cannotBeKeptWhole = false, pendingRootSlot = None)
+
+let applyCoreCall (context: CoreCallContext) arity argument (copiedToSpace: Bool) argumentType consumed functionTemp resultType passedTemp (copiedState: CoreLoweringState) =
     match readsResultOwnershipAtRunTime(context)(arity)(resultType)(copiedState) with
         | (decidedState, readsResult, resultNormalizedOwned) ->
-            decidedState
-            |> argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)
-            |> borrowedByReuseSpecialization(context)(arity)(decidedState)
-            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(handOff)(readsResult)(resultNormalizedOwned)(decidedState))
+            match if copiedToSpace
+            then (toSpaceArgumentHandOff, decidedState)
+            else
+                argumentHandOffOf(context.facts)(context.selfCallee)(argumentIndexOf(context.facts)(arity))(argument)(argumentType)(passedTemp)(resultNormalizedOwned)(decidedState) with
+                | (handOff, queried) ->
+                    let placed =
+                        if copiedToSpace
+                        then handOff
+                        else borrowedByReuseSpecialization(context)(arity)(queried)(handOff)
+                    in emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(passedTemp)(resultType)(placed)(readsResult)(resultNormalizedOwned)(queried)
+
+let freshToSpaceSourceOwner (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(argumentTemp)(state) with
+        | Some(RuntimeNewlyProduced) -> !isVariableArgument(argument)
+        | _ -> false
 
 // The argument reaches the application as the value itself, a handed-over reference for a generic
 // string parameter, or a to-space copy for any other generic parameter.
@@ -18890,10 +19650,17 @@ let finishCoreCall (context: CoreCallContext) arity argument argumentType consum
             |> callStageOf
         | (unifiedState, None) ->
             match handOverGenericStringArgument(context)(arity)(argumentType)(resultType)(argumentTemp)(consumed)(unifiedState) with
-                | Some((ownedState, ownedTemp, handedConsumed)) -> applyCoreCall(context)(arity)(argument)(argumentType)(handedConsumed)(functionTemp)(resultType)(ownedTemp)(ownedState)
+                | Some((ownedState, ownedTemp, handedConsumed)) -> applyCoreCall(context)(arity)(argument)(false)(argumentType)(handedConsumed)(functionTemp)(resultType)(ownedTemp)(ownedState)
                 | None ->
                     match copyGenericArgumentToSpace(context)(context.argumentCount - arity)(argumentType)(argumentTemp)(unifiedState) with
-                        | (copiedState, passedTemp) -> applyCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(resultType)(passedTemp)(copiedState)
+                        | (copiedState, passedTemp) ->
+                            let copied = passedTemp != argumentTemp
+                            in
+                                let sourceConsumed =
+                                    if copied && freshToSpaceSourceOwner(argument)(argumentTemp)(unifiedState)
+                                    then append(consumed)([CoreConsumedArgument(temp = argumentTemp, semanticType = resolveType(unifiedState)(argumentType), preserveEscapedChildren = false, adoptionFlagTemp = -1)])
+                                    else consumed
+                                in applyCoreCall(context)(arity)(argument)(copied)(argumentType)(sourceConsumed)(functionTemp)(resultType)(passedTemp)(copiedState)
 
 // The site an argument's mismatch against its parameter type is reported at: the call, which the
 // state's span is back to once the argument is lowered.
@@ -19096,10 +19863,10 @@ let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: 
 // `SynthesizeRuntimeManagedAdtDropper`), synthesizing it once through the state's label cache.
 let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
     match state with
-        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+        | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    (label, withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
+                | DropperSynthesis { label = label, cache = nextCache, queryContext = queryContext, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    (label, withStateDropperResult(nextCache)(queryContext)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
 // Stage 0's `EmitRecursiveRuntimeManagedAdtDrop`: the value is handed to its type's dropper.
 let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
@@ -19119,13 +19886,13 @@ let emitRecordDropperCall (valueTemp: Int) (named: SemanticType) (state: CoreLow
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeRecordDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = Some(label), cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    match freshTempRun(2)(withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
+                | DropperSynthesis { label = Some(label), cache = nextCache, queryContext = queryContext, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    match freshTempRun(2)(withStateDropperResult(nextCache)(queryContext)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
                         | FreshTemp { state = reserved, temp = environmentTemp } ->
                             reserved
                             |> emit(LoadConstInt(environmentTemp)(0))
                             |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
-                | _ -> state
+                | DropperSynthesis { queryContext = queryContext } -> withStateDropperContext(queryContext)(state)
 
 // An argument-free record the program's start recorded as joining the ownership contract, where
 // the contract governs the lowering.
@@ -19159,14 +19926,16 @@ let emitGeneralAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticT
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeGeneralAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = Some(label), cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    match freshTempRun(2)(withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
+                | DropperSynthesis { label = Some(label), cache = nextCache, queryContext = queryContext, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    match freshTempRun(2)(withStateDropperResult(nextCache)(queryContext)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
                         | FreshTemp { state = reserved, temp = environmentTemp } ->
                             reserved
                             |> emit(LoadConstInt(environmentTemp)(0))
                             |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
-                | _ ->
-                    emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+                | DropperSynthesis { queryContext = queryContext } ->
+                    state
+                    |> withStateDropperContext(queryContext)
+                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
 
 // The layout of a named type's first constructor.
 let recursive firstConstructorLayoutOf (typeName: Str) (layouts: List(CoreConstructorLayout)) =
@@ -19266,7 +20035,7 @@ and emitRuntimeAdtDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (s
                 else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
 and emitFirstConstructorDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
     match state
-    |> stateConstructorLayouts
+    |> stateConstructorsOfType(typeName)
     |> firstConstructorLayoutOf(typeName) with
         | Some(CoreConstructorLayout { name = constructorName, tagless = tagless }) ->
             match ownedLayoutChildren(Some(constructorName))(named)(state) with
@@ -19451,7 +20220,7 @@ let recursive heapPartTypesInto (pending: List(SemanticType)) (expanded: List(St
                                 then
                                     heapPartTypesInto(append(arguments)(rest))(expanded)(resolved :: parts)(state)
                                 else
-                                    match namedTypeConstructorFieldTypes(name)(stateConstructorLayouts(state))(state)(false)([]) with
+                                    match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
                                         | (_found, fieldTypes) ->
                                             heapPartTypesInto(rest
                                             |> append(arguments)
@@ -20536,11 +21305,11 @@ let emitCallResultCopyTakingParts (context: CoreCallContext) (temp: Int) (semant
 // Stage 0's withdrawal in `LowerCallRestoreArenaFor`: a call result that is not copied out under
 // the contract takes no parts over.
 let withdrawTuplePartsRequestOutsideContract (context: CoreCallContext) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    if isGeneralRcValueType(semanticType)(state)
-    then state
-    else
-        match takeTupleResultPartsRequest(context)(temp)(semanticType)(true)(state) with
-            | (withdrawn, _parts) -> withdrawn
+    match isGeneralRcValueTypeIndexed(semanticType)(state) with
+        | (true, queried) -> queried
+        | (false, queried) ->
+            match takeTupleResultPartsRequest(context)(temp)(semanticType)(true)(queried) with
+                | (withdrawn, _parts) -> withdrawn
 
 // Stage 0's `NoteTakenOverOwnedSlotSource`: the call an owned call-result slot holds the result of.
 let noteTakenOverSlotSource (context: CoreCallContext) (ownedSlot: Int) (state: CoreLoweringState) =
@@ -21075,6 +21844,14 @@ let pinSiblingCallResult (context: CoreCallContext) (stage: CoreCallStage) =
                 | None -> stage
         | _ -> stage
 
+let prepareCallAdmissibility (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, semanticType = semanticType, error = None } as lowered } ->
+            match callCopyOutOfIndexed(semanticType)(state) with
+                | (Some(_copyOut), queried) -> stage with lowered = (lowered with state = queried)
+                | (None, queried) -> stage with lowered = (lowered with state = prepareGeneralRcAdmissibility(semanticType)(queried))
+        | _ -> stage
+
 let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Maybe(CoreMismatchSite)) (transfers: Bool) (tailCall: Bool) (resultDiscarded: Bool) lower state =
     match state
     |> ensureResultRcEligibility
@@ -21088,6 +21865,7 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                         match applied
                         |> pinSiblingCallResult(context)
                         |> withCallResultLayout(context)
+                        |> prepareCallAdmissibility
                         |> markCallSpineResult(context) with
                             | stage ->
                                 stage
@@ -21097,11 +21875,11 @@ let lowerCallInFrame (spine: CoreCallSpine) function argument expected (site: Ma
                                 |> withCallResultType(applied)
                                 |> noteTakenOverCallResult(context))
 
-let restoreCallArgumentLabelStart (start: Int) (lowered: LoweredCoreValue) =
+let restoreCallArgumentLabelStart (start: Int) (active: Bool) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state } ->
             let group = state.tcoState
-            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start))
+            in lowered with state = (state with tcoState = (group with callArgumentLabelStart = start, callArgumentFrameActive = active))
 
 // Stage 0's `NoteDiscardedResultArgument`: a lambda ignoring its parameter applied to a call.
 let noteDiscardedResultArgument (spine: CoreCallSpine) (state: CoreLoweringState) =
@@ -21139,11 +21917,13 @@ let lowerCall (spine: CoreCallSpine) function argument expected (site: Maybe(Cor
     |> noteDiscardedResultArgument(spine)
     |> takeDiscardedResultSite with
         | (resultDiscarded, noted) ->
-            noted
-            |> withCallArgumentRetainFrame([])(false)
-            |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
-            |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
-            |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))
+            let framed = noted with tcoState = (noted.tcoState with callArgumentFrameActive = true)
+            in
+                framed
+                |> withCallArgumentRetainFrame([])(false)
+                |> lowerCallInFrame(spine)(function)(argument)(expected)(site)(transfers)(tailCall)(resultDiscarded)(lower)
+                |> leaveCallArgumentRetainFrame(stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))
+                |> restoreCallArgumentLabelStart(stateCallArgumentLabelStart(state))(stateCallArgumentFrameActive(state))
 
 let failedIfPlan state error =
     CoreIfPlan(
@@ -21281,13 +22061,13 @@ let matchArmResultWith body (finalTemp: Int) (resultType: SemanticType) (borrows
         MatchArmResult(
             armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || retainedParameterPart || emptyListArm,
             armNewlyProduced = tempIsNewlyProduced(finalTemp)(state) || retainedParameterPart || emptyListArm,
-            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && (retainedParameterPart || forwardsPatternOwner(body)(state) == false) || isSelfFunnelArm(body)(state),
+            armRetainedOwner = containsInt(finalTemp)(statePatternOwnerResultTemps(state)) && (retainedParameterPart || forwardsPatternOwner(body)(state) == false) || armNeverReachesJoin(finalTemp)(state),
             armOwned = isRuntimeTemp(finalTemp)(state) || retainedParameterPart,
             armBorrowsLoopParameter = borrowsParameter && !retainedParameterPart,
             armFreshCell = constructsFreshCell(body)(state),
             armConsesOntoSelfResult = isConsChainOntoSelfCall(body)(state),
             armJoinsSelfConsingArms = nestedJoinConsesOntoSelfResult(body)(state),
-            armStoreTemp = if armNeverReachesJoin(body)(state)
+            armStoreTemp = if armNeverReachesJoin(finalTemp)(state)
             then -1
             else finalTemp
         ))
@@ -21652,9 +22432,20 @@ let recursive armsStoreRetains (arms: List(MatchArmResult)) (state: CoreLowering
         | [] -> true
         | arm :: rest -> (arm.armStoreTemp < 0 || isRuntimeTemp(arm.armStoreTemp)(state) && definedByRetain(arm.armStoreTemp)(state.reversedInstructions)) && armsStoreRetains(rest)(state)
 
+// Stage 0's RecordNeutralJoin: a join is unreachable only if all its arms are proven so.
+// Keep that proof through nested if/match joins without excluding any reaching call result.
+let recordNeutralJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match arms with
+        | [] -> state
+        | _ ->
+            if anyArmReachesJoin(arms)
+            then state
+            else withStateBackEdgeDummyTemps(resultTemp :: stateBackEdgeDummyTemps(state))(state)
+
 let markControlFlowJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
     ((given (marked: CoreLoweringState) ->
         marked
+        |> recordNeutralJoin(resultTemp)(arms)
         |> (given (owners: CoreLoweringState) ->
             if joinIsRetainedOwner(arms)
             then withStatePatternOwnerResultTemps(resultTemp :: statePatternOwnerResultTemps(owners))(owners)
@@ -22424,9 +23215,7 @@ let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType
                 |> canArenaResetLayout, scrutineeType = valueType))
             | SemTuple(_elements) -> Some(MatchScrutineeOwner(scrutineeTypeName = "Tuple", scrutineeIsList = false, scrutineeType = valueType))
             | SemNamed(_symbolId, _name, _arguments) as named ->
-                match state
-                |> stateConstructorLayouts
-                |> ownedTypeNameOf(named) with
+                match state |> stateOwnedTypeNameOf(named) with
                     | Some(typeName) -> Some(MatchScrutineeOwner(scrutineeTypeName = typeName, scrutineeIsList = false, scrutineeType = valueType))
                     | None -> None
             | _ -> None
@@ -22462,9 +23251,7 @@ let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
                         |> ArmResourceOwner(name)(slot)
                         |> Some
                     | None ->
-                        match state
-                        |> stateConstructorLayouts
-                        |> ownedTypeNameOf(resolved) with
+                        match state |> stateOwnedTypeNameOf(resolved) with
                             | Some(typeName) ->
                                 typeName
                                 |> ArmHeapOwner(slot)
@@ -22963,8 +23750,7 @@ let reuseMatchExhaustiveAndSafe (cases: List((Pattern, Expr, Maybe(Expr)))) (sta
                 | Some(typeName) ->
                     let required =
                         state
-                        |> stateConstructorLayouts
-                        |> constructorLayoutsOfType(typeName)
+                        |> stateConstructorsOfType(typeName)
                         |> constructorLayoutNames
                     in
                         let caseNames = constructorLayoutNames(layouts)
@@ -24295,7 +25081,7 @@ let trimPrefixCoversAll state patterns =
             | Some(name) ->
                 match trimAdtOfConstructor(state)(name) with
                     | Some(adtName) ->
-                        match trimAdtConstructorNames(stateConstructorLayouts(state))(adtName)([]) with
+                        match trimAdtConstructorNames(stateConstructorsOfType(adtName)(state))(adtName)([]) with
                             | [] -> false
                             | names ->
                                 []
@@ -24679,7 +25465,7 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
     in
         state
         |> enterFunctionOrigin(origin)
-        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
+        |> (given (current: CoreLoweringState) -> current with reversedInstructions = [], tcoState = (current.tcoState with callArgumentFrameActive = false))
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) ->
             withStateRecursiveGroupNames(bindingNames(selfBindings))(current))
@@ -26676,6 +27462,32 @@ let recordLateCopiedCellHead (request: ConsumerRequest) (ownedHead: LoweredCoreV
     |> recordLateCopiedCellPart(request)(ownedHead)(duplicatedHead)
     |> recordLateCopiedCellPart(request)(ownedTail)(duplicatedTail)
 
+// Stage 0's `RecordCallArgumentCellOwnerDuplicates`: an arena cons in an argument
+// never releases its pattern-owner references. The existing call-frame release takes
+// them back only when the result owns itself, or cannot reach the argument.
+// Successor cells retain their existing back-edge cleanup instead.
+let recordCallArgumentCellOwnerPart (owned: LoweredCoreValue) (duplicated: LoweredCoreValue) (state: CoreLoweringState) =
+    match (owned, duplicated) with
+        | (LoweredCoreValue { temp = original }, LoweredCoreValue { temp = duplicate, semanticType = semanticType }) ->
+            if original == duplicate
+            then state
+            else
+                let slot =
+                    if stateCollectingCallArgumentRetains(state)
+                    then -2
+                    else -3
+                in
+                    withCallArgumentRetainFrame((duplicate, slot, semanticType) :: stateCallArgumentRecordRetains(state))(stateCollectingCallArgumentRetains(state))(state)
+
+let recordCallArgumentCellOwnerDuplicates (request: ConsumerRequest) (ownedHead: LoweredCoreValue) (duplicatedHead: LoweredCoreValue) (ownedTail: LoweredCoreValue) (duplicatedTail: LoweredCoreValue) (cell: LoweredCoreValue) =
+    match cell with
+        | LoweredCoreValue { state = state, temp = temp, error = None } ->
+            if !stateCallArgumentFrameActive(state) || state.nextLabelId != stateCallArgumentLabelStart(state) || isRuntimeTemp(temp)(state) || request.borrowsCellParts || request.lateCopiedCellParts || request.recordFieldCell
+            then cell
+            else
+                cell with state = state |> recordCallArgumentCellOwnerPart(ownedHead)(duplicatedHead) |> recordCallArgumentCellOwnerPart(ownedTail)(duplicatedTail)
+        | _ -> cell
+
 let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpression tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -26693,6 +27505,7 @@ let finishConsTail (request: ConsumerRequest) (transfers: Bool) lower headExpres
                                     |> retainConsTail(cellRequest)(transfers)(headExpression)(tailExpression)(duplicatedHead)
                                     |> finishCons(cellRequest)(headExpression)(tailExpression)(duplicatedHead)
                                     |> recordLateCopiedCellHead(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
+                                    |> recordCallArgumentCellOwnerDuplicates(cellRequest)(ownedHead)(duplicatedHead)(ownedTail)(duplicatedTail)
                                     |> noteListHeadCell(tailExpression)(duplicatedHead)(duplicatedTail)
                                     |> keepArgumentExitCellOwned(request)(tailExpression)
 
@@ -27293,7 +28106,7 @@ let relocateSpecializationField (fieldType: SemanticType) (fieldTemp: Int) (stat
     if specializationFieldRelocatable(fieldType)(state)
     then
         match state with
-            | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { constructorLayouts = layouts, dropperLabels = cache } } ->
+            | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
                 match synthesizeToSpaceCopy(fieldTemp)(resolveType(state)(fieldType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
                     | (synthesis, resultTemp) -> (spliceInlineReleaseWith(unlocatedInstruction)(synthesis)(state), resultTemp)
     else (state, fieldTemp)
@@ -27828,7 +28641,19 @@ let noteOwnFieldParameterRetain (argument: Expr) (retained: Bool) (state: CoreLo
 // An arena cell built as a call's argument is no successor cell, the call's result is: its retain
 // of a parameter read is collected with the call argument's retains and released after the call
 // (stage 0's `RecordCallArgumentArenaRetain` in `RetainRuntimeManagedTcoConstructorArguments`).
-let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let keepLoopResultConstructorFieldRetainOwned (request: ConsumerRequest) (duplicate: Int) (fieldType: SemanticType) (state: CoreLoweringState) =
+    if generalRcEnabled(state) && (request.tailPosition || request.consTailPosition) && !containsUnresolvedLayout(resolveType(state)(fieldType))(state) && (match (stateTcoLoopFrame(state), stateBackEdgeArgumentSlot(state), request.transferSlot) with
+        | (Some(_frame), None, None) -> true
+        | _ -> false)
+    then
+        match freshLocal(state) with
+            | FreshLocal { state = allocated, local = ownedSlot } ->
+                allocated
+                |> emit(StoreLocal(ownedSlot)(duplicate))
+                |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(fieldType))
+    else state
+
+let retainConstructorLoopParameterArgument (request: ConsumerRequest) (runtimeManaged: Bool) (argument: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (state
     |> statePatternOwnerCopyTemps
     |> containsInt(temp), constructorArgumentParameterSlot(argument)(semanticType)(state)) with
@@ -27849,23 +28674,29 @@ let retainConstructorLoopParameterArgument (runtimeManaged: Bool) (argument: Exp
                                     |> (given (recorded: CoreLoweringState) ->
                                         if releasedAfterCall
                                         then recorded
-                                        else noteOwnFieldParameterRetain(argument)(true)(recorded))
+                                        else
+                                            recorded
+                                            |> noteOwnFieldParameterRetain(argument)(true)
+                                            |> (given (noted: CoreLoweringState) ->
+                                                if runtimeManaged
+                                                then noted
+                                                else keepLoopResultConstructorFieldRetainOwned(request)(duplicate)(semanticType)(noted)))
                                     |> (given (noted: CoreLoweringState) -> (noted, duplicate))
             else
                 match emitPendingConstructorFieldRetain(temp)(slot)(state) with
                     | (pending, pendingTemp) -> (noteOwnFieldParameterRetain(argument)(false)(pending), pendingTemp)
 
-let recursive retainLoopParameterArguments (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
+let recursive retainLoopParameterArguments (request: ConsumerRequest) (runtimeManaged: Bool) (arguments: List(Expr)) (temps: List(Int)) (semanticTypes: List(SemanticType)) (state: CoreLoweringState) (reversed: List(Int)) =
     match (arguments, temps, semanticTypes) with
         | (argument :: restArguments, temp :: restTemps, semanticType :: restTypes) ->
-            match retainConstructorLoopParameterArgument(runtimeManaged)(argument)(temp)(semanticType)(state) with
-                | (marked, markedTemp) -> retainLoopParameterArguments(runtimeManaged)(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
+            match retainConstructorLoopParameterArgument(request)(runtimeManaged)(argument)(temp)(semanticType)(state) with
+                | (marked, markedTemp) -> retainLoopParameterArguments(request)(runtimeManaged)(restArguments)(restTemps)(restTypes)(marked)(markedTemp :: reversed)
         | _ -> (state, reverse(reversed))
 
-let retainConstructorLoopParameterArguments (runtimeManaged: Bool) arguments lowered =
+let retainConstructorLoopParameterArguments (request: ConsumerRequest) (runtimeManaged: Bool) arguments lowered =
     match lowered with
         | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
-            match retainLoopParameterArguments(runtimeManaged)(arguments)(temps)(semanticTypes)(state)([]) with
+            match retainLoopParameterArguments(request)(runtimeManaged)(arguments)(temps)(semanticTypes)(state)([]) with
                 | (marked, markedTemps) -> lowered with state = marked, temps = markedTemps
         | _ -> lowered
 
@@ -28188,7 +29019,7 @@ let finishConstructorArguments arguments (request: ConsumerRequest) (stackAlloca
                                                     | (placed, placedRuntimeManaged) ->
                                                         placed
                                                         |> handConstructorFreshChildren(layout)(arguments)(resultType)(placedRuntimeManaged)(stackAllocate)
-                                                        |> retainConstructorLoopParameterArguments(placedRuntimeManaged)(arguments)
+                                                        |> retainConstructorLoopParameterArguments(request)(placedRuntimeManaged)(arguments)
                                                         |> retainRuntimeCellChildren(placedRuntimeManaged)(arguments)
                                                         |> finishConstructorAllocation(arguments)(stackAllocate)(layout)(resultType)(placedRuntimeManaged)
 
@@ -28809,9 +29640,7 @@ let recursive recordLayoutsDeclaringField (fieldName: Str) (layouts: List(CoreCo
 // one record type declares the field, by unifying the receiver with a fresh instance of that
 // type. An ambiguous or undeclared field leaves the receiver unresolved.
 let resolveRecordReceiverByFieldName (fieldName: Str) (receiverType: SemanticType) (state: CoreLoweringState) =
-    match state
-    |> stateConstructorLayouts
-    |> recordLayoutsDeclaringField(fieldName) with
+    match state |> stateConstructorsOfField(fieldName) with
         | layout :: [] ->
             match (instantiateConstructor(layout)(state), constructorResultName(layout)) with
                 | (CoreConstructorShape { state = instantiated, resultType = resultType }, Some(typeName)) ->
@@ -30584,14 +31413,6 @@ let finishCoreBuiltinReference layout lower state =
 // LowerVarUnbound/_topLevelBindingNames specialization (Lowering.cs:2844). Expression-only entry
 // points (lowerCoreExpression*) never populate topLevelNames, so this never fires for them — there
 // is no "later in the file" to be forward-referencing without a whole program.
-let recursive lookupTopLevelFunctionRef (name: Str) (refs: List((Str, Str, TypeScheme))) =
-    match refs with
-        | [] -> None
-        | (candidate, label, scheme) :: rest ->
-            if candidate == name
-            then Some((label, scheme))
-            else lookupTopLevelFunctionRef(name)(rest)
-
 // Stage 0's `LowerVarUnbound` for a registered top-level function: reached only when the scope
 // holds no binding for the name, from a body spliced into a scope that never captured it. The
 // function is already lowered (a genuine backward reference), has no environment, so its closure
@@ -30627,7 +31448,7 @@ let lowerCoreVariable name lower (state: CoreLoweringState) =
         | Some(binding) -> lowerBoundVariable(binding)(state)
         | None ->
             match state
-            |> stateTopLevelFunctionRefs
+            |> stateTopLevelFunctionRefIndex
             |> lookupTopLevelFunctionRef(name) with
                 | Some((label, scheme)) -> lowerTopLevelFunctionReference(label)(scheme)(state)
                 | None -> lowerUnboundVariable(name)(lower)(state)
@@ -31762,9 +32583,7 @@ let recursive ownerTypeNameOfSlot (slot: Int) (bindings: List(CoreBinding)) (sta
         | CoreBinding { location = CoreLocal(candidate), scheme = TypeScheme { body = bindingType } } :: rest ->
             if candidate == slot
             then
-                state
-                |> stateConstructorLayouts
-                |> ownedTypeNameOf(resolveType(state)(bindingType))
+                state |> stateOwnedTypeNameOf(resolveType(state)(bindingType))
             else ownerTypeNameOfSlot(slot)(rest)(state)
         | _ :: rest -> ownerTypeNameOfSlot(slot)(rest)(state)
 
@@ -31778,9 +32597,7 @@ let iterationOwnerTypeName (slot: Int) (state: CoreLoweringState) =
             |> stateOwnerReleasePlans
             |> lookupOwnerReleasePlan(slot) with
                 | Some((semanticType, _plan)) ->
-                    state
-                    |> stateConstructorLayouts
-                    |> ownedTypeNameOf(resolveType(state)(semanticType))
+                    state |> stateOwnedTypeNameOf(resolveType(state)(semanticType))
                 | None -> None
 
 // The runtime owners registered since the loop entry that still hold their reference at the back
@@ -32856,9 +33673,7 @@ and inlinedReferenceResolvesHere (name: Str) (visited: List(Str)) (state: CoreLo
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            if containsName(name)(state
-            |> stateConstructorLayouts
-            |> constructorLayoutNames) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None
+            if constructorNameKnown(name)(state) || containsName(name)(visited) || Ashes.Text.contains(name)(".") || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefIndex(state)) != None
             then true
             else
                 if state
@@ -33016,14 +33831,6 @@ let recursive lastArgument (arguments: List(Expr)) =
         | argument :: [] -> Some(argument)
         | _argument :: rest -> lastArgument(rest)
 
-let recursive lookupSpecializationCandidate (name: Str) (candidates: List((Str, List(Str), Expr))) =
-    match candidates with
-        | [] -> None
-        | (candidate, parameters, value) :: rest ->
-            if candidate == name
-            then Some((parameters, value))
-            else lookupSpecializationCandidate(name)(rest)
-
 // Stage 0's `IsFreshOwnershipResultCall`: the accumulator argument is itself a saturated call
 // whose callee's whole-program result reach keeps none of its parameters, so the value handed to
 // the specialization is freshly built here and aliased by nothing the specialization could
@@ -33107,12 +33914,7 @@ let specializationReferenceResolvesHere (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
         | Some(_binding) -> true
         | None ->
-            let constructors =
-                state
-                |> stateConstructorLayouts
-                |> constructorLayoutNames
-            in
-                Ashes.Text.contains(name)(".") || containsName(name)(constructors) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefs(state)) != None || containsName(name)(stateInlinableHelpers(state))
+            Ashes.Text.contains(name)(".") || constructorNameKnown(name)(state) || lookupTopLevelFunctionRef(name)(stateTopLevelFunctionRefIndex(state)) != None || containsName(name)(stateInlinableHelpers(state))
 
 let recursive specializationReferencesResolveHere (names: List(Str)) (state: CoreLoweringState) =
     match names with
@@ -33136,7 +33938,7 @@ let reuseSpecializedCallOf (spine: CoreCallSpine) (state: CoreLoweringState) =
             if stateReuseEnabled(state) && containsName(callee)(stateSpecializingInProgress(state)) == false
             then
                 match state
-                |> stateSpecializationCandidates
+                |> stateSpecializationCandidateIndex
                 |> lookupSpecializationCandidate(callee) with
                     | Some((parameters, value)) ->
                         match (specializationLinearParameter(parameters)(value), lastArgument(spine.arguments)) with
@@ -33602,11 +34404,17 @@ let ownContractHeadForTmcCell (request: ConsumerRequest) (headExpression: Expr) 
                     then
                         match generalCopyPlanOf(named)(state) with
                             | Some(plan) ->
-                                match emitGuardedDeepCopy(temp)(plan)(state) with
-                                    | (copied, ownedTemp) ->
-                                        copied
-                                        |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
-                                        |> success(ownedTemp)(semanticType)
+                                let heldRetains =
+                                    if isArenaCell(temp)(state.reversedInstructions)
+                                    then retainsHeldPastTheCopy(temp)([])(state.reversedInstructions)
+                                    else []
+                                in
+                                    match emitGuardedDeepCopy(temp)(plan)(state) with
+                                        | (copied, ownedTemp) ->
+                                            copied
+                                            |> emitHeldRetainReleases(heldRetains)(semanticType)
+                                            |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                                            |> success(ownedTemp)(semanticType)
                             | None -> lowered
                     else lowered
                 | _ -> lowered
@@ -33689,10 +34497,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprNotEqual(left, right) -> lowerCoreBinary(CoreNotEqualOperator)(left)(right)(lowerCore)(state)
         | ExprVar(name) -> lowerCoreVariable(name)(lowerCore)(state)
         | ExprQualifiedVar(receiverName, fieldName) -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
-        | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
+        | ExprLet(name, value, body, _parameters, annotation, _requirements) ->
             lowerLet(
                 name,
-                value,
+                bindingLambdaValue(annotation)(value)(state),
                 body,
                 lowerCore,
                 state
@@ -33700,7 +34508,7 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprLetRecursive(name, value, body, _parameters, annotation, _requirements) ->
             lowerLetRecursive(
                 name,
-                value,
+                bindingLambdaValue(annotation)(value)(state),
                 body,
                 annotation,
                 lowerCore,
@@ -33753,11 +34561,6 @@ let recursive flowEvidenceArgumentCount (arguments: List(Expr)) =
                     else 0
                 | _ -> 0
 
-let recursive flowReachFlags (parameters: List(Str)) (counts: List(ParameterReachEntry)) =
-    match parameters with
-        | [] -> []
-        | parameter :: rest -> (reachCountOf(parameter)(counts) > 0) :: flowReachFlags(rest)(counts)
-
 let recursive flowTrueFlags (count: Int) =
     if count == 0
     then []
@@ -33770,13 +34573,14 @@ let flowSummaryFlags (root: Expr) (arguments: List(Expr)) (state: CoreLoweringSt
     match unspanArgument(root) with
         | ExprVar(callee) ->
             match calleeSummaryOf(callee)(state) with
-                | Some(ReachSummary { function = ReachFunction { parameters = parameters }, reach = ResultReachState { counts = counts, isPoisoned = false } }) ->
+                | Some(ReachSummary { function = ReachFunction { parameters = parameters }, reach = ResultReachState { isPoisoned = false } } as summary) ->
                     let evidence = flowEvidenceArgumentCount(arguments)
                     in
                         if coreListLength(arguments) - evidence == length(parameters)
                         then
-                            counts
-                            |> flowReachFlags(parameters)
+                            state
+                            |> preparedReachOfSummary(summary)
+                            |> preparedCallReachFlags
                             |> append(flowTrueFlags(evidence))
                             |> Some
                         else None
@@ -33995,10 +34799,10 @@ let recursive checkTopLevelNames (names: List(Str)) (seen: MapTree(Str, Bool)) =
                     |> Ashes.Collection.Map.setStr(name)(true)
                     |> checkTopLevelNames(rest)
 
-let recursive letBindingSyntaxPairs bindings =
+let recursive letBindingSyntaxPairs bindings state =
     match bindings with
         | [] -> []
-        | LetBindingSyntax { name = name, value = value } :: rest -> (name, value) :: letBindingSyntaxPairs(rest)
+        | LetBindingSyntax { name = name, value = value, typeAnnotation = annotation } :: rest -> (name, bindingLambdaValue(annotation)(value)(state)) :: letBindingSyntaxPairs(rest)(state)
 
 let recursive recursiveMemberStartsOf (groupStart: Int) (bindings: List(LetBindingSyntax)) =
     match bindings with
@@ -34105,10 +34909,10 @@ let openedChainFailure (pending: List(PendingTopLevelClose)) (error: CoreLowerin
 // come precomputed from the program analysis: `escapeBody`, the innermost body the chain escapes
 // through (escapingChainBody), and `tailForwarded`, whether the chain's result forwards this
 // binding (isTailForwardedBindingResult).
-let openArenaBracketedTopLevelLet name value remainingBody (escapeBody: Maybe(Expr)) (tailForwarded: Bool) environment outerBindings stackClosure (pending: List(PendingTopLevelClose)) (state: CoreLoweringState) =
+let openArenaBracketedTopLevelLet name value annotation remainingBody (escapeBody: Maybe(Expr)) (tailForwarded: Bool) environment outerBindings stackClosure (pending: List(PendingTopLevelClose)) (state: CoreLoweringState) =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
-            match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+            match rewriteTraitConstrainedTopLevelValue(name)(bindingLambdaValue(annotation)(value)(state))(environment) with
                 | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> openedChainFailure(pending)(UnresolvedTraitEvidenceForwarding(error))(saved)
                 | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
                     match saved
@@ -34584,12 +35388,12 @@ let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailin
 // this shape. A partial application of a real multi-argument constructor would also syntactically
 // match `ExprCall(ExprVar(ctorName), _, _, _)` here, which is why the scheme's OWN arity is checked
 // against — not just that the call produces one argument — before ever answering `Some`.
-let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(CoreConstructorLayout)) =
+let directSingleArgRcConstructorLayout (expr: Expr) (state: CoreLoweringState) =
     match stripExprAt(expr) with
         | ExprCall(callee, _arg, _isSugar, _argLayout) ->
             match stripExprAt(callee) with
                 | ExprVar(constructorName) ->
-                    match findConstructorLayout(constructorName)(constructorLayouts) with
+                    match constructorLayout(constructorName)(state) with
                         | Some(CoreConstructorLayout { isZeroCost = true }) -> None
                         | Some(CoreConstructorLayout { scheme = TypeScheme { body = SemFunction(_parameterType, resultType, _effect) } } as layout) ->
                             match resultType with
@@ -34899,11 +35703,11 @@ let recursive layoutSchemes (layouts: List(CoreConstructorLayout)) =
         | [] -> []
         | CoreConstructorLayout { scheme = scheme } :: rest -> scheme :: layoutSchemes(rest)
 
-let recursive markTaglessLayouts (state: CoreLoweringState) (schemes: List(TypeScheme)) (layouts: List(CoreConstructorLayout)) =
+let recursive markTaglessLayouts (state: CoreLoweringState) (index: TaglessConstructorIndex) (layouts: List(CoreConstructorLayout)) =
     match layouts with
         | [] -> []
         | (CoreConstructorLayout { scheme = scheme, isZeroCost = isZeroCost } as layout) :: rest ->
-            (layout with tagless = isTaglessAdtConstructor(given (name: Str) -> isDeclaredResourceName(name)(state))(schemes)(isZeroCost)(scheme)) :: markTaglessLayouts(state)(schemes)(rest)
+            (layout with tagless = isTaglessAdtConstructorPrepared(given (name: Str) -> isDeclaredResourceName(name)(state))(index)(isZeroCost)(scheme)) :: markTaglessLayouts(state)(index)(rest)
 
 // The layouts of one type declaration with their tagless flag decided (see TaglessAdtLayout). The
 // sibling count and the resource walk see every registered constructor scheme, the declaration's
@@ -34911,7 +35715,8 @@ let recursive markTaglessLayouts (state: CoreLoweringState) (schemes: List(TypeS
 let decideTaglessLayouts (state: CoreLoweringState) (existingLayouts: List(CoreConstructorLayout)) (newLayouts: List(CoreConstructorLayout)) =
     markTaglessLayouts(state)(newLayouts
     |> append(existingLayouts)
-    |> layoutSchemes)(newLayouts)
+    |> layoutSchemes
+    |> prepareTaglessConstructorIndex)(newLayouts)
 
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
@@ -35083,19 +35888,19 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
             |> withStateRecursiveDeclarationSpan(Some(span))
             |> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(analysis)(pending)
         | TopLevelType(_declaration) :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+        | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation }, false) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
-                        | CoreLoweringState { bindings = outerBindings, programState = CoreProgramState { constructorLayouts = constructorLayouts } } ->
+                        | CoreLoweringState { bindings = outerBindings } ->
                             let nextAnalysis = peelAnalysis(1)(analysis)
                             in
-                                match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
+                                match directSingleArgRcConstructorLayout(value)(state) with
                                     | Some(layout) ->
                                         if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
                                         then
-                                            match openArenaBracketedTopLevelLet(name)(value)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
                                                 | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                 | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
                                         else
@@ -35103,19 +35908,19 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                 | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
                                     | None ->
-                                        match openArenaBracketedTopLevelLet(name)(value)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
+                                        match openArenaBracketedTopLevelLet(name)(value)(annotation)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
                                             | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                             | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
+        | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
                         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
                             match []
-                            |> prepareRecursiveGroup([(name, value)])(state)
+                            |> prepareRecursiveGroup([(name, bindingLambdaValue(annotation)(value)(state))])(state)
                             |> relabelSingleRecursive(lambdaId)
-                            |> openPreparedRecursiveGroup([(name, value)])(lowerCore)(outerBindings) with
+                            |> openPreparedRecursiveGroup([(name, bindingLambdaValue(annotation)(value)(state))])(lowerCore)(outerBindings) with
                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                 | LoweredCoreValue { state = opened, error = None } ->
                                     lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(1)(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
@@ -35125,7 +35930,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
                         | CoreLoweringState { bindings = outerBindings } ->
-                            let pairs = letBindingSyntaxPairs(bindings)
+                            let pairs = letBindingSyntaxPairs(bindings)(state)
                             in
                                 match []
                                 |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
@@ -35243,6 +36048,7 @@ let registerProgramExternals (items: List(TopLevelItem)) (state: CoreLoweringSta
             |> validateExternalProgramAbi(declarations) with
                 | ExternalAbiValidation { metadata = Some(ExternalProgramAbi { functions = functions, opaqueTypes = opaqueTypes }), error = None } ->
                     (state with externalFunctions = append(state.externalFunctions)(functions), externalOpaqueTypes = append(state.externalOpaqueTypes)(opaqueTypes))
+                    |> clearAdmissibilityAnswers
                     |> withStateExternalLayouts(functions
                     |> externalLayoutsOf
                     |> append(stateExternalLayouts(state)))
@@ -35579,8 +36385,7 @@ let entryValueHoldsNoHeap (semanticType: SemanticType) (state: CoreLoweringState
     resultSurvivesReset(semanticType)(state) || (match resolveType(state)(semanticType) with
         | SemNamed(_symbolId, name, _arguments) ->
             state
-            |> stateConstructorLayouts
-            |> constructorLayoutsOfType(name)
+            |> stateConstructorsOfType(name)
             |> declaredAllNullary
         | _ -> false)
 
@@ -35698,13 +36503,22 @@ let recursive reachSummariesByName (summaries: List(ReachSummary)) (byName: MapT
                 else summary)
             |> reachSummariesByName(rest)
 
-// Seeds the state with the whole-program result-reach summaries and their two indexes.
+let recursive callReachByFunctionKey (summaries: List(ReachSummary)) (index: MapTree(Str, PreparedCallReach)) =
+    match summaries with
+        | [] -> index
+        | ReachSummary { function = ReachFunction { key = key, parameters = parameters }, reach = reach } :: rest ->
+            index
+            |> Ashes.Collection.Map.setStr(key)(prepareCallReach(parameters)(reach))
+            |> callReachByFunctionKey(rest)
+
+// Seeds the state with completed summaries and all of their query indexes.
 let withReachSummaries (summaries: List(ReachSummary)) (state: CoreLoweringState) =
     state
     |> withStateReachSummaries(summaries)
     |> withStateReachTable(summariesTable(summaries))
     |> withStateReachByIdentity(reachSummariesByIdentity(summaries)(Ashes.Collection.Map.empty))
     |> withStateReachByName(reachSummariesByName(summaries)(Ashes.Collection.Map.empty))
+    |> withStateCallReachByKey(callReachByFunctionKey(summaries)(Ashes.Collection.Map.empty))
 
 // Stage 0's live-handler effects (`ComputeLiveHandlerEffects`): what one function's body tells the
 // analysis. The functions it calls by name, the functions it names as values (which may escape

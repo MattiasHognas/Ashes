@@ -1,0 +1,12 @@
+{
+  "name": "ashes-compiler-lexer-unicode-classification-tests",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "AshesCompiler.Frontend": { "path": "../../packages/frontend" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../../packages/frontend" }
+  }
+}

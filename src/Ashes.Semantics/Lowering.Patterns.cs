@@ -778,6 +778,7 @@ public sealed partial class Lowering
     {
         var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         var patternType = InferPatternType(match.Cases[i].Pattern, patternBindings);
+        NoteResolvedMatchBinders(valueTemp, patternBindings.Keys);
         var hasTupleArityMismatch = ValidateTuplePatternArity(Prune(valueType), match.Cases[i].Pattern);
         if (hasTupleArityMismatch)
         {
@@ -1534,6 +1535,7 @@ public sealed partial class Lowering
     {
         var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         var patternType = InferPatternType(cases[i].Pattern, patternBindings);
+        NoteResolvedMatchBinders(valueTemp, patternBindings.Keys);
         Unify(valueType, patternType);
 
         // The tag is already matched by the switch; only extract and bind payload fields.
@@ -1631,8 +1633,8 @@ public sealed partial class Lowering
     /// returning its tracking name together with the names of any fields that got their own
     /// independent ownership tracking (see <see cref="TrackIndependentlyOwnedMatchFields"/>) and so
     /// must not also be aliased to it by the caller. A scrutinee that is itself an existing owned
-    /// variable resolves to that variable's own owner unchanged — this narrower fix only applies to a
-    /// freshly constructed scrutinee, which is referenced nowhere else.
+    /// variable resolves to that variable's own owner unchanged. Other runtime-managed expressions
+    /// produce an owned reference but may share their wrapper, so field transfers check uniqueness.
     /// </summary>
     private (string? OwnerName, HashSet<string>? IndependentlyTrackedFieldNames) TrackRuntimeManagedMatchScrutineeOwner(
         Expr matchValue,
@@ -1668,17 +1670,20 @@ public sealed partial class Lowering
         int ownerSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownerSlot, valueTemp));
 
-        // A freshly constructed scrutinee is referenced nowhere else, so every one of its top-level
+        // A runtime-managed scrutinee owns its fields. Every one of its top-level
         // fields bound directly by a plain name (not `_`, and not a nested sub-pattern one level
         // further in) is extracted by EmitConstructorFieldBindings via a bare GetAdtField — never
-        // duplicated. The moment that happens, ownership of that one field has already moved from this
-        // wrapper to its own binding, so this wrapper's own eventual drop must never recurse into it:
+        // duplicated. For a unique wrapper, ownership of that field can move from this
+        // wrapper to its binding; shared wrappers require an independent field retain first.
+        // This wrapper's own eventual drop must never recurse into the transferred field:
         // doing so, on top of whatever that field's own independent tracking later does with it, would
         // release the same allocation twice. Give each such field its own independent tracking (instead
         // of only ever aliasing its name to this wrapper's), and record its index so this wrapper's own
-        // drop skips it. Nested sub-patterns and wildcard fields stay on the pre-existing aliasing path.
+        // drop skips it only on the initial unique/transfer branch. The initially shared branch
+        // retains the wrapper's original field responsibility even if other owners leave before
+        // cleanup. Nested sub-patterns and wildcard fields stay on the existing aliasing path.
         (HashSet<int>? excludedFieldIndices, HashSet<string>? trackedNames, ConstructorSymbol? matchedCtor) =
-            TrackIndependentlyOwnedMatchFields(ownedType, armPattern, patternBindings);
+            TrackIndependentlyOwnedMatchFields(valueTemp, ownedType, armPattern, patternBindings, out int transferFlagSlot);
 
         TrackOwnedValue(
             ownerName,
@@ -1689,7 +1694,8 @@ public sealed partial class Lowering
             ownedType,
             runtimeManaged: true,
             runtimeConstructor: excludedFieldIndices is not null ? matchedCtor : null,
-            excludedDropFieldIndices: excludedFieldIndices);
+            excludedDropFieldIndices: excludedFieldIndices,
+            excludedDropFieldsTransferFlagSlot: transferFlagSlot);
 
         return (ownerName, excludedFieldIndices is not null ? trackedNames : null);
     }
@@ -1722,9 +1728,9 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// For a freshly constructed match scrutinee, finds every top-level constructor field that this
+    /// For an owned runtime-managed match scrutinee, finds every top-level constructor field that this
     /// arm's pattern binds directly to a plain name (not a nested sub-pattern, not a wildcard) whose
-    /// own type is not arena-resettable, gives each one its own independent runtime-managed ownership
+    /// own type is not arena-resettable, retains it when the wrapper is shared, and gives it an ownership
     /// entry (overwriting whatever placeholder <see cref="TrackOwnedBindingsInPattern"/> already
     /// registered for it), and returns the set of field indices this represents so the caller can
     /// exclude them from the wrapper's own recursive drop. Returns a null field-index set (and leaves
@@ -1733,10 +1739,13 @@ public sealed partial class Lowering
     /// is left entirely on the pre-existing, more conservative behavior.
     /// </summary>
     private (HashSet<int>? FieldIndices, HashSet<string>? FieldNames, ConstructorSymbol? Constructor) TrackIndependentlyOwnedMatchFields(
+        int scrutineeTemp,
         TypeRef ownedType,
         Pattern armPattern,
-        IReadOnlyDictionary<string, TypeRef> patternBindings)
+        IReadOnlyDictionary<string, TypeRef> patternBindings,
+        out int transferFlagSlot)
     {
+        transferFlagSlot = -1;
         if (ownedType is not TypeRef.TNamedType
             || armPattern is not Pattern.Constructor ctorPattern
             || !TryResolveConstructorSymbol(
@@ -1775,6 +1784,9 @@ public sealed partial class Lowering
                 continue;
             }
 
+            EnsureMatchFieldTransferFlag(scrutineeTemp, ref transferFlagSlot);
+            RetainSharedMatchField(transferFlagSlot, fieldLocal.Slot, prunedFieldType);
+
             TrackOwnedValue(
                 fieldName,
                 fieldLocal.Slot,
@@ -1791,6 +1803,43 @@ public sealed partial class Lowering
         }
 
         return (fieldIndices, fieldNames, fieldIndices is not null ? matchedCtor : null);
+    }
+
+    // An owned call result may still share its wrapper with its caller. Only a unique wrapper
+    // transfers its field reference; a shared wrapper keeps that reference and the binding
+    // needs an independent one before its eventual drop or move.
+    private void EnsureMatchFieldTransferFlag(int scrutineeTemp, ref int transferFlagSlot)
+    {
+        if (transferFlagSlot >= 0 || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GRC_NO_SHAREDMATCHFIELD")))
+        {
+            return;
+        }
+
+        transferFlagSlot = NewLocal();
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, scrutineeTemp));
+        Emit(new IrInst.StoreLocal(transferFlagSlot, uniqueTemp));
+    }
+
+    private void RetainSharedMatchField(int transferFlagSlot, int fieldSlot, TypeRef fieldType)
+    {
+        if (transferFlagSlot < 0)
+        {
+            return;
+        }
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(uniqueTemp, transferFlagSlot));
+        string sharedLabel = NewLabel("rc_match_field_shared");
+        string doneLabel = NewLabel("rc_match_field_owned");
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(sharedLabel));
+        int fieldTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(fieldTemp, fieldSlot));
+        int ownedTemp = EmitRuntimeManagedTcoParamCopy(fieldTemp, fieldType);
+        Emit(new IrInst.StoreLocal(fieldSlot, ownedTemp));
+        Emit(new IrInst.Label(doneLabel));
     }
 
     /// <summary>

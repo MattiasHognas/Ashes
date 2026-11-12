@@ -2239,10 +2239,13 @@ public sealed partial class Lowering
     private (int, TypeRef) ApplyLoweredArgs(int closureTemp, IReadOnlyList<int> argTemps, TypeRef resultType)
     {
         int current = closureTemp;
+        string? stageLabel = ArenaCurryPlacementLabel(closureTemp);
         foreach (var argTemp in argTemps)
         {
             int next = NewTemp();
             Emit(new IrInst.CallClosure(next, current, argTemp));
+            RecordCurryStageCall(stageLabel);
+            stageLabel = stageLabel is null ? null : _functionReturnedClosureLabels.GetValueOrDefault(stageLabel);
             current = next;
         }
 

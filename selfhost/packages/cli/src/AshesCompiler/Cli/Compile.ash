@@ -43,6 +43,7 @@ import Ashes.Ffi
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.IO.Path
+import AshesCompiler.Cli.DiagnosticIrDump
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
@@ -483,7 +484,10 @@ let emitObject lowered =
                         | Error(message) -> Error(message)
                         | Ok(machine) -> emitObjectWithMachine(machine)(builder)(module_)(context))
 
-let linkExecutable objectBytes = linkLinuxExecutable(objectBytes)(entrySymbolName)
+let linkExecutable program objectBytes =
+    program
+    |> externalLibraries
+    |> linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)
 
 // The output's directory is created first, as stage 0 does, so a fresh project's
 // `<outDir>/<name>` needs no prior `mkdir`.
@@ -515,7 +519,7 @@ let emitAndLink outputPath optimized =
     match emitObject(optimized) with
         | Error(message) -> Error(message)
         | Ok(objectBytes) ->
-            match linkExecutable(objectBytes) with
+            match linkExecutable(optimized)(objectBytes) with
                 | Error(message) -> Error(message)
                 | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
@@ -527,7 +531,10 @@ let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabl
         | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
             optimized
             |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
-            |> (given (_) -> emitAndLink(outputPath)(optimized))
+            |> (given (_) ->
+                match writeDiagnosticIrDump(lowered)(optimized) with
+                    | Error(message) -> Error(message)
+                    | Ok(_) -> emitAndLink(outputPath)(optimized))
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.

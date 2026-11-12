@@ -2979,8 +2979,13 @@ public sealed partial class Lowering
     {
         bool consedTail = Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILREBUILD") is null
             && IsConsedTailArgument(state, ordinal, structural, tailOwners, parameterScope);
+        // A helper refill composes with the already-proven consumed-tail/cons-tail edges.
+        // The existing placement gates still decide whether this element graph can be owned;
+        // the back edge then normalizes the refill before releasing its borrowed producers.
+        bool callRefill = Environment.GetEnvironmentVariable("GRC_NO_CONSEDTAILCALLREFILL") is null
+            && structural is Expr.Call;
         state.ConsedTailEdges[ordinal] = (state.ConsedTailEdges[ordinal] ?? true)
-            && (consedTail || local == TcoSelfCallArgumentShape.ConsumedTail);
+            && (consedTail || callRefill || local == TcoSelfCallArgumentShape.ConsumedTail);
         state.AnyConsedTailEdge[ordinal] |= consedTail;
     }
 

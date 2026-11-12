@@ -313,7 +313,7 @@ internal static partial class LlvmCodegen
 
         using LlvmTargetContext target = LlvmTargetSetup.Create(Backends.TargetIds.LinuxX64, options.OptimizationLevel, options.TargetCpu, options.ParallelWorkerStackBytes, options.ParallelWorkerCap);
         CompilePhaseTiming.Measure("backend.emit-module", () =>
-            EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, usesTlsRuntime));
+            EmitLinuxX64ProgramModule(target, program, options, usesTlsRuntime));
 
         CompilePhaseTiming.Measure("backend.verify", () => VerifyModule(target));
         CompilePhaseTiming.Measure("backend.llvm-passes", () =>
@@ -492,6 +492,10 @@ internal static partial class LlvmCodegen
         LlvmApi.SetLinkage(glibcMarker, LlvmLinkage.Internal);
     }
 
+    internal static void EmitLinuxX64ProgramModule(
+        LlvmTargetContext target, IrProgram program, BackendCompileOptions options, bool usesTlsRuntime)
+        => EmitProgramModule(target, program, "entry", LlvmCodegenFlavor.LinuxX64, options, usesTlsRuntime);
+
     private static void EmitProgramModule(
         LlvmTargetContext target,
         IrProgram program,
@@ -555,6 +559,26 @@ internal static partial class LlvmCodegen
         EmitProgramModuleNetworking(target, flavor, flags, arena, imports, i32, i32Ptr, usesTlsRuntime, nounwindAttr);
         EmitProgramModuleParallel(target, program, flavor, flags, nounwindAttr);
         EmitProgramModuleFunctions(target, program, entryFunctionName, flavor, options, flags, arena, imports, i32, i32Ptr, i64, voidType, closureFunctionType, stringLiterals, nounwindAttr);
+        if (options.EmitDebugInfo)
+        {
+            PreserveDebugFramePointers(target);
+        }
+    }
+
+    // Runtime helpers need the same frame chain as source functions: a sample inside memcpy
+    // must still unwind to its Ashes caller. Naked signal restorers cannot have a prologue.
+    private static void PreserveDebugFramePointers(LlvmTargetContext target)
+    {
+        uint nakedKind = LlvmApi.GetEnumAttributeKindForName("naked");
+        LlvmAttributeHandle framePointer = LlvmApi.CreateStringAttribute(target.Context, "frame-pointer", "all");
+        for (LlvmValueHandle function = LlvmApi.GetFirstFunction(target.Module); function.Ptr != 0; function = LlvmApi.GetNextFunction(function))
+        {
+            if (LlvmApi.IsDeclaration(function) == 0
+                && LlvmApi.GetEnumAttributeAtIndex(function, LlvmApi.AttributeIndexFunction, nakedKind).Ptr == 0)
+            {
+                LlvmApi.AddAttributeAtIndex(function, LlvmApi.AttributeIndexFunction, framePointer);
+            }
+        }
     }
 
     private readonly record struct EmitProgramModuleFlags(

@@ -993,6 +993,7 @@ format is target-dependent.
 | Aspect | Effect |
 |--------|--------|
 | **Debug metadata** | Debug information is emitted into the output binary; the exact sections and format depend on the target platform. |
+| **Frame pointers** | Stage 0 preserves frame pointers in debug entry, lifted functions, and generated runtime helpers (except naked signal restorers), including with explicit optimization. This supports frame-pointer stack sampling such as Linux `perf record --call-graph fp`. Inlined and tail-eliminated calls do not acquire physical stack frames. Non-debug compilation keeps LLVM's normal frame-pointer policy. |
 | **Optimization** | Without an explicit `-O` flag, optimization defaults to `-O0` for the most faithful single-stepping. An explicit `-O1`/`-O2`/`-O3` is honored (no cap), so a profiled debug build matches the optimized binary's inlining. The DWARF stays valid at every level — the backend re-verifies the module after optimization when debug info is requested. |
 | **Compile summary** | An extra `Debug: yes` line is printed in the `ashes compile` success output. |
 | **Target triple** | `--debug` does not change the Windows LLVM target triple; the current implementation continues to target `x86_64-pc-windows-msvc`. |

@@ -15,11 +15,13 @@ import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
 import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 export (
     type TypeEnvironment(..),
     type ExternalFunctionInferenceDefinition(..),
     type ConstructorInferenceDefinition(..),
     type ConstructorFieldGroup(..),
+    type HeapConstructorLookupIndex(..),
     type CapabilityInferenceDefinition(..),
     type CapabilityOperationInferenceDefinition(..),
     type CapabilityProviderInferenceDefinition(..),
@@ -130,11 +132,16 @@ type ExternalFunctionInferenceDefinition =
     | directScheme: TypeScheme
     | firstClassScheme: Maybe(TypeScheme)
 
+type HeapConstructorLookupIndex =
+    | groups: MapTree(Int, MapTree(Str, ConstructorFieldGroup))
+    | records: MapTree(Int, MapTree(Str, Bool))
+
 type TypeEnvironment =
     | packageId: Str
     | bindings: List((Str, TypeScheme))
     | constructors: List(ConstructorInferenceDefinition)
     | constructorFieldGroups: List(ConstructorFieldGroup)
+    | heapConstructorIndex: Maybe(HeapConstructorLookupIndex)
     | capabilities: List(CapabilityInferenceDefinition)
     | traits: List(TraitInferenceDefinition)
     | traitImplementations: List(TraitImplementationInferenceDefinition)
@@ -267,7 +274,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -285,7 +292,7 @@ let addTypeBinding name scheme (environment: TypeEnvironment) =
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
     match addTypeBinding(name)(scheme)(environment) with
-        | TypeEnvironment { constructors = constructors } as withBinding -> withBinding with constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors
+        | TypeEnvironment { constructors = constructors } as withBinding -> withBinding with constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, heapConstructorIndex = None
 
 let addCapabilityBinding name scheme operations (environment: TypeEnvironment) =
     match environment with

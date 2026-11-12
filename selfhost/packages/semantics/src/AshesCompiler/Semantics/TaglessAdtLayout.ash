@@ -20,6 +20,7 @@
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 export (
     value adtWordSizeBytes,
     value adtTagOffsetBytes,
@@ -32,6 +33,9 @@ export (
     value countConstructorsOfType,
     value isResourceBearingType,
     value isTaglessAdtConstructor,
+    type TaglessConstructorIndex,
+    value prepareTaglessConstructorIndex,
+    value isTaglessAdtConstructorPrepared,
 )
 
 let adtWordSizeBytes = 8
@@ -157,4 +161,74 @@ let isTaglessAdtConstructor (isDeclaredResource: Str -> Bool) (schemes: List(Typ
             if isZeroCost || isCompilerProvidedTypeName(typeName) || isDeclaredResource(typeName) || countConstructorsOfType(typeName)(schemes) != 1
             then false
             else !anyResourceBearingType(isDeclaredResource)(schemes)([])(fields)
+        | _ -> false
+
+// One immutable index per declaration-layout decision. Keys deliberately use names, matching
+// the existing tagless resource walk; generic arguments are substituted at each reaching use.
+type TaglessConstructorShape =
+    | fields: List(SemanticType)
+    | resultArguments: List(SemanticType)
+
+type TaglessConstructorIndex =
+    | byName: MapTree(Str, List(TaglessConstructorShape))
+
+let indexedConstructorShapes (name: Str) (index: TaglessConstructorIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.byName) with
+        | Some(shapes) -> shapes
+        | None -> []
+
+let recursive indexConstructorSchemes (schemes: List(TypeScheme)) (index: TaglessConstructorIndex) =
+    match schemes with
+        | [] -> index
+        | scheme :: rest ->
+            match constructorSchemeFields(scheme) with
+                | (fields, SemNamed(_id, name, arguments)) ->
+                    let shape = TaglessConstructorShape(fields = fields, resultArguments = arguments)
+                    in indexConstructorSchemes(rest)((index with byName = Ashes.Collection.Map.setStr(name)(shape :: indexedConstructorShapes(name)(index))(index.byName)))
+                | _ -> indexConstructorSchemes(rest)(index)
+
+let prepareTaglessConstructorIndex (schemes: List(TypeScheme)) =
+    // Prepending the reversed input preserves constructor declaration order within each group.
+    indexConstructorSchemes(reverse(schemes))(TaglessConstructorIndex(byName = Ashes.Collection.Map.empty))
+
+let recursive indexedResourceBearing (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (visiting: List(Str)) (semanticType: SemanticType) =
+    match semanticType with
+        | SemOpaque(name) -> isDeclaredResource(name)
+        | SemNamed(_id, name, arguments) ->
+            if isBuiltinResourceTypeName(name) || isDeclaredResource(name)
+            then true
+            else
+                if containsTypeName(name)(visiting)
+                then false
+                else
+                    index
+                    |> indexedConstructorShapes(name)
+                    |> indexedConstructorResource(isDeclaredResource)(index)(name :: visiting)(arguments)
+        | SemTuple(elements) -> indexedAnyResource(isDeclaredResource)(index)(visiting)(elements)
+        | SemList(element) -> indexedResourceBearing(isDeclaredResource)(index)(visiting)(element)
+        | _ -> false
+and indexedAnyResource (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (visiting: List(Str)) (types: List(SemanticType)) =
+    match types with
+        | [] -> false
+        | head :: rest -> indexedResourceBearing(isDeclaredResource)(index)(visiting)(head) || indexedAnyResource(isDeclaredResource)(index)(visiting)(rest)
+and indexedConstructorResource (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (visiting: List(Str)) (arguments: List(SemanticType)) (shapes: List(TaglessConstructorShape)) =
+    match shapes with
+        | [] -> false
+        | shape :: rest ->
+            let fields =
+                map(arguments
+                |> resultParameterMapping(shape.resultArguments)
+                |> applySubstitution)(shape.fields)
+            in indexedAnyResource(isDeclaredResource)(index)(visiting)(fields) || indexedConstructorResource(isDeclaredResource)(index)(visiting)(arguments)(rest)
+
+let isTaglessAdtConstructorPrepared (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (isZeroCost: Bool) (scheme: TypeScheme) =
+    match constructorSchemeFields(scheme) with
+        | ([], _result) -> false
+        | (fields, SemNamed(_id, typeName, _arguments)) ->
+            if isZeroCost || isCompilerProvidedTypeName(typeName) || isDeclaredResource(typeName)
+            then false
+            else
+                match indexedConstructorShapes(typeName)(index) with
+                    | _only :: [] -> !indexedAnyResource(isDeclaredResource)(index)([])(fields)
+                    | _ -> false
         | _ -> false

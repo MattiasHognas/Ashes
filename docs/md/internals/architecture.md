@@ -40,6 +40,13 @@ Each pipeline project's public surface is documented directly from its `///` XML
 the [Frontend](api/frontend.md), [Semantics](api/semantics.md), [Backend](api/backend.md), and
 [Formatter](api/formatter.md) API references.
 
+The self-hosted lexer keeps its ASCII fast paths and UTF-8 byte spans. Its non-ASCII letter,
+identifier-continuation and whitespace predicates are generated pure-Ashes integer comparisons
+in `UnicodeClassification.ash`, preserving the three fixed regex patterns from the pinned PCRE2
+payload. `scripts/selfhost-dev/generate-lexer-unicode.sh` regenerates or verifies that source;
+`selfhost/tests/lexer-unicode-classification` compares all Unicode code points against the payload.
+Generation is a development step, not part of compiling with the self-hosted compiler.
+
 ---
 
 ## Project Dependency Graph
@@ -253,6 +260,12 @@ Token secrets are random 256-bit values, shown once and stored only as SHA-256 h
 ## Backend Architecture
 
 The backend converts IR into a native executable through LLVM:
+
+The self-hosted backend carries floating-point temporaries as their raw `f64` bits in an
+`i64` word. `IntToFloat` uses signed integer-to-float conversion before packing that word;
+`FloatToInt` unpacks it before LLVM's signed conversion, matching stage 0. `RuneFromInt`
+checks the Unicode scalar bounds and excludes surrogates, then constructs `Some` or `None`
+using the instruction's existing arena/RC placement flag.
 
 ```mermaid
 flowchart TD
@@ -778,6 +791,68 @@ Shared analysis infrastructure the passes build on:
 | `Lowering.DirectCalleeAnalysis` | `Lowering.DirectCalleeAnalysis.cs` | Whether a let-bound name is only ever used as a direct call target | Stack allocation of non-escaping closures |
 | `IrCompileTimeEval` | `IrCompileTimeEval.cs` | The whole-program set of provably evaluable (pure, terminating under a budget) functions | Whole-call folding and, as a purity oracle, local CSE |
 
+A runtime-managed match scrutinee owns a reference, which does not imply a unique
+wrapper: a call may return a retained alias. Stage 0's direct constructor-field
+ownership transfer checks wrapper uniqueness. Shared wrappers retain each eligible
+field before that field becomes an independent owner; unique wrappers transfer
+without an extra retain. A local flag remembers this initial distinction through
+deferred loop cleanup. Only the transferred branch excludes fields from the
+wrapper drop; the retained branch performs an ordinary full drop, including its
+original child references if the wrapper has since become unique. Stage 1 keeps
+constructor bindings aliased to the whole scrutinee owner.
+
+Loop-owned match results record names from resolved pattern bindings, in both
+linear and tag-switch lowering. Bare nullary constructor tests such as `None` are
+not binders: treating them as names of the old value falsely makes a later fresh
+`None` look like an escaping alias and prevents the existing back-edge release
+proof. Explicit `as` aliases and other real bindings remain in the reach analysis.
+Stage 0 exposes `GRC_NO_RESOLVEDMATCHBINDERS` for regression comparisons;
+`GRC_NO_SHAREDMATCHFIELD` disables the shared-wrapper field retain above.
+
+Unspecialized reuse fallback calls record their actual lexical callee and its
+returned stages for a final check before Perceus placement. A stage that only
+constructs an arena environment and arena closure borrows its captured argument
+through the returned closure; it
+cannot consume a duplicate reference. The existing strict currying-stage matcher
+proves this shape and rejects calls, drops, owned allocations and pending lowering
+instructions; non-owning aliases of captured source loads are permitted. Placement
+follows argument aliases through the returned closure to its later uses. This
+placement fact does not change resource ownership summaries,
+call adoption, or result reachability. `GRC_NO_ARENACURRYBORROW` disables it.
+
+Closure-capture normalization projects record and owned-child eligibility directly
+from settled cached facts; cache misses read the existing copy-plan view once,
+behind the resource guard. Boolean cache hits never copy child descriptors. Runtime
+result droppability requests the existing path-sensitive graph verdict directly.
+Both queries preserve settled monomorphic full-fact cache answers; uncached
+queries do not construct unrelated heap-layout facts or retain new cache state.
+
+Result-reach ancestor-pair detection indexes exact token names per query and
+checks slash-delimited prefixes only when a nonempty suffix follows. Duplicate
+names and count ordering are unchanged. The capped-count short-circuit avoids
+index construction; tokenShared retains its distinct ancestor semantics.
+
+Result-reach sum and branch-join merges preserve ordered count lists and the first
+matching count, including negative sentinel behavior. For two tables of at least
+256 entries, per-query string maps replace repeated cross-table scans. Smaller
+or skewed merges retain the original list path; duplicate detection independently
+uses its original scan below 256 entries. Repeated right-hand names still select
+the original entry-by-entry fallback. The cutoff reflects measured construction
+cost, and introduces no semantic size limit or retained cross-query state.
+
+The self-hosted inspect-only parameter fixpoint keeps its public ownership table
+in registration order. Each pass builds a private string-keyed lookup index from
+the complete previous table before walking any function bodies. A second name
+occurrence permanently marks that index entry ambiguous, including later third
+occurrences. Handoffs still require an unshadowed name and exact argument count;
+newly promoted parameters become visible only in the following pass. The index
+has pass-local lifetime and is not retained between independent inference calls.
+The three stage-0 rules are not mirrored for this case: unchanged stage 1 is
+already flat at 100 and 1000 complete inference invocations on the exact original
+AST, including expression wrappers and byte spans. Reproducible fixtures and the
+historical comparison renderer live in `selfhost/tests/ownership-lookup/`.
+
+
 Which side does what. Everything that depends on ownership, reference counting,
 reuse, arena scoping, trait evidence, capabilities, purity across closures and
 user ADTs, or closure construction is Ashes-only: LLVM sees opaque calls and
@@ -858,6 +933,72 @@ lifetime substrate for escaping ordinary heap graphs; compiler-proven scoped
 values, scheduler state, OS-backed payload views, and a small number of
 specialized data-structure regions retain explicit region lifetimes. There is
 no tracing garbage collector and no ownership syntax in the source language.
+
+### Generic variant loop roots
+
+A fully resolved generic variant can use an owned RC loop slot when canonical
+ownership facts prove a changing tail-selfcall argument and its exit contract is
+safe. A direct return of that same unshadowed parameter is safe. So is a scalar
+result, a general-RC result normalized before parameter release, or an exhaustive
+unpoisoned proof that the result cannot reach the parameter at any depth. The
+concrete candidate is reserved before persistent-region specialization; reservation
+only declines that specialization, and final RC admission still requires the exit
+proof. Entry acquires an independent root; each back edge acquires
+all successor roots before releasing predecessors and iteration temporaries. The
+normalizer retains existing RC subtrees and only normalizes fresh arena cells, so
+this does not introduce a whole-map copy on each update.
+
+The contextual rule declines TMC, invariant/shadowed parameters, hidden evidence
+parameters, unresolved or inadmissible layouts, and unproven terminal returns.
+In particular, a polymorphic tuple result can force arena demotion whose
+unsupported list-field copy borrows from the released RC root. Such exits retain
+the previous placement until an independent returned-field ownership contract is
+proved. `GRC_NO_GENERICVARIANTLOOPRC=1` disables the rule; an unset or empty value
+leaves it enabled. This does not broaden context-free generic layout predicates.
+`GRC_NO_UNREACHEDGENERICLOOPRC=1` disables the additional exit proofs and early
+reservation while preserving the original direct-root rule.
+
+The exact nested-map accumulator regression is flat under unchanged stage 1 at
+two round counts, so this stage-0 placement correction has no stage-1 mirror.
+That exemption is limited to this loop: the larger resource-query fixture still
+has pre-existing stage-1 growth, measured separately from candidate regressions.
+
+The visited-map regression separately checks a map of path lists while the pending
+work list releases its old references. Its scalar-result and owned-tuple-result loops
+are flat at two counts under unchanged stage 1 when constructor heads are built directly. This is a scoped
+exemption for generic-loop placement, not for the separate TMC retain correction.
+
+### TMC constructor heads discharge copied field retains
+
+An arena constructor used as a tail-modulo-constructor list head can already hold
+protective RC retains for its fields. Immediate normalization gives the RC head
+its own references, but the discarded arena shell has no destructor to discharge
+the earlier retains. Both stages use existing construction provenance to collect
+only single-use retains stored in that arena head or its arena children, then
+release them after normalization has acquired its own references. RC-allocated
+heads are excluded. `GRC_NO_TMCCONSTRUCTORHEADRETAINS=1` disables this correction
+in stage 0; empty or unset leaves it enabled.
+
+The exact path-worklist template leaked in stage 1, so the matching
+`ownContractHeadForTmcCell` correction is required. The shared-query fixtures also
+exposed an unannotated visited-map reducer failure; it remains a separate coverage
+limitation, preserved under `selfhost/tests/shared-query-rc-regressions`, and is
+not claimed fixed by annotating the regression's loop parameters.
+
+### Generic call argument representation
+
+When a quantified call parameter requires a persistent-region copy, ownership
+metadata follows the actual argument temp. The copied value has no RC header and
+must not inherit the source binding's adoption, retain, or accessor-result facts.
+Only a real conversion takes this route; scalar/no-op copies and deliberate RC
+handoffs retain their existing contracts. Resource-bearing and unsupported layouts
+remain excluded by the copy-safety proof. Named or borrowed sources keep their ordinary owner and release. A fresh owned
+source is recorded separately for release after the call, since the independent
+copy keeps none of its children. Synthesized to-space copiers borrow their input, preventing
+lifetime placement from inserting an unconsumed retain around the read-only copy.
+The call's result-ownership and requested-result contracts remain independent.
+`GRC_NO_TOSPACEARGUMENTREPRESENTATION=1` disables the representation correction for
+regression diagnosis; unset or empty leaves it enabled.
 
 ### The trade this model makes
 
@@ -1353,18 +1494,134 @@ old reference. This conditional implementation still presents one uniform
 "consume left, produce target" contract to TCO parallel assignment, preventing
 both a predecessor double-drop and a retained old reservation.
 
+Self-hosted resource-containment and unresolved-type classification use a per-query worklist
+with shared visits keyed by complete instantiated types. Shared branches are expanded once
+instead of once per path; regular cycles terminate without caching a path-local negative answer
+as a fact about a type. An ancestor reached at different generic arguments switches to a
+path-aware worklist preserving the existing name-cycle cuts. This worklist shares an exact
+type visit only when an earlier visit has a subset of its blocked ancestor names, so all paths
+available to the skipped visit remain covered. Incomparable ancestor sets can still require
+separate expansions; this is not a general linear-time guarantee. The path-aware visited index
+first selects the exact symbol ID and type name using nested maps, then compares complete
+instantiations and blocked-path subsets only inside that nominal bucket. Neither generic
+arguments nor incomparable blocked paths are merged; bucket insertion preserves the previous
+newest-first comparison order. This avoids structural equality against unrelated named types
+without changing traversal order or publishing negative facts. Nominal visit records own
+their retained type/path pair, avoiding growth observed for tuple payloads under stage 1.
+Work items retain complete type roots,
+and the temporary query state is released through ordinary inferred ownership.
+General RC admissibility asks only for containment flags and ordered child type/drop-kind
+pairs. It uses `classifyHeapAdmissibility` for generic or uncached types rather than eagerly
+computing unrelated copy/reuse layouts and child copy kinds. A monomorphic cache hit projects
+the same facts from the existing full layout; eligibility guards and cycle rules are unchanged.
+Copy-plan queries similarly use a dedicated `HeapCopyPlanFacts` view on cache misses: shallow
+copy eligibility, the four runtime-layout flags consulted by the planner, arena deep-copy
+eligibility, and ordered constructor/field/type/drop-kind children. The view omits child copy
+kinds and unrelated root drop/reuse/rejection classifications. Settled monomorphic full-cache
+entries remain authoritative through projection. Constructor order, recorded contract answers,
+inline-plan recursion, and the general-RC normalizer fallback retain their existing decisions.
+Named-root copy-plan and dropper queries share constructor groups, recordness, and a resource
+query within that classification's immutable environment. A completed regular resource-free
+walk supplies exact negative facts for its visited named types; a changing-instantiation
+fallback supplies a negative only for its queried root. Recursive layout gates consult these
+facts through symbol-ID/type-name buckets followed by complete instantiated-type equality.
+Root constructor and record facts additionally require exact root identity. The context owns
+its retained type roots, ends with the classification, and never caches layout answers or
+changes the nominal ancestor paths used by recursive layout checks.
+The general-RC admissibility lowering query shares pending work across branches and falls back to its original path walk
+when display-based cycle keys would merge distinct instantiated types. Completed root answers
+are cached by exact type in a bounded, function-local list; substitutions, layout facts,
+declarations, and inference defaults invalidate that list. Dropper synthesis separately caches
+a drop-specific view within one immutable type environment, sharing it with nested synthesis
+and discarding it at the top-level synthesis boundary. The view preserves containment flags,
+shallow-copy eligibility, the four relevant runtime layout flags, and ordered child ownership
+descriptors. It omits child copy kinds and unrelated reuse/deep-copy support queries. Existing
+full layout-cache entries remain authoritative and are projected before the dedicated cache
+is consulted. Both caches use exact instantiated type identity within symbol-id buckets.
+Within that synthesis, admissibility queries project the containment flags and ordered
+child type/drop-kind pairs from an existing exact-type layout-cache hit. A miss still
+uses the dedicated admissibility classifier. Path-dependent admissibility answers are
+not cached, and neither cache keys nor classification environments change.
+Tagless-layout decisions prepare a constructor-shape index once for the declaration's complete
+scheme environment. Resource traversal looks up only the matching type name before substituting
+its generic fields, preserving constructor order and the existing name-based ancestor cuts.
+The index is rebuilt for each declaration decision and does not outlive that environment.
+Heap constructor groups are accumulated in a local index keyed by both symbol ID and type name,
+then returned in first-seen group order with constructor fields in declaration order. This avoids
+rebuilding the preceding group-list prefix for each constructor without reusing renumbered
+groups across declarations. Scope-copy decisions and internal shallow-copy checks ask a dedicated
+predicate, so a negative shallow answer does not calculate an unused deep-copy classification.
+Child projections likewise avoid unrelated root classification. `classifyHeapChildren` returns
+the same ordered field descriptors as full classification; `classifyHeapChildTypes` returns only
+their types without computing child drop/copy kinds. Both resolve zero-cost wrappers first,
+instantiate generic constructor fields at the use site, and preserve a list's element and
+self/tail edges. Lowering projects settled monomorphic cached facts before using either narrow
+query on a miss. The type-only view is used by bounded-copy and general-RC reachability walks;
+their path guards and ownership decisions are unchanged, and path-relative answers are not cached.
+`heap-shallow-copy-equivalence` and `heap-classification-plateau` compare the projections with
+full facts; `scripts/selfhost-dev/render-heap-child-projections.sh` extracts the Core query
+boundaries for cache-authority and fresh-state regression checks.
+Lowering also indexes raw constructor layouts by constructor name and result-type name. The
+constructor lookup retains the first declaration; type buckets retain declaration order.
+Replacing the layout list rebuilds both indexes, while inference and generic substitution
+remain at the use site. Dropper preparation separately indexes its freshly renumbered definitions,
+preserving first-seen type IDs and rebuilding when the definition environment changes.
+Heap classification retains exact `(symbol ID, type name)` maps for constructor groups and
+first-constructor record status in prepared environments. Incremental declarations extend those
+maps with the same first-match behavior as the ordered lists; unprepared environments retain
+the list-backed path. Lowering's field-name index preserves layout order and does not duplicate
+a layout whose field-name list repeats a name. All structural synthesis entry points reuse the
+prepared type-ID map rather than searching the ordered ID list for each nested type.
+The constructor index uses a nested field-name walk that threads the complete index
+through record updates. Unchanged fields retained into an arena call argument remain
+tracked after completed normalization branches within that argument: every preceding
+jump and switch target must already be defined before the retain. Open conditional arms
+still reject the proof. Once the callee's result owns its references, the existing call
+cleanup releases those temporary field retains (`GRC_NO_ARGRETCLOSEDREGION`, stage 0).
+A blanket rejection of any earlier label missed these retains and leaked the old field
+maps. The original nested builder is flat at two round counts in stage 1, so this case
+needs no mirrored rule or source-level representation workaround.
+Type resolution maintains separate maps for name resolution, parameters, provenance IDs,
+zero-cost representations, and external destructors. These have different shadowing predicates:
+for example, a nominal declaration does not hide an older external destructor from an
+external-only query. Updates retain the original declaration lists for ordered enumeration.
+`bash scripts/selfhost-dev/list-classification-callers.sh` lists classification entry points
+and wrapper references with their enclosing source functions. Resource-only and arena-deep-copy
+queries compute their respective predicates without constructing unrelated drop, child-copy,
+or reuse facts. Core resource queries first project any settled monomorphic answer. Callers
+whose layout requires exactly one constructor check that condition before classifying it.
+
+Completed function reach summaries have a separate index of per-argument reach counts, selected
+by the resolved function identity. Call lowering and flow flags reuse those counts rather than
+scanning reach paths for each argument query. Specialization candidates retain their earliest
+declaration in a prepared name index; successfully registered top-level closure references
+update a separate newest-entry index. Ordered lists and lexical/frame restoration retain their
+existing semantics.
+
+Returned-closure stage labels are stored directly in a persistent name map. Both registration
+sites replace the previous value, preserving the former prepended-list lookup's newest-entry
+semantics. Nested lowering carries the completed map back through the existing outer-frame
+restoration. Call-result placement and bounded curry-chain reachability share it, so each hop
+looks up one label without scanning every previously compiled function.
+
 These are compiler-internal operations. Resource ownership is separate:
 `CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
 resource-bearing closures and remains governed by the `ASH006`-`ASH008` diagnostics. A declared
 external resource carries its destructor symbol, library, ABI signature, and per-parameter
 borrow/consume metadata from frontend declarations through semantic ownership analysis into the IR;
 the backend emits automatic cleanup through the same external-call machinery as an explicit call.
+The self-hosted compile pipeline also forwards declared symbol/library pairs from that IR to the
+ELF linker. Explicit libraries take precedence over runtime defaults. Only undefined symbols in
+the emitted object produce dynamic imports, so unused declarations do not add library dependencies;
+an unresolved symbol with neither a declaration nor a runtime default remains a link error.
 An external `FfiBuffer(T)` parameter has source type `List(T)` but records a distinct call-scoped
 buffer shape in IR. Immediately before the direct native call, the backend counts the immutable list,
 allocates a target-pointer-width contiguous array in the current stack frame, walks the list again to
 copy each opaque handle, and passes the array address. Empty lists pass null. The address never exists
 as an Ashes value and the declaration cannot be called indirectly, returned, pointer-nested, or used
 with affine resource elements, so its storage cannot escape the call boundary.
+The self-hosted emitter mirrors this count/allocation/fill sequence in `IrCodegen.External.ash`;
+its temporary native array neither retains nor releases the borrowed handles.
 An external `out T` parameter is likewise a declaration-only call shape and consumes no Ashes
 argument. The compiler creates a naturally aligned, pointer-sized stack slot initialized to null,
 passes its address to the native call, and loads it exactly once after the call. Null materializes as
@@ -1379,6 +1636,11 @@ string. Conversion failures are explicit `Result` errors. Borrowed pointers are 
 non-null pointer is passed exactly once to its declaration-validated external destructor after the
 copy or failed conversion and before the result becomes visible to Ashes. Nullable returns and
 string-valued out slots materialize null as `Ok(None)`.
+The self-hosted backend implements this boundary in `IrCodegen.ForeignStrings.ash`, including
+the 1 GiB scan bound and strict UTF-8 continuation bounds. `CoreExternalLowering` makes an out
+string nullable while preserving its declared ownership and destructor; it must not silently
+turn an owned out string into a borrowed one. The external-symbol scan includes destructors used
+only by `CopyFfiString`, even when there is no explicit source call to that destructor.
 `Ashes.Ffi.copyBytes` is the sole trusted escape hatch from a raw foreign byte range into an ordinary
 managed value. Lowering emits `CopyFfiBytes` after the pointer and `u64` length have been evaluated.
 The backend accepts null only for zero length, rejects lengths above 1 GiB with `Error` before pointer
@@ -1760,6 +2022,17 @@ unless the callee's result may reach the argument and does not own itself. A dup
 behind a branch of the argument keeps its reference. The duplicate and its release are markers
 promoted together with the owner (`GRC_NO_ARGUMENTTUPLEOWNERDUP`, stage 0; stage 1's
 `prepareRecursiveGroup([(name, value)])` kept the binder strings).
+The same accounting applies to pattern-owner duplicates stored in an arena cons call argument,
+including the tail of `refill(children)(resolved :: path)(rest)`. The helper's normalized result
+retains its own paths, so the temporary cons must give up its separate retain after the call.
+`RecordCallArgumentCellOwnerDuplicates` collects those head and tail duplicates only in the
+active call frame's function and before any argument label. Reference-counted cells own their
+duplicates; direct or late-copied back-edge cells and record-field cells keep their existing
+cleanup instead. The existing call-result ownership/reachability gate controls release; it is
+not an unconditional drop (`GRC_NO_ARGUMENTCELLOWNERDUP`, stage 0; mirrored by
+`recordCallArgumentCellOwnerDuplicates` in stage 1). The stage-1 call-frame marker is disabled
+inside lifted function bodies and restored with the outer frame. The direct recursive regression
+is `selfhost/tests/owned-cons-argument-worklist`; it must not be replaced by a step/fold workaround.
 The pattern-owner duplicates an aggregate took, and those already released after a
 normalization, are kept per function: temps are numbered per function, and one set shared by
 every function let an earlier function's released duplicate stop a later one's release under the
@@ -2072,6 +2345,16 @@ type comes from that parameter alone (`state |> lowerLoaded(name)(lower) |> lowe
 a generic helper ending in a call of the closure parameter `lower`) closed its call window on an
 unresolved type: it asked for an arena result and skipped the contract's owned-result protocol, and
 the loop then released the arena cell as a counted one.
+
+Stage 1 also carries concrete whole-binding function signatures into the lambda parameters before
+lowering their bodies, including curried and mutually recursive bindings. Otherwise an annotated
+callback such as `Int -> Maybe(Value)` could be lowered as `Int -> Maybe(a)` when its result was
+matched only with `Some(_)`. The generic call requested an arena result, but a callee returning a
+recursive reference-counted `Value` could not honor that request, leaving the returned owner
+unreleased. Preserving the declared layout selects the existing owned-call protocol, as stage 0
+does. Explicit inline annotations are preserved. Signatures with type variables retain their prior
+lowering path until mutually recursive members have independent annotation-variable scopes.
+
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).
@@ -2240,6 +2523,27 @@ from such a list's heads (`current :: reachable`) receives copies, not parts: th
 check and the predecessor release follow a list of inline values only through its spine, as they
 do a list of strings (`GRC_NO_INLINESPINEFLOW`).
 
+A worklist may combine all three edges: its consumed tail, a proven one-cell cons onto that
+tail, and a helper-call refill. The cons-tail analysis accepts the helper call as another edge
+without removing the requirement for at least one proven cons-tail edge. Existing head-layout,
+tail-identity, and sibling-ownership checks still control RC placement. Thus the successor owns
+its children before the ordinary back-edge cleanup releases earlier call results; no broader
+release rule is needed (`GRC_NO_CONSEDTAILCALLREFILL`, stage 0; mirrored by
+`shapeObserveConsedTails` in stage 1). A pop/refill-only loop keeps its existing classification.
+`selfhost/tests/owned-call-result-worklist` preserves the original direct walker and checks an
+escaping aggregate head and a borrowed sibling. The latter deliberately retains the existing
+conservative placement and is compared with the disabled-rule baseline.
+
+A loop returning an arena constructor such as `Some(label)` may retain a reference-counted
+parameter in its field even though the constructor itself has no RC owner. A concrete field
+retain at the loop result is registered in an owned slot, as for a returned record update.
+Existing result normalization makes the result independent before releasing that slot and the
+loop parameter. Runtime-owned constructors, back-edge arguments, unresolved layouts and fields
+whose retains are already handled by call cleanup are excluded. This is an exit operation, not
+a copy of the graph at each back edge (`GRC_NO_LOOPRESULTCTORFIELDRETAIN`, stage 0; mirrored by
+`keepLoopResultConstructorFieldRetainOwned` in stage 1). The unchanged regression lives in
+`selfhost/tests/returned-constructor-field` and the last-registered leak template.
+
 ### Buffered standard output
 
 `Ashes.IO.writeBuffered` and `writeBufferedLine` append to a process-wide 64 KiB stdout buffer.
@@ -2368,6 +2672,15 @@ their labels returns a list that cannot hold the list of records it consumed, so
 alone decides and the input is released. Reading the result-ownership bit unconditionally instead
 keeps the reference on every reference-counted result, stranding the whole consumed argument — its
 spine, its elements and their own children — once per call.
+
+Stage 1's containment walk shares its visited set across sibling constructor fields. Keeping only
+the current path makes a shared type graph expand once per path, which can take exponential time
+during compiler lowering. Identical named instantiations are expanded once per query, while
+different sibling instantiations are searched separately. Recursive expansion of the same name
+at changing type arguments conservatively answers "may contain" to bound non-regular recursion;
+a negative answer for one instantiation must never justify a release for another. Structural type
+arguments are checked before the visited-set test. Stage 0 already shares its expansion set
+across siblings.
 
 Types cannot answer that question when the result's element type equals the argument's — a map from
 strings to strings — and the hand-over is what a caller falls back on whenever the callee's result
@@ -2942,3 +3255,102 @@ Adding a new compile target requires:
 | `linux-arm64` | `aarch64-unknown-linux-gnu` | ELF64 | ELF64 (AArch64) |
 | `win-x64` | `x86_64-pc-windows-msvc` | COFF | PE32+ |
 | `win-arm64` | `aarch64-pc-windows-msvc` | COFF (AArch64) | PE32+ (AArch64) |
+
+### Selfhost join ownership follows emitted backedges
+
+A syntactic saturated self-call is not proof that a branch cannot reach its join:
+inside a curried helper it can remain a `CallClosure` whose returned owner is
+parked in a local cleanup slot. Stage 1 now uses the existing function-local
+backedge dummy-temp provenance for both unreachable-arm and neutral-funnel arm
+facts, matching stage 0's emitted ownership-neutral values. A nonempty join of
+only proven backedges propagates that fact; a mixed join keeps every reaching
+call result in its ownership calculation. The separate syntactic funnel checks
+used for escape-shape and static-string planning retain their existing meaning.
+
+This corrects a premature free in `parserParseSugarParameters`: a recursive
+owned pair was returned unchanged and then freed by its local owned-slot cleanup.
+The fix establishes the join's real reference ownership rather than retaining a
+child of an already freed returned owner. The extracted metadata regression is
+`selfhost/tests/join-backedge-provenance`; the original parser-only runtime case
+is preserved in `selfhost/tests/parser-curried-result`.
+
+### Indexed whole-program ownership handoff approval
+
+Core lowering prepares a name index when installing the completed whole-program
+parameter-ownership table. The index preserves the first entry, including an
+empty parameter list; it deliberately differs from the inference fixpoint's
+unique-name index, where duplicates are ambiguous. Qualified names remain exact
+string keys. Handoff approval still requires top-level registration and the same
+ordered parameter-name chain before overlaying proven borrows. The index shares
+its immutable ownership lists under ordinary RC lifetimes and is scoped to the
+lowering state. `selfhost/tests/handoff-ownership-index` compares the old scan and
+actual approval logic, including fresh index/state lifetimes.
+
+### Constructor arguments preserve their returning continuation
+
+Stage0 suppresses loop tail position while evaluating a runtime constructor's
+fields. A recursive call in a field must return so that the enclosing constructor
+can still allocate and store its result. The surrounding tail state is restored
+before constructor ownership and allocation are completed. Erased zero-cost
+constructors retain their existing transparent treatment; direct tail calls and
+the separate list tail-modulo-constructor path are unchanged.
+
+This fixes `semanticRuntimeRepresentation` losing `SemPointer` wrappers: its
+pointer arm previously became a plain self backedge, skipping the constructor.
+The defect predates the generic-variant RC loop rule. Stage1 already preserves
+single and nested pointers. Focused regressions cover direct/piped, multi-field,
+and generic constructors with a genuine tail-recursive alternate branch, plus
+the real selfhost type-resolution function.
+
+### Shared immutable type-graph classification
+
+`TypeGraphIndex` owns one immutable type environment and assigns exact node IDs
+within that index lineage. Nodes retain both source and runtime-resolved
+constructor groups, record shape and query-specific child edges. Complete type
+fingerprints select integer-AVL buckets; full semantic-type equality resolves
+collisions. A hash alone never establishes type identity.
+
+`TypeGraphQueries` reuses those nodes for resource, unresolved-type and drop
+queries. Only completed context-free root facts are published. Regular negative
+searches may publish their fully visited named closure; nonregular fallback
+publishes only its queried root. Blocked-path visits remain query-local.
+
+Every indexed heap-layout view returns its updated index alongside its answer.
+Layout gates retain their original nominal cycle paths and short-circuit order;
+path-dependent answers are not cached as root facts. Legacy public classifiers
+are fresh-index compatibility wrappers around the same implementation, rather
+than a second traversal engine. Stateful lowering and synthesis consumers must
+retain the returned index and replace it when their type environment changes.
+
+Dropper synthesis also retains completed dropper and admissibility views in a
+`DropperQueryContext`. Its integer-keyed table uses exact node IDs from the paired
+graph lineage, including all generic arguments, and has at most one entry per
+queried type. Opening another synthesized body preserves this context; preparing
+a new type environment starts an empty graph and table. Inline synthesis returns
+the context even when it emits no release. Body-local full layout facts retain
+priority over shared projections. Only context-free facts are shared: recursive
+admissibility still evaluates its nominal cycle path, and lowering-dependent copy
+plans are not stored in this table.
+
+Core lowering has a separate `CoreHeapQueryContext` for its coverage environment,
+whose symbol IDs differ from the prepared dropper environment. Copy-plan,
+admissibility, shallow-copy, child-layout and child-type views are populated on
+demand and keyed by exact nodes of that context's graph. Settled monomorphic
+layout facts still take precedence. The final copy plan, general-RC decision and
+cycle-path answer are not stored there: their indexed evaluators return the
+updated state, preserving the original guards and short-circuit order. Legacy
+answer-only entry points delegate to these same evaluators.
+
+Call argument hand-off, call-result window classification and call admissibility
+preparation retain the returned context. Returning from a nested function also
+retains both coverage and dropper query contexts, while preserving the outer
+dropper contract-record decisions. A coverage-environment version advances on
+type declaration; equal versions prove no replacement only along the descendant
+frame lineage passed to restoration, not between independently initialized
+states. Replacing the coverage environment resets its query context. Startup
+constructs one coverage environment shared by the context and settled facts.
+
+Some pure lowering boundaries still discard cold query updates. Raw tuple-element
+and recursive-copy gates, full-layout/owned-child views, and closure-capture's
+intentional settled-cache bypass remain separate paths; this migration does not
+claim to make every classification persistent.

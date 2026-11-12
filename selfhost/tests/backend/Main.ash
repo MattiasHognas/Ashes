@@ -6,6 +6,7 @@
 import Ashes.Byte
 import Ashes.Ffi
 import Ashes.Test as test
+import NativeFfiFixtures
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
@@ -2140,7 +2141,7 @@ let buildAdtFieldTagReadModule name context =
 // end by `buildRealIrMatchSomeModule` below).
 //
 // A first attempt at this instruction crashed/corrupted memory: `IrCodegen.ash`'s own
-// `addSwitchCases` interleaved a `labelBlocks` lookup (`lookupIndexed`) with the `LLVMAddCase` FFI
+// `addSwitchCases` interleaved a `labelBlocks` lookup (`lookupIndexedStr`) with the `LLVMAddCase` FFI
 // call for each case, in a single recursive pass. Direct experiment confirmed a `labelBlocks`
 // lookup performed AFTER an `addCase` FFI call reads back wrong data for later entries in the
 // same list — reproduced with static string literals, no real lowering involved. The actual fix
@@ -3237,6 +3238,14 @@ let buildFloatScalarOpsModule name context = codegenOptimizedRealSource("Ashes.I
 
 let testRunStaticExecutableForFloatScalarOpsModule unit = assertProgramPrints(buildFloatScalarOpsModule)("selfhostBackendRunFloatScalarOps")("selfhost_backend_float_scalar_ops_e2e")("1")
 
+let buildNumericConversionsModule name context = codegenRealSource("let widen n = Ashes.Number.Math.toFloat(n)\nlet narrow x = Ashes.Number.Math.truncToInt(x)\nAshes.IO.print(Ashes.Text.fromInt(narrow(widen(-42))) + \"|\" + Ashes.Text.fromInt(narrow(-3.75)) + \"|\" + Ashes.Text.fromInt(narrow(3.75)) + \"|\" + Ashes.Text.fromInt(narrow(widen(0))) + \"|\" + Ashes.Text.fromInt(narrow(widen(9007199254740991))))")(name)(context)
+
+let testRunNumericConversionsModule unit = assertProgramPrints(buildNumericConversionsModule)("selfhostBackendNumericConversions")("selfhost_backend_numeric_conversions_e2e")("-42|-3|3|0|9007199254740991")
+
+let buildRuneFromIntModule name context = codegenRealSource("let scalar n = match Ashes.Rune.fromInt(n) with | Some(r) -> Ashes.Text.fromInt(Ashes.Rune.toInt(r)) | None -> \"none\"\nAshes.IO.print(scalar(-1) + \"|\" + scalar(0) + \"|\" + scalar(55295) + \"|\" + scalar(55296) + \"|\" + scalar(57343) + \"|\" + scalar(57344) + \"|\" + scalar(1114111) + \"|\" + scalar(1114112))")(name)(context)
+
+let testRunRuneFromIntModule unit = assertProgramPrints(buildRuneFromIntModule)("selfhostBackendRuneFromInt")("selfhost_backend_rune_from_int_e2e")("none|0|55295|none|none|57344|1114111|none")
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -3502,11 +3511,11 @@ let recursive assertStdoutLines process expectedLines =
                     |> test.assertEqual(line)
                     |> (given (_) -> assertStdoutLines(process)(rest))
 
-let assertProgramPrintsLines buildModule name executablePath expectedLines =
+let assertProgramPrintsLinesWithImports libraries buildModule name executablePath expectedLines =
     match emitModule(buildModule)(name)(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
-            match linkLinuxExecutable(objectBytes)(name) with
+            match linkLinuxExecutableWithImports(objectBytes)(name)(libraries) with
                 | Error(message) -> test.fail(message)
                 | Ok(executableBytes) ->
                     match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
@@ -3522,6 +3531,8 @@ let assertProgramPrintsLines buildModule name executablePath expectedLines =
                                             |> assertStdoutLines(process)
                                             |> Ashes.IO.Process.waitForExit
                                             |> test.assertEqual(0)
+
+let assertProgramPrintsLines buildModule name executablePath expectedLines = assertProgramPrintsLinesWithImports([])(buildModule)(name)(executablePath)(expectedLines)
 
 // A single-constructor record is laid out without a tag word: constructed, matched positionally,
 // read through `.field`, and rebuilt with `with`, every field value read back at offset 0.
@@ -3650,6 +3661,52 @@ let buildOptimizedIrExternalCallModule name context = codegenOptimizedRealSource
 
 let testRunStaticExecutableForExternalCallModule unit = assertProgramPrints(buildOptimizedIrExternalCallModule)("selfhostBackendRunExternalCall")("selfhost_backend_external_call_e2e")("5 0 0")
 
+let nativeStringSource = "external nativeRelease(*u8) -> void\nexternal nativeCount() -> Int\nexternal nativeValid() -> FfiStr(owned nativeRelease)\nexternal nativeEmpty() -> FfiStr(owned nativeRelease)\nexternal nativeInvalid() -> FfiStr(owned nativeRelease)\nexternal nativeSurrogate() -> FfiStr(owned nativeRelease)\nexternal nativeTruncated() -> FfiStr(owned nativeRelease)\nexternal nativeAboveMax() -> FfiStr(owned nativeRelease)\nexternal nativeMaxValid() -> FfiStr(owned nativeRelease)\nexternal nativeOverlong() -> FfiStr(owned nativeRelease)\nexternal nativeFourOverlong() -> FfiStr(owned nativeRelease)\nexternal nativeTwoByte() -> FfiStr(owned nativeRelease)\nexternal nativeBorrowed() -> FfiStr(borrowed)\nexternal nativeNull() -> FfiStr(nullable borrowed)\nexternal nativeNullRequired() -> FfiStr(owned nativeRelease)\nexternal nativeOut(out FfiStr(owned nativeRelease)) -> Int\nlet describe result = match result with | Ok(text) -> \"ok:\" + Ashes.Text.fromInt(Ashes.Text.byteLength(text)) | Error(message) -> \"error:\" + message\nlet counted result = describe(result) + \":\" + Ashes.Text.fromInt(nativeCount(Unit))\nlet row0 = counted(nativeValid(Unit))\nlet row1 = counted(nativeEmpty(Unit))\nlet row2 = counted(nativeInvalid(Unit))\nlet row3 = counted(nativeSurrogate(Unit))\nlet row4 = counted(nativeTruncated(Unit))\nlet row5 = counted(nativeAboveMax(Unit))\nlet row6 = counted(nativeMaxValid(Unit))\nlet row7 = counted(nativeOverlong(Unit))\nlet row8 = counted(nativeFourOverlong(Unit))\nlet row9 = counted(nativeTwoByte(Unit))\nlet borrowed = counted(nativeBorrowed(Unit))\nlet absent = (match nativeNull(Unit) with | Ok(None) -> \"none\" | _ -> \"bad\") + \":\" + Ashes.Text.fromInt(nativeCount(Unit))\nlet required = counted(nativeNullRequired(Unit))\nlet output = (match nativeOut(Unit) with | (status, Ok(Some(text))) -> Ashes.Text.fromInt(status) + \":\" + Ashes.Text.fromInt(Ashes.Text.byteLength(text)) | _ -> \"bad\") + \":\" + Ashes.Text.fromInt(nativeCount(Unit))\nAshes.IO.print(row0 + \"\\n\" + row1 + \"\\n\" + row2 + \"\\n\" + row3 + \"\\n\" + row4 + \"\\n\" + row5 + \"\\n\" + row6 + \"\\n\" + row7 + \"\\n\" + row8 + \"\\n\" + row9 + \"\\n\" + borrowed + \"\\n\" + absent + \"\\n\" + required + \"\\n\" + output)"
+
+let nativeOutSource = "external type Handle\nexternal nativeHandles(Int, out Handle, out Handle) -> Int\nexternal nativeRead(Handle) -> Int\nlet handleText value = match value with | None -> \"none\" | Some(nativeHandle) -> Ashes.Text.fromInt(nativeRead(nativeHandle))\nlet describe result = match result with | (status, first, second) -> Ashes.Text.fromInt(status) + \" \" + handleText(first) + \" \" + handleText(second)\nAshes.IO.print(describe(nativeHandles(0)) + \"\\n\" + describe(nativeHandles(1)))"
+
+let buildNativeStringModule name context =
+    match codegenOptimizedRealSource(nativeStringSource)(name)(context) with
+        | (module_, builder) -> addNativeStringFixtures(module_)(context)(builder)
+
+let buildNativeOutModule name context =
+    match codegenOptimizedRealSource(nativeOutSource)(name)(context) with
+        | (module_, builder) -> addNativeOutFixtures(module_)(context)(builder)
+
+let testNativeStrings unit = assertProgramPrintsLines(buildNativeStringModule)("selfhostBackendNativeStrings")("selfhost_backend_native_strings_e2e")(["ok:4:1", "ok:0:2", "error:Native UTF-8 string is invalid.:3", "error:Native UTF-8 string is invalid.:4", "error:Native UTF-8 string is invalid.:5", "error:Native UTF-8 string is invalid.:6", "ok:4:7", "error:Native UTF-8 string is invalid.:8", "error:Native UTF-8 string is invalid.:9", "ok:2:10", "ok:4:10", "none:10", "error:Native UTF-8 string was null.:10", "5:4:11"])
+
+let testNativeOutSlots unit = assertProgramPrintsLines(buildNativeOutModule)("selfhostBackendNativeOut")("selfhost_backend_native_out_e2e")(["7 101 none", "9 none 202"])
+
+// The declaration, rather than the runtime's libc table, supplies this import. An unused
+// declaration must not add its nonexistent library to DT_NEEDED.
+let declaredLibrarySource = "external nextValue(Float, Float) -> Float = \"nextafter@libm.so.6\"\nexternal unused() -> Int = \"unused@does-not-exist.so\"\nAshes.IO.print(nextValue(1.0)(2.0) > 1.0)"
+
+let testDeclaredLibraryImports unit =
+    (let name = "selfhostBackendDeclaredLibrary"
+    in
+        let libraries =
+            name
+            |> lowerRealSource(declaredLibrarySource)
+            |> externalLibraries
+        in
+            let _ = test.assertEqual([("nextafter", "libm.so.6"), ("unused", "does-not-exist.so")])(libraries)
+            in
+                let _ =
+                    match emitModule(codegenRealSource(declaredLibrarySource))(name)(objectFileType) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(objectBytes) ->
+                            match linkLinuxExecutable(objectBytes)(name) with
+                                | Error(message) -> test.assertEqual("dynamic linker: unknown external symbol 'nextafter' (not in the recognized-library table)")(message)
+                                | Ok(_) -> test.fail("undeclared library import was accepted")
+                in
+                    assertProgramPrintsLinesWithImports(libraries)(codegenRealSource(declaredLibrarySource))(name)("selfhost_backend_declared_library_e2e")(["true"]))
+
+let externalBufferSource = "external type Cell\nexternal malloc(Int) -> Cell\nexternal free(Cell) -> void\nexternal compareCells(FfiBuffer(Cell), FfiBuffer(Cell), Int) -> Int = \"memcmp\"\n\nlet first = malloc(1)\nlet second = malloc(1)\nlet empty = compareCells([])([])(0) == 0\nlet single = compareCells([first])([first])(8) == 0\nlet ordered = compareCells([first, second, first])([first, second, first])(24) == 0\nlet different = compareCells([first, second])([second, first])(16) != 0\nlet _ = free(first) |> (given (_) -> free(second))\n\nAshes.IO.print((if empty then \"1\" else \"0\") + \" \" + (if single then \"1\" else \"0\") + \" \" + (if ordered then \"1\" else \"0\") + \" \" + (if different then \"1\" else \"0\"))\n"
+
+let buildOptimizedIrExternalBufferModule name context = codegenOptimizedRealSource(externalBufferSource)(name)(context)
+
+let testRunStaticExecutableForExternalBufferModule unit = assertProgramPrints(buildOptimizedIrExternalBufferModule)("selfhostBackendRunExternalBuffer")("selfhost_backend_external_buffer_e2e")("1 1 1 1")
+
 // A file mapped once per iteration of a loop and read through the view, which is an arena block
 // over the program-lifetime mapping as stage 0 builds it (`emitArenaStringView`), not a
 // reference-counted cell no release reaches: `13` bytes per round, and the same live cells at
@@ -3769,6 +3826,27 @@ let sharedTestSource path =
 
 let buildSharedTestModule shipped path name context =
     codegenOptimizedShippedSource(shipped)(sharedTestSource(path))(name)(context)
+
+let annotatedCallbackSource rounds =
+    (let source = sharedTestSource("tests/annotated_callbacks_release_recursive_results.ash")
+    in
+        "repeat(1000)(0)"
+        |> Ashes.Text.split(source)
+        |> Ashes.Text.join("repeat(" + Ashes.Text.fromInt(rounds) + ")(0)"))
+
+let testAnnotatedCallbacksReleaseRecursiveResults shipped unit =
+    (let first =
+        liveCellsReportedBy(1
+        |> annotatedCallbackSource
+        |> codegenShippedSourceLeakChecked(shipped))("annotatedCallbacksOneRound")("selfhost_backend_annotated_callbacks_one_round_e2e")
+    in
+        let second =
+            liveCellsReportedBy(2
+            |> annotatedCallbackSource
+            |> codegenShippedSourceLeakChecked(shipped))("annotatedCallbacksTwoRounds")("selfhost_backend_annotated_callbacks_two_rounds_e2e")
+        in
+            let _ = test.assertEqual("1")(first)
+            in test.assertEqual(first)(second))
 
 let showAsFromInt source =
     "Ashes.Trait.Show.show("
@@ -5892,6 +5970,8 @@ let run shipped =
     |> testRunStaticExecutableForNullarySingleConstructorModule
     |> testRunStaticExecutableForDeepIfInsideMatchJoinLoopModule
     |> testRunStaticExecutableForFloatScalarOpsModule
+    |> testRunNumericConversionsModule
+    |> testRunRuneFromIntModule
     |> testRunStaticExecutableForTextParseUnconsModule
     |> testRunStaticExecutableForBytesBuilderOpsModule
     |> testRunStaticExecutableForBytesRangeOpsModule
@@ -5940,12 +6020,17 @@ let run shipped =
     |> testRunStaticExecutableForProgramArgsModule
     |> testRunStaticExecutableForProgramArgsEmptyModule
     |> testRunStaticExecutableForExternalCallModule
+    |> testRunStaticExecutableForExternalBufferModule
+    |> testNativeStrings
+    |> testNativeOutSlots
+    |> testDeclaredLibraryImports
     |> testRunStaticExecutableForMmapViewModule
     |> testMmapViewLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBuiltinResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testBytesResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testAnnotatedCallbacksReleaseRecursiveResults(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

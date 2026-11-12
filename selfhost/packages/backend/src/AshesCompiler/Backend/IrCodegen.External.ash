@@ -9,23 +9,25 @@
 // declaring the same name twice would leave LLVM renaming the second one. `ToCString` is here too,
 // since it exists only to hand a `Str` argument to such a call.
 //
-// The marshalling that needs its own runtime loop is deliberately not here and panics instead of
-// emitting something silently wrong: a `Buffer` parameter (a list copied into a native array), an
-// `Out` parameter (a caller-allocated slot the callee writes), and a `NativeString` (a returned
-// `char*` copied in, with its ownership rule). Those are `AllocFfiOut`/`LoadFfiOut`/
-// `CopyFfiString`'s own slice of CG-11.
+// A `Buffer` parameter is copied from its immutable list into a native array in the current
+// stack frame. Empty lists pass null. `Out` parameters use null-initialized native slots;
+// `IrCodegen.ForeignStrings` copies and validates native string results before disposal.
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import AshesCompiler.Semantics.ExternalAbi
+import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 export (
     type ExternalSymbolDeclaration(..),
     value collectExternalSymbols,
+    value collectExternalLibraries,
     value declareExternalSymbols,
     value lookupExternalSymbol,
     value emitCallExternal,
+    value emitAllocFfiOut,
+    value emitLoadFfiOut,
 )
 
 // One declared C symbol: the name a call site names it by, the LLVM function value, and its
@@ -35,8 +37,8 @@ type ExternalSymbolDeclaration =
     | externalSymbolValue: LLVMValueRef
     | externalSymbolType: LLVMTypeRef
 
-// The native type an ABI position has. A buffer, an out slot and a native string are pointers to
-// the callee; what the caller must build for them is the part this slice leaves out.
+// The native type an ABI position has. Buffers, out slots and native strings use pointers;
+// argument marshalling below constructs the buffer storage before the call.
 let recursive externalAbiLlvmType context types (abiType: ExternalAbiType) =
     match abiType with
         | ExternalAbiInt -> types.i64
@@ -69,6 +71,141 @@ let recursive externalAbiLlvmTypes context types (abiTypes: List(ExternalAbiType
         | [] -> []
         | abiType :: rest -> externalAbiLlvmType(context)(types)(abiType) :: externalAbiLlvmTypes(context)(types)(rest)
 
+// The lowering owns null-to-None conversion and tuple assembly. These operations only pass
+// a null-initialized native pointer slot and read its pointer word after the call.
+let emitAllocFfiOut context builder types elementType =
+    (let nativeType = externalAbiLlvmType(context)(types)(elementType)
+    in
+        let slot = buildEntryAlloca(builder)(nativeType)("ffi_out_slot")
+        in
+            let _ =
+                buildStore(builder)(constNull(nativeType))(slot)
+            in buildPtrToInt(builder)(slot)(types.i64)("ffi_out_slot_address"))
+
+let emitLoadFfiOut context builder types slotAddress elementType =
+    (let nativeType = externalAbiLlvmType(context)(types)(elementType)
+    in
+        let slot = buildIntToPtr(builder)(slotAddress)(types.ptrType)("ffi_out_slot_pointer")
+        in
+            let value = buildLoad(builder)(nativeType)(slot)("ffi_out_value")
+            in buildPtrToInt(builder)(value)(types.i64)("ffi_out_value_word"))
+
+let emitExternalBufferCount context function_ builder types value cursorSlot countSlot =
+    (let loop = appendBasicBlock(context)(function_)("ffi_buffer_count_loop")
+    in
+        let body = appendBasicBlock(context)(function_)("ffi_buffer_count_body")
+        in
+            let doneBlock = appendBasicBlock(context)(function_)("ffi_buffer_count_done")
+            in
+                let _ = buildStore(builder)(value)(cursorSlot)
+                in
+                    let _ =
+                        buildStore(builder)(constInt(types.i64)(0u64)(false))(countSlot)
+                    in
+                        let _ = buildBr(builder)(loop)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(loop)
+                            in
+                                let cursor = buildLoad(builder)(types.i64)(cursorSlot)("ffi_buffer_count_cursor")
+                                in
+                                    let atEnd =
+                                        buildICmp(builder)(intPredicateEq)(cursor)(constInt(types.i64)(0u64)(false))("ffi_buffer_count_at_end")
+                                    in
+                                        let _ = buildCondBr(builder)(atEnd)(doneBlock)(body)
+                                        in
+                                            let _ = positionBuilderAtEnd(builder)(body)
+                                            in
+                                                let count = buildLoad(builder)(types.i64)(countSlot)("ffi_buffer_count_value")
+                                                in
+                                                    let _ =
+                                                        buildStore(builder)(buildAdd(builder)(count)(constInt(types.i64)(1u64)(false))("ffi_buffer_count_next"))(countSlot)
+                                                    in
+                                                        let tailPointer = memOffsetPtr(builder)(types.i64)(types.i8)(types.ptrType)(cursor)(8)("ffi_buffer_count_tail_ptr")
+                                                        in
+                                                            let _ =
+                                                                buildStore(builder)(buildLoad(builder)(types.i64)(tailPointer)("ffi_buffer_count_tail"))(cursorSlot)
+                                                            in
+                                                                let _ = buildBr(builder)(loop)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                    in buildLoad(builder)(types.i64)(countSlot)("ffi_buffer_final_count"))
+
+let emitExternalBufferFill context function_ builder types value buffer elementType cursorSlot indexSlot =
+    (let loop = appendBasicBlock(context)(function_)("ffi_buffer_fill_loop")
+    in
+        let body = appendBasicBlock(context)(function_)("ffi_buffer_fill_body")
+        in
+            let doneBlock = appendBasicBlock(context)(function_)("ffi_buffer_fill_done")
+            in
+                let _ = buildStore(builder)(value)(cursorSlot)
+                in
+                    let _ =
+                        buildStore(builder)(constInt(types.i64)(0u64)(false))(indexSlot)
+                    in
+                        let _ = buildBr(builder)(loop)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(loop)
+                            in
+                                let cursor = buildLoad(builder)(types.i64)(cursorSlot)("ffi_buffer_fill_cursor")
+                                in
+                                    let atEnd =
+                                        buildICmp(builder)(intPredicateEq)(cursor)(constInt(types.i64)(0u64)(false))("ffi_buffer_fill_at_end")
+                                    in
+                                        let _ = buildCondBr(builder)(atEnd)(doneBlock)(body)
+                                        in
+                                            let _ = positionBuilderAtEnd(builder)(body)
+                                            in
+                                                let index = buildLoad(builder)(types.i64)(indexSlot)("ffi_buffer_index")
+                                                in
+                                                    let destination = buildGEP(builder)(elementType)(buffer)([index])(1u32)("ffi_buffer_element_ptr")
+                                                    in
+                                                        let headPointer = memOffsetPtr(builder)(types.i64)(types.i8)(types.ptrType)(cursor)(0)("ffi_buffer_head_ptr")
+                                                        in
+                                                            let handleWord = buildLoad(builder)(types.i64)(headPointer)("ffi_buffer_handle")
+                                                            in
+                                                                let _ =
+                                                                    buildStore(builder)(buildIntToPtr(builder)(handleWord)(elementType)("ffi_buffer_handle_ptr"))(destination)
+                                                                in
+                                                                    let _ =
+                                                                        buildStore(builder)(buildAdd(builder)(index)(constInt(types.i64)(1u64)(false))("ffi_buffer_index_next"))(indexSlot)
+                                                                    in
+                                                                        let tailPointer = memOffsetPtr(builder)(types.i64)(types.i8)(types.ptrType)(cursor)(8)("ffi_buffer_fill_tail_ptr")
+                                                                        in
+                                                                            let _ =
+                                                                                buildStore(builder)(buildLoad(builder)(types.i64)(tailPointer)("ffi_buffer_fill_tail"))(cursorSlot)
+                                                                            in
+                                                                                let _ = buildBr(builder)(loop)
+                                                                                in positionBuilderAtEnd(builder)(doneBlock))
+
+// Mirrors stage 0's count, stack allocation and fill walks. The list's handles are borrowed;
+// this temporary native array neither retains nor releases them.
+let emitExternalBuffer context builder types value element =
+    (let function_ = builderFunction(builder)
+    in
+        let cursorSlot = buildEntryAlloca(builder)(types.i64)("ffi_buffer_cursor")
+        in
+            let countSlot = buildEntryAlloca(builder)(types.i64)("ffi_buffer_count")
+            in
+                let count = emitExternalBufferCount(context)(function_)(builder)(types)(value)(cursorSlot)(countSlot)
+                in
+                    let isEmpty =
+                        buildICmp(builder)(intPredicateEq)(count)(constInt(types.i64)(0u64)(false))("ffi_buffer_is_empty")
+                    in
+                        let allocationCount =
+                            buildSelect(builder)(isEmpty)(constInt(types.i64)(1u64)(false))(count)("ffi_buffer_allocation_count")
+                        in
+                            let elementType = externalAbiLlvmType(context)(types)(element)
+                            in
+                                let buffer = buildArrayAlloca(builder)(elementType)(allocationCount)("ffi_buffer_storage")
+                                in
+                                    let indexSlot = buildEntryAlloca(builder)(types.i64)("ffi_buffer_index")
+                                    in
+                                        let _ = emitExternalBufferFill(context)(function_)(builder)(types)(value)(buffer)(elementType)(cursorSlot)(indexSlot)
+                                        in
+                                            let nullPointer =
+                                                buildIntToPtr(builder)(constInt(types.i64)(0u64)(false))(types.ptrType)("ffi_buffer_null")
+                                            in buildSelect(builder)(isEmpty)(nullPointer)(buffer)("ffi_buffer_argument"))
+
 // The `i64` word a temp holds, converted to what the position declares: a float is the word's bits
 // read as a double, a narrower integer is truncated, and every pointer-shaped position is the word
 // as an address.
@@ -87,8 +224,8 @@ let convertExternalArgument context builder types value (abiType: ExternalAbiTyp
         | ExternalAbiString -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_arg_str")
         | ExternalAbiOpaque(_name) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_arg_ptr")
         | ExternalAbiPointer(_element) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_arg_ptr")
-        | ExternalAbiBuffer(_element) -> Ashes.IO.panic("codegen: an external buffer parameter needs the list marshalling slice of CG-11")
-        | ExternalAbiOut(_element) -> Ashes.IO.panic("codegen: an external out parameter needs AllocFfiOut/LoadFfiOut, the out-parameter slice of CG-11")
+        | ExternalAbiBuffer(element) -> emitExternalBuffer(context)(builder)(types)(value)(element)
+        | ExternalAbiOut(_element) -> buildIntToPtr(builder)(value)(types.ptrType)("ffi_out_argument")
         | ExternalAbiNativeString(_nullable, _ownership, _free) -> Ashes.IO.panic("codegen: an external native-string parameter needs CopyFfiString, the native-string slice of CG-11")
         | _ -> value
 
@@ -114,7 +251,7 @@ let normalizeExternalResult context builder types result (returnType: ExternalAb
         | ExternalAbiString -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_str")
         | ExternalAbiOpaque(_name) -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_ptr")
         | ExternalAbiPointer(_element) -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_ptr")
-        | ExternalAbiNativeString(_nullable, _ownership, _free) -> Ashes.IO.panic("codegen: an external native-string result needs CopyFfiString, the native-string slice of CG-11")
+        | ExternalAbiNativeString(_nullable, _ownership, _free) -> buildPtrToInt(builder)(result)(types.i64)("ffi_ret_native_string")
         | _ -> result
 
 // LLVM's C API counts parameters and arguments in `unsigned`, and there is no Int-to-`u32`
@@ -154,6 +291,13 @@ let recursive containsExternalSymbol (name: Str) (signatures: List((Str, List(Ex
 let recursive collectInstructionExternalSymbols instructions (signatures: List((Str, List(ExternalAbiType), ExternalAbiType))) =
     match instructions with
         | [] -> signatures
+        | IrInstruction { instruction = CopyFfiString(_, _, ExternalAbiNativeString(_, ExternalNativeStringOwned, Some(ExternalSymbolReference { symbolName = name }))) } :: rest ->
+            if containsExternalSymbol(name)(signatures)
+            then collectInstructionExternalSymbols(rest)(signatures)
+            else
+                [(name, [ExternalAbiPointer(ExternalAbiUInt(8))], ExternalAbiVoid)]
+                |> append(signatures)
+                |> collectInstructionExternalSymbols(rest)
         | IrInstruction { instruction = CallExternal(_target, symbolName, _library, _argTemps, parameterTypes, returnType) } :: rest ->
             if containsExternalSymbol(symbolName)(signatures)
             then collectInstructionExternalSymbols(rest)(signatures)
@@ -173,6 +317,14 @@ let recursive collectExternalSymbols functions (signatures: List((Str, List(Exte
             signatures
             |> collectInstructionExternalSymbols(instructions)
             |> collectExternalSymbols(rest)
+
+// Keep declaration-provided libraries separate from runtime defaults. The linker chooses only
+// undefined symbols actually present in the object, so unused declarations add no dependency.
+let recursive collectExternalLibraries (functions: List(ExternalFunctionAbi)) =
+    match functions with
+        | [] -> []
+        | ExternalFunctionAbi { symbol = ExternalSymbolReference { symbolName = name, libraryName = Some(library) } } :: rest -> (name, library) :: collectExternalLibraries(rest)
+        | _ :: rest -> collectExternalLibraries(rest)
 
 let recursive lookupDeclaredSymbol (name: Str) (declared: List((Str, LLVMValueRef))) =
     match declared with

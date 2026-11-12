@@ -333,6 +333,27 @@ let testOutParameterAndReturnPackaging unit =
                             |> containsAlloc(16)
                             |> test.assertEqual(true)))
 
+let recursive nativeStringCopyTypes instructions =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = CopyFfiString(_, _, abiType) } :: rest -> abiType :: nativeStringCopyTypes(rest)
+        | _ :: rest -> nativeStringCopyTypes(rest)
+
+let testOwnedOutStringPreservesDestructor unit =
+    (let destructor = Some(ExternalSymbolReference(symbolName = "dispose_text", libraryName = Some("libnative.so")))
+    in
+        let abi =
+            makeExternalFunctionAbi("c_text")("native_text")(None)([ExternalParameterAbi(parameterIndex = 0, abiType = destructor
+            |> ExternalAbiNativeString(false)(ExternalNativeStringOwned)
+            |> ExternalAbiOut, source = dummyParamSource)])(ExternalAbiVoid)(true)
+        in
+            callArgumentsInline
+            |> ExprCall(ExprVar("c_text"))(ExprVar("Unit"))(false)
+            |> loweredProgramWithExternal([makeLayout(abi)])([abi])([])
+            |> entryInstructions
+            |> nativeStringCopyTypes
+            |> test.assertEqual([ExternalAbiNativeString(true)(ExternalNativeStringOwned)(destructor)]))
+
 let testFirstClassExternalFunctionReference unit =
     (let abi =
         makeExternalFunctionAbi(
@@ -536,6 +557,7 @@ let runCoreExternalLoweringTests unit =
     |> testDirectStringExternalCall
     |> testNativeStringReturn
     |> testOutParameterAndReturnPackaging
+    |> testOwnedOutStringPreservesDestructor
     |> testFirstClassExternalFunctionReference
     |> testDirectOnlyRejection
     |> testExternalProgramMetadata

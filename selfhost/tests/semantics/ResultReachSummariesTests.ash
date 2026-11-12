@@ -214,6 +214,15 @@ let testSingleFunctionReach unit =
                     |> reaches
                     |> test.assertEqual(true)))
 
+let pairPoisons (left: Str) (right: Str) =
+    (let reach =
+        right
+        |> reachParam
+        |> reachSum(reachParam(left))
+    in reach.isPoisoned)
+
+let testProperPathAncestorSharing unit = !pairPoisons("a")("a/") && pairPoisons("a")("a//") && pairPoisons("a")("a/1") && !pairPoisons("a")("ab/1") && pairPoisons("å")("å/树") && pairPoisons("a")("a") |> test.assertEqual(true)
+
 let reportResultReachSummariesSuccess unit = Ashes.IO.print("all self-hosted result reach summary tests passed")
 
 let runResultReachSummariesTests unit =
@@ -227,4 +236,5 @@ let runResultReachSummariesTests unit =
     |> testCopyTypedConstructorFieldDoesNotReach
     |> testInternalSharingPoisons
     |> testSingleFunctionReach
+    |> testProperPathAncestorSharing
     |> reportResultReachSummariesSuccess

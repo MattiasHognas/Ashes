@@ -28,6 +28,7 @@ internal enum TcoRcEligibilityReason
 {
     UnresolvedType,
     ScalarTupleOrAdtLayout,
+    GenericVariantLoop,
     FreshListRebuild,
     AffineConsList,
     ConsumedListTail,
@@ -907,7 +908,10 @@ public sealed partial class Lowering
         public List<OwnershipInfo>? BorrowedRuntimeOwners { get; set; }
 
         /// <summary>
-        /// Constructor field indices this value's own recursive drop must never touch, because a
+        /// Constructor field indices transferred to independent bindings. This value's recursive
+        /// drop excludes them when <see cref="ExcludedDropFieldsTransferFlagSlot"/> is negative or
+        /// its stored flag is true. A false flag keeps the wrapper's original child references.
+        /// The exclusions are necessary because a
         /// pattern match already extracted those specific fields into their own independently tracked
         /// bindings — <see cref="EmitConstructorFieldBindings"/> extracts a field by loading its stored
         /// pointer without duplicating it, so the moment a field gets its own binding and its own
@@ -918,6 +922,14 @@ public sealed partial class Lowering
         /// tracked value.
         /// </summary>
         public IReadOnlySet<int>? ExcludedDropFieldIndices { get; } = excludedDropFieldIndices;
+
+        /// <summary>
+        /// Local flag recording whether the match transferred fields from a unique wrapper.
+        /// A false flag means fields were independently retained and the wrapper still owns its
+        /// original children, even if it becomes unique before cleanup. Negative means unconditional
+        /// exclusions, used by ownership transfers that need no dynamic distinction.
+        /// </summary>
+        public int ExcludedDropFieldsTransferFlagSlot { get; init; } = -1;
 
         /// <summary>
         /// True once this resource (or resource-bearing) binding has been captured by a closure. The

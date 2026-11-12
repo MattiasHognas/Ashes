@@ -625,6 +625,26 @@ public sealed partial class Lowering
         RegisterGeneralRcOwnedSlot(ownedSlot, Prune(fieldType));
     }
 
+    // A returned arena constructor never walks its retained parameter fields. Track the
+    // concrete retain just like a result record-update field, so result normalization
+    // establishes independent ownership before the temporary field reference is released.
+    private void KeepLoopResultConstructorFieldRetainOwned(int retainedTemp, TypeRef fieldType)
+    {
+        if (!GeneralRcEnabled
+            || Environment.GetEnvironmentVariable("GRC_NO_LOOPRESULTCTORFIELDRETAIN") is not null
+            || _tcoCtx?.InTailPosition != true
+            || _backEdgeArgumentPosition is not null
+            || _tcoArgumentDestination is not null
+            || ContainsUnresolvedLayoutType(Prune(fieldType), []))
+        {
+            return;
+        }
+
+        int ownedSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
+        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(fieldType));
+    }
+
     /// <summary>
     /// A loop-parameter child of unresolved layout retained into an arena aggregate: the parameter's
     /// type is only known once its body is lowered, so the arena copy that
@@ -830,7 +850,8 @@ public sealed partial class Lowering
         bool runtimeDeepUnique = false,
         IReadOnlySet<int>? excludedDropFieldIndices = null,
         bool perceusPatternOwner = false,
-        int perceusRootParameterSlot = -1)
+        int perceusRootParameterSlot = -1,
+        int excludedDropFieldsTransferFlagSlot = -1)
     {
         if (_ownershipScopes.Count > 0)
         {
@@ -850,7 +871,10 @@ public sealed partial class Lowering
                 excludedDropFieldIndices,
                 perceusPatternOwner,
                 perceusRootParameterSlot,
-                _lambdaDepth);
+                _lambdaDepth)
+            {
+                ExcludedDropFieldsTransferFlagSlot = excludedDropFieldsTransferFlagSlot,
+            };
             Dictionary<string, OwnershipInfo> scope = _ownershipScopes.Peek();
             if (scope.TryGetValue(name, out OwnershipInfo? previous))
             {
@@ -1097,12 +1121,7 @@ public sealed partial class Lowering
             // placement pass moves one RcDrop anchor, not a guarded tree of child drops.
             if (info.RuntimeConstructor is { } constructor)
             {
-                EmitKnownConstructorRuntimeManagedAdtDrop(
-                    loadTemp,
-                    runtimeAdt,
-                    constructor,
-                    info.RuntimeDeepUnique,
-                    info.ExcludedDropFieldIndices);
+                EmitOwnedConstructorDrop(info, loadTemp, runtimeAdt, constructor);
             }
             else
             {
@@ -1113,6 +1132,26 @@ public sealed partial class Lowering
         {
             EmitSimpleOwnedValueDrop(info, loadTemp);
         }
+    }
+
+    private void EmitOwnedConstructorDrop(OwnershipInfo info, int valueTemp, TypeRef.TNamedType type, ConstructorSymbol constructor)
+    {
+        if (info.ExcludedDropFieldsTransferFlagSlot < 0)
+        {
+            EmitKnownConstructorRuntimeManagedAdtDrop(valueTemp, type, constructor, info.RuntimeDeepUnique, info.ExcludedDropFieldIndices);
+            return;
+        }
+
+        int transferredTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(transferredTemp, info.ExcludedDropFieldsTransferFlagSlot));
+        string retainedLabel = NewLabel("rc_match_fields_retained");
+        string doneLabel = NewLabel("rc_match_wrapper_released");
+        Emit(new IrInst.JumpIfFalse(transferredTemp, retainedLabel));
+        EmitKnownConstructorRuntimeManagedAdtDrop(valueTemp, type, constructor, info.RuntimeDeepUnique, info.ExcludedDropFieldIndices);
+        Emit(new IrInst.Jump(doneLabel));
+        Emit(new IrInst.Label(retainedLabel));
+        EmitRuntimeManagedAdtDrop(valueTemp, type);
+        Emit(new IrInst.Label(doneLabel));
     }
 
     private void EmitSimpleOwnedValueDrop(OwnershipInfo info, int loadTemp)
@@ -4333,7 +4372,7 @@ public sealed partial class Lowering
         Emit(new IrInst.MakeClosure(copier, listLabel, envPtr, 8));
         Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
         int result = NewTemp();
-        Emit(new IrInst.CallClosure(result, copier, sourceTemp));
+        EmitClosureCall(result, copier, sourceTemp, borrowsArgument: true);
         return result;
     }
 
@@ -4482,7 +4521,7 @@ public sealed partial class Lowering
                     Emit(new IrInst.MakeClosure(copier, label, envPtr, 8));
                     Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
                     int result = NewTemp();
-                    Emit(new IrInst.CallClosure(result, copier, temp));
+                    EmitClosureCall(result, copier, temp, borrowsArgument: true);
                     return result;
                 }
 

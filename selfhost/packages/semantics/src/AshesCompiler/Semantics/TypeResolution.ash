@@ -4,10 +4,13 @@
 // - Nominal types retain stable symbol identity while aliases expand transparently.
 // - Alias cycles are rejected before they can create an infinite semantic type.
 // - Capability rows are resolved as unordered structures with an optional open tail.
+// - Declaration indexes preserve the first matching entry of the ordered lists; variant-specific
+//   indexes are updated only by that variant, so unrelated declarations do not shadow them.
 
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 export (
     type DeclarationProvenance(..),
     type TypeDefinition(..),
@@ -24,6 +27,7 @@ export (
     value addExternalTypeDefinition,
     value addTypeAliasDefinition,
     value nominalTypeProvenance,
+    value externalTypeHasDestructor,
     value nextTypeDefinitionSymbolId,
     value prepareTypeResolutionContext,
     value resolveSemanticTypeApplication,
@@ -44,6 +48,12 @@ type TypeDefinition =
 type TypeResolutionContext =
     | parameters: List((Str, SemanticType))
     | definitions: List(TypeDefinition)
+    | definitionsByName: MapTree(Str, TypeDefinition)
+    | parametersByName: MapTree(Str, SemanticType)
+    | provenanceById: MapTree(Int, DeclarationProvenance)
+    | zeroCostById: MapTree(Int, TypeDefinition)
+    | externalDestructorsByName: MapTree(Str, Maybe(Str))
+    | maximumSymbolId: Int
 
 type TypeResolutionError =
     | UnknownTypeName(Str)
@@ -63,133 +73,54 @@ type TypeListResolutionResult =
     | semanticTypes: List(SemanticType)
     | error: Maybe(TypeResolutionError)
 
-let emptyTypeResolutionContext unit = TypeResolutionContext(parameters = [], definitions = [])
+let emptyTypeResolutionContext unit = TypeResolutionContext(parameters = [], definitions = [], definitionsByName = Ashes.Collection.Map.empty, parametersByName = Ashes.Collection.Map.empty, provenanceById = Ashes.Collection.Map.empty, zeroCostById = Ashes.Collection.Map.empty, externalDestructorsByName = Ashes.Collection.Map.empty, maximumSymbolId = -1)
 
-let addTypeParameter name semanticType context =
-    match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = (name, semanticType) :: parameters, definitions = definitions)
+let addTypeParameter name semanticType (context: TypeResolutionContext) = context with parameters = (name, semanticType) :: context.parameters, parametersByName = Ashes.Collection.Map.setStr(name)(semanticType)(context.parametersByName)
+
+let addIndexedDefinition name definition (context: TypeResolutionContext) = context with definitions = definition :: context.definitions, definitionsByName = Ashes.Collection.Map.setStr(name)(definition)(context.definitionsByName)
+
+let addIndexedProvenance symbolId provenance (context: TypeResolutionContext) =
+    context with provenanceById = Ashes.Collection.Map.setInt(symbolId)(provenance)(context.provenanceById), maximumSymbolId = (if symbolId > context.maximumSymbolId
+    then symbolId
+    else context.maximumSymbolId)
 
 let addTypeDefinitionWithProvenance symbolId name arity provenance context =
-    match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } ->
-            TypeResolutionContext(parameters = parameters, definitions = NominalTypeDefinition(
-                symbolId,
-                name,
-                arity,
-                provenance
-            ) :: definitions)
+    context
+    |> addIndexedDefinition(name)(NominalTypeDefinition(symbolId)(name)(arity)(provenance))
+    |> addIndexedProvenance(symbolId)(provenance)
 
-let addTypeDefinition symbolId name arity context =
-    addTypeDefinitionWithProvenance(
-        symbolId,
-        name,
-        arity,
-        DeclarationProvenance(packageId = "standalone"),
-        context
-    )
+let addTypeDefinition symbolId name arity context = addTypeDefinitionWithProvenance(symbolId)(name)(arity)(DeclarationProvenance(packageId = "standalone"))(context)
 
 let addZeroCostTypeDefinitionWithProvenance symbolId name parameterIds representation provenance context =
-    match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } ->
-            TypeResolutionContext(parameters = parameters, definitions = ZeroCostTypeDefinition(
-                symbolId,
-                name,
-                parameterIds,
-                representation,
-                provenance
-            ) :: definitions)
+    (let definition = ZeroCostTypeDefinition(symbolId)(name)(parameterIds)(representation)(provenance)
+    in
+        let indexed =
+            context
+            |> addIndexedDefinition(name)(definition)
+            |> addIndexedProvenance(symbolId)(provenance)
+        in indexed with zeroCostById = Ashes.Collection.Map.setInt(symbolId)(definition)(indexed.zeroCostById))
 
 let addTypeAliasDefinition name parameterIds target context =
-    match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } ->
-            TypeResolutionContext(parameters = parameters, definitions = AliasTypeDefinition(
-                name,
-                parameterIds,
-                target
-            ) :: definitions)
+    addIndexedDefinition(name)(AliasTypeDefinition(name)(parameterIds)(target))(context)
 
 let addExternalTypeDefinition name destructor context =
-    match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = ExternalTypeDefinition(name)(destructor) :: definitions)
+    (let indexed =
+        addIndexedDefinition(name)(ExternalTypeDefinition(name)(destructor))(context)
+    in indexed with externalDestructorsByName = Ashes.Collection.Map.setStr(name)(destructor)(indexed.externalDestructorsByName))
+
+let externalTypeHasDestructor name (context: TypeResolutionContext) =
+    match Ashes.Collection.Map.getStr(name)(context.externalDestructorsByName) with
+        | Some(Some(_destructor)) -> true
+        | _ -> false
 
 let recursive typeListLength values =
     match values with
         | [] -> 0
         | _head :: tail -> 1 + typeListLength(tail)
 
-let recursive findTypeParameter name parameters =
-    match parameters with
-        | [] -> None
-        | (candidateName, semanticType) :: tail ->
-            if name == candidateName
-            then Some(semanticType)
-            else findTypeParameter(name)(tail)
+let nominalTypeProvenance symbolId (context: TypeResolutionContext) = Ashes.Collection.Map.getInt(symbolId)(context.provenanceById)
 
-let recursive findTypeDefinition name definitions =
-    match definitions with
-        | [] -> None
-        | definition :: tail ->
-            match definition with
-                | NominalTypeDefinition(_symbolId, candidateName, _arity, _provenance) ->
-                    if name == candidateName
-                    then Some(definition)
-                    else findTypeDefinition(name)(tail)
-                | ZeroCostTypeDefinition(_symbolId, candidateName, _parameterIds, _representation, _provenance) ->
-                    if name == candidateName
-                    then Some(definition)
-                    else findTypeDefinition(name)(tail)
-                | AliasTypeDefinition(candidateName, _parameterIds, _target) ->
-                    if name == candidateName
-                    then Some(definition)
-                    else findTypeDefinition(name)(tail)
-                | ExternalTypeDefinition(candidateName, _destructor) ->
-                    if name == candidateName
-                    then Some(definition)
-                    else findTypeDefinition(name)(tail)
-
-let recursive findNominalTypeProvenance symbolId definitions =
-    match definitions with
-        | [] -> None
-        | NominalTypeDefinition(candidateId, _name, _arity, provenance) :: tail ->
-            if symbolId == candidateId
-            then Some(provenance)
-            else findNominalTypeProvenance(symbolId)(tail)
-        | ZeroCostTypeDefinition(candidateId, _name, _parameterIds, _representation, provenance) :: tail ->
-            if symbolId == candidateId
-            then Some(provenance)
-            else findNominalTypeProvenance(symbolId)(tail)
-        | AliasTypeDefinition(_name, _parameterIds, _target) :: tail -> findNominalTypeProvenance(symbolId)(tail)
-        | ExternalTypeDefinition(_name, _destructor) :: tail -> findNominalTypeProvenance(symbolId)(tail)
-
-let nominalTypeProvenance symbolId context =
-    match context with
-        | TypeResolutionContext { parameters = _parameters, definitions = definitions } ->
-            findNominalTypeProvenance(
-                symbolId,
-                definitions
-            )
-
-let recursive maximumTypeDefinitionSymbolId definitions maximum =
-    match definitions with
-        | [] -> maximum
-        | NominalTypeDefinition(symbolId, _name, _arity, _provenance) :: tail ->
-            if symbolId > maximum
-            then maximumTypeDefinitionSymbolId(tail)(symbolId)
-            else maximumTypeDefinitionSymbolId(tail)(maximum)
-        | ZeroCostTypeDefinition(symbolId, _name, _parameterIds, _representation, _provenance) :: tail ->
-            if symbolId > maximum
-            then maximumTypeDefinitionSymbolId(tail)(symbolId)
-            else maximumTypeDefinitionSymbolId(tail)(maximum)
-        | AliasTypeDefinition(_name, _parameterIds, _target) :: tail -> maximumTypeDefinitionSymbolId(tail)(maximum)
-        | ExternalTypeDefinition(_name, _destructor) :: tail -> maximumTypeDefinitionSymbolId(tail)(maximum)
-
-let nextTypeDefinitionSymbolId context =
-    match context with
-        | TypeResolutionContext { parameters = _parameters, definitions = definitions } ->
-            maximumTypeDefinitionSymbolId(
-                definitions,
-                -1
-            ) + 1
+let nextTypeDefinitionSymbolId (context: TypeResolutionContext) = context.maximumSymbolId + 1
 
 let recursive findAliasArgument parameterId parameterIds arguments =
     match (parameterIds, arguments) with
@@ -280,7 +211,7 @@ let resolvePrimitive name =
 
 let recursive resolveNamed name arguments context =
     match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } ->
+        | TypeResolutionContext { parametersByName = parameters, definitionsByName = definitions } ->
             match (arguments, resolvePrimitive(name)) with
                 | ([], Some(primitive)) -> TypeResolutionResult(semanticType = primitive, error = None)
                 | (_, Some(_primitive)) ->
@@ -309,12 +240,12 @@ let recursive resolveNamed name arguments context =
                                 |> TypeNameArityMismatch(name)(1)
                             ))
                         | (_, []) ->
-                            match findTypeParameter(name)(parameters) with
+                            match Ashes.Collection.Map.getStr(name)(parameters) with
                                 | Some(parameter) -> TypeResolutionResult(semanticType = parameter, error = None)
                                 | None -> resolveTypeDefinition(name)(arguments)(definitions)
                         | _ -> resolveTypeDefinition(name)(arguments)(definitions)
 and resolveTypeDefinition name arguments definitions =
-    match findTypeDefinition(name)(definitions) with
+    match Ashes.Collection.Map.getStr(name)(definitions) with
         | None -> TypeResolutionResult(semanticType = SemNever, error = Some(UnknownTypeName(name)))
         | Some(NominalTypeDefinition(symbolId, definitionName, arity, _provenance)) ->
             let actualArity = typeListLength(arguments)
@@ -370,8 +301,8 @@ let resolveSemanticTypeApplication name arguments context = resolveNamed(name)(a
 
 let recursive semanticRuntimeRepresentation semanticType context =
     match (semanticType, context) with
-        | (SemNamed(symbolId, _name, arguments), TypeResolutionContext { definitions = definitions }) ->
-            match findZeroCostTypeDefinition(symbolId)(definitions) with
+        | (SemNamed(symbolId, _name, arguments), TypeResolutionContext { zeroCostById = definitions }) ->
+            match Ashes.Collection.Map.getInt(symbolId)(definitions) with
                 | Some(ZeroCostTypeDefinition(_definitionId, _definitionName, parameterIds, representation, _provenance)) ->
                     semanticRuntimeRepresentation(
                         substituteAliasType(parameterIds)(arguments)(representation)
@@ -383,14 +314,6 @@ let recursive semanticRuntimeRepresentation semanticType context =
             |> semanticRuntimeRepresentation(pointee)
             |> SemPointer
         | _ -> semanticType
-and findZeroCostTypeDefinition symbolId definitions =
-    match definitions with
-        | [] -> None
-        | (ZeroCostTypeDefinition(candidateId, _name, _parameterIds, _representation, _provenance) as definition) :: tail ->
-            if symbolId == candidateId
-            then Some(definition)
-            else findZeroCostTypeDefinition(symbolId)(tail)
-        | _head :: tail -> findZeroCostTypeDefinition(symbolId)(tail)
 
 let recursive resolveTypeExpressions expressions context reversed =
     match expressions with
@@ -521,8 +444,8 @@ let isLowerTypeName name =
 let prepareNamedParameter name context supply =
     match (resolvePrimitive(name), context) with
         | (Some(_primitive), _) -> TypeResolutionPreparationResult(context = context, supply = supply)
-        | (None, TypeResolutionContext { parameters = parameters, definitions = _definitions }) ->
-            match findTypeParameter(name)(parameters) with
+        | (None, TypeResolutionContext { parametersByName = parameters }) ->
+            match Ashes.Collection.Map.getStr(name)(parameters) with
                 | Some(_parameter) -> TypeResolutionPreparationResult(context = context, supply = supply)
                 | None ->
                     if isLowerTypeName(name)

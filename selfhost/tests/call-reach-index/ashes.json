@@ -1,0 +1,1 @@
+{"name":"call-reach-index","entry":"Main.ash","sourceRoots":["."],"outDir":"out","devDependencies":{"semantics":{"path":"../../packages/semantics"}},"overrides":{"AshesCompiler.Frontend":{"path":"../../packages/frontend"}}}

@@ -26,14 +26,16 @@ state of `main`. The fix, and the stage-0 leak fixes measured alongside it, sit 
 matching change to stage 1, so the shared parity fixtures fail on it and it cannot be merged as it
 is.
 
-**The next task** is step E of the work order, the leak work; steps A to D have landed. Read the
+**The next task** is step F, after recording a fresh baseline census. The remaining step-E leak
+work is paused until after F; it is not complete. Steps A to D have landed. Read the
 work order's introduction before anything else. It holds:
 - what was measured;
 - the rule it establishes: a stage-0 ownership change ships with its stage-1 mirror;
 - the definition of leak-free that ends the memory work.
 
-Stage 1 still leaks after everything measured so far, and leak-free comes before the fixpoint work
-of steps F to J.
+Stage 1 still leaks. Clearing F first broadens the real compiler workloads available for measuring
+stage-1 leaks; it does not make the existing census more accurate. After F, repeat the same census
+and reassess whether to finish E or proceed to G. Advancing to G is not automatic.
 
 The defect queue behind that is short. Three stops are known on the whole-tree build, listed in that
 section in the order the build reaches them. SEM-22, an `==` generalization gap that also blocks
@@ -81,8 +83,9 @@ than marking it done here. Read "How to work on this" below before your first ch
 
 ## Work order
 
-One list, worked top to bottom. Every step names the checklist identifiers that gate it, and a step
-starts once the one before it has landed. The stretches:
+Every step names the checklist identifiers that gate it. Work top to bottom except for the
+2026-11-09 sequencing decision: pause the remaining E work, establish a baseline, complete F, then
+compare measurements and decide whether to resume E or proceed to G. The stretches:
 - A to E land the memory work and restore stage parity.
 - F to J make the compiler compile itself, to a fixpoint.
 - K to M settle what the first two stretches left behind: a benchmark's memory, the size of the
@@ -99,9 +102,13 @@ flowchart TD
     A[A. Land the self-hosted-only fixes] --> B[B. Vet the ownership branch]
     B --> C[C. Port the ownership changes into stage 1, group by group]
     C --> D[D. Keep the tools, clean the workspace]
-    D --> E[E. Finish the leak work under the mirror rule]
-    E --> F[F. Clear the blockers the probe reports]
-    F --> G[G. Compile the whole self-hosted tree with stage 1]
+    D --> E[E. Leak work: remaining fixes paused]
+    E --> BASE[Record clean-tree baseline census]
+    BASE --> F[F. Clear the blockers the probe reports]
+    F --> REVIEW[Repeat census and reassess remaining leaks]
+    REVIEW --> RESUME[Resume E if needed before G]
+    RESUME --> G[G. Compile the whole self-hosted tree with stage 1]
+    REVIEW --> G
     G --> H[H. Make stage 2 run]
     H --> I[I. Remove the sources of nondeterminism]
     I --> J[J. Establish the fixpoint]
@@ -222,7 +229,9 @@ D. **Keep the tools, then clean up.** Move the scripts the remaining work depend
    check, the exit-census and leaked-state tools, the reference-count watchpoint scripts), since they
    are what makes each step above a minutes-long loop rather than a day. Then delete the scratch
    directories, the old stage-1 binaries and heap dumps, and the stray outputs in the worktree.
-E. **Finish the leak work under the mirror rule**, in a fresh worktree and branch. The method that
+E. **Finish the leak work under the mirror rule** (remaining work paused until after F), in a fresh
+   worktree and branch. The zero-leak goal and mirror rule remain unchanged. See F for the baseline,
+   safety requirements and post-F decision before resuming. The method that
    found every fix above: compile a tiny input with stage 1, take a census of what is still live at
    exit, add one construct and diff the census, then put a hardware watchpoint on one leaked cell's
    reference count and read which retain has no matching release. Pricing constructs this way says
@@ -700,7 +709,65 @@ E. **Finish the leak work under the mirror rule**, in a fresh worktree and branc
    rule, withdrawn because it corrupted stage 1's heap; stage-1 counterparts for mutual groups'
    result normalization, a loop head binder tuple on a back edge, and a loop exit head under a nested
    pattern.
-F. **Clear the blockers the probe reports.** From here to J the goal is a fixpoint, not feature
+F. **Clear the blockers the probe reports.** This is the next active step under the 2026-11-09
+   sequencing decision. Before starting fixes, record a fresh census from a clean, committed tree
+   containing the landed round-11 work. Record the source commit, stage-1 binary, census inputs,
+   NET/GROWTH, per-class deltas and peak memory. Historical round-11 counts are not this baseline.
+
+   Fresh baseline (2026-11-09, source `a51ede27`, after merged #1153): stage 1 built in 557.61 s,
+   peaking at 16,564,336 KiB, and passed all six smoke guards. The unchanged round-11 loops10/11
+   census measured **NET +20 / GROWTH +33** (6,032 -> 6,052 live cells). Binary SHA-256:
+   `41bb083063cfa5ec15bc6fc3a5620a40aa9c98ca805e29123b0087d149a04156`.
+   Largest positive classes: `32_ptr` +5; `40_9`, `32_3`, `32_29`, `32_28` +2 each.
+   All 20 backend module probes were attempted: 15 stopped on missing `Show` evidence, four on
+   unsupported FFI buffer marshalling, and `ElfLinker` compiled and ran. `FloatText` reached the
+   buffer stop without the historical `u64` mismatch. The semantics sweep is incomplete:
+   `AggregateOwnership` passed; `CallOwnership` exhausted memory. A reduced-budget trace showed
+   rapid 4 MiB anonymous mappings, but neither repeated work nor a missing release is established.
+   These are baseline findings, not evidence that F or E is complete.
+
+   The first F slices split backend lookup keys and added FFI buffer marshalling (`17cb09da`).
+   A phase trace then located the `CallOwnership` memory stop in trivial ownership-copy elision's
+   temporary-use counter: rebuilding the association-list prefix allocated quadratically.
+   Prepending the latest count and using the existing integer-key lookup (`89691259`) preserves
+   first-match lookup semantics. At 1,000/2,000/4,000 probe pairs, peak RSS fell from
+   174,348/665,992/2,634,084 KiB to 10,080/10,072/10,076 KiB. A fresh stage 1 built from
+   `e0b13051` compiled the real `CallOwnership` module in 173.24 s at 1,652,220 KiB and the emitted
+   program ran. No release was added. Its clean-tree census remains **NET +20 / GROWTH +33**, with
+   all class deltas unchanged; the full self-hosted semantics suite also passes.
+
+   The completed module surveys found 21/21 backend modules compiling and running after the
+   native-FFI/linker slices, and 69/89 semantics modules passing before the next source fixes.
+   Both semantics modules that exceeded the 4 GiB screening cap reached the same mixed-key
+   diagnostic at 20 GiB, peaking near 6.5 GiB. `StateMachineTransform` and `IrCompileTimeEval`
+   now separate string labels from integer slots/temporaries. The backend also implements the
+   signed numeric conversions used by compile-time evaluation and `Rune.fromInt` used by formatting.
+
+   Replacing the lexer's three fixed regex checks with predicates generated from bundled PCRE2
+   moved the frontend survey from 9/12 passing to 13/13, including the generated module. Both
+   compiler stages agree with PCRE2 for all 1,114,112 code-point entries, and the full frontend
+   suite passes normally. The focused lexer suite passes with poisoning. The complete poisoned
+   frontend suite has a separately reproduced baseline crash in `ModuleSource.ash:125`, reached
+   by `ModuleSourceTests.checkAmbiguousProjectSource`; the old regex lexer and a reproducer that
+   imports only `ModuleSourceTests` fail there too. Do not report that full poisoned suite as green.
+   The full semantics suite passes, and all 30/95 whole-program IR parity diagnostics match a
+   frozen `a51ede27` build byte for byte. A fresh stage-1 build, census and compiler probes are
+   still required before declaring F complete.
+
+   During F, crashes, use-after-free and over-releases remain blockers. Fix leaks only when they
+   block F within the existing memory budgets; leave the other leak classes tracked under E.
+   Ownership fixes still require the stage-0/stage-1 mirror (or a measured exemption), regression
+   coverage and the existing gates. Keep the memory scopes, heavy-job limit and free-memory floor;
+   do not raise budgets to bypass a leak or accept an unproven release.
+
+   After F, repeat the same census on a clean, committed tree with the same inputs and round counts.
+   Compare NET/GROWTH and per-class deltas against the baseline, recording commits and peak memory.
+   Use the broader working probes to investigate leaks that the old workloads could not reach.
+   Then explicitly reassess whether to finish E or proceed to G; a small per-function leak count
+   does not establish that whole-tree self-compilation fits in memory. E remains unfinished until
+   its leak-free acceptance criteria pass.
+
+   From here to J the goal is a fixpoint, not feature
    parity with stage 0. Stage 2 and stage 3 are both produced by the self-hosted compiler, so the
    fixpoint is blind to any disagreement between stage 0 and stage 1: matching stage 0 instruction
    for instruction is a debugging aid, not a requirement.
@@ -2797,10 +2864,19 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
   declared once from a scan of the whole program, reusing the runtime's own declaration where the
   name matches so LLVM does not rename the second one to `strlen.1`; each argument word converted
   to what its ABI position declares and the result normalized back to a word, with `ToCString` for
-  a `Str` argument. A `Buffer`, `Out` or `NativeString` position panics rather than emitting
-  something silently wrong: those need `AllocFfiOut`/`LoadFfiOut`/`CopyFfiString`, still open, and
-  the self-hosted linker still resolves an imported symbol against its own fixed table rather than
-  the `symbol@library` the declaration carries). Open: the buffered stdout ring (writes are
+  a `Str` argument. Added during step F (2026-11-10): `Buffer` arguments count the immutable list,
+  allocate a contiguous stack array, copy the borrowed opaque handles in order, and pass null for
+  an empty list. The self-hosted backend suite generates and runs empty, single-element and
+  multi-element buffer comparisons. The next F slice implements `AllocFfiOut`/`LoadFfiOut` and
+  `CopyFfiString`: null-initialized output slots, bounded NUL scans, strict UTF-8 validation,
+  nullable results and owned-string disposal. Out-string lowering preserves the declared
+  destructor instead of replacing it with borrowed ownership. The full backend suite passes,
+  including untouched output slots, native status preservation, UTF-8 boundary failures and
+  exactly-once disposal for direct and out strings. The linker now accepts declared symbol/library
+  pairs from `IrProgram.externalFunctions`, ahead of its runtime defaults, and imports only
+  undefined symbols actually used by the object. A real `nextafter@libm.so.6` call runs; the same
+  object without its mapping is rejected, and an unused declaration adds no dependency on its
+  nonexistent library. These tests also pass in the poisoned backend suite). Open: the buffered stdout ring (writes are
   immediate), entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the

@@ -255,6 +255,15 @@ internal static class LeakCombinationTemplates
         registry.Register(new ConstrainedLoopAtCallerTypesTemplate());
         registry.Register(new ArenaSuccessorJoinTemplate());
         registry.Register(new CallPartAccumulatorTemplate());
+        registry.Register(new ConsedTailCallRefillTemplate());
+        registry.Register(new LoopResultConstructorFieldTemplate());
+        registry.Register(new SharedCallResultFieldTemplate());
+        registry.Register(new ResolvedNullaryPatternBinderTemplate());
+        registry.Register(new ArenaCurryBorrowTemplate());
+        registry.Register(new NestedGenericMapAccumulatorTemplate());
+        registry.Register(new CopiedGenericEnumArgumentTemplate());
+        registry.Register(new TmcConstructorHeadRetainsTemplate());
+        registry.Register(new VisitedGenericMapOwnerTemplate());
     }
 }
 

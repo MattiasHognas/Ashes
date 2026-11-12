@@ -20,6 +20,13 @@ import AshesCompiler.Semantics.Types
 export (
     type CallCopyOut(..),
     type CoreCalleeFacts(..),
+    type CallParameterReach(..),
+    type PreparedCallReach(..),
+    value prepareCallReach,
+    value preparedArgumentReaches,
+    value preparedArgumentReachesWhole,
+    value preparedArgumentCannotKeepWhole,
+    value preparedCallReachFlags,
     value callCopyOutInstruction,
     value listHeadCopyOf,
     value parameterAtIndex,
@@ -58,6 +65,69 @@ let listHeadCopyOf (element: SemanticType) =
             else None
         | _ -> None
 
+// Frozen query answers for one declared argument. Counts retain duplicate-entry sums; they are
+// not sets, and a component path does not count as a whole-value reach.
+type CallParameterReach =
+    | anyCount: Int
+    | wholeCount: Int
+    | exposedWholeCount: Int
+    deriving {Eq, Show}
+
+type PreparedCallReach =
+    | byArgument: MapTree(Int, CallParameterReach)
+    | parameterCount: Int
+    | inputsEnumerated: Bool
+
+let recursive countParameterReach (parameter: Str) (prefix: Str) (exposed: Str) (entries: List(ParameterReachEntry)) (anyCount: Int) (wholeCount: Int) (exposedWholeCount: Int) =
+    match entries with
+        | [] -> CallParameterReach(anyCount = anyCount, wholeCount = wholeCount, exposedWholeCount = exposedWholeCount)
+        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
+            countParameterReach(parameter)(prefix)(exposed)(rest)(anyCount + (if name == parameter || Ashes.Text.startsWith(name)(prefix)
+            then count
+            else 0))(wholeCount + (if name == parameter
+            then count
+            else 0))(exposedWholeCount + (if name == exposed
+            then count
+            else 0))
+
+let recursive prepareCallReachArguments (parameters: List(Str)) (entries: List(ParameterReachEntry)) (index: Int) (prepared: PreparedCallReach) =
+    match parameters with
+        | [] -> prepared with parameterCount = index
+        | parameter :: rest ->
+            let answer = countParameterReach(parameter)(parameter + "/")("~" + parameter)(entries)(0)(0)(0)
+            in prepareCallReachArguments(rest)(entries)(index + 1)((prepared with byArgument = Ashes.Collection.Map.setInt(index)(answer)(prepared.byArgument)))
+
+let recursive reachCausesContain (causes: List(ResultReachCause)) (target: ResultReachCause) =
+    match causes with
+        | [] -> false
+        | cause :: rest -> cause == target || reachCausesContain(rest)(target)
+
+// Prepare only completed summaries, once at their registration boundary. The evolving reach
+// fixpoint retains its original representation and never carries stale query answers.
+let prepareCallReach (parameters: List(Str)) (reach: ResultReachState) = prepareCallReachArguments(parameters)(reach.counts)(0)(PreparedCallReach(byArgument = Ashes.Collection.Map.empty, parameterCount = 0, inputsEnumerated = !reachCausesContain(reach.causes)(UnenumeratedInputs)))
+
+let preparedArgumentReaches (index: Int) (prepared: PreparedCallReach) =
+    match Ashes.Collection.Map.getInt(index)(prepared.byArgument) with
+        | Some(CallParameterReach { anyCount = count }) -> count > 0
+        | None -> false
+
+let preparedArgumentReachesWhole (index: Int) (prepared: PreparedCallReach) =
+    match Ashes.Collection.Map.getInt(index)(prepared.byArgument) with
+        | Some(CallParameterReach { wholeCount = count }) -> count > 0
+        | None -> false
+
+let preparedArgumentCannotKeepWhole (index: Int) (prepared: PreparedCallReach) =
+    match Ashes.Collection.Map.getInt(index)(prepared.byArgument) with
+        | Some(CallParameterReach { wholeCount = wholeCount, exposedWholeCount = exposedCount }) -> prepared.inputsEnumerated && wholeCount == 0 && exposedCount == 0
+        | None -> false
+
+let recursive preparedReachFlagsFrom (index: Int) (prepared: PreparedCallReach) =
+    if index == prepared.parameterCount
+    then []
+    else preparedArgumentReaches(index)(prepared) :: preparedReachFlagsFrom(index + 1)(prepared)
+
+let preparedCallReachFlags (prepared: PreparedCallReach) = preparedReachFlagsFrom(0)(prepared)
+
 // The facts about a call spine's callee the argument and result rules consult, stage 0's
 // ownership summary and known-label resolution of a let-bound function called by name: its
 // generated label (once its body is lowered), its parameters in order, their ownership, the
@@ -68,20 +138,15 @@ type CoreCalleeFacts =
     | parameters: List(Str)
     | ownership: List((Str, ParameterOwnership))
     | reach: ResultReachState
+    | preparedReach: PreparedCallReach
     | rcEligible: Bool
     | argumentCount: Int
 
-let recursive lookupReturnedClosureLabel (label: Str) (labels: List((Str, Str))) =
-    match labels with
-        | [] -> None
-        | (candidate, returned) :: rest ->
-            if candidate == label
-            then Some(returned)
-            else lookupReturnedClosureLabel(label)(rest)
+let lookupReturnedClosureLabel (label: Str) (labels: MapTree(Str, Str)) = Ashes.Collection.Map.getStr(label)(labels)
 
 // The label of the stage `hops` returned closures past `label` along the recorded
 // returned-closure chain, `None` where the chain is not recorded.
-let recursive innermostStageLabel (hops: Int) (label: Str) (labels: List((Str, Str))) =
+let recursive innermostStageLabel (hops: Int) (label: Str) (labels: MapTree(Str, Str)) =
     if hops <= 0
     then Some(label)
     else
@@ -95,7 +160,7 @@ let lookupBodyPlacement (label: Str) (placements: MapTree(Str, Bool)) = Ashes.Co
 // the spine's applications reach produced a reference-counted result, following the
 // returned-closure chain one hop per application past the first; `None` while that body is not
 // lowered or the chain is not recorded.
-let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: List((Str, Str))) (bodyPlacements: MapTree(Str, Bool)) =
+let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: MapTree(Str, Str)) (bodyPlacements: MapTree(Str, Bool)) =
     match facts with
         | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
             match innermostStageLabel(count - 1)(label)(returnedClosureLabels) with
@@ -119,14 +184,6 @@ let recursive parameterAtIndex (index: Int) (ownership: List((Str, ParameterOwne
             then kind
             else parameterAtIndex(index - 1)(rest)
 
-let recursive parameterNameAt (index: Int) (parameters: List(Str)) =
-    match parameters with
-        | [] -> None
-        | parameter :: rest ->
-            if index == 0
-            then Some(parameter)
-            else parameterNameAt(index - 1)(rest)
-
 // Stage 0's `CalleeParamBorrowsOnly`: the callee's summary classifies the parameter at this
 // position as borrowed.
 let calleeParameterBorrows (facts: Maybe(CoreCalleeFacts)) (index: Int) =
@@ -147,20 +204,8 @@ let recursive reachCountOf (parameter: Str) (entries: List(ParameterReachEntry))
 // or through one of its components (a matched head or field kept in the result).
 let calleeResultReachesArgument (facts: Maybe(CoreCalleeFacts)) (index: Int) =
     match facts with
-        | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts } }) ->
-            match parameterNameAt(index)(parameters) with
-                | Some(parameter) -> reachCountOf(parameter)(counts) > 0
-                | None -> false
+        | Some(CoreCalleeFacts { preparedReach = prepared }) -> preparedArgumentReaches(index)(prepared)
         | None -> false
-
-// The parameter's own entry alone: a whole-value reach.
-let recursive wholeReachCountOf (parameter: Str) (entries: List(ParameterReachEntry)) =
-    match entries with
-        | [] -> 0
-        | ParameterReachEntry { parameterName = name, reachCount = count } :: rest ->
-            if name == parameter
-            then count + wholeReachCountOf(parameter)(rest)
-            else wholeReachCountOf(parameter)(rest)
 
 // Stage 0's `ResultReachesWhole`: the callee's result may keep the parameter's value itself (a
 // curry stage that stores it into the value it returns), so a fresh argument moves into the
@@ -168,16 +213,8 @@ let recursive wholeReachCountOf (parameter: Str) (entries: List(ParameterReachEn
 // value, and the caller's release of the spine stays.
 let calleeResultReachesArgumentWhole (facts: Maybe(CoreCalleeFacts)) (index: Int) =
     match facts with
-        | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts } }) ->
-            match parameterNameAt(index)(parameters) with
-                | Some(parameter) -> wholeReachCountOf(parameter)(counts) > 0
-                | None -> false
+        | Some(CoreCalleeFacts { preparedReach = prepared }) -> preparedArgumentReachesWhole(index)(prepared)
         | None -> false
-
-let recursive reachCausesContain (causes: List(ResultReachCause)) (target: ResultReachCause) =
-    match causes with
-        | [] -> false
-        | cause :: rest -> cause == target || reachCausesContain(rest)(target)
 
 // Stage 0's `CalleeResultCannotKeepParameterWhole`: the proof `calleeResultReachesArgumentWhole` is
 // the possibility of. The callee's result never holds the argument itself, though it may hold
@@ -187,8 +224,5 @@ let recursive reachCausesContain (causes: List(ResultReachCause)) (target: Resul
 // handed over instead of abandoning it to the callee.
 let calleeResultCannotKeepArgumentWhole (facts: Maybe(CoreCalleeFacts)) (index: Int) =
     match facts with
-        | Some(CoreCalleeFacts { parameters = parameters, reach = ResultReachState { counts = counts, causes = causes } }) ->
-            match parameterNameAt(index)(parameters) with
-                | Some(parameter) -> !reachCausesContain(causes)(UnenumeratedInputs) && wholeReachCountOf(parameter)(counts) == 0 && wholeReachCountOf("~" + parameter)(counts) == 0
-                | None -> false
+        | Some(CoreCalleeFacts { preparedReach = prepared }) -> preparedArgumentCannotKeepWhole(index)(prepared)
         | None -> false

@@ -238,6 +238,8 @@ let remapSourceTemps inst (remap: List((IrTemp, IrTemp))) =
             then temp
             else resolveTemp(remap)(temp))(inst))
 
+// Counts are read only through first-match lookup. Keep the latest count at the head instead
+// of rebuilding a growing prefix for every use; compare Int keys without Eq closures.
 let recursive countTempUses instructions acc =
     match instructions with
         | [] -> acc
@@ -249,12 +251,12 @@ let recursive countTempUses instructions acc =
                         | [] -> entries
                         | u :: uTail ->
                             let count =
-                                match lookupAssociation(u)(entries) with
+                                match lookupTempAssociation(u)(entries) with
                                     | Some(c) -> c + 1
                                     | None -> 1
                             in
                                 entries
-                                |> setAssociation(u)(count)
+                                |> pushAssociation(u)(count)
                                 |> addUses(uTail)
                 in
                     acc

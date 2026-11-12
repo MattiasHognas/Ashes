@@ -5,9 +5,8 @@
 // - Malformed input produces source-ordered diagnostics and scanning always advances.
 // - Token text remains the original spelling needed by parsing and formatting.
 
-import Ashes.Text.Regex.compile as compileRegex
-import Ashes.Text.Regex.isMatch as regexIsMatch
 import AshesCompiler.Frontend.Token
+import AshesCompiler.Frontend.UnicodeClassification
 export (
     type LexerResult(..),
     value tokenize,
@@ -17,12 +16,6 @@ type LexerResult =
     | tokens: List(Token)
     | diagnostics: List(DiagnosticEntry)
     deriving {Eq, Show}
-
-let lexerUnicodeLetter = compileRegex("^\\p{L}$")
-
-let lexerUnicodeIdentifierCharacter = compileRegex("^[\\p{L}\\p{Nd}]$")
-
-let lexerUnicodeWhiteSpace = compileRegex("^\\s$")
 
 let recursive reverseLexerValues remaining result =
     match remaining with
@@ -97,11 +90,6 @@ let lexerSourceRune (bytes: Bytes) (byteCount: Int) (position: Int) =
             let text = Ashes.Rune.toText(value)
             in (value, text, Ashes.Text.byteLength(text))
 
-let lexerRegexMatches compiled value =
-    match compiled with
-        | Ok(regex) -> regexIsMatch(regex)(value)
-        | Error(_) -> false
-
 let lexerIdentifierWidth (bytes: Bytes) (byteCount: Int) (position: Int) =
     (let first = lexerByteAt(bytes)(position)
     in
@@ -112,8 +100,10 @@ let lexerIdentifierWidth (bytes: Bytes) (byteCount: Int) (position: Int) =
             else 0
         else
             match lexerSourceRune(bytes)(byteCount)(position) with
-                | (_rune, text, width) ->
-                    if lexerRegexMatches(lexerUnicodeIdentifierCharacter)(text)
+                | (rune, _text, width) ->
+                    if rune
+                    |> Ashes.Rune.toInt
+                    |> isUnicodeIdentifierCharacter
                     then width
                     else 0)
 
@@ -127,8 +117,10 @@ let lexerIdentifierStartWidth (bytes: Bytes) (byteCount: Int) (position: Int) =
             else 0
         else
             match lexerSourceRune(bytes)(byteCount)(position) with
-                | (_rune, text, width) ->
-                    if lexerRegexMatches(lexerUnicodeLetter)(text)
+                | (rune, _text, width) ->
+                    if rune
+                    |> Ashes.Rune.toInt
+                    |> isUnicodeLetter
                     then width
                     else 0)
 
@@ -142,8 +134,10 @@ let lexerWhiteSpaceWidth (bytes: Bytes) (byteCount: Int) (position: Int) =
             else 0
         else
             match lexerSourceRune(bytes)(byteCount)(position) with
-                | (_rune, text, width) ->
-                    if lexerRegexMatches(lexerUnicodeWhiteSpace)(text)
+                | (rune, _text, width) ->
+                    if rune
+                    |> Ashes.Rune.toInt
+                    |> isUnicodeWhiteSpace
                     then width
                     else 0)
 
