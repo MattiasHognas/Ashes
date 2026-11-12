@@ -18,6 +18,19 @@ Compile each generated `ashes.json` with `ASHES_RC_LEAKCHECK=1`, then run the ex
 invocations must use the configured heavy-job wrapper and systemd scopes: 8G for these small
 compiles, 4G for their programs, and `MemorySwapMax=0`.
 
+The counter-equality runner applies these limits and records source/compiler hashes, output,
+elapsed time and peak memory under each generated project's `<tag>/` directory:
+
+```sh
+bash selfhost/tests/pending-goal-lifetime/validate.sh /absolute/path/to/compiler checkpoint
+```
+
+Pass `poison` as the third argument only for stage 0; stage 1 has no poison backend.
+`ASHES_HEAVY_RUNNER` can select the configured heavy-job wrapper. The script compares counters
+at 1000 and 10000 rounds for both cases and returns nonzero if either grows. The known stage-1
+failure is deliberately not accepted as a pass. The runner has been syntax-checked; the results
+below came from the equivalent individually scoped commands, not a new invocation of this runner.
+
 The `state` case creates a dynamic string key, stores its unresolved goal in the state, binds
 the goal variable to Bool, and reads the pending list through `statePendingTraitGoals` before
 calling `resolvedTraitGoals`. It checks that the resulting list has one element. The `literal`
@@ -50,6 +63,11 @@ found exactly this string plus the baseline cell. The retained-reference instruc
 `0x445b6a`, `0x445e93`, `0x44627e`, and `0x44693c`; the last observed drops were at
 `0x4495b6` and `0x44983b`. These addresses belong to the original reduced executable, not the
 standalone fixtures above, and must be regenerated after recompilation.
+
+Rendering the tracked inputs reproduces the validated source bytes exactly:
+
+- State: `4104056f73fc31f1ada4d9b947dd083acf518e7b4cccbb418f5f896d0409cf85`.
+- Literal: `a0708000fcd56aceba081c6bbf97383de2fec3c1fcc3c75dcd0d3850dd34e541`.
 
 Stage1's region allocator has a 16-byte block prefix before the ordinary RC header. Freed
 blocks retain their old reference counts; a correct live-cell scan must subtract the allocator's

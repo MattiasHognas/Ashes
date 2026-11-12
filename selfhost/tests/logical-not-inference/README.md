@@ -80,7 +80,20 @@ Bootstrap28 SHA256:
 `ecd48b70e3c1e5f20796a6eee67425a394641b9fe7d0bd2681d7302c55f0d9a3`.
 Stage 1 has no poison backend. Evidence is retained under
 `work/logical-not-lifetime/`, including the failing `validate-more.sh` comparison.
-An independent allocation/watchpoint investigation is in progress; attribution to
-an existing compiler defect versus a newly exercised owner is not yet established.
-The semantic fix is therefore not claimed lifetime-accepted. No full suites or
-successful stage-2 compilation are claimed by this change.
+An independent baseline reproduction removes `finishOrDeferCoreLogicalNot`
+entirely. It constructs a dynamic key in the existing pending-goal state, binds its
+type, and calls the unchanged `resolvedTraitGoals` helper. Bootstrap28 emits live
+counts 2/1001/10001 at 1/1000/10000 rounds; a literal pending-list control stays
+flat at 1/1. Seed creation, key creation, empty proof lookup, deferral alone, and
+binding alone are also flat. Adding `resolvedTraitGoals` introduces the growth;
+the later proof-map and pinning steps add none.
+
+The leaked cell is a reference-counted string (`2:3:Not:not` in the reduced case),
+still at reference count 1. This establishes an existing stage-1 ownership defect
+in the borrowed pending-list to resolved-list path, newly exercised by logical
+negation. It does not establish a safe release fix. The failing equality check
+remains required, and the semantic fix is not claimed lifetime-accepted. No full
+suites or successful stage-2 compilation are claimed by this change.
+
+The frozen minimal sources, watchpoint observations, and a counter-equality runner
+are tracked in [pending-goal-lifetime](../pending-goal-lifetime/README.md).
