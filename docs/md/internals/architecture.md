@@ -3332,6 +3332,15 @@ priority over shared projections. Only context-free facts are shared: recursive
 admissibility still evaluates its nominal cycle path, and lowering-dependent copy
 plans are not stored in this table.
 
+The dropper's admissibility decision uses a query-local worklist. Every newly
+visited exact type leaves all of its children pending, so another branch can
+skip that type without skipping a possible rejecting descendant. The original
+nominal cycle key is preserved: if one key identifies different exact types,
+the query falls back to the original path-only traversal with its discovered
+view context retained. Caller-supplied blocked paths still precede constructor
+and resource checks, and body-local full facts remain authoritative. No final
+path-dependent Boolean is persisted in the shared context.
+
 Core lowering has a separate `CoreHeapQueryContext` for its coverage environment,
 whose symbol IDs differ from the prepared dropper environment. Copy-plan,
 admissibility, shallow-copy, child-layout and child-type views are populated on
