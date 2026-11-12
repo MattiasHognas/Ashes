@@ -36,6 +36,7 @@ export (
     type DropperLabelCache(..),
     type DropperSynthesis(..),
     type DropperBody(..),
+    type DropperQueryContext(..),
     value emptyDropperLabelCache,
     value containsType,
     value structuralReleaseNeedsHelper,
@@ -53,6 +54,8 @@ export (
     value synthesizeChildDrop,
     type DropperTypes(..),
     value prepareDropperTypes,
+    value dropperQueryContextOf,
+    value withDropperQueryContext,
     value openDropperBody,
     value renumberType,
     value renumberPreparedType,
@@ -63,6 +66,8 @@ export (
     value bodyEnvironment,
     value dropperAdmissibilityFacts,
     value dropperLayoutFacts,
+    value dropperLayoutFactsIndexed,
+    value dropperAdmissibilityFactsIndexed,
     value dropperConstructorGroupsIndexed,
     value cacheDropperLayout,
     value openSynthesizedValue,
@@ -87,13 +92,25 @@ type DropperLabelCache =
 
 let emptyDropperLabelCache = DropperLabelCache(structuralLabels = [], adtLabels = [], copierLabels = [], normalizerLabels = [], generalDropperLabels = [], recordDropperLabels = [])
 
+// Only completed type/environment queries belong here. The recursive admissibility
+// decision still carries its caller's path and is never cached in this table.
+type DropperQueryFacts =
+    | dropper: Maybe(HeapDropperFacts)
+    | admissibility: Maybe(HeapAdmissibilityFacts)
+
+// Node IDs are meaningful only in this graph lineage. Carry the table and graph
+// together, including when a synthesis emits no instructions.
+type DropperQueryContext =
+    | graphIndex: TypeGraphIndex
+    | facts: MapTree(Int, DropperQueryFacts)
+
 // The outcome of one synthesis request: the helper's label (`None` when the release needs no
 // helper), the cache and counters to carry forward, and the functions synthesized by the request
 // in completion order.
 type DropperSynthesis =
     | label: Maybe(Str)
     | cache: DropperLabelCache
-    | graphIndex: TypeGraphIndex
+    | queryContext: DropperQueryContext
     | functions: List(IrFunction)
     | nextLambdaId: Int
     | nextLabelId: Int
@@ -116,6 +133,7 @@ type DropperBody =
     | nextLabelId: Int
     | environment: TypeEnvironment
     | graphIndex: TypeGraphIndex
+    | sharedFacts: MapTree(Int, DropperQueryFacts)
     | constructorsByType: MapTree(Str, List(ConstructorInferenceDefinition))
     | taglessConstructorIndex: TaglessConstructorIndex
     // Local to this immutable synthesis environment; never persisted with dropper labels.
@@ -218,6 +236,7 @@ type DropperTypes =
     | dropperTypeIdsByName: MapTree(Str, Int)
     | dropperTypeEnvironment: TypeEnvironment
     | graphIndex: TypeGraphIndex
+    | sharedFacts: MapTree(Int, DropperQueryFacts)
     | constructorsByType: MapTree(Str, List(ConstructorInferenceDefinition))
     | taglessConstructorIndex: TaglessConstructorIndex
     | contractRecords: MapTree(Str, Bool)
@@ -225,6 +244,12 @@ type DropperTypes =
 // Uses the same first-seen IDs as the public list, without scanning it at each named node.
 let renumberPreparedType (types: DropperTypes) (semanticType: SemanticType) =
     renumberTypeWith(given (name: Str) -> Ashes.Collection.Map.getStr(name)(types.dropperTypeIdsByName))(semanticType)
+
+let dropperQueryContextOf (types: DropperTypes) = DropperQueryContext(graphIndex = types.graphIndex, facts = types.sharedFacts)
+
+let withDropperQueryContext (context: DropperQueryContext) (types: DropperTypes) = types with graphIndex = context.graphIndex, sharedFacts = context.facts
+
+let bodyQueryContext (body: DropperBody) = DropperQueryContext(graphIndex = body.graphIndex, facts = body.sharedFacts)
 
 let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
     (let ids = namedTypeIds(definitions)([])(Ashes.Collection.Map.empty)(0)
@@ -240,6 +265,7 @@ let prepareDropperTypes (definitions: List(ConstructorInferenceDefinition)) =
                     dropperTypeIdsByName = ids.byName,
                     dropperTypeEnvironment = environment,
                     graphIndex = emptyTypeGraphIndex(environment),
+                    sharedFacts = Ashes.Collection.Map.empty,
                     constructorsByType = indexDropperConstructors(renumbered),
                     taglessConstructorIndex = renumbered
                     |> map(given (definition: ConstructorInferenceDefinition) ->
@@ -262,6 +288,7 @@ let openDropperBody (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nex
             nextLabelId = nextLabelId,
             environment = dropperTypes.dropperTypeEnvironment,
             graphIndex = dropperTypes.graphIndex,
+            sharedFacts = dropperTypes.sharedFacts,
             constructorsByType = dropperTypes.constructorsByType,
             taglessConstructorIndex = dropperTypes.taglessConstructorIndex,
             layoutFacts = Ashes.Collection.Map.empty,
@@ -339,19 +366,39 @@ let dropperLayoutFacts (semanticType: SemanticType) (body: DropperBody) =
         | Some(facts) -> facts
         | None -> classifyHeapDropper(semanticType)(body.environment)
 
+let admissibilityChild (child: HeapDropperChild) = (child.childType, child.dropKind)
+
+let dropperAdmissibilityProjection (facts: HeapDropperFacts) =
+    HeapAdmissibilityFacts(
+        containsResource = facts.containsResource,
+        containsUnresolvedType = facts.containsUnresolvedType,
+        children = map(admissibilityChild)(facts.children)
+    )
+
 let dropperLayoutFactsIndexed (semanticType: SemanticType) (body: DropperBody) =
     match cachedDropperLayout(semanticType)(body) with
         | Some(facts) -> (facts, body)
         | None ->
-            match classifyHeapDropperIndexed(semanticType)(body.graphIndex) with
-                | (facts, graphIndex) -> (facts, (body with graphIndex = graphIndex))
+            match typeGraphNode(semanticType)(body.graphIndex) with
+                | (node, graphIndex) ->
+                    let queried = body with graphIndex = graphIndex
+                    in
+                        let previous =
+                            match Ashes.Collection.Map.getInt(node.nodeId)(queried.sharedFacts) with
+                                | Some(facts) -> facts
+                                | None -> DropperQueryFacts(dropper = None, admissibility = None)
+                        in
+                            match previous.dropper with
+                                | Some(facts) -> (facts, queried)
+                                | None ->
+                                    match classifyHeapDropperIndexed(semanticType)(queried.graphIndex) with
+                                        | (facts, discovered) ->
+                                            (facts, (queried with graphIndex = discovered, sharedFacts = Ashes.Collection.Map.setInt(node.nodeId)((previous with dropper = Some(facts), admissibility = Some(dropperAdmissibilityProjection(facts))))(queried.sharedFacts)))
 
 // Copier construction uses the source type's groups, without runtime alias erasure.
 let dropperConstructorGroupsIndexed (semanticType: SemanticType) (body: DropperBody) =
     match typeGraphNode(semanticType)(body.graphIndex) with
         | (node, graphIndex) -> (node.sourceConstructorGroups, (body with graphIndex = graphIndex))
-
-let admissibilityChild (child: HeapDropperChild) = (child.childType, child.dropKind)
 
 // Full facts already belong to this immutable synthesis environment. Reuse only their
 // context-free projection; admissibility answers still depend on the caller's cycle path.
@@ -367,15 +414,24 @@ let dropperAdmissibilityFacts (semanticType: SemanticType) (body: DropperBody) =
 
 let dropperAdmissibilityFactsIndexed (semanticType: SemanticType) (body: DropperBody) =
     match cachedDropperLayout(semanticType)(body) with
-        | Some(facts) ->
-            (HeapAdmissibilityFacts(
-                containsResource = facts.containsResource,
-                containsUnresolvedType = facts.containsUnresolvedType,
-                children = map(admissibilityChild)(facts.children)
-            ), body)
+        | Some(facts) -> (dropperAdmissibilityProjection(facts), body)
         | None ->
-            match classifyHeapAdmissibilityIndexed(semanticType)(body.graphIndex) with
-                | (facts, graphIndex) -> (facts, (body with graphIndex = graphIndex))
+            match typeGraphNode(semanticType)(body.graphIndex) with
+                | (node, graphIndex) ->
+                    let queried = body with graphIndex = graphIndex
+                    in
+                        let previous =
+                            match Ashes.Collection.Map.getInt(node.nodeId)(queried.sharedFacts) with
+                                | Some(facts) -> facts
+                                | None -> DropperQueryFacts(dropper = None, admissibility = None)
+                        in
+                            // A completed full view stores its projection here too; a
+                            // warm query neither walks children nor reallocates that list.
+                            match previous.admissibility with
+                                | Some(facts) -> (facts, queried)
+                                | None ->
+                                    match classifyHeapAdmissibilityIndexed(semanticType)(queried.graphIndex) with
+                                        | (facts, discovered) -> (facts, (queried with graphIndex = discovered, sharedFacts = Ashes.Collection.Map.setInt(node.nodeId)((previous with admissibility = Some(facts)))(queried.sharedFacts)))
 
 let cacheDropperLayout (semanticType: SemanticType) (body: DropperBody) =
     match semanticType with
@@ -458,7 +514,7 @@ let finishSynthesizedBody (label: Str) (origin: IrFunctionOrigin) (outer: Droppe
                     origin = Some(origin),
                     lifetimesPlaced = true
                 )
-            in outer with cache = cache, graphIndex = inner.graphIndex, layoutFacts = inner.layoutFacts, dropperFacts = inner.dropperFacts, functions = append(functions)([function]), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
+            in outer with cache = cache, graphIndex = inner.graphIndex, sharedFacts = inner.sharedFacts, layoutFacts = inner.layoutFacts, dropperFacts = inner.dropperFacts, functions = append(functions)([function]), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId
 
 let recursive lookupLabel (key: Str) (labels: List((Str, Str))) =
     match labels with
@@ -980,9 +1036,18 @@ let structuralReleaseNeedsHelperIndexed (semanticType: SemanticType) (index: Typ
                 | (facts, queried) -> (facts.containsOwnedChild, queried)
         | _ -> (false, index)
 
+let structuralReleaseNeedsHelperIn (semanticType: SemanticType) (body: DropperBody) =
+    match semanticType with
+        | SemNamed(_symbolId, _name, _arguments) ->
+            match dropperLayoutFactsIndexed(semanticType)(body) with
+                | (facts, queried) -> (facts.containsOwnedChild, queried)
+        | _ ->
+            match structuralReleaseNeedsHelperIndexed(semanticType)(body.graphIndex) with
+                | (needed, graphIndex) -> (needed, (body with graphIndex = graphIndex))
+
 let synthesisResult (label: Maybe(Str)) (body: DropperBody) =
     match body with
-        | DropperBody { cache = cache, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> DropperSynthesis(label = label, cache = cache, graphIndex = body.graphIndex, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)
+        | DropperBody { cache = cache, functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> DropperSynthesis(label = label, cache = cache, queryContext = bodyQueryContext(body), functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)
 
 let emitStructuralBody (semanticType: SemanticType) (body: DropperBody) =
     match openSynthesizedValue(body) with
@@ -992,25 +1057,21 @@ let emitStructuralBody (semanticType: SemanticType) (body: DropperBody) =
             |> emitReturnZero
 
 let synthesizeStructuralOwnerDropperIn (semanticType: SemanticType) (body: DropperBody) =
-    match structuralReleaseNeedsHelperIndexed(semanticType)(body.graphIndex) with
-        | (needed, graphIndex) ->
-            let queried = body with graphIndex = graphIndex
-            in
-                if !needed
-                then synthesisResult(None)(queried)
-                else
-                    match cachedStructuralLabel(formatSemanticType(semanticType))(queried) with
-                        | Some(label) -> synthesisResult(Some(label))(queried)
-                        | None ->
-                            match registerStructuralLabel(formatSemanticType(semanticType))(queried) with
-                                | (label, registered) ->
-                                    registered
-                                    |> beginSynthesizedBody
-                                    |> emitStructuralBody(semanticType)
-                                    |> finishSynthesizedBody(label)(semanticType
-                                    |> formatSemanticType
-                                    |> createStructuralOwnerDropperOrigin(label))(registered)
-                                    |> synthesisResult(Some(label))
+    match structuralReleaseNeedsHelperIn(semanticType)(body) with
+        | (false, queried) -> synthesisResult(None)(queried)
+        | (true, queried) ->
+            match cachedStructuralLabel(formatSemanticType(semanticType))(queried) with
+                | Some(label) -> synthesisResult(Some(label))(queried)
+                | None ->
+                    match registerStructuralLabel(formatSemanticType(semanticType))(queried) with
+                        | (label, registered) ->
+                            registered
+                            |> beginSynthesizedBody
+                            |> emitStructuralBody(semanticType)
+                            |> finishSynthesizedBody(label)(semanticType
+                            |> formatSemanticType
+                            |> createStructuralOwnerDropperOrigin(label))(registered)
+                            |> synthesisResult(Some(label))
 
 // Names the whole-value release of `semanticType` as a callable helper, synthesizing it and any
 // ADT dropper it calls, or answers `None` when the release is a single allocation and needs no
@@ -1069,7 +1130,7 @@ type InlineReleaseSynthesis =
     | nextTemp: Int
     | nextLocal: Int
     | cache: DropperLabelCache
-    | graphIndex: TypeGraphIndex
+    | queryContext: DropperQueryContext
     | functions: List(IrFunction)
     | nextLambdaId: Int
     | nextLabelId: Int
@@ -1161,7 +1222,7 @@ let inlineReleaseResult (body: DropperBody) =
                 nextTemp = nextTemp,
                 nextLocal = nextLocal,
                 cache = cache,
-                graphIndex = body.graphIndex,
+                queryContext = bodyQueryContext(body),
                 functions = functions,
                 nextLambdaId = nextLambdaId,
                 nextLabelId = nextLabelId
@@ -1175,16 +1236,16 @@ let synthesizeOwnedAggregateReleaseIndexed (valueTemp: Int) (semanticType: Seman
     match openDropperBody(dropperTypes)(cache)(nextLambdaId)(nextLabelId) with
         | (_ids, opened) ->
             match emitOwnedAggregateRelease(valueTemp)(renumberPreparedType(dropperTypes)(semanticType))(plan)((opened with nextTemp = nextTemp, nextLocal = nextLocal)) with
-                | (false, queried) -> (None, queried.graphIndex)
+                | (false, queried) -> (None, bodyQueryContext(queried))
                 | (true, released) ->
                     (released
                     |> inlineReleaseResult
-                    |> Some, released.graphIndex)
+                    |> Some, bodyQueryContext(released))
 
 // Compatibility entry point for callers that do not retain a synthesis context.
 let synthesizeOwnedAggregateRelease (valueTemp: Int) (semanticType: SemanticType) (plan: OwnedReleasePlan) (dropperTypes: DropperTypes) (cache: DropperLabelCache) (nextTemp: Int) (nextLocal: Int) (nextLambdaId: Int) (nextLabelId: Int) =
     match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(semanticType)(plan)(dropperTypes)(cache)(nextTemp)(nextLocal)(nextLambdaId)(nextLabelId) with
-        | (synthesis, _graphIndex) -> synthesis
+        | (synthesis, _queryContext) -> synthesis
 
 // The inline release of an owned value by its type alone, stage 0's `EmitRuntimeManagedChildDrop`:
 // a tuple or a list is walked, a named type released by the dropper its layout calls for, and a

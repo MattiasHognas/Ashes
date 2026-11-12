@@ -3311,3 +3311,13 @@ path-dependent answers are not cached as root facts. Legacy public classifiers
 are fresh-index compatibility wrappers around the same implementation, rather
 than a second traversal engine. Stateful lowering and synthesis consumers must
 retain the returned index and replace it when their type environment changes.
+
+Dropper synthesis also retains completed dropper and admissibility views in a
+`DropperQueryContext`. Its integer-keyed table uses exact node IDs from the paired
+graph lineage, including all generic arguments, and has at most one entry per
+queried type. Opening another synthesized body preserves this context; preparing
+a new type environment starts an empty graph and table. Inline synthesis returns
+the context even when it emits no release. Body-local full layout facts retain
+priority over shared projections. Only context-free facts are shared: recursive
+admissibility still evaluates its nominal cycle path, and lowering-dependent copy
+plans are not stored in this table.
