@@ -30,9 +30,11 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.TypeGraphIndex
 import AshesCompiler.Semantics.Types
 export (
     value toSpaceCopySafeType,
+    value toSpaceCopySafeTypeIndexed,
     value synthesizeToSpaceCopy,
 )
 
@@ -60,7 +62,9 @@ let recursive containsTypeKey (key: Str) (keys: List(Str)) =
         | [] -> false
         | candidate :: rest -> candidate == key || containsTypeKey(key)(rest)
 
-let namedTypeIsResourceBearing (named: SemanticType) (environment: TypeEnvironment) = classifyHeapResource(named)(environment)
+let namedTypeIsResourceBearing (named: SemanticType) (body: DropperBody) =
+    match classifyHeapResourceIndexed(named)(body.graphIndex) with
+        | (resource, graphIndex) -> (resource, (body with graphIndex = graphIndex))
 
 // Stage 0's `IsToSpaceCopySafeType`: whether the walk below relocates every heap pointer inside a
 // value of this type. Copy types are inline and need nothing; a string or bytes value copies by its
@@ -70,33 +74,56 @@ let namedTypeIsResourceBearing (named: SemanticType) (environment: TypeEnvironme
 // resource handle — is declined, so the caller keeps the value where it is rather than relocating
 // half of it. `path` guards the recursion: a type already being validated further up answers safe,
 // the same assumption its own synthesis makes.
-let recursive toSpaceCopySafeIn (path: List(Str)) (semanticType: SemanticType) (environment: TypeEnvironment) =
+let recursive toSpaceCopySafeIn (path: List(Str)) (semanticType: SemanticType) (index: TypeGraphIndex) =
     if canArenaResetLayout(semanticType)
-    then true
+    then (true, index)
     else
         match semanticType with
-            | SemString -> true
-            | SemBytes -> true
-            | SemTuple(elements) -> everyElementIsCopyType(elements)
-            | SemList(SemString) -> true
-            | SemNamed(_symbolId, typeName, _arguments) -> !isBuiltinResourceTypeName(typeName) && !namedTypeIsResourceBearing(semanticType)(environment) && adtToSpaceCopySafeIn(path)(semanticType)(environment)
-            | _ -> false
-and adtToSpaceCopySafeIn (path: List(Str)) (named: SemanticType) (environment: TypeEnvironment) =
-    match heapNamedTypeConstructors(named)(environment) with
-        | [] -> false
-        | constructors ->
-            let key = formatSemanticType(named)
-            in containsTypeKey(key)(path) || everyConstructorToSpaceSafeIn(key :: path)(constructors)(environment)
-and everyConstructorToSpaceSafeIn (path: List(Str)) (constructors: List((Str, List(SemanticType)))) (environment: TypeEnvironment) =
+            | SemString -> (true, index)
+            | SemBytes -> (true, index)
+            | SemTuple(elements) -> (everyElementIsCopyType(elements), index)
+            | SemList(SemString) -> (true, index)
+            | SemNamed(_symbolId, typeName, _arguments) ->
+                if isBuiltinResourceTypeName(typeName)
+                then (false, index)
+                else
+                    match classifyHeapResourceIndexed(semanticType)(index) with
+                        | (true, queried) -> (false, queried)
+                        | (false, queried) -> adtToSpaceCopySafeIn(path)(semanticType)(queried)
+            | _ -> (false, index)
+and adtToSpaceCopySafeIn (path: List(Str)) (named: SemanticType) (index: TypeGraphIndex) =
+    match typeGraphNode(named)(index) with
+        | (node, queried) ->
+            match node.sourceConstructorGroups with
+                | [] -> (false, queried)
+                | constructors ->
+                    let key = formatSemanticType(named)
+                    in
+                        if containsTypeKey(key)(path)
+                        then (true, queried)
+                        else everyConstructorToSpaceSafeIn(key :: path)(constructors)(queried)
+and everyConstructorToSpaceSafeIn (path: List(Str)) (constructors: List((Str, List(SemanticType)))) (index: TypeGraphIndex) =
     match constructors with
-        | [] -> true
-        | (_constructorName, fieldTypes) :: rest -> everyFieldToSpaceSafeIn(path)(fieldTypes)(environment) && everyConstructorToSpaceSafeIn(path)(rest)(environment)
-and everyFieldToSpaceSafeIn (path: List(Str)) (fieldTypes: List(SemanticType)) (environment: TypeEnvironment) =
+        | [] -> (true, index)
+        | (_constructorName, fieldTypes) :: rest ->
+            match everyFieldToSpaceSafeIn(path)(fieldTypes)(index) with
+                | (false, queried) -> (false, queried)
+                | (true, queried) -> everyConstructorToSpaceSafeIn(path)(rest)(queried)
+and everyFieldToSpaceSafeIn (path: List(Str)) (fieldTypes: List(SemanticType)) (index: TypeGraphIndex) =
     match fieldTypes with
-        | [] -> true
-        | fieldType :: rest -> toSpaceCopySafeIn(path)(fieldType)(environment) && everyFieldToSpaceSafeIn(path)(rest)(environment)
+        | [] -> (true, index)
+        | fieldType :: rest ->
+            match toSpaceCopySafeIn(path)(fieldType)(index) with
+                | (false, queried) -> (false, queried)
+                | (true, queried) -> everyFieldToSpaceSafeIn(path)(rest)(queried)
 
-let toSpaceCopySafeType (semanticType: SemanticType) (environment: TypeEnvironment) = toSpaceCopySafeIn([])(semanticType)(environment)
+let toSpaceCopySafeTypeIndexed (semanticType: SemanticType) (index: TypeGraphIndex) = toSpaceCopySafeIn([])(semanticType)(index)
+
+let toSpaceCopySafeType (semanticType: SemanticType) (environment: TypeEnvironment) =
+    match environment
+    |> emptyTypeGraphIndex
+    |> toSpaceCopySafeTypeIndexed(semanticType) with
+        | (safe, _index) -> safe
 
 // Calls a synthesized copier on `valueTemp` through a fresh closure whose environment holds the
 // closure itself, so the copier can recurse through `LoadEnv 0`; answers the clone's temp. A real
@@ -141,9 +168,12 @@ let recursive emitToSpaceCopyInto (valueTemp: Int) (semanticType: SemanticType) 
                 else (valueTemp, body)
             | SemList(SemString) -> emitListToSpaceCopy(valueTemp)(SemString)(body)
             | SemNamed(_symbolId, typeName, _arguments) ->
-                if isBuiltinResourceTypeName(typeName) || namedTypeIsResourceBearing(semanticType)(bodyEnvironment(body))
+                if isBuiltinResourceTypeName(typeName)
                 then (valueTemp, body)
-                else emitAdtToSpaceCopy(valueTemp)(semanticType)(body)
+                else
+                    match namedTypeIsResourceBearing(semanticType)(body) with
+                        | (true, queried) -> (valueTemp, queried)
+                        | (false, queried) -> emitAdtToSpaceCopy(valueTemp)(semanticType)(queried)
             | _ -> (valueTemp, body)
 and emitToSpaceLeafCopy (valueTemp: Int) (sizeBytes: Int) (body: DropperBody) =
     match freshDropperTemp(body) with
@@ -214,12 +244,10 @@ and synthesizeAdtToSpaceCopierIn (named: SemanticType) (body: DropperBody) =
     match cachedToSpaceLabel(toSpaceCacheKey(named))(body) with
         | Some(label) -> (Some(label), body)
         | None ->
-            match body
-            |> bodyEnvironment
-            |> heapNamedTypeConstructors(named) with
-                | [] -> (None, body)
-                | constructors ->
-                    match registerToSpaceLabel("__tospacecopy_adt_")(toSpaceCacheKey(named))(body) with
+            match dropperConstructorGroupsIndexed(named)(body) with
+                | ([], queried) -> (None, queried)
+                | (constructors, queried) ->
+                    match registerToSpaceLabel("__tospacecopy_adt_")(toSpaceCacheKey(named))(queried) with
                         | (label, registered) ->
                             registered
                             |> beginSynthesizedBody

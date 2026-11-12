@@ -42,9 +42,8 @@ let registerCopierLabel (prefix: Str) (key: Str) (body: DropperBody) =
 // Whether the arena copier can clone a value of this type completely (stage 0's
 // `IsDeepCopyOutSafeType`).
 let elementDeepCopySupported (element: SemanticType) (body: DropperBody) =
-    body
-    |> bodyEnvironment
-    |> classifyHeapArenaDeepCopy(element)
+    match classifyHeapArenaDeepCopyIndexed(element)(body.graphIndex) with
+        | (supported, graphIndex) -> (supported, (body with graphIndex = graphIndex))
 
 // Calls a synthesized copier on `valueTemp` through a fresh closure whose environment holds the
 // closure itself, so the copier can recurse through `LoadEnv 0`; answers the clone's temp.
@@ -65,9 +64,8 @@ let emitCopierCall (label: Str) (valueTemp: Int) (body: DropperBody) =
 // A named type whose value is, or holds, a resource handle is never cloned: duplicating a handle
 // is wrong, so the reference stays shared.
 let namedTypeHoldsResource (named: SemanticType) (body: DropperBody) =
-    body
-    |> bodyEnvironment
-    |> classifyHeapResource(named)
+    match classifyHeapResourceIndexed(named)(body.graphIndex) with
+        | (resource, graphIndex) -> (resource, (body with graphIndex = graphIndex))
 
 let recursive constructorLabels (label: Str) (count: Int) (index: Int) =
     if index >= count
@@ -89,9 +87,9 @@ let recursive emitDeepCopyInto (valueTemp: Int) (semanticType: SemanticType) pur
         | SemTuple(elements) -> emitTupleClone(valueTemp)(elements)(purpose)(body)
         | SemList(element) -> emitListClone(valueTemp)(element)(purpose)(body)
         | SemNamed(_symbolId, _name, _arguments) ->
-            if namedTypeHoldsResource(semanticType)(body)
-            then (valueTemp, body)
-            else emitAdtClone(valueTemp)(semanticType)(body)
+            match namedTypeHoldsResource(semanticType)(body) with
+                | (true, queried) -> (valueTemp, queried)
+                | (false, queried) -> emitAdtClone(valueTemp)(semanticType)(queried)
         | _ -> (valueTemp, body)
 and emitLeafClone (valueTemp: Int) purpose (body: DropperBody) =
     match freshDropperTemp(body) with
@@ -124,11 +122,11 @@ and emitListClone (valueTemp: Int) (element: SemanticType) purpose (body: Droppe
                 | (destTemp, destBody) ->
                     (destTemp, emitDropper(CopyOutList(destTemp)(valueTemp)(headKind)(false)(purpose))(destBody))
         | None ->
-            if elementDeepCopySupported(element)(body)
-            then
-                match synthesizeListCopierIn(element)(body) with
-                    | (label, synthesized) -> emitCopierCall(label)(valueTemp)(synthesized)
-            else (valueTemp, body)
+            match elementDeepCopySupported(element)(body) with
+                | (true, queried) ->
+                    match synthesizeListCopierIn(element)(queried) with
+                        | (label, synthesized) -> emitCopierCall(label)(valueTemp)(synthesized)
+                | (false, queried) -> (valueTemp, queried)
 and synthesizeListCopierIn (element: SemanticType) (body: DropperBody) =
     match cachedCopierLabel(formatSemanticType(SemList(element)))(body) with
         | Some(label) -> (label, body)
@@ -198,12 +196,10 @@ and synthesizeAdtCopierIn (named: SemanticType) (body: DropperBody) =
     match cachedCopierLabel(formatSemanticType(named))(body) with
         | Some(label) -> (Some(label), body)
         | None ->
-            match body
-            |> bodyEnvironment
-            |> heapNamedTypeConstructors(named) with
-                | [] -> (None, body)
-                | constructors ->
-                    match registerCopierLabel("__deepcopy_")(formatSemanticType(named))(body) with
+            match dropperConstructorGroupsIndexed(named)(body) with
+                | ([], queried) -> (None, queried)
+                | (constructors, queried) ->
+                    match registerCopierLabel("__deepcopy_")(formatSemanticType(named))(queried) with
                         | (label, registered) ->
                             registered
                             |> beginSynthesizedBody
