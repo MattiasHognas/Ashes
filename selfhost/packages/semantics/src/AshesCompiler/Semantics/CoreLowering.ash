@@ -1189,6 +1189,12 @@ let withStateDropperTypes value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with dropperTypes = value))
 
+// A synthesis returns the graph discovered in the same prepared type environment.
+// Carry it with that environment so the next request reuses the exact nodes.
+let withStateDropperGraph value (state: CoreLoweringState) =
+    (let types = stateDropperTypes(state)
+    in withStateDropperTypes((types with graphIndex = value))(state))
+
 let stateBuiltinLayouts (state: CoreLoweringState) =
     (let group = state.programState
     in group.builtinLayouts)
@@ -1513,6 +1519,11 @@ let stateDropperLabels (state: CoreLoweringState) =
 let withStateDropperLabels value (state: CoreLoweringState) =
     (let group = state.programState
     in state with programState = (group with dropperLabels = value))
+
+let withStateDropperResult cache graphIndex state =
+    state
+    |> withStateDropperGraph(graphIndex)
+    |> withStateDropperLabels(cache)
 
 let stateClosureDropperLabels (state: CoreLoweringState) =
     (let group = state.programState
@@ -5387,7 +5398,7 @@ let spliceInlineRelease (synthesis: InlineReleaseSynthesis) (state: CoreLowering
             (state with nextTemp = nextTemp, nextLocal = nextLocal, functions = append(synthesized
             |> map(locateSynthesizedFunction(state))
             |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)
-            |> withStateDropperLabels(cache)
+            |> withStateDropperResult(cache)(synthesis.graphIndex)
             |> emitSplicedInstructions(instructions)
 
 // The scope-exit release of a runtime-managed owner whose release reaches past its own cell —
@@ -5398,16 +5409,16 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
     match state
     |> stateOwnerReleasePlans
     |> lookupOwnerReleasePlan(ownerSlot) with
-        | None -> None
+        | None -> (None, state.programState.dropperTypes.graphIndex)
         | Some((semanticType, plan)) ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateRelease(loadTemp)(resolveType(state)(semanticType))(plan)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                        | None -> None
-                        | Some(synthesis) ->
-                            state
+                    match synthesizeOwnedAggregateReleaseIndexed(loadTemp)(resolveType(state)(semanticType))(plan)(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                        | (None, graphIndex) -> (None, graphIndex)
+                        | (Some(synthesis), graphIndex) ->
+                            (state
                             |> spliceInlineRelease(synthesis)
-                            |> Some
+                            |> Some, graphIndex)
 
 let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: CoreLoweringState) =
     if typeName == "Function"
@@ -5415,9 +5426,11 @@ let emitOwnerDrop typeName ownerSlot loadTemp (runtimeOwner: Bool) (loaded: Core
         emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
     else
         match (runtimeOwner, emitInlineOwnerRelease(loadTemp)(ownerSlot)(loaded)) with
-            | (true, Some(released)) -> released
-            | _ ->
-                emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner)(false)(None))(loaded)
+            | (true, (Some(released), _graphIndex)) -> released
+            | (_runtimeOwner, (_release, graphIndex)) ->
+                loaded
+                |> withStateDropperGraph(graphIndex)
+                |> emit(RcDrop(loadTemp)(typeName)(ownerSlot)(runtimeOwner)(false)(None))
 
 // The lexical release of an owned `let` binding at its scope exit, stage 0's
 // `EmitOwnedValueDrop`: the owner is loaded back and released with an `RcDrop` naming its slot,
@@ -7162,9 +7175,11 @@ let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLower
                     match unlocatedInstruction(LoadLocal(temp)(slot))(tempState) with
                         | loaded ->
                             emitResolvedOwnedDrops(rest)((match emitInlineOwnerRelease(temp)(slot)((loaded with currentSpan = None)) with
-                                | Some(released) -> released with currentSpan = loaded.currentSpan
-                                | None ->
-                                    unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))(loaded)))
+                                | (Some(released), _graphIndex) -> released with currentSpan = loaded.currentSpan
+                                | (None, graphIndex) ->
+                                    loaded
+                                    |> withStateDropperGraph(graphIndex)
+                                    |> unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))))
 
 let recursive argumentsSurviveReset (types: List(SemanticType)) (state: CoreLoweringState) =
     match types with
@@ -8637,7 +8652,7 @@ let spliceInlineReleaseWith emitter (synthesis: InlineReleaseSynthesis) (state: 
             (state with nextTemp = nextTemp, nextLocal = nextLocal, functions = append(synthesized
             |> map(locateSynthesizedFunction(state))
             |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)
-            |> withStateDropperLabels(cache)
+            |> withStateDropperResult(cache)(synthesis.graphIndex)
             |> emitSplicedInstructionsWith(emitter)(instructions)
 
 // The inline `rcdrop_list` walk of a runtime-managed list whose cells may be shared, stage 0's
@@ -8646,11 +8661,11 @@ let spliceInlineReleaseWith emitter (synthesis: InlineReleaseSynthesis) (state: 
 let emitInlineListRelease emitter (listTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-            match synthesizeOwnedAggregateRelease(listTemp)(elementType
+            match synthesizeOwnedAggregateReleaseIndexed(listTemp)(elementType
             |> resolveType(state)
             |> SemList)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                | None -> state
-                | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
+                | (None, graphIndex) -> withStateDropperGraph(graphIndex)(state)
+                | (Some(synthesis), _graphIndex) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
 
 // The list release under the slot's active flag (stage 0's `EmitRuntimeManagedTcoParamDropIfActive`
 // and the guarded predecessor drop): skipped when the slot holds no reference of its own.
@@ -8687,10 +8702,12 @@ let emitOwnedValueRelease emitter (valueTemp: Int) (semanticType: SemanticType) 
         | SemNamed(_symbolId, name, _arguments) as named ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-                    match synthesizeOwnedAggregateRelease(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                        | None ->
-                            emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))(state)
-                        | Some(synthesis) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
+                    match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(named)(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                        | (None, graphIndex) ->
+                            state
+                            |> withStateDropperGraph(graphIndex)
+                            |> emitter(RcDrop(valueTemp)(runtimeManagedAdtTypeName(name))(-1)(true)(false)(None))
+                        | (Some(synthesis), _graphIndex) -> spliceInlineReleaseWith(emitter)(synthesis)(state)
         | SemTuple(elements) as tuple ->
             if allScalarElements(elements)(state)
             then
@@ -11567,19 +11584,21 @@ let arenaResultDropTypeName (semanticType: SemanticType) =
 let emitArenaResultRelease (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
-            match synthesizeOwnedAggregateRelease(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
-                | Some(synthesis) -> spliceInlineReleaseWith(emit)(synthesis)(state)
-                | None ->
+            match synthesizeOwnedAggregateReleaseIndexed(valueTemp)(resolveType(state)(semanticType))(OwnedReleasePlan(deepUnique = false, constructorName = None))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId) with
+                | (Some(synthesis), _graphIndex) -> spliceInlineReleaseWith(emit)(synthesis)(state)
+                | (None, graphIndex) ->
                     // A type only the normalization helper expresses is released through its own
                     // dropper even when no constructor owns a heap field, as stage 0's result
                     // drop routes it; any other single allocation is one typed drop.
-                    match generalCopyPlanOf(semanticType)(state) with
-                        | Some(NormalizerArgumentCopy(_named)) ->
-                            spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(state)
-                        | _ ->
-                            emit(RcDrop(valueTemp)(semanticType
-                            |> resolveType(state)
-                            |> arenaResultDropTypeName)(-1)(true)(false)(None))(state)
+                    let queried = withStateDropperGraph(graphIndex)(state)
+                    in
+                        match generalCopyPlanOf(semanticType)(queried) with
+                            | Some(NormalizerArgumentCopy(_named)) ->
+                                spliceInlineReleaseWith(emit)(synthesizeChildDrop(valueTemp)(resolveType(queried)(semanticType))(dropperTypesOf(queried))(cache)(nextTemp)(nextLocal)(lambdaId)(labelId))(queried)
+                            | _ ->
+                                emit(RcDrop(valueTemp)(semanticType
+                                |> resolveType(queried)
+                                |> arenaResultDropTypeName)(-1)(true)(false)(None))(queried)
 
 let recursive anyOwnedSlotOf (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) =
     match slots with
@@ -15740,8 +15759,8 @@ let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLo
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    (label, withStateDropperLabels(nextCache)((state with functions = append(synthesized
+                | DropperSynthesis { label = label, cache = nextCache, graphIndex = graphIndex, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    (label, withStateDropperResult(nextCache)(graphIndex)((state with functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
                     |> reverse)(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
@@ -17058,8 +17077,8 @@ let synthesizeAccumulatorCopier (named: SemanticType) (state: CoreLoweringState)
     match state with
         | CoreLoweringState { nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeDeepCopy(0)(named)(dropperTypesOf(state))(cache)(0)(0)(lambdaId)(labelId)(IndependentClone) with
-                | (InlineReleaseSynthesis { cache = copierCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
-                    withStateDropperLabels(copierCache)((state with functions = append(synthesized
+                | (InlineReleaseSynthesis { cache = copierCache, graphIndex = graphIndex, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId }, _cloneTemp) ->
+                    withStateDropperResult(copierCache)(graphIndex)((state with functions = append(synthesized
                     |> map(locateSynthesizedFunction(state))
                     |> reverse)(state.functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
 
@@ -19484,8 +19503,8 @@ let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    (label, withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
+                | DropperSynthesis { label = label, cache = nextCache, graphIndex = graphIndex, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    (label, withStateDropperResult(nextCache)(graphIndex)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId)))
 
 // Stage 0's `EmitRecursiveRuntimeManagedAdtDrop`: the value is handed to its type's dropper.
 let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
@@ -19505,13 +19524,13 @@ let emitRecordDropperCall (valueTemp: Int) (named: SemanticType) (state: CoreLow
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeRecordDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = Some(label), cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    match freshTempRun(2)(withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
+                | DropperSynthesis { label = Some(label), cache = nextCache, graphIndex = graphIndex, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    match freshTempRun(2)(withStateDropperResult(nextCache)(graphIndex)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
                         | FreshTemp { state = reserved, temp = environmentTemp } ->
                             reserved
                             |> emit(LoadConstInt(environmentTemp)(0))
                             |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
-                | _ -> state
+                | DropperSynthesis { graphIndex = graphIndex } -> withStateDropperGraph(graphIndex)(state)
 
 // An argument-free record the program's start recorded as joining the ownership contract, where
 // the contract governs the lowering.
@@ -19545,14 +19564,16 @@ let emitGeneralAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticT
     match state with
         | CoreLoweringState { functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
             match synthesizeGeneralAdtDropper(resolveType(state)(named))(dropperTypesOf(state))(cache)(lambdaId)(labelId) with
-                | DropperSynthesis { label = Some(label), cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
-                    match freshTempRun(2)(withStateDropperLabels(nextCache)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
+                | DropperSynthesis { label = Some(label), cache = nextCache, graphIndex = graphIndex, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } ->
+                    match freshTempRun(2)(withStateDropperResult(nextCache)(graphIndex)((state with functions = append(reverse(synthesized))(functions), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))) with
                         | FreshTemp { state = reserved, temp = environmentTemp } ->
                             reserved
                             |> emit(LoadConstInt(environmentTemp)(0))
                             |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
-                | _ ->
-                    emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+                | DropperSynthesis { graphIndex = graphIndex } ->
+                    state
+                    |> withStateDropperGraph(graphIndex)
+                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
 
 // The layout of a named type's first constructor.
 let recursive firstConstructorLayoutOf (typeName: Str) (layouts: List(CoreConstructorLayout)) =
