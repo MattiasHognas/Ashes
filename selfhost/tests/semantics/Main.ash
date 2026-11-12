@@ -38,6 +38,7 @@ import IrTests
 import IrFunctionSelectionTests
 import IrTextTests
 import CoreLoweringTests
+import CoreLogicalNotInferenceTests
 import CoreProgramLoweringTests
 import RecursiveProducerResultTests
 import TcoParameterHeadCellTests
@@ -128,6 +129,7 @@ let run unit =
     |> (given (_) -> IrFunctionSelectionTests.runIrFunctionSelectionTests(Unit))
     |> (given (_) -> IrTextTests.runIrTextTests(Unit))
     |> (given (_) -> CoreLoweringTests.runCoreLoweringTests(Unit))
+    |> (given (_) -> CoreLogicalNotInferenceTests.runCoreLogicalNotInferenceTests(Unit))
     |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
     |> (given (_) -> RecursiveProducerResultTests.runRecursiveProducerResultTests(Unit))
     |> (given (_) -> TcoParameterHeadCellTests.runTcoParameterHeadCellTests(Unit))

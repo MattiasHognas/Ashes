@@ -689,13 +689,13 @@ let recursive containsType (semanticType: SemanticType) (path: List(SemanticType
 // Stage 0's `IsGeneralRcAdmissible` over the synthesis environment: a resolved graph of inline
 // values, strings, byte buffers, big integers, lists, tuples and algebraic data types. A named
 // type already on the walk's path is taken as admissible, which lets a recursive type through.
-let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (body: DropperBody) =
+let recursive originalGeneralRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (body: DropperBody) =
     match semanticType with
         | SemString -> (true, body)
         | SemBytes -> (true, body)
         | SemBigInt -> (true, body)
-        | SemList(element) -> generalRcAdmissible(element)(path)(body)
-        | SemTuple(elements) -> allGeneralRcAdmissible(elements)(path)(body)
+        | SemList(element) -> originalGeneralRcAdmissible(element)(path)(body)
+        | SemTuple(elements) -> originalAllGeneralRcAdmissible(elements)(path)(body)
         | SemNamed(_symbolId, name, _arguments) ->
             if containsType(semanticType)(path)
             then (true, body)
@@ -706,24 +706,91 @@ let recursive generalRcAdmissible (semanticType: SemanticType) (path: List(Seman
                             | ([], _facts) -> (false, queried)
                             | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> (false, queried)
                             | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (false, queried)
-                            | (_constructors, HeapAdmissibilityFacts { children = children }) -> allChildrenGeneralRcAdmissible(children)(semanticType :: path)(queried)
+                            | (_constructors, HeapAdmissibilityFacts { children = children }) -> originalAllChildrenGeneralRcAdmissible(children)(semanticType :: path)(queried)
         | other -> (canArenaResetLayout(other), body)
-and allGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (body: DropperBody) =
+and originalAllGeneralRcAdmissible (types: List(SemanticType)) (path: List(SemanticType)) (body: DropperBody) =
     match types with
         | [] -> (true, body)
         | semanticType :: rest ->
-            match generalRcAdmissible(semanticType)(path)(body) with
+            match originalGeneralRcAdmissible(semanticType)(path)(body) with
                 | (false, queried) -> (false, queried)
-                | (true, queried) -> allGeneralRcAdmissible(rest)(path)(queried)
-and allChildrenGeneralRcAdmissible (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (body: DropperBody) =
+                | (true, queried) -> originalAllGeneralRcAdmissible(rest)(path)(queried)
+and originalAllChildrenGeneralRcAdmissible (children: List((SemanticType, HeapChildDropKind))) (path: List(SemanticType)) (body: DropperBody) =
     match children with
         | [] -> (true, body)
         | (_childType, DropClosure) :: _rest -> (false, body)
         | (_childType, UnsupportedChildDrop) :: _rest -> (false, body)
         | (childType, _dropKind) :: rest ->
-            match generalRcAdmissible(childType)(path)(body) with
+            match originalGeneralRcAdmissible(childType)(path)(body) with
                 | (false, queried) -> (false, queried)
-                | (true, queried) -> allChildrenGeneralRcAdmissible(rest)(path)(queried)
+                | (true, queried) -> originalAllChildrenGeneralRcAdmissible(rest)(path)(queried)
+
+// The pending work covers all expanded children, including when another branch
+// reaches an exact type already visited. A rendered recursion key can alias distinct
+// semantic types; that case must retain the original path-only interpretation.
+type DropperAdmissibilityWork =
+    | VisitDropperAdmissibilityType(SemanticType)
+    | CheckDropperAdmissibilityChild(SemanticType, HeapChildDropKind)
+
+let recursive prependDropperAdmissibilityTypes types pending =
+    match types with
+        | [] -> pending
+        | semanticType :: rest -> VisitDropperAdmissibilityType(semanticType) :: prependDropperAdmissibilityTypes(rest)(pending)
+
+let recursive prependDropperAdmissibilityChildren children pending =
+    match children with
+        | [] -> pending
+        | (semanticType, dropKind) :: rest -> CheckDropperAdmissibilityChild(semanticType)(dropKind) :: prependDropperAdmissibilityChildren(rest)(pending)
+
+let recursive dropperAdmissibilityVisitStatus semanticType visited =
+    match visited with
+        | [] -> Some(false)
+        | previous :: rest ->
+            if sameTypeKey(previous)(semanticType)
+            then
+                if previous == semanticType
+                then Some(true)
+                else None
+            else dropperAdmissibilityVisitStatus(semanticType)(rest)
+
+let recursive searchDropperAdmissibility pending visited body =
+    match pending with
+        | [] -> (Some(true), body)
+        | CheckDropperAdmissibilityChild(_semanticType, DropClosure) :: _rest -> (Some(false), body)
+        | CheckDropperAdmissibilityChild(_semanticType, UnsupportedChildDrop) :: _rest -> (Some(false), body)
+        | CheckDropperAdmissibilityChild(semanticType, _dropKind) :: rest -> searchDropperAdmissibility(VisitDropperAdmissibilityType(semanticType) :: rest)(visited)(body)
+        | VisitDropperAdmissibilityType(semanticType) :: rest ->
+            match semanticType with
+                | SemString -> searchDropperAdmissibility(rest)(visited)(body)
+                | SemBytes -> searchDropperAdmissibility(rest)(visited)(body)
+                | SemBigInt -> searchDropperAdmissibility(rest)(visited)(body)
+                | SemList(element) -> searchDropperAdmissibility(VisitDropperAdmissibilityType(element) :: rest)(visited)(body)
+                | SemTuple(elements) ->
+                    searchDropperAdmissibility(prependDropperAdmissibilityTypes(elements)(rest))(visited)(body)
+                | SemNamed(_symbolId, name, _arguments) ->
+                    // Match the dropper's cycle check before inspecting constructors
+                    // or resource facts; its contract differs from Core's predicate.
+                    match dropperAdmissibilityVisitStatus(semanticType)(visited) with
+                        | None -> (None, body)
+                        | Some(true) -> searchDropperAdmissibility(rest)(visited)(body)
+                        | Some(false) ->
+                            match dropperAdmissibilityFactsIndexed(semanticType)(body) with
+                                | (facts, queried) ->
+                                    match (dropperConstructorsOfType(name)(queried), facts) with
+                                        | ([], _facts) -> (Some(false), queried)
+                                        | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> (Some(false), queried)
+                                        | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (Some(false), queried)
+                                        | (_constructors, HeapAdmissibilityFacts { children = children }) ->
+                                            searchDropperAdmissibility(prependDropperAdmissibilityChildren(children)(rest))(semanticType :: visited)(queried)
+                | other ->
+                    if canArenaResetLayout(other)
+                    then searchDropperAdmissibility(rest)(visited)(body)
+                    else (Some(false), body)
+
+let generalRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (body: DropperBody) =
+    match searchDropperAdmissibility([VisitDropperAdmissibilityType(semanticType)])(path)(body) with
+        | (Some(answer), queried) -> (answer, queried)
+        | (None, queried) -> originalGeneralRcAdmissible(semanticType)(path)(queried)
 
 // Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type that neither the fixed
 // copy-out nor the inline runtime-managed layouts express. Its values are released through a
