@@ -18,14 +18,12 @@ awk '/^let sameTypeKey / { copying=1 } copying && /^\/\/ Stage 0.*IsGeneralRcAdm
 python3 - "$repo" "$core" "$out" <<'PY'
 from pathlib import Path
 import hashlib
-import re
-import subprocess
 import sys
 
 repo, core, out = map(Path, sys.argv[1:])
 reference_commit = 'cc50f0f52b4ee76ffa0f96ee3c70e288bd273abd'
 source_path = 'selfhost/packages/semantics/src/AshesCompiler/Semantics/CoreLowering.ash'
-reference_source = subprocess.check_output(['git', '-C', str(repo), 'show', reference_commit + ':' + source_path], text=True)
+reference = (repo / 'selfhost/tests/admissibility-worklist/Reference.ash.inc').read_text()
 source = core.read_text()
 
 def extract(text, start, end):
@@ -34,16 +32,13 @@ def extract(text, start, end):
     assert begin < finish, 'reversed extraction boundaries'
     return text[begin:finish]
 
-reference = extract(reference_source, 'let recursive originalGeneralRcAdmissible ', 'type GeneralRcAdmissibilityWork =')
-for name in ['originalGeneralRcAdmissible', 'originalAllGeneralRcAdmissible', 'originalAllChildrenGeneralRcAdmissible']:
-    reference = re.sub(r'\b' + name + r'\b', 'reference' + name[0].upper() + name[1:], reference)
 candidate = extract(source, 'type GeneralRcAdmissibilityWork =', 'let isGeneralRcAdmissibleIndexed (semanticType:')
 with (out / 'Main.ash').open('a') as generated:
     generated.write(reference)
     generated.write(candidate)
 (out / 'candidate-extracted.ash.inc').write_text(candidate)
 (out / 'reference-extracted.ash.inc').write_text(reference)
-(out / 'reference-source.txt').write_text(reference_commit + ':' + source_path + '\nsha256 ' + hashlib.sha256(reference_source.encode()).hexdigest() + '\n')
+(out / 'reference-source.txt').write_text(reference_commit + ':' + source_path + '\ntracked reference sha256 ' + hashlib.sha256(reference.encode()).hexdigest() + '\n')
 (out / 'candidate-source.txt').write_text(str(core.resolve()) + '\nsha256 ' + hashlib.sha256(source.encode()).hexdigest() + '\n')
 PY
 cat "$fixture/Assertions.ash.inc" >> "$out/Main.ash"

@@ -9,10 +9,14 @@ generation. The source hashes and exact extracted sections are saved beside the
 generated project; regenerate after source edits.
 
 The independent reference is the legacy path traversal from commit
-`cc50f0f52b4ee76ffa0f96ee3c70e288bd273abd`, loaded with `git show` and renamed to
-avoid collisions with the candidate. That commit must be available locally. Its
-identity and full source hash are recorded in `reference-source.txt`. The candidate
-engine is extracted verbatim; only the frozen reference function names are changed.
+`cc50f0f52b4ee76ffa0f96ee3c70e288bd273abd`, retained in `Reference.ash.inc` with
+function names prefixed by `reference` to avoid collisions with the candidate.
+It does not require the original Git object, so shallow and squashed checkouts work.
+The original full CoreLowering source SHA256 was
+`f36a368656f969561dc75dda1b1917ca147d93384a6cbb7d3207de2d001e5f02`.
+The reference identity and tracked reference hash are recorded in
+`reference-source.txt`. The candidate engine is extracted verbatim; only the frozen
+reference function names were changed.
 
 Compile the generated project and run it under stage 0 plain, stage 0 poisoned, and
 stage 1 plain. Expected stdout: `12288 graphs and special cases ok`, exit 0. The
