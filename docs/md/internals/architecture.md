@@ -2345,6 +2345,16 @@ type comes from that parameter alone (`state |> lowerLoaded(name)(lower) |> lowe
 a generic helper ending in a call of the closure parameter `lower`) closed its call window on an
 unresolved type: it asked for an arena result and skipped the contract's owned-result protocol, and
 the loop then released the arena cell as a counted one.
+
+Stage 1 also carries concrete whole-binding function signatures into the lambda parameters before
+lowering their bodies, including curried and mutually recursive bindings. Otherwise an annotated
+callback such as `Int -> Maybe(Value)` could be lowered as `Int -> Maybe(a)` when its result was
+matched only with `Some(_)`. The generic call requested an arena result, but a callee returning a
+recursive reference-counted `Value` could not honor that request, leaving the returned owner
+unreleased. Preserving the declared layout selects the existing owned-call protocol, as stage 0
+does. Explicit inline annotations are preserved. Signatures with type variables retain their prior
+lowering path until mutually recursive members have independent annotation-variable scopes.
+
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).

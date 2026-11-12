@@ -3827,6 +3827,27 @@ let sharedTestSource path =
 let buildSharedTestModule shipped path name context =
     codegenOptimizedShippedSource(shipped)(sharedTestSource(path))(name)(context)
 
+let annotatedCallbackSource rounds =
+    (let source = sharedTestSource("tests/annotated_callbacks_release_recursive_results.ash")
+    in
+        "repeat(1000)(0)"
+        |> Ashes.Text.split(source)
+        |> Ashes.Text.join("repeat(" + Ashes.Text.fromInt(rounds) + ")(0)"))
+
+let testAnnotatedCallbacksReleaseRecursiveResults shipped unit =
+    (let first =
+        liveCellsReportedBy(1
+        |> annotatedCallbackSource
+        |> codegenShippedSourceLeakChecked(shipped))("annotatedCallbacksOneRound")("selfhost_backend_annotated_callbacks_one_round_e2e")
+    in
+        let second =
+            liveCellsReportedBy(2
+            |> annotatedCallbackSource
+            |> codegenShippedSourceLeakChecked(shipped))("annotatedCallbacksTwoRounds")("selfhost_backend_annotated_callbacks_two_rounds_e2e")
+        in
+            let _ = test.assertEqual("1")(first)
+            in test.assertEqual(first)(second))
+
 let showAsFromInt source =
     "Ashes.Trait.Show.show("
     |> Ashes.Text.split(source)
@@ -6009,6 +6030,7 @@ let run shipped =
     |> testBytesResultLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testPairwiseParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
     |> testUnreadParameterLoopReportsTheSameLiveCellsAtOneRoundAndThree(shipped)
+    |> testAnnotatedCallbacksReleaseRecursiveResults(shipped)
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

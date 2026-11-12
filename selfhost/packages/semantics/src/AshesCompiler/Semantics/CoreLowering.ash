@@ -14738,6 +14738,35 @@ let lowerLambdaParameterType annotation parameterType state =
                         | None -> (bound, None)
                         | Some(annotationType) -> bindType(parameterType)(annotationType)(bound)
 
+// Keep a binding's declared parameter types available while its lambda body is lowered.
+// Inference already checks the complete signature; ownership placement must see the same
+// callback result layout before deciding whether the call returns an owned value.
+let recursive annotateBindingLambdaChain (annotation: TypeExpr) (value: Expr) =
+    match (annotation, value) with
+        | (TypeAt(_span, inner), _) -> annotateBindingLambdaChain(inner)(value)
+        | (_, ExprAt(span, inner)) ->
+            inner
+            |> annotateBindingLambdaChain(annotation)
+            |> ExprAt(span)
+        | (TypeArrow(argument, result, _capabilities, _tail), ExprLambda(parameter, body, existing)) ->
+            ExprLambda(parameter)(annotateBindingLambdaChain(result)(body))(match existing with
+                | Some(_explicit) -> existing
+                | None -> Some(argument))
+        | _ -> value
+
+let bindingLambdaValue annotation value (state: CoreLoweringState) =
+    match annotation with
+        | None -> value
+        | Some(signature) ->
+            let expanded =
+                expandTypeAliases(stateTypeAliases(state))(32)(signature)
+            in
+                // Generic signatures need a member-local type-variable scope before their
+                // annotations can be shared across a mutually recursive lambda chain.
+                match annotationTypeVariableNames(expanded)([]) with
+                    | [] -> annotateBindingLambdaChain(expanded)(value)
+                    | _ -> value
+
 // A let-bound lambda's generated label is remembered under the let's name, so a call through the
 // name can consult the function's recorded body placement.
 let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
@@ -34138,10 +34167,10 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprNotEqual(left, right) -> lowerCoreBinary(CoreNotEqualOperator)(left)(right)(lowerCore)(state)
         | ExprVar(name) -> lowerCoreVariable(name)(lowerCore)(state)
         | ExprQualifiedVar(receiverName, fieldName) -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
-        | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
+        | ExprLet(name, value, body, _parameters, annotation, _requirements) ->
             lowerLet(
                 name,
-                value,
+                bindingLambdaValue(annotation)(value)(state),
                 body,
                 lowerCore,
                 state
@@ -34149,7 +34178,7 @@ let lowerCoreDispatch expression lowerCore state =
         | ExprLetRecursive(name, value, body, _parameters, annotation, _requirements) ->
             lowerLetRecursive(
                 name,
-                value,
+                bindingLambdaValue(annotation)(value)(state),
                 body,
                 annotation,
                 lowerCore,
@@ -34440,10 +34469,10 @@ let recursive checkTopLevelNames (names: List(Str)) (seen: MapTree(Str, Bool)) =
                     |> Ashes.Collection.Map.setStr(name)(true)
                     |> checkTopLevelNames(rest)
 
-let recursive letBindingSyntaxPairs bindings =
+let recursive letBindingSyntaxPairs bindings state =
     match bindings with
         | [] -> []
-        | LetBindingSyntax { name = name, value = value } :: rest -> (name, value) :: letBindingSyntaxPairs(rest)
+        | LetBindingSyntax { name = name, value = value, typeAnnotation = annotation } :: rest -> (name, bindingLambdaValue(annotation)(value)(state)) :: letBindingSyntaxPairs(rest)(state)
 
 let recursive recursiveMemberStartsOf (groupStart: Int) (bindings: List(LetBindingSyntax)) =
     match bindings with
@@ -34550,10 +34579,10 @@ let openedChainFailure (pending: List(PendingTopLevelClose)) (error: CoreLowerin
 // come precomputed from the program analysis: `escapeBody`, the innermost body the chain escapes
 // through (escapingChainBody), and `tailForwarded`, whether the chain's result forwards this
 // binding (isTailForwardedBindingResult).
-let openArenaBracketedTopLevelLet name value remainingBody (escapeBody: Maybe(Expr)) (tailForwarded: Bool) environment outerBindings stackClosure (pending: List(PendingTopLevelClose)) (state: CoreLoweringState) =
+let openArenaBracketedTopLevelLet name value annotation remainingBody (escapeBody: Maybe(Expr)) (tailForwarded: Bool) environment outerBindings stackClosure (pending: List(PendingTopLevelClose)) (state: CoreLoweringState) =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
-            match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+            match rewriteTraitConstrainedTopLevelValue(name)(bindingLambdaValue(annotation)(value)(state))(environment) with
                 | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> openedChainFailure(pending)(UnresolvedTraitEvidenceForwarding(error))(saved)
                 | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
                     match saved
@@ -35529,7 +35558,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
             |> withStateRecursiveDeclarationSpan(Some(span))
             |> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(analysis)(pending)
         | TopLevelType(_declaration) :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(analysis)(pending)(state)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+        | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation }, false) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
@@ -35541,7 +35570,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                     | Some(layout) ->
                                         if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
                                         then
-                                            match openArenaBracketedTopLevelLet(name)(value)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
+                                            match openArenaBracketedTopLevelLet(name)(value)(annotation)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(false)(pending)(state) with
                                                 | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                                 | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
                                         else
@@ -35549,19 +35578,19 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                 | LoweredCoreValue { state = dropped, error = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(pending)(dropped)
                                     | None ->
-                                        match openArenaBracketedTopLevelLet(name)(value)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
+                                        match openArenaBracketedTopLevelLet(name)(value)(annotation)(nextAnalysis.remainingBody)(topLevelEscapeBody(nextAnalysis))(topLevelTailForwarded(name)(nextAnalysis))(environment)(outerBindings)(topLevelNameOnlyDirectCallee(name)(analysis.nonCalleeUses))(pending)(state) with
                                             | OpenedTopLevelChain { chainState = failedState, chainError = Some(error) } -> failure(failedState)(error)
                                             | OpenedTopLevelChain { chainState = opened, chainPending = nextPending, chainError = None } -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(nextAnalysis)(nextPending)(opened)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
+        | TopLevelLet(LetBindingSyntax { name = name, value = value, typeAnnotation = annotation }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
                         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
                             match []
-                            |> prepareRecursiveGroup([(name, value)])(state)
+                            |> prepareRecursiveGroup([(name, bindingLambdaValue(annotation)(value)(state))])(state)
                             |> relabelSingleRecursive(lambdaId)
-                            |> openPreparedRecursiveGroup([(name, value)])(lowerCore)(outerBindings) with
+                            |> openPreparedRecursiveGroup([(name, bindingLambdaValue(annotation)(value)(state))])(lowerCore)(outerBindings) with
                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                 | LoweredCoreValue { state = opened, error = None } ->
                                     lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(peelAnalysis(1)(analysis))(pendingBindingsRestore(outerBindings) :: pending)(opened)
@@ -35571,7 +35600,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment (analysi
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
                         | CoreLoweringState { bindings = outerBindings } ->
-                            let pairs = letBindingSyntaxPairs(bindings)
+                            let pairs = letBindingSyntaxPairs(bindings)(state)
                             in
                                 match []
                                 |> prepareRecursiveGroup(pairs)(groupMemberStarts(bindings)(state))
