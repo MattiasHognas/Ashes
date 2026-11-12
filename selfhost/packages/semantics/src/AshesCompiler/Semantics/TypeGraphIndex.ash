@@ -19,6 +19,7 @@ export (
     value compareTypeGraphKeys,
     value typeGraphFingerprint,
     value typeGraphNode,
+    value typeGraphLookupNode,
     value typeGraphRootFact,
     value completeTypeGraphRootFact,
     value completeTypeGraphNegativeRoots,
@@ -509,6 +510,13 @@ let findNode semanticType (index: TypeGraphIndex) =
     index
     |> bucket(typeGraphFingerprint(semanticType))
     |> findInBucket(semanticType)
+
+// Read-only consumers may reuse a completed view without discovering a node whose
+// updated index they cannot retain. A miss never builds a node or inspects children.
+let typeGraphLookupNode (semanticType: SemanticType) (index: TypeGraphIndex) =
+    match findNode(semanticType)(index) with
+        | Some(entry) -> Some(entry.node)
+        | None -> None
 
 let setNode semanticType entry (index: TypeGraphIndex) =
     (let hash = typeGraphFingerprint(semanticType)

@@ -311,6 +311,11 @@ let collisionTypePairs unit =
                 (SemPointer(first), SemPointer(second))
             ])
 
+let lookupNodeId semanticType index =
+    match typeGraphLookupNode(semanticType)(index) with
+        | Some(node) -> Some(node.nodeId)
+        | None -> None
+
 let recursive checkCollisionPairs pairs index =
     match pairs with
         | [] -> index
@@ -321,30 +326,50 @@ let recursive checkCollisionPairs pairs index =
             |> (given (_) ->
                 match typeGraphNode(first)(index) with
                     | (firstNode, afterFirst) ->
-                        match typeGraphNode(second)(afterFirst) with
-                            | (secondNode, afterSecond) ->
-                                let completed = completeTypeGraphRootFact(ResourceFact)(first)(false)(afterSecond)
-                                in
-                                    match typeGraphNode(first)(completed) with
-                                        | (repeated, afterRepeat) ->
-                                            firstNode.nodeId != secondNode.nodeId
-                                            |> test.assertEqual(true)
-                                            |> (given (_) -> test.assertEqual(first)(repeated.sourceType))
-                                            |> (given (_) -> test.assertEqual(second)(secondNode.sourceType))
-                                            |> (given (_) -> test.assertEqual(firstNode.nodeId)(repeated.nodeId))
-                                            |> (given (_) ->
-                                                afterRepeat
-                                                |> typeGraphRootFact(ResourceFact)(first)
-                                                |> test.assertEqual(Some(false)))
-                                            |> (given (_) ->
-                                                afterRepeat
-                                                |> typeGraphRootFact(ResourceFact)(second)
-                                                |> test.assertEqual(None))
-                                            |> (given (_) ->
-                                                afterSecond
-                                                |> typeGraphRootFact(ResourceFact)(first)
-                                                |> test.assertEqual(None))
-                                            |> (given (_) -> checkCollisionPairs(rest)(afterRepeat)))
+                        index
+                        |> lookupNodeId(first)
+                        |> test.assertEqual(None)
+                        |> (given (_) ->
+                            afterFirst
+                            |> lookupNodeId(first)
+                            |> test.assertEqual(Some(firstNode.nodeId)))
+                        |> (given (_) ->
+                            afterFirst
+                            |> lookupNodeId(second)
+                            |> test.assertEqual(None))
+                        |> (given (_) ->
+                            match typeGraphNode(second)(afterFirst) with
+                                | (secondNode, afterSecond) ->
+                                    let completed = completeTypeGraphRootFact(ResourceFact)(first)(false)(afterSecond)
+                                    in
+                                        match typeGraphNode(first)(completed) with
+                                            | (repeated, afterRepeat) ->
+                                                firstNode.nodeId != secondNode.nodeId
+                                                |> test.assertEqual(true)
+                                                |> (given (_) -> test.assertEqual(first)(repeated.sourceType))
+                                                |> (given (_) -> test.assertEqual(second)(secondNode.sourceType))
+                                                |> (given (_) -> test.assertEqual(firstNode.nodeId)(repeated.nodeId))
+                                                |> (given (_) ->
+                                                    afterRepeat
+                                                    |> lookupNodeId(first)
+                                                    |> test.assertEqual(Some(firstNode.nodeId)))
+                                                |> (given (_) ->
+                                                    afterRepeat
+                                                    |> lookupNodeId(second)
+                                                    |> test.assertEqual(Some(secondNode.nodeId)))
+                                                |> (given (_) ->
+                                                    afterRepeat
+                                                    |> typeGraphRootFact(ResourceFact)(first)
+                                                    |> test.assertEqual(Some(false)))
+                                                |> (given (_) ->
+                                                    afterRepeat
+                                                    |> typeGraphRootFact(ResourceFact)(second)
+                                                    |> test.assertEqual(None))
+                                                |> (given (_) ->
+                                                    afterSecond
+                                                    |> typeGraphRootFact(ResourceFact)(first)
+                                                    |> test.assertEqual(None))
+                                                |> (given (_) -> checkCollisionPairs(rest)(afterRepeat))))
 
 let runTypeGraphCollisionTests unit =
     (let result =
