@@ -31301,10 +31301,27 @@ let finishCoreBitwiseNot lowered =
                     |> failure(state)
         | LoweredCoreValue { state = state, error = Some(error) } -> failure(state)(error)
 
+// A later mutual-recursion member's result can still be open at !. Keep the Not goal
+// and its a -> a result until its consumer or a later body settles it, rather than
+// forcing a generic Not requirement to Bool. Pending goals cannot be generalized or
+// emitted: the final pass pins the proved type, or rejects a still-unresolved operand.
+let finishOrDeferCoreLogicalNot lower lowered =
+    match lowered with
+        | LoweredCoreValue { state = operandState, temp = operandTemp, semanticType = operandType, error = None } as lowered ->
+            match pinProvenTraitGoal("Not")("not")(resolveType(operandState)(operandType))(operandState) with
+                | (pinnedState, pinnedType) ->
+                    if hasActiveTraitEvidence("Not")(pinnedType)(pinnedState)
+                    then emitCoreTraitUnaryDispatch("Not")("not")(pinnedType)(lower)(operandTemp)(pinnedType)(pinnedState)
+                    else
+                        match (pinnedType, unprovenTraitGoalKey("Not")("not")(pinnedType)(pinnedState)) with
+                            | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(pinnedType)(pinnedType)(pinnedState)
+                            | _ -> finishCoreLogicalNot((lowered with state = pinnedState, semanticType = pinnedType))
+        | failed -> failed
+
 let lowerCoreLogicalNot operand lower state =
     state
     |> lower(operand)
-    |> finishCoreLogicalNot
+    |> finishOrDeferCoreLogicalNot(lower)
 
 let lowerCoreBitwiseNot operand lower state =
     state
@@ -36907,9 +36924,12 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
                 |> lowerProgramPasses(items)(trailingBody)(Some(environment))
                 |> buildProgram
 
+// These entry points do not replay a discovery pass. Unresolved trait goals must fail
+// here instead of allowing a provisional constant to escape into executable IR.
 let lowerCoreExpression expression =
     Unit
     |> initialState
+    |> withStateTraitGoalsPinned(true)
     |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
@@ -36917,6 +36937,7 @@ let lowerCoreExpression expression =
 let lowerCoreExpressionWithLayouts layouts expression =
     Unit
     |> initialStateWithLayouts(layouts)
+    |> withStateTraitGoalsPinned(true)
     |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
@@ -36924,6 +36945,7 @@ let lowerCoreExpressionWithLayouts layouts expression =
 let lowerCoreExpressionWithContext constructorLayouts builtinLayouts expression =
     Unit
     |> initialStateWithContext(constructorLayouts)(builtinLayouts)
+    |> withStateTraitGoalsPinned(true)
     |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
@@ -36931,6 +36953,7 @@ let lowerCoreExpressionWithContext constructorLayouts builtinLayouts expression 
 let lowerCoreExpressionWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes expression =
     Unit
     |> initialStateWithFullContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)
+    |> withStateTraitGoalsPinned(true)
     |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
@@ -36938,6 +36961,7 @@ let lowerCoreExpressionWithFullContext constructorLayouts builtinLayouts externa
 let lowerCoreExpressionWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount expression =
     Unit
     |> initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)(capabilityLayouts)(staticProviders)(capabilityGlobalCount)
+    |> withStateTraitGoalsPinned(true)
     |> withExpressionReachSummaries(expression)
     |> lowerCore(expression)
     |> buildProgram
@@ -36947,6 +36971,7 @@ let lowerCoreExpressionWithCompleteContext constructorLayouts builtinLayouts ext
 let lowerCoreExpressionLocated (context: SourceContext) (itemIndex: Int) expression =
     Unit
     |> initialState
+    |> withStateTraitGoalsPinned(true)
     |> (given (state: CoreLoweringState) ->
         state
         |> withStateSourceContext(Some(context))
@@ -36958,5 +36983,6 @@ let lowerCoreExpressionLocated (context: SourceContext) (itemIndex: Int) express
 let lowerCoreRecursiveGroup bindings body =
     Unit
     |> initialState
+    |> withStateTraitGoalsPinned(true)
     |> lowerRecursiveGroup(bindings)(body)(lowerCore)
     |> buildProgram

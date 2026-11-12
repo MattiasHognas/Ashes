@@ -2355,6 +2355,20 @@ unreleased. Preserving the declared layout selects the existing owned-call proto
 does. Explicit inline annotations are preserved. Signatures with type variables retain their prior
 lowering path until mutually recursive members have independent annotation-variable scopes.
 
+Stage 1 defers logical negation when its operand is still a type variable, using the existing
+typed trait-goal pass. A call to a later member of a mutually recursive group can have an
+unresolved result before that member's body is lowered. The deferred `Not` goal preserves its
+operand type as its result (`a -> a`); its Boolean consumer or later body can then settle that
+type. Pending goals are withheld from generalization. The final pass pins the proved type and
+emits primitive Boolean negation, or rejects a still-unresolved operand. Active `Not` trait
+evidence dispatches first. This avoids silently specializing an unsupported generic requirement
+to Bool. Concrete invalid operands retain the existing operator diagnostic; proof pinning uses
+the normal substitution update and invalidates function-local admissibility answers. Public
+expression and recursive-group entry points do not replay discovery, so they pin goals at entry
+and reject unresolved evidence rather than emit provisional IR. Ordinary generic `Not` bindings
+without mapped evidence remain unsupported for non-Boolean uses; this is not full polymorphic
+operator support.
+
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
 withdrawn too; the tail is left to the list copy's own rules (`GRC_NO_COPIEDCONSHEAD`).
