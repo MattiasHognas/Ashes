@@ -5409,7 +5409,9 @@ let emitInlineOwnerRelease (loadTemp: Int) (ownerSlot: Int) (state: CoreLowering
     match state
     |> stateOwnerReleasePlans
     |> lookupOwnerReleasePlan(ownerSlot) with
-        | None -> (None, state.programState.dropperTypes.graphIndex)
+        | None ->
+            let types = stateDropperTypes(state)
+            in (None, types.graphIndex)
         | Some((semanticType, plan)) ->
             match state with
                 | CoreLoweringState { nextTemp = nextTemp, nextLocal = nextLocal, nextLambdaId = lambdaId, nextLabelId = labelId, programState = CoreProgramState { dropperLabels = cache } } ->
