@@ -255,6 +255,62 @@ type CoreConstructorLookupIndex =
     | byConstructor: MapTree(Str, CoreConstructorLayout)
     | byResult: MapTree(Str, List(CoreConstructorLayout))
     | byField: MapTree(Str, List(CoreConstructorLayout))
+    | stableFields: MapTree(Str, Maybe(List(SemanticType)))
+
+// Only completely closed schemes share fields across inference states. Generic and
+// open schemes still instantiate at the query's current fresh-variable supply.
+let recursive stableConstructorFieldTypes types =
+    match types with
+        | [] -> true
+        | head :: rest -> stableConstructorFieldType(head) && stableConstructorFieldTypes(rest)
+and stableConstructorFieldType semanticType =
+    match semanticType with
+        | SemVariable(_) -> false
+        | SemParameter(_, _) -> false
+        | SemList(element) -> stableConstructorFieldType(element)
+        | SemPointer(element) -> stableConstructorFieldType(element)
+        | SemTuple(elements) -> stableConstructorFieldTypes(elements)
+        | SemNamed(_, _, arguments) -> stableConstructorFieldTypes(arguments)
+        | SemCapability(_, arguments) -> stableConstructorFieldTypes(arguments)
+        | SemFunction(argument, result, row) -> stableConstructorFieldTypes([argument, result]) && stableConstructorOptionalField(row)
+        | SemRow(elements, tail) -> stableConstructorFieldTypes(elements) && stableConstructorOptionalField(tail)
+        | _ -> true
+and stableConstructorOptionalField optional =
+    match optional with
+        | None -> true
+        | Some(semanticType) -> stableConstructorFieldType(semanticType)
+
+let recursive closedConstructorFields body =
+    match body with
+        | SemFunction(parameter, result, _) -> parameter :: closedConstructorFields(result)
+        | _ -> []
+
+let stableConstructorFields (layout: CoreConstructorLayout) =
+    match layout.scheme with
+        | TypeScheme { quantified = [], body = body } ->
+            if stableConstructorFieldType(body)
+            then
+                body
+                |> closedConstructorFields
+                |> Some
+            else None
+        | _ -> None
+
+let indexStableConstructorFields name layout (index: CoreConstructorLookupIndex) =
+    (let fields =
+        match (stableConstructorFields(layout), Ashes.Collection.Map.getStr(name)(index.stableFields)) with
+            | (Some(current), Some(Some(previous))) ->
+                previous
+                |> append(current)
+                |> Some
+            | (Some(current), None) -> Some(current)
+            | _ -> None
+    in index with stableFields = Ashes.Collection.Map.setStr(name)(fields)(index.stableFields))
+
+let lookupStableConstructorFields name (index: CoreConstructorLookupIndex) =
+    match Ashes.Collection.Map.getStr(name)(index.stableFields) with
+        | Some(Some(fields)) -> Some(fields)
+        | _ -> None
 
 let lookupFirstConstructor (name: Str) (index: CoreConstructorLookupIndex) = Ashes.Collection.Map.getStr(name)(index.byConstructor)
 
@@ -293,10 +349,13 @@ let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout
                     | None -> collectConstructorLookupIndex(rest)(named)
                     | Some(resultName) ->
                         let updated = named with byResult = Ashes.Collection.Map.setStr(resultName)(layout :: lookupResultConstructors(resultName)(named))(named.byResult)
-                        in collectConstructorLookupIndex(rest)(updated)
+                        in
+                            updated
+                            |> indexStableConstructorFields(resultName)(layout)
+                            |> collectConstructorLookupIndex(rest)
 
 let constructorLookupIndex (layouts: List(CoreConstructorLayout)) =
-    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty))
+    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty, stableFields = Ashes.Collection.Map.empty))
 
 type CoreBindingLocation =
     | CoreLocal(Int)
@@ -1194,6 +1253,10 @@ let withStateConstructorLayouts value (state: CoreLoweringState) =
 let stateConstructorsOfType (name: Str) (state: CoreLoweringState) =
     (let group = state.programState
     in lookupResultConstructors(name)(group.constructorIndex))
+
+let stateStableConstructorFields name (state: CoreLoweringState) =
+    (let group = state.programState
+    in lookupStableConstructorFields(name)(group.constructorIndex))
 
 let stateConstructorsOfField (name: Str) (state: CoreLoweringState) =
     (let group = state.programState
@@ -8865,12 +8928,21 @@ let structuralComponentTypes (semanticType: SemanticType) =
         | _ -> []
 
 let namedTypeFieldTypesAs (instantiated: Bool) (name: Str) (arguments: List(SemanticType)) (state: CoreLoweringState) =
-    if instantiated
-    then
-        namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorsOfType(name)(state))(state)([])
-    else
-        match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
-            | (_found, fieldTypes) -> fieldTypes
+    match stateStableConstructorFields(name)(state) with
+        | Some(fields) -> fields
+        | None ->
+            if instantiated
+            then
+                namedTypeInstantiatedFieldTypes(name)(arguments)(stateConstructorsOfType(name)(state))(state)([])
+            else
+                match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
+                    | (_found, fieldTypes) -> fieldTypes
+
+let namedTypeDeclaredFields name (state: CoreLoweringState) =
+    match stateStableConstructorFields(name)(state) with
+        | Some(fields) -> (true, fields)
+        | None ->
+            namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([])
 
 // Stage 0's `ContainsBytesLayout`: whether a value of the type may hold Bytes, through its
 // elements or its constructors' fields at this instantiation. `path` holds the named types being
@@ -17512,14 +17584,13 @@ let specializationFieldRelocatable (fieldType: SemanticType) (state: CoreLowerin
 let accumulatorLayoutIsPersistable (accumulatorType: SemanticType) (state: CoreLoweringState) =
     match accumulatorType with
         | SemNamed(_symbolId, typeName, arguments) ->
-            match namedTypeConstructorFieldTypes(typeName)(stateConstructorsOfType(typeName)(state))(state)(false)([]) with
+            match namedTypeDeclaredFields(typeName)(state) with
                 | (false, _fieldTypes) -> false
                 | (true, declaredFieldTypes) ->
                     let fieldTypes =
                         match arguments with
                             | [] -> declaredFieldTypes
-                            | _ ->
-                                namedTypeInstantiatedFieldTypes(typeName)(arguments)(stateConstructorsOfType(typeName)(state))(state)([])
+                            | _ -> namedTypeFieldTypesAs(true)(typeName)(arguments)(state)
                     in
                         namedAccumulatorFieldsPersistent(typeName)(given (fieldType: SemanticType) -> specializationFieldRelocatable(fieldType)(state))(fieldTypes)
         | _ -> true
@@ -20226,7 +20297,7 @@ let recursive heapPartTypesInto (pending: List(SemanticType)) (expanded: List(St
                                 then
                                     heapPartTypesInto(append(arguments)(rest))(expanded)(resolved :: parts)(state)
                                 else
-                                    match namedTypeConstructorFieldTypes(name)(stateConstructorsOfType(name)(state))(state)(false)([]) with
+                                    match namedTypeDeclaredFields(name)(state) with
                                         | (_found, fieldTypes) ->
                                             heapPartTypesInto(rest
                                             |> append(arguments)

@@ -1566,6 +1566,13 @@ constructor lookup retains the first declaration; type buckets retain declaratio
 Replacing the layout list rebuilds both indexes, while inference and generic substitution
 remain at the use site. Dropper preparation separately indexes its freshly renumbered definitions,
 preserving first-seen type IDs and rebuilding when the definition environment changes.
+The constructor index also retains an ordered field view for a result-name bucket only when
+every constructor scheme is unquantified and contains no inference variables or rigid parameters.
+Instantiating these closed schemes and applying any substitution leave their fields unchanged,
+so declared-field and instantiated-field queries may share this view across fresh-variable supplies.
+One open or generic constructor disables the view for the entire bucket. Layout replacement
+rebuilds it with the other constructor maps; generic/open queries retain fresh instantiation and
+resolution at the use site. This is a field-list cache, not a cached containment or lifetime verdict.
 Heap classification retains exact `(symbol ID, type name)` maps for constructor groups and
 first-constructor record status in prepared environments. Incremental declarations extend those
 maps with the same first-match behavior as the ordered lists; unprepared environments retain
