@@ -3359,7 +3359,16 @@ nominal cycle key is preserved: if one key identifies different exact types,
 the query falls back to the original path-only traversal with its discovered
 view context retained. Caller-supplied blocked paths still precede constructor
 and resource checks, and body-local full facts remain authoritative. No final
-path-dependent Boolean is persisted in the shared context.
+path-dependent Boolean is persisted in the shared context. The query-local
+visited set keeps bare named types separate from types with rendered keys,
+preserving the cycle relation's distinction between those classes. Each pending
+named visit computes its key once; previous rendered keys are retained alongside
+their exact types instead of being reformatted at each comparison. Membership
+remains a linear search. Bare names use their existing cheap name comparison.
+The first entry of a caller-supplied path wins when that path contains multiple
+exact types with one nominal key. Initial paths are built in linear order without
+deduplicating aliases; a match still compares the exact types before deciding
+whether alias fallback is needed.
 
 Core lowering has a separate `CoreHeapQueryContext` for its coverage environment,
 whose symbol IDs differ from the prepared dropper environment. Copy-plan,

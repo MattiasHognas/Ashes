@@ -1,5 +1,6 @@
 import ProbeDroppers
 import FrozenDecision
+import FrozenLinearWorklist
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.HeapLayoutClassification
@@ -147,6 +148,29 @@ let aliasChecks unit =
                             |> compareDecision(first)([]))
                     |> (given (_) -> Ashes.IO.print("alias and override decisions passed")))
 
+// Compare the full three-way visited status, including which alias wins when
+// an initial path contains multiple entries with the same nominal key.
+let keySamples = [SemNamed(0)("Alias")([]), SemNamed(1)("Alias")([]), SemNamed(0)("Alias")([SemInt]), SemNamed(1)("Alias")([SemInt]), SemNamed(2)("Alias(Int)")([]), SemOpaque("Alias(Int)"), SemNamed(0)("Alias")([SemOpaque("T")]), SemNamed(1)("Alias")([SemNamed(0)("T")([])]), SemString, SemRow([])(Some(SemString))]
+
+let checkVisitStatus path =
+    (let visited = initialDropperAdmissibilityVisited(path)
+    in
+        keySamples |> list.foldLeft(given (unit) ->
+            given (semanticType) ->
+                let key = dropperAdmissibilityKey(semanticType)
+                in check(dropperAdmissibilityVisitStatus(key)(semanticType)(visited) == linearDropperAdmissibilityVisitStatus(semanticType)(path)))(Unit))
+
+let initialPathChecks unit =
+    keySamples
+    |> list.foldLeft(given (unit) ->
+        given (first) ->
+            keySamples |> list.foldLeft(given (unit) ->
+                given (second) ->
+                    keySamples |> list.foldLeft(given (unit) ->
+                        given (third) -> checkVisitStatus([first, second, third]))(Unit))(Unit))(Unit)
+    |> (given (_) -> checkVisitStatus([]))
+    |> (given (_) -> Ashes.IO.print("10010 initial path statuses passed"))
+
 let shapeChecks unit =
     (let body = baseBody(Unit)
     in
@@ -219,6 +243,62 @@ let recursive warmRounds old n depth body =
             | (true, queried) -> warmRounds(old)(n - 1)(depth)(queried)
             | (false, _body) -> Ashes.IO.panic("diamond rejected")
 
+let recursive linearWarmRounds old n depth (body: DropperBody) =
+    if n == 0
+    then
+        if map.size(body.sharedFacts) >= depth + 1
+        then Ashes.IO.print("linear scaling passed")
+        else Ashes.IO.panic("linear scaling did not visit every diamond level")
+    else
+        match if old
+        then
+            linearGeneralRcAdmissible(node(depth))([])(body)
+        else
+            generalRcAdmissible(node(depth))([])(body) with
+            | (true, queried) -> linearWarmRounds(old)(n - 1)(depth)(queried)
+            | (false, _body) -> Ashes.IO.panic("linear diamond rejected")
+
+// Applied types exercise the rendered-key path measured in real lowering.
+let appliedNode n = SemNamed(n)("AppliedNode" + Ashes.Text.fromInt(n))([SemTuple([SemInt, SemString, SemList(SemInt)])])
+
+let recursive appliedDiamondDefinitions level =
+    if level < 0
+    then []
+    else
+        definition("AppliedNode" + Ashes.Text.fromInt(level))(appliedNode(level))(if level == 0
+        then [SemString]
+        else [appliedNode(level - 1), appliedNode(level - 1)]) :: appliedDiamondDefinitions(level - 1)
+
+let appliedDiamond depth =
+    (let body =
+        depth
+        |> appliedDiamondDefinitions
+        |> list.reverse
+        |> openBody
+    in
+        match dropperAdmissibilityFactsIndexed(appliedNode(depth))(body) with
+            | (facts, queried) ->
+                if list.length(facts.children) == (if depth == 0
+                then 1
+                else 2)
+                then queried
+                else Ashes.IO.panic("applied diamond constructor fields missing"))
+
+let recursive appliedWarmRounds old n depth (body: DropperBody) =
+    if n == 0
+    then
+        if map.size(body.sharedFacts) >= depth + 1
+        then Ashes.IO.print("applied scaling passed")
+        else Ashes.IO.panic("applied scaling did not visit every level")
+    else
+        match if old
+        then
+            linearGeneralRcAdmissible(appliedNode(depth))([])(body)
+        else
+            generalRcAdmissible(appliedNode(depth))([])(body) with
+            | (true, queried) -> appliedWarmRounds(old)(n - 1)(depth)(queried)
+            | (false, _body) -> Ashes.IO.panic("applied diamond rejected")
+
 let freshOnce n =
     (let named = SemNamed(0)("Fresh" + Ashes.Text.fromInt(n))([])
     in
@@ -248,6 +328,7 @@ match Ashes.IO.args with
         |> (given (_) -> aliasChecks(Unit))
         |> (given (_) -> shapeChecks(Unit))
         |> (given (_) -> realFactsChecks(Unit))
+        |> (given (_) -> initialPathChecks(Unit))
     | "fresh" :: count :: [] ->
         count
         |> number
@@ -261,4 +342,14 @@ match Ashes.IO.args with
         |> number
         |> diamond
         |> warmRounds(version == "old")(number(count))(number(depth))
-    | _ -> Ashes.IO.panic("expected check/fresh/warm/scale")
+    | "linear-scale" :: version :: depth :: count :: [] ->
+        depth
+        |> number
+        |> diamond
+        |> linearWarmRounds(version == "old")(number(count))(number(depth))
+    | "applied-scale" :: version :: depth :: count :: [] ->
+        depth
+        |> number
+        |> appliedDiamond
+        |> appliedWarmRounds(version == "old")(number(count))(number(depth))
+    | _ -> Ashes.IO.panic("expected check/fresh/warm/scale/linear-scale/applied-scale")
