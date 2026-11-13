@@ -54,9 +54,15 @@ let recursive allPairs remaining all =
         | left :: rest -> row(left)(all) && allPairs(rest)(all)
 
 let recursive padding remaining =
-    if remaining == 0 then [] else entry("padding/" + Ashes.Text.fromInt(remaining))(1) :: padding(remaining - 1)
+    if remaining == 0
+    then []
+    else entry("padding/" + Ashes.Text.fromInt(remaining))(1) :: padding(remaining - 1)
+
 let recursive largeCases entries =
-    match entries with | [] -> [] | head :: rest -> append(head)(padding(256)) :: largeCases(rest)
+    match entries with
+        | [] -> []
+        | head :: rest ->
+            append(head)(padding(256)) :: largeCases(rest)
 
 let checks unit =
     (let atoms = [entry("")(-2), entry("")(-1), entry("")(0), entry("")(1), entry("")(2), entry("")(3), entry("a")(-2), entry("a")(-1), entry("a")(0), entry("a")(1), entry("a")(2), entry("a")(3)]
@@ -64,7 +70,9 @@ let checks unit =
         let lists = smallLists(2)(atoms)
         in
             let special = [[entry("a")(1), entry("a")(-1), entry("a")(2)], [entry("a")(3), entry("a")(-2), entry("a")(-1)], [entry("a")(-1), entry("a")(0), entry("a")(3)], [entry("a")(1), entry("a/leaf")(1), entry("树")(0)], [entry("树")(2), entry("a/leaf")(-1), entry("a")(3)]]
-            in let large = largeCases(special) in allPairs(lists)(lists) && allPairs(special)(special) && row([])(special) && allPairs(large)(large))
+            in
+                let large = largeCases(special)
+                in allPairs(lists)(lists) && allPairs(special)(special) && row([])(special) && allPairs(large)(large))
 
 let recursive makeEntries count prefix value =
     if count == 0
@@ -135,7 +143,8 @@ let skewBenchmark old reversed =
 match Ashes.IO.args with
     | "crossover" :: old :: size :: [] ->
         match Ashes.Text.parseInt(size) with
-            | Ok(count) -> timed(5000)(old == "old")(makeEntries(count)("L")(1))(makeEntries(count)("R")(1))(count * 4)
+            | Ok(count) ->
+                timed(5000)(old == "old")(makeEntries(count)("L")(1))(makeEntries(count)("R")(1))(count * 4)
             | Error(message) -> Ashes.IO.panic(message)
     | "old-index10" :: [] -> plateau(10)(true)(256)
     | "old-index100" :: [] -> plateau(100)(true)(256)

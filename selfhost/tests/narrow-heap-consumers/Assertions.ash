@@ -8,24 +8,31 @@ let oldFact (semanticType: SemanticType) (state: CoreLoweringState) (kind: Int) 
         in
             match cached with
                 | Some(facts) ->
-                    if kind == 0 then facts.runtimeRecordAdtSupported
-                    else if kind == 1 then facts.runtimeOwnedChildAdtSupported
-                    else facts.ownedChildrenDroppable
+                    if kind == 0
+                    then facts.runtimeRecordAdtSupported
+                    else
+                        if kind == 1
+                        then facts.runtimeOwnedChildAdtSupported
+                        else facts.ownedChildrenDroppable
                 | None ->
                     let facts = ref_classifyHeapLayout(resolved)(state.environment)
                     in
-                        if kind == 0 then facts.runtimeRecordAdtSupported
-                        else if kind == 1 then facts.runtimeOwnedChildAdtSupported
-                        else facts.ownedChildrenDroppable)
+                        if kind == 0
+                        then facts.runtimeRecordAdtSupported
+                        else
+                            if kind == 1
+                            then facts.runtimeOwnedChildAdtSupported
+                            else facts.ownedChildrenDroppable)
 
-let agrees (named: SemanticType) (state: CoreLoweringState) =
-    ownedChildrenDroppable(named)(state) == oldFact(named)(state)(2) &&
-    canNormalizeClosureCapture(named)(state) == oldCanNormalizeClosureCapture(named)(state)
+let agrees (named: SemanticType) (state: CoreLoweringState) = ownedChildrenDroppable(named)(state) == oldFact(named)(state)(2) && canNormalizeClosureCapture(named)(state) == oldCanNormalizeClosureCapture(named)(state)
 
 let checkOne (named: SemanticType) (environment: TypeEnvironment) =
     (let plain = CoreLoweringState(environment = environment, facts = Ashes.Collection.Map.empty, resolvedOverride = None, resourceGuard = false)
     in
-        let name = match named with | SemNamed(_id, text, _args) -> text | _ -> "unused"
+        let name =
+            match named with
+                | SemNamed(_id, text, _args) -> text
+                | _ -> "unused"
         in
             let baseline = classifyHeapLayout(SemInt)(environment)
             in
@@ -36,8 +43,7 @@ let checkOne (named: SemanticType) (environment: TypeEnvironment) =
                         let cachedYes = plain with facts = Ashes.Collection.Map.setStr(name)(yes)(Ashes.Collection.Map.empty)
                         in
                             let cachedNo = plain with facts = Ashes.Collection.Map.setStr(name)(no)(Ashes.Collection.Map.empty)
-                            in
-                                agrees(named)(plain) && agrees(named)(cachedYes) && agrees(named)(cachedNo) && agrees(named)((cachedYes with resourceGuard = true)) && agrees(named)((cachedNo with resolvedOverride = Some(named))) && ownedChildrenDroppable(SemVariable(999))((cachedYes with resolvedOverride = Some(named))) == oldFact(SemVariable(999))((cachedYes with resolvedOverride = Some(named)))(2))
+                            in agrees(named)(plain) && agrees(named)(cachedYes) && agrees(named)(cachedNo) && agrees(named)((cachedYes with resourceGuard = true)) && agrees(named)((cachedNo with resolvedOverride = Some(named))) && ownedChildrenDroppable(SemVariable(999))((cachedYes with resolvedOverride = Some(named))) == oldFact(SemVariable(999))((cachedYes with resolvedOverride = Some(named)))(2))
 
 let recursive allAgree (types: List(SemanticType)) (environment: TypeEnvironment) =
     match types with
@@ -100,19 +106,29 @@ let freshQuery seed =
             in checkOne(named)(environment))
 
 let recursive repeat remaining =
-    if remaining == 0 then Ashes.IO.print("done")
-    else if freshQuery(remaining) then repeat(remaining - 1)
-    else Ashes.IO.panic("query mismatch")
+    if remaining == 0
+    then Ashes.IO.print("done")
+    else
+        if freshQuery(remaining)
+        then repeat(remaining - 1)
+        else Ashes.IO.panic("query mismatch")
 
 let recursive repeatedFields (count: Int) =
-    if count == 0 then [] else SemString :: repeatedFields(count - 1)
+    if count == 0
+    then []
+    else SemString :: repeatedFields(count - 1)
 
 let recursive timedQueries (remaining: Int) (old: Bool) (named: SemanticType) (state: CoreLoweringState) (expected: Bool) =
-    if remaining == 0 then Ashes.IO.print("benchmarked")
+    if remaining == 0
+    then Ashes.IO.print("benchmarked")
     else
-        let actual = if old then oldCanNormalizeClosureCapture(named)(state) else canNormalizeClosureCapture(named)(state)
+        let actual =
+            if old
+            then oldCanNormalizeClosureCapture(named)(state)
+            else canNormalizeClosureCapture(named)(state)
         in
-            if actual == expected then timedQueries(remaining - 1)(old)(named)(state)(expected)
+            if actual == expected
+            then timedQueries(remaining - 1)(old)(named)(state)(expected)
             else Ashes.IO.panic("benchmark mismatch")
 
 let benchmark (old: Bool) (cached: Bool) =
@@ -124,31 +140,55 @@ let benchmark (old: Bool) (cached: Bool) =
             in
                 let full = classifyHeapLayout(SemTuple(fields))(environment) with runtimeRecordAdtSupported = true
                 in
-                    let facts = if cached then Ashes.Collection.Map.setStr("Bench")(full)(Ashes.Collection.Map.empty) else Ashes.Collection.Map.empty
+                    let facts =
+                        if cached
+                        then Ashes.Collection.Map.setStr("Bench")(full)(Ashes.Collection.Map.empty)
+                        else Ashes.Collection.Map.empty
                     in
                         let state = CoreLoweringState(environment = environment, facts = facts, resolvedOverride = None, resourceGuard = false)
-                        in timedQueries(if cached then 50000 else 1000)(old)(named)(state)(oldCanNormalizeClosureCapture(named)(state)))
+                        in
+                            state
+                            |> oldCanNormalizeClosureCapture(named)
+                            |> timedQueries(if cached
+                            then 50000
+                            else 1000)(old)(named)(state))
 
 let genericQuery (seed: Int) (old: Bool) (nonregular: Bool) =
-    (let leaf = if seed % 2 == 0 then SemString else SemList(SemInt)
+    (let leaf =
+        if seed % 2 == 0
+        then SemString
+        else SemList(SemInt)
     in
         let environment =
-            if nonregular then genericEnvironment(leaf)
+            if nonregular
+            then genericEnvironment(leaf)
             else emptyTypeEnvironment(Unit) with constructorFieldGroups = [ConstructorFieldGroup(groupSymbolId = 40, groupTypeName = "A", groupIsGeneric = true, groupFields = [], groupGenericFields = [("A", [SemVariable(7)], [SemVariable(7)])])]
         in
-            let named = if nonregular then genericA(SemInt) else genericA(leaf)
+            let named =
+                if nonregular
+                then genericA(SemInt)
+                else genericA(leaf)
             in
                 let state = CoreLoweringState(environment = environment, facts = Ashes.Collection.Map.empty, resolvedOverride = None, resourceGuard = false)
                 in
-                    let droppable = if old then oldFact(named)(state)(2) else ownedChildrenDroppable(named)(state)
+                    let droppable =
+                        if old
+                        then oldFact(named)(state)(2)
+                        else ownedChildrenDroppable(named)(state)
                     in
-                        let capture = if old then oldCanNormalizeClosureCapture(named)(state) else canNormalizeClosureCapture(named)(state)
+                        let capture =
+                            if old
+                            then oldCanNormalizeClosureCapture(named)(state)
+                            else canNormalizeClosureCapture(named)(state)
                         in droppable && !capture)
 
 let recursive genericRepeat (remaining: Int) (old: Bool) (nonregular: Bool) =
-    if remaining == 0 then Ashes.IO.print("done")
-    else if genericQuery(remaining)(old)(nonregular) then genericRepeat(remaining - 1)(old)(nonregular)
-    else Ashes.IO.panic("generic query mismatch")
+    if remaining == 0
+    then Ashes.IO.print("done")
+    else
+        if genericQuery(remaining)(old)(nonregular)
+        then genericRepeat(remaining - 1)(old)(nonregular)
+        else Ashes.IO.panic("generic query mismatch")
 
 match Ashes.IO.args with
     | "old-generic100" :: [] -> genericRepeat(100)(true)(false)
@@ -163,7 +203,10 @@ match Ashes.IO.args with
     | "new-cache" :: [] -> benchmark(false)(true)
     | "old-miss" :: [] -> benchmark(true)(false)
     | "new-miss" :: [] -> benchmark(false)(false)
-    | "check" :: [] -> if check(Unit) && adversarialCases(Unit) then Ashes.IO.print("equivalent") else Ashes.IO.panic("query mismatch")
+    | "check" :: [] ->
+        if check(Unit) && adversarialCases(Unit)
+        then Ashes.IO.print("equivalent")
+        else Ashes.IO.panic("query mismatch")
     | "1000" :: [] -> repeat(1000)
     | "10000" :: [] -> repeat(10000)
     | _ -> Ashes.IO.panic("mode")

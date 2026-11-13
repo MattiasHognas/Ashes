@@ -5,8 +5,8 @@ set -euo pipefail
 cli=$(realpath "${1:?usage: validate.sh /absolute/path/to/ashes}")
 export UseSharedCompilation=false MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0
 ulimit -s 1048576
-perl selfhost/tests/persistent-dropper-context/render.pl
-perl selfhost/tests/persistent-dropper-context/render-synthesis.pl
+bash selfhost/tests/persistent-dropper-context/render.sh
+bash selfhost/tests/persistent-dropper-context/render-synthesis.sh
 results=work/persistent-dropper-context/results
 mkdir -p "$results"
 run() {

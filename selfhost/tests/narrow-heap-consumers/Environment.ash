@@ -105,4 +105,3 @@ let namedTypeAt (constructorName: Str) (concreteArguments: List(SemanticType)) (
                 | _ -> test.fail("constructor " + constructorName + " does not resolve to a named type")
 
 let admissibilityProjection (child: HeapLayoutChild) = (child.childType, child.dropKind)
-

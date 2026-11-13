@@ -1,6 +1,6 @@
 # Result-reach count merge index
 
-Render with `perl selfhost/tests/reach-count-index/render.pl`. The project is
+Render with `bash selfhost/tests/reach-count-index/render.sh`. The project is
 written to `work/reach-count-index`. The frozen oracle is ResultReachSummaries
 from beaa9a30. Its local types and exported names are renamed only to permit a
 side-by-side import; unchanged original bytes are also retained. CountQueries

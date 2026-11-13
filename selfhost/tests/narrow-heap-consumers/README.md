@@ -1,10 +1,10 @@
 # Narrow lowering heap queries
 
-Run `perl selfhost/tests/narrow-heap-consumers/render.pl` from the repository.
+Run `bash selfhost/tests/narrow-heap-consumers/render.sh` from the repository.
 It generates `work/narrow-consumers/ashes.json`. The historical full classifier
 comes from frozen commit b19daa03; only private nominal type and exported value
 names are prefixed to prevent cross-module importer collisions. The byte-for-byte
-original is retained beside it as `.ash.inc`.
+original is retained beside it as an ignored raw-source dump.
 
 The renderer extracts the actual candidate `classifyClosureCaptureLayout`, `heapClosureCaptureLayoutOf`,
 `canNormalizeClosureCapture`, and `ownedChildrenDroppable` query functions.
