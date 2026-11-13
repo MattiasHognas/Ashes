@@ -2130,6 +2130,21 @@ function's such tuple, or a result of unresolved type, as a generic `apply f x =
 forwards its own caller's request and address to that call, in place of a request of its own, and
 takes no parts itself; the callee answers the caller that asked.
 
+Known `Str` and `Bytes` fields can use the same tuple-part hand-over instead of copying their
+payload into the arena and then back onto the reference-counted heap. This applies only to a
+borrowed field stored once in the sole returned arena tuple, outside a loop, whose exact earlier
+demotion has one user. The interval between that demotion and the field's store must contain only
+non-releasing construction operations and local branches; calls, releases, resets and unproved
+operations retain the copy. A caller requesting parts skips the demotion, the store retains each
+counted alias separately, and the mask makes the caller release each handed reference after its
+own normalization retains it. The requested ownership analysis follows only these proved guarded
+demotions back to their original source owners. Without a request the original copy remains;
+fixed-copyout callers continue withdrawing the request. Fresh unowned fields, deferred
+materializations and multiple possible result cells keep their existing behavior
+(`GRC_NO_TUPLESTRINGPARTS`, stage 0; mirrored in stage 1). The regression is
+`selfhost/tests/generic-tuple-byte-parts`: this avoids repeated whole-source byte copies in the
+parser's legitimately polymorphic state updaters without adding source type annotations.
+
 A result outside the contract's types can also be one of the function's owned values returned as it
 is: a generic `Result(e, T)` whose `Ok` arm returns an owned call result of type `Result(Never, T)`,
 say. The function cannot release that value, and its caller, which may know the concrete type, does
