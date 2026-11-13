@@ -2,6 +2,7 @@ import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText
+import AshesCompiler.Semantics.Ir
 export (
     value runCoreOrderedInferenceTests,
 )
@@ -88,6 +89,38 @@ let checkStandardListSort traits unit =
             match expectBool(traits + "\n" + source + "\nmatch sort([\"z\", \"a\"]) with | first :: second :: [] -> first == \"a\" && second == \"z\" | _ -> false") with
                 | _ -> Unit
 
+let checkUnusedComparator unit =
+    match expectBool("let before left right = left <= right\ntrue") with
+        | IrProgram { functions = [] } -> Unit
+        | _ -> Ashes.IO.panic("unused comparator retained a provisional body")
+
+let checkUnusedLibrarySort traits unit =
+    match Ashes.IO.File.readText("lib/Ashes/Collection.List.ash") with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match expectBool(traits + "\n" + source + "\nlength([1, 2]) == 2") with
+                | _ -> Unit
+
+let checkUsedComparatorReferences unit =
+    match expectBool("let before left right = left <= right\nlet alias = before\nalias(1)(2)") with
+        | _ ->
+            match expectBool("let before left right = left <= right\ntype Rank = | Rank(Int)\nimplement Eq(Rank) = | equal = given left -> given right -> match (left, right) with | (Rank(x), Rank(y)) -> before(x)(y)\nRank(1) == Rank(2)") with
+                | _ -> Unit
+
+let checkUnusedBodyError unit =
+    match lowerSource("let before left right = left <= right\nlet invalid value = value + true\ntrue") with
+        | CoreLoweringResult { error = Some(_error) } -> Unit
+        | _ -> Ashes.IO.panic("unused invalid body escaped discovery validation")
+
+let checkEagerInitializer unit =
+    match expectBool("let before left right = left <= right\nlet effect = Ashes.IO.print(\"kept\")\ntrue") with
+        | program ->
+            if Ashes.Text.contains(None
+            |> formatIr(program)(LoweredIr)
+            |> Ashes.Text.join("\n"))("PrintStr")
+            then Unit
+            else Ashes.IO.panic("replay omitted an eager initializer")
+
 let checkExpressionBoundary unit =
     match parseExpression("given left -> given right -> left <= right") with
         | ExpressionParseResult { expression = expression, diagnostics = [] } ->
@@ -115,4 +148,9 @@ let runCoreOrderedInferenceTests unit =
         |> checkMissingEvidence
         |> checkMixedUses(traits)
         |> checkExpressionBoundary
-        |> checkStandardListSort(traits))
+        |> checkStandardListSort(traits)
+        |> checkUnusedComparator
+        |> checkUnusedLibrarySort(traits)
+        |> checkUsedComparatorReferences
+        |> checkUnusedBodyError
+        |> checkEagerInitializer)

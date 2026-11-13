@@ -26,6 +26,12 @@ import AshesCompiler.Frontend.Syntax.TypeDecl
 import AshesCompiler.Frontend.Syntax.TypeAliasDecl
 import AshesCompiler.Frontend.Syntax.ZeroCostTypeDecl
 import AshesCompiler.Frontend.Syntax.ExternalDecl
+import AshesCompiler.Frontend.Syntax.TraitMethodDecl
+import AshesCompiler.Frontend.Syntax.TraitDecl
+import AshesCompiler.Frontend.Syntax.ProvideBinding
+import AshesCompiler.Frontend.Syntax.ProvideDecl
+import AshesCompiler.Frontend.Syntax.ExportDecl
+import AshesCompiler.Frontend.Syntax.ExportItem
 import AshesCompiler.Frontend.Syntax.TraitImplementationDecl
 import AshesCompiler.Frontend.Syntax.TraitImplementationMethodBinding
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
@@ -35209,6 +35215,7 @@ let recursive letBindingSyntaxListMayReferenceName (bindings: List(LetBindingSyn
 type NonCalleeUses =
     | names: MapTree(Str, Bool)
     | everyName: Bool
+    | includeCallees: Bool
 
 let recordNonCalleeUse (candidate: Str) (shadowed: List(Str)) (uses: NonCalleeUses) =
     if containsName(candidate)(shadowed)
@@ -35255,10 +35262,13 @@ let recursive collectNonCalleeUses (expr: Expr) (asCallee: Bool) (shadowed: List
         | ExprRune(_value) -> uses
         | ExprBool(_value) -> uses
         | ExprVar(candidate) ->
-            if asCallee
+            if asCallee && !uses.includeCallees
             then uses
             else recordNonCalleeUse(candidate)(shadowed)(uses)
-        | ExprQualifiedVar(_moduleName, _memberName) -> uses
+        | ExprQualifiedVar(owner, _memberName) ->
+            if uses.includeCallees
+            then recordNonCalleeUse(owner)(shadowed)(uses)
+            else uses
         | ExprCall(function, argument, _isSugar, _layout) ->
             uses
             |> collectNonCalleeUses(function)(true)(shadowed)
@@ -35357,6 +35367,44 @@ let recursive letBindingValuesNonCalleeUses (bindings: List(LetBindingSyntax)) (
             |> collectNonCalleeUses(value)(false)([])
             |> letBindingValuesNonCalleeUses(rest)
 
+// The all-reference mode also includes bodies lowered through registered evidence
+// and providers, rather than only ordinary value bindings. The ownership analysis
+// retains its original non-callee-only mode and decisions.
+let recursive implementationReferenceUses bindings uses =
+    match bindings with
+        | [] -> uses
+        | TraitImplementationMethodBinding { implementation = body } :: rest ->
+            uses
+            |> collectNonCalleeUses(body)(false)([])
+            |> implementationReferenceUses(rest)
+
+let recursive defaultMethodReferenceUses methods uses =
+    match methods with
+        | [] -> uses
+        | TraitMethodDecl { defaultImplementation = None } :: rest -> defaultMethodReferenceUses(rest)(uses)
+        | TraitMethodDecl { defaultImplementation = Some(body) } :: rest ->
+            uses
+            |> collectNonCalleeUses(body)(false)([])
+            |> defaultMethodReferenceUses(rest)
+
+let recursive providerReferenceUses bindings uses =
+    match bindings with
+        | [] -> uses
+        | ProvideBinding { implementation = body } :: rest ->
+            uses
+            |> collectNonCalleeUses(body)(false)([])
+            |> providerReferenceUses(rest)
+
+let recursive exportReferenceUses items uses =
+    match items with
+        | [] -> uses
+        | ExportValue(name) :: rest ->
+            uses
+            |> recordNonCalleeUse(name)([])
+            |> exportReferenceUses(rest)
+        | ExportType(_name, _constructors) :: rest -> exportReferenceUses(rest)(uses)
+        | ExportModule(_name) :: _rest -> uses with everyName = true
+
 let recursive programNonCalleeUses (items: List(TopLevelItem)) (trailingBody: Expr) (uses: NonCalleeUses) =
     match items with
         | [] -> collectNonCalleeUses(trailingBody)(false)([])(uses)
@@ -35369,6 +35417,22 @@ let recursive programNonCalleeUses (items: List(TopLevelItem)) (trailingBody: Ex
             uses
             |> letBindingValuesNonCalleeUses(bindings)
             |> programNonCalleeUses(rest)(trailingBody)
+        | TopLevelImplementation(TraitImplementationDecl { bindings = bindings }) :: rest ->
+            programNonCalleeUses(rest)(trailingBody)(if uses.includeCallees
+            then implementationReferenceUses(bindings)(uses)
+            else uses)
+        | TopLevelTrait(TraitDecl { methods = methods }) :: rest ->
+            programNonCalleeUses(rest)(trailingBody)(if uses.includeCallees
+            then defaultMethodReferenceUses(methods)(uses)
+            else uses)
+        | TopLevelProvide(ProvideDecl { bindings = bindings }) :: rest ->
+            programNonCalleeUses(rest)(trailingBody)(if uses.includeCallees
+            then providerReferenceUses(bindings)(uses)
+            else uses)
+        | TopLevelExport(ExportDecl { items = exported }) :: rest ->
+            programNonCalleeUses(rest)(trailingBody)(if uses.includeCallees
+            then exportReferenceUses(exported)(uses)
+            else uses)
         | _other :: rest -> programNonCalleeUses(rest)(trailingBody)(uses)
 
 // A plain top-level binding's lambda value is a stack closure when nothing after it uses the
@@ -35446,7 +35510,7 @@ let programLoweringAnalysis (items: List(TopLevelItem)) (trailingBody: Expr) =
     (let remainingBody = remainingProgramBody(items)(trailingBody)
     in
         TopLevelLoweringAnalysis(
-            nonCalleeUses = programNonCalleeUses(items)(trailingBody)(NonCalleeUses(names = Ashes.Collection.Map.empty, everyName = false)),
+            nonCalleeUses = programNonCalleeUses(items)(trailingBody)(NonCalleeUses(names = Ashes.Collection.Map.empty, everyName = false, includeCallees = false)),
             remainingBody = remainingBody,
             escapeOfChain = escapingChainBody(remainingBody)(true),
             escapeOfTrailing = escapingChainBody(trailingBody)(true),
@@ -36315,6 +36379,32 @@ let recursive traitGoalMap (entries: List((Str, SemanticType))) (proven: MapTree
             |> Ashes.Collection.Map.setStr(key)(goalType)
             |> traitGoalMap(rest)
 
+// A successful discovery pass already validated every body. During its final replay
+// an entirely unreferenced, nonrecursive lambda needs no emitted body or unresolved
+// dictionary. The reference index is conservative: calls, escaped values, evidence
+// methods and providers all count. Eager initializers and recursive groups stay intact.
+let recursive unreferencedLambdaItem (uses: NonCalleeUses) item =
+    match item with
+        | TopLevelAt(_span, inner) -> unreferencedLambdaItem(uses)(inner)
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) ->
+            match stripExprAt(value) with
+                | ExprLambda(_parameter, _body, _annotation) -> Ashes.Collection.Map.getStr(name)(uses.names) == None
+                | _ -> false
+        | _ -> false
+
+let recursive retainReferencedLambdaItems items uses reversed =
+    match items with
+        | [] -> reverse(reversed)
+        | item :: rest ->
+            if unreferencedLambdaItem(uses)(item)
+            then retainReferencedLambdaItems(rest)(uses)(reversed)
+            else retainReferencedLambdaItems(rest)(uses)(item :: reversed)
+
+let validatedReplayItems items trailingBody =
+    match programNonCalleeUses(items)(trailingBody)(NonCalleeUses(names = Ashes.Collection.Map.empty, everyName = false, includeCallees = true)) with
+        | NonCalleeUses { everyName = true } -> items
+        | uses -> retainReferencedLambdaItems(items)(uses)([])
+
 // Stage 0's discovery pass, run only for a program that needs one: a pass that met a trait goal
 // its substitution could not yet answer lowers the program a second time with what that pass went
 // on to prove, so each such site chooses the evidence the rest of the program settled on. The
@@ -36324,14 +36414,19 @@ let recursive traitGoalMap (entries: List((Str, SemanticType))) (proven: MapTree
 // either dispatches it or reports it.
 let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
-        | LoweredCoreValue { state = firstState } as first ->
+        | LoweredCoreValue { state = firstState, error = firstError } as first ->
             match statePendingTraitGoals(firstState) with
                 | [] -> first
                 | pending ->
-                    seed
-                    |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)([]))(Ashes.Collection.Map.empty))
-                    |> withStateTraitGoalsPinned(true)
-                    |> lowerProgramWithCapabilities(items)(trailingBody)(environment)
+                    let replayItems =
+                        match firstError with
+                            | None -> validatedReplayItems(items)(trailingBody)
+                            | Some(_error) -> items
+                    in
+                        seed
+                        |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)([]))(Ashes.Collection.Map.empty))
+                        |> withStateTraitGoalsPinned(true)
+                        |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.

@@ -181,3 +181,41 @@ was retained and now passes. These checks establish lowering and stage-0 runtime
 behavior. Final integrated stage-1 runtime guards and stage-2 compilation remain
 required. The pending-goal ownership defect above is still unresolved; none of
 these semantic checks establishes leak-free acceptance.
+
+## Unused imported ordering helpers
+
+Bootstrap30 compiled the ordering guards, but its combined logical-not CLI guard
+failed with `MissingCoreTraitEvidence("Ord", SemVariable(204))`. The same error
+reproduces in the actual-Core driver by loading `Trait.ash` and all of
+`Collection.List.ash`, then calling only `length([1, 2])`. Imported `sort` was
+unused, so its inferred comparison operand never acquired a concrete type.
+
+After a successful discovery pass, final replay now omits only nonrecursive
+top-level lambda declarations with zero references in a conservative map.
+Callees, aliases, captures, method/provider bodies, exports and qualified owners
+are included; unknown syntax prevents omission. Initializers with effects stay,
+and a failed discovery retains the original declarations during replay. This
+neither emits provisional bodies nor defaults unresolved comparisons to Int.
+Unused dependency chains, recursive declarations and mixed constrained uses
+retain their existing limitations.
+
+The expanded registered Not/Ord modules pass together against updated Core:
+
+- Build: 3:33.42, peak 10,250,332 KiB; run: 1.64s, peak 102,792 KiB, exit 0.
+- Production Core SHA256:
+  `ffc6e47635331dbe372c16519b64c7947a2adaa001580ff244a53a1b8243460c`.
+- Coverage includes unused comparator emission (no retained function body),
+  actual library `length` without `sort`, alias and implementation-only uses,
+  malformed unused bodies and eager initializer retention.
+- `tests/unused_ordered_helper.ash` passes stage 0 plain and poisoned with stdout
+  `kept|2`; its eager initializer writes the prefix before the final print.
+- The [reference-index test](../unused-lambda-references/README.md) covers direct
+  AST branches and unchanged ownership-analysis mode. Its map lifetime guard
+  is flat at 10 live cells for 1000 and 10000 rounds, plain and poisoned.
+
+Evidence is under `work/unused-ordered/{build2,run2}.*` and
+`work/unused-lambda-references/`. The first expanded test run caught an incorrect
+assertion counting the entry function inside `IrProgram.functions`; the entry is
+stored separately. The corrected entire module was rebuilt and passed. Final
+integrated stage-1 guards and stage-2 compilation remain required. These focused
+map checks do not resolve the separate pending-goal string leak documented above.
