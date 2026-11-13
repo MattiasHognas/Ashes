@@ -2369,11 +2369,27 @@ and reject unresolved evidence rather than emit provisional IR. Ordinary generic
 without mapped evidence remain unsupported for non-Boolean uses; this is not full polymorphic
 operator support.
 
+Stage 1 orders the operands of `<`, `<=`, `>`, and `>=` through the same typed trait-goal
+replay before numeric defaulting. It first unifies both operands, then records an unresolved
+`Ord` goal with a Boolean result. Later callers can settle the shared operand type to `Str`,
+for example in the unannotated comparator inside `List.sort`. Replay emits the concrete primitive
+comparison or the existing `Ord` method dispatch; active generic implementation evidence is used
+immediately. Required dictionaries build the standard ordering predicates through those same
+mapped expressions inside a wrapper pinned to the implementation head; otherwise their bare
+`Ord.compare` sibling reference has no value binding. Explicit implementation overrides are
+preserved. Structural heads with available requirement evidence dispatch without deferral.
+Missing evidence and unresolved goals at non-replaying entry points fail closed.
+This does not generalize ordinary constrained bindings at multiple concrete types: mixed `Int`
+and `Str` uses of the same such binding remain unsupported in stage 1 (TRT13/SEM22).
+
 A recursive group's disposable member pass keeps trait discovery enabled even inside a
 whole-program replay: later siblings still need to settle their result types. The retained member
 pass starts again from the original group state with the proved sibling results and the caller's
-original pinned-goal flag. A pinned caller always takes that final pass, including when no sibling
-result settled, so provisional operator values cannot escape through expression entry points.
+original pinned-goal flag. If no sibling result settled and discovery's append-only pending-goal
+list is empty, the first result is already final: restore the caller's pinned flag and reuse it.
+This constant-time check avoids lowering every recursive group twice during whole-program replay.
+A nonempty pending-goal list still requires the pinned final pass, so provisional operator values
+cannot escape through expression entry points.
 
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are

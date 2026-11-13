@@ -6,9 +6,11 @@ use File::Copy qw(copy);
 my $out = 'work/logical-not-inference';
 make_path($out);
 copy('selfhost/tests/semantics/CoreLogicalNotInferenceTests.ash', "$out/CoreLogicalNotInferenceTests.ash") or die $!;
+copy('selfhost/tests/semantics/CoreOrderedInferenceTests.ash', "$out/CoreOrderedInferenceTests.ash") or die $!;
 open my $main, '>', "$out/Main.ash" or die $!;
 print $main <<'ASH';
 import CoreLogicalNotInferenceTests
+import CoreOrderedInferenceTests
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
 let report result =
@@ -20,7 +22,7 @@ let read path =
         | Ok(source) -> source
         | Error(message) -> Ashes.IO.panic(message)
 match Ashes.IO.args with
-    | [] -> Unit |> runCoreLogicalNotInferenceTests |> (given (_) -> Ashes.IO.print("logical-not inference passed"))
+    | [] -> Unit |> runCoreLogicalNotInferenceTests |> (given (_) -> Ashes.IO.print("logical-not inference passed")) |> runCoreOrderedInferenceTests |> (given (_) -> Ashes.IO.print("ordered inference passed"))
     | "program" :: path :: [] ->
         match parseProgram(read(path)) with
             | ProgramParseResult { program = program, diagnostics = [] } -> report(lowerCoreProgram(program))

@@ -25797,12 +25797,22 @@ let lowerRecursiveMembersPinningSiblingResults members selfBindings captures env
             in
                 match settledSiblingCallResults(statePendingSiblingCallResults(firstState))(recorded)(firstState)(stateProvenSiblingCallResults(environmentState))(false) with
                     | (proven, settled) ->
-                        if settled || stateTraitGoalsPinned(environmentState)
-                        then
-                            environmentState
-                            |> withStateProvenSiblingCallResults(proven)
-                            |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)
-                        else first
+                        // Pending goals are append-only, so an empty discovery list proves
+                        // no provisional trait value was emitted. A pinned entry normally
+                        // starts empty; preserve its boundary without replaying this group.
+                        // A nonempty list conservatively requires the final pinned pass.
+                        let needsPinnedReplay =
+                            match statePendingTraitGoals(firstState) with
+                                | [] -> false
+                                | _goals -> stateTraitGoalsPinned(environmentState)
+                        in
+                            if settled || needsPinnedReplay
+                            then
+                                environmentState
+                                |> withStateProvenSiblingCallResults(proven)
+                                |> lowerPreparedRecursiveMembers(members)(selfBindings)(captures)(environmentTemp)(memberLower)
+                            else
+                                first with state = withStateTraitGoalsPinned(stateTraitGoalsPinned(environmentState))(firstState)
 
 let recursive addRecursiveGroupContinuationBindings members outerBindings state =
     match members with
@@ -30448,6 +30458,40 @@ let traitMethodTypeAt (traitName: Str) (methodName: Str) (headTypes: List(Semant
                 | None -> None
         | _ -> None
 
+// The standard ordering defaults use the same predicate lowering in dictionaries
+// as at direct operator sites. Keeping the mapped expression inside the typed method
+// wrapper lets its head type select compare evidence; a bare Ord.compare reference
+// in the default body has no ordinary value binding.
+let orderingDefaultMethodBody (methodName: Str) (body: Expr) =
+    (let left = ExprVar("__ordered_default_left")
+    in
+        let right = ExprVar("__ordered_default_right")
+        in
+            let comparison =
+                match methodName with
+                    | "less" ->
+                        right
+                        |> ExprLessThan(left)
+                        |> Some
+                    | "lessOrEqual" ->
+                        right
+                        |> ExprLessOrEqual(left)
+                        |> Some
+                    | "greater" ->
+                        right
+                        |> ExprGreaterThan(left)
+                        |> Some
+                    | "greaterOrEqual" ->
+                        right
+                        |> ExprGreaterOrEqual(left)
+                        |> Some
+                    | _ -> None
+            in
+                match comparison with
+                    | Some(expression) ->
+                        ExprLambda("__ordered_default_left")(ExprLambda("__ordered_default_right")(expression)(None))(None)
+                    | None -> body)
+
 // The method body an implementation supplies, or the trait's default for it.
 let traitMethodBody (traitName: Str) (methodName: Str) (implementation: TraitImplementationInferenceDefinition) (state: CoreLoweringState) =
     match implementationMethodExpression(methodName)(implementation) with
@@ -30456,7 +30500,11 @@ let traitMethodBody (traitName: Str) (methodName: Str) (implementation: TraitImp
             match traitDefinitionOf(traitName)(state) with
                 | Some(TraitInferenceDefinition { methods = methods }) ->
                     match findTraitMethodDefinition(methodName)(methods) with
-                        | Some(TraitMethodInferenceDefinition { defaultImplementation = defaultImplementation }) -> defaultImplementation
+                        | Some(TraitMethodInferenceDefinition { defaultImplementation = Some(body) }) ->
+                            Some(if traitName == "Ord"
+                            then orderingDefaultMethodBody(methodName)(body)
+                            else body)
+                        | Some(TraitMethodInferenceDefinition { defaultImplementation = None }) -> None
                         | None -> None
                 | None -> None
 
@@ -31133,9 +31181,40 @@ let unifyEqualityOperands operator (binary: LoweredCoreBinary) =
         | (CoreNotEqualOperator, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) -> bindEqualityOperands("!=")(leftType)(rightType)(binary)(state)
         | _ -> binary
 
-let emitPreparedCoreBinary operator lower binary =
+let coreOrderedOperatorName operator =
+    match operator with
+        | CoreGreaterOperator -> Some(">")
+        | CoreGreaterOrEqualOperator -> Some(">=")
+        | CoreLessOperator -> Some("<")
+        | CoreLessOrEqualOperator -> Some("<=")
+        | _ -> None
+
+// Ordered comparisons infer one Ord operand type before numeric fallback can turn an
+// unresolved parameter into Int. Discovery records the goal until callers settle it;
+// replay pins that type and emits the real primitive comparison or trait dispatch.
+// An active generic implementation already carries evidence and needs no replay.
+let emitPreparedCoreOrdered name operator lower binary =
     match binary with
         | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
+            match bindEqualityOperands(name)(leftType)(rightType)(binary)(state) with
+                | LoweredCoreBinary { state = unifiedState, error = None } as unified ->
+                    match pinProvenTraitGoal("Ord")(orderedTraitMethod(name))(resolveType(unifiedState)(leftType))(unifiedState) with
+                        | (pinnedState, operandType) ->
+                            let prepared = unified with state = pinnedState, leftType = operandType, rightType = operandType
+                            in
+                                if hasActiveTraitEvidence("Ord")(operandType)(pinnedState)
+                                then emitCoreTraitOrdered(name)(lower)(prepared)
+                                else
+                                    match (operandType, unprovenTraitGoalKey("Ord")(orderedTraitMethod(name))(operandType)(pinnedState)) with
+                                        | (SemVariable(_id), Some(key)) -> deferTraitGoal(key)(operandType)(SemBool)(pinnedState)
+                                        | _ -> emitResolvedCoreBinary(operator)(lower)(prepared)
+                | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
+
+let emitPreparedCoreBinary operator lower binary =
+    match (coreOrderedOperatorName(operator), binary) with
+        | (Some(name), _binary) -> emitPreparedCoreOrdered(name)(operator)(lower)(binary)
+        | (None, LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None }) ->
             match (deferredCoreOperatorEmitter(operator), resolveType(state)(leftType), resolveType(state)(rightType)) with
                 | (Some(emitDeferred), SemVariable(leftId), SemVariable(_rightId)) ->
                     if activeEvidenceCoversOperator(operator)(SemVariable(leftId))(state)
@@ -31150,7 +31229,7 @@ let emitPreparedCoreBinary operator lower binary =
                     |> unifyEqualityOperands(operator)
                     |> resolvedCoreBinary
                     |> emitResolvedCoreBinary(operator)(lower)
-        | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | (None, LoweredCoreBinary { state = failedState, error = Some(error) }) -> failure(failedState)(error)
 
 // The instructions a speculative operator becomes once its operand type is final, with the
 // function's temp count after them: a BigInt comparison needs two temps of its own.

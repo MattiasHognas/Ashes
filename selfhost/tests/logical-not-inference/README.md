@@ -110,9 +110,10 @@ unpinned discovery/replay path handled the group successfully on its own.
 
 The recursive-group helper now permits discovery in its disposable first member
 pass. Its final member pass starts from the original group state plus settled
-sibling proofs, preserving the caller's pinned flag. A pinned caller always takes
-that final pass, even if no sibling result settled; no provisional expression may
-escape through a public expression API. Tests combine an inferred `invert` with
+sibling proofs, preserving the caller's pinned flag. If no sibling result settled
+and discovery's append-only pending-goal list is empty, restore that flag on the
+first result and reuse it. Otherwise a pinned caller takes the final pass; no
+provisional expression may escape through a public expression API. Tests combine an inferred `invert` with
 mutual predicates and cover concrete and unresolved recursive expressions.
 
 The known pending-goal string ownership defect above remains outstanding. This
@@ -135,3 +136,48 @@ combined real-Core validation build; no extra compiler build was started for it.
 Evidence is in `work/logical-not-inference/recursive-compile.{log,time}`,
 `check-recursive.{stdout,stderr,time}`, and
 `work/not-inference/{s29-invert-mutual-gdb.log,recursive-*.stdout}`.
+
+
+## Ordered inference and combined replay validation
+
+Bootstrap29 reached `List.sort` with its unannotated `left <= right` comparator
+already defaulted to `Int`, then rejected the compiler's string callers. Ordered
+operators now unify operands before numeric fallback, defer unresolved `Ord`
+goals, and replay against the type established by their callers. Active evidence
+and known structural instances dispatch directly. Required dictionaries lower
+standard default predicates through the same mapped operator path, inside their
+typed wrapper; explicit implementation methods remain untouched.
+
+The renderer now includes `CoreOrderedInferenceTests.ash` alongside the complete
+logical-not module. Ordering coverage includes all four string comparisons,
+Int/Float primitives, one-known-operand inference, custom implementations,
+active required evidence, supplied predicate overrides, generic implementation
+heads, the actual `Collection.List.ash` declarations, and invalid/unresolved
+operands. Mixed concrete uses of an ordinary constrained binding remain an
+explicit call-type error: this is not full constrained polymorphism.
+
+Combined updated-Core validation passed both registered modules, exit 0:
+
+- Build: 3:29.06, peak 10,249,448 KiB, `--debug -O0`.
+- Run: 1.41s, peak 99,892 KiB; stdout `logical-not inference passed` and
+  `ordered inference passed`.
+- Core source SHA256:
+  `a5f2c892c8ee655dbc5772d314dfc62e03e8fcf123827368dce34d8614c0c3a6`.
+- Dynamic unresolved program and expression checks both return
+  `MissingCoreTraitEvidence("Ord", SemVariable(6))`.
+- `tests/ordered_comparison_inference.ash`: plain/poison stage-0 passes,
+  stdout `true,true,true,true,a,m,z` (1.33s/1.22s suites).
+- `tests/ordered_trait_default_evidence.ash`: plain/poison stage-0 passes,
+  stdout `false,true` (0.55s/0.57s suites).
+- The extracted [recursive replay callback check](../recursive-replay/README.md)
+  passes plain and poisoned with exact callback counts: the pinned empty-goal
+  case takes one member pass; a new unresolved goal still forces a rejecting
+  pinned pass. Builds took 0.69s/0.68s; runs were below 0.01s.
+
+Evidence is retained locally in `work/combined-inference/build3.{log,time}`,
+`run3.{stdout,stderr,time}`, and `work/recursive-replay/`. The first combined run
+exposed the default dictionary's unresolved `Ord.compare` reference; that test
+was retained and now passes. These checks establish lowering and stage-0 runtime
+behavior. Final integrated stage-1 runtime guards and stage-2 compilation remain
+required. The pending-goal ownership defect above is still unresolved; none of
+these semantic checks establishes leak-free acceptance.
