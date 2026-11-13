@@ -3,7 +3,7 @@ set -euo pipefail
 cli=$(realpath "${1:?usage: validate.sh /absolute/path/to/ashes}")
 export UseSharedCompilation=false MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0
 ulimit -s 1048576
-perl selfhost/tests/dropper-worklist/render.pl
+bash selfhost/tests/dropper-worklist/render.sh
 base=$PWD/work/dropper-worklist
 run() {
     local budget=$1 timing=$2

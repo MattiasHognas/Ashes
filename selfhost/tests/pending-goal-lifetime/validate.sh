@@ -22,7 +22,7 @@ run() {
 }
 failed=0
 for mode in state literal; do
-    perl selfhost/tests/pending-goal-lifetime/render.pl "$mode"
+    bash selfhost/tests/pending-goal-lifetime/render.sh "$mode"
     base="$PWD/work/pending-goal-lifetime-$mode"
     result="$base/$tag"
     mkdir -p "$result"

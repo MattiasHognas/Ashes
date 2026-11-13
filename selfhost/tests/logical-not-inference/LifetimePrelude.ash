@@ -2,7 +2,6 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Frontend.Token
-
 type CoreFunctionState =
     | admissibilityAnswers: List((SemanticType, Bool))
     | pendingTraitGoals: List((Str, SemanticType))
@@ -51,8 +50,8 @@ let lowerConstant _make semanticType (state: CoreLoweringState) = success(state.
 let lowerString _text (state: CoreLoweringState) = success(state.nextTemp)(SemString)((state with nextTemp = state.nextTemp + 1))
 
 let hasActiveTraitEvidence _traitName _operandType state =
-    let group = state.functionState
-    in group.active
+    (let group = state.functionState
+    in group.active)
 
 let emitCoreTraitUnaryDispatch _traitName _methodName resultType _lower operandTemp _operandType state = success(operandTemp)(resultType)(state)
 

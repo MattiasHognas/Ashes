@@ -22,7 +22,7 @@ preserve that limitation rather than silently forcing every operand to Bool.
 
 ## Focused real-Core checks
 
-From the worktree root, `perl selfhost/tests/logical-not-inference/render.pl`
+From the worktree root, `bash selfhost/tests/logical-not-inference/render.sh`
 generates `work/logical-not-inference/ashes.json`. Compile that project using the
 stage-0 CLI with `--debug -O0`, inside the agreed heavy-job wrapper and 20G systemd
 scope; run the result in a 4G scope. No arguments runs the assertions. The optional
@@ -57,7 +57,7 @@ Final integrated stage-1 acceptance and another stage-2 attempt remain required.
 
 ## Lifetime check: stage-1 discrepancy remains unresolved
 
-`perl selfhost/tests/logical-not-inference/render-lifetime.pl` extracts the actual
+`bash selfhost/tests/logical-not-inference/render-lifetime.sh` extracts the actual
 production helpers for goal discovery, proof-map creation, replay, binding and
 cache invalidation into `work/logical-not-lifetime/ashes.json`. Prelude and
 assertions model the relevant state; instruction emission and trait dispatch are

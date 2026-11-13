@@ -7,11 +7,11 @@ bash selfhost/tests/dropper-worklist/validate.sh /absolute/path/to/ashes
 ```
 
 The renderer exposes the private production decision in an ignored probe module.
-`FrozenDecision.ash.inc` preserves the decision and nominal-key relation from
+`FrozenDecision.ash` preserves the decision and nominal-key relation from
 `c0e23905`, with prefixed names. Both decisions use the same unchanged view-query
 and constructor-lookup APIs; the oracle does not call the new worklist.
 
-The `FrozenLinearWorklist.ash.inc` oracle additionally preserves the linear-visited
+The `FrozenLinearWorklist.ash` oracle additionally preserves the linear-visited
 worklist from `5344d284`. Initial-path tests compare all 10,010 three-way lookup
 results across ordered triples of ten adversarial key types and the empty path,
 including first-alias priority and the bare/rendered key partition. Linear
@@ -43,9 +43,9 @@ retaining the graph and completed views. Every compilation and execution uses
 `work/dropper-worklist/`. Plain and poisoned modes are both required. Every stderr counter is checked
 against its exact expected value, so missing counters cannot pass as a plateau.
 
-Generated `.ash` files are formatted during validation. The checked-in `.ash.inc`
-files hold the same canonical source without entering the semantics suite's
-ordinary source-root discovery. The integration lead runs the full gates.
+The checked-in `.ash` fixtures are canonical source outside the semantics suite's
+source roots. The Bash renderer copies them into the isolated validation project;
+generated files are formatted during validation. The integration lead runs the full gates.
 
 Focused results on mattias-cachyos (2026-11-13), candidate source SHA-256
 `abed6e121e7cdc1562edae39373ae037950b508f7f61ca29c70e99fbe1571f09`:

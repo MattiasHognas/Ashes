@@ -9,8 +9,8 @@ require an old Git object in a fresh or shallow clone.
 Render from the repository root:
 
 ```sh
-perl selfhost/tests/pending-goal-lifetime/render.pl state
-perl selfhost/tests/pending-goal-lifetime/render.pl literal
+bash selfhost/tests/pending-goal-lifetime/render.sh state
+bash selfhost/tests/pending-goal-lifetime/render.sh literal
 ```
 
 Compile each generated `ashes.json` with `ASHES_RC_LEAKCHECK=1`, then run the executable with

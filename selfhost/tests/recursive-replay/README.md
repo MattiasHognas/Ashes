@@ -1,6 +1,6 @@
 # Recursive discovery replay count
 
-`perl selfhost/tests/recursive-replay/render.pl` extracts the production
+`bash selfhost/tests/recursive-replay/render.sh` extracts the production
 `lowerRecursiveMembersPinningSiblingResults` helper unchanged. A reporting
 member-lowering callback models goal discovery and sibling-result settlement;
 this test checks how often the helper invokes it, and the retained pinned flag.

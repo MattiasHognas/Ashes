@@ -4,7 +4,7 @@ cli=$(realpath "${1:?usage: validate.sh /path/to/ashes [/path/to/candidate/Struc
 candidate=${2:-selfhost/packages/semantics/src/AshesCompiler/Semantics/StructuralDroppers.ash}
 export UseSharedCompilation=false MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0
 ulimit -s 1048576
-perl selfhost/tests/dropper-worklist-ir/render.pl "$candidate"
+bash selfhost/tests/dropper-worklist-ir/render.sh "$candidate"
 results=work/dropper-worklist-ir-results
 mkdir -p "$results"
 run() {
