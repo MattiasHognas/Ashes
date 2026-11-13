@@ -9,6 +9,39 @@ See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broad
 [self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
 for package boundaries and commands.
 
+## Known gaps deferred during Step F
+
+Scope recorded on **2026-11-13**. Step F currently targets a complete, fast stage-1-to-stage-2
+compiler build. It is not a claim of full stage-0 feature parity or completion of step E. The
+following known work remains open; keep this list updated when an item is promoted or resolved.
+
+| Area | Known limitation and evidence | Deferred work / return condition |
+| --- | --- | --- |
+| Constrained let-polymorphism (TRT-13, SEM-22) | Stage 1 can resolve a constrained binding at one concrete use type, but a second use at another type can be rejected with ASH002. Physical dictionaries and constraint-aware local type reconstruction are incomplete; see [traits, implementations, and evidence](#traits-implementations-and-evidence) and the SEM-22 analysis below. | Full mixed-type constrained binding support, including its ownership-safe specialization. Promote the required part into F if the actual compiler sources need multiple instantiations; do not annotate callers merely to hide the missing compiler rule. |
+| Ordinary generic `Not` evidence | Concrete Boolean discovery/replay is not general `Not(a)` dictionary lowering. Ordinary custom-type and mixed Boolean/custom-type cases still fail closed, even though active evidence in implementation bodies has a supported path. [Cases and current limits](../../../selfhost/tests/logical-not-inference/README.md). | Ordinary constrained-binding operator-to-dictionary elaboration and genuinely polymorphic `Not` calls. Preserve rejection of unsupported cases until their evidence and lifetime handling are implemented. |
+| Constrained specialization and generic-loop ownership | Generalizing constrained bindings without stage 0's concrete specialization can expose retained dictionary/lookup values. The existing trait milestone records a stage-1 generic snapshot loop leaking five cells per round; that historical count has not been remeasured in this round. See `GRC_NO_CONSTRAINEDSPECIALIZATION`, `Lowering.ConstrainedSpecialization.cs`, and `tests/constrained_loop_lowered_at_caller_types_releases_snapshots.ash`. | Mirror the required specialization and prove lifetime safety before enabling broader generalization. This is a dependency of the polymorphism work, not permission to generalize now and fix its leaks later. |
+| Derived trait execution (TRT-14 / TRT-15) | Declaration expansion and evidence planning do not establish complete physical dictionary/method lowering. The existing milestone records rejection of equality on a list of a derived record in `tests/reuse_specialization_declines_unreachable_helper.ash`; this case has not been revalidated in the current bootstrap round. | Remaining runtime evidence and method lowering beyond what the compiler build requires. Reproduce the recorded case before claiming it still fails or is fixed. |
+| Pending trait-goal string ownership | Frozen bootstrap28 leaks one key string per round through unchanged `resolvedTraitGoals` when the pending list comes from lowering state. The reproducer without the new negation helper reports 2/1001/10001 live cells at 1/1000/10000 rounds; the literal-list control is flat. [Tracked sources, watchpoint evidence, and strict plateau runner](../../../selfhost/tests/pending-goal-lifetime/README.md). | Attribute the exact missing ownership operation and fix it under the mirror rule. This existing defect is newly exercised by negation; neither semantic success nor a stage-0-only flat result counts as stage-1 lifetime acceptance. |
+| Stage-1 poison instrumentation | Stage 1 does not implement the stage-0 `ASHES_RC_POISON=1` backend switch. Current stage-1-produced program checks are plain; poison checks use stage 0. [Validation limits](../../../selfhost/tests/logical-not-inference/README.md). | Implement and verify stage-1 poisoning separately. Do not report a poisoned stage-1 pass merely because the environment variable was set. |
+| Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E after F with a clean committed-tree census and fresh reproductions. Promote any item that blocks F or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
+
+The removed Round11 handoff is preserved locally, with a SHA256 manifest, under the main
+checkout's `.claude/step-f-archive/round2-20261112/artifacts/selfhost-dev/handoff-step-e/`.
+It is intentionally not restored under tracked `artifacts/`. The historical list and measurements
+remain available there; the current tracked pending-goal reproducer is linked above.
+
+**Still in scope for F:** the `List.sort` ordering/type-inference failure seen in bootstrap29,
+recursive-group discovery during pinned negation replay, and measured repeated graph traversal or
+lookup costs. Bootstrap29 exited naturally after 9:04.34 with `ASH002 Int vs Str` in
+`Ashes_Collection_List_sort`, without a stage-2 executable. The recursive replay follow-up and
+visited-key optimization still need their combined/final-binary validation. Do not mark these as
+deferred just because broader trait parity is deferred. See
+[PR #1155's recorded build outcome](https://github.com/MattiasHognas/Ashes/pull/1155).
+
+An item leaves this list only with a linked fix and relevant stage-1 regression/lifetime evidence,
+or with a fresh reproduction proving the recorded defect no longer applies. Full suites and a
+compiler census remain required at their agreed milestones; focused checks are not substitutes.
+
 ## Start here
 
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
