@@ -17,8 +17,10 @@ extract_declaration() {
     for declaration in containsName stripExprAt NonCalleeUses recordNonCalleeUse \
         patternBoundNames collectNonCalleeUses letBindingValuesNonCalleeUses \
         implementationReferenceUses defaultMethodReferenceUses providerReferenceUses \
-        exportReferenceUses programNonCalleeUses unreferencedLambdaItem \
-        retainReferencedLambdaItems validatedReplayItems; do
+        exportReferenceUses programNonCalleeUses ReplayDependencyGraph emptyReplayUses \
+        replayLambdaOrAlias declareReplayName declareReplayGroup addReplayCandidate \
+        buildReplayDependencyGraph enqueueReplayReferences reachableReplayNames \
+        unreachableReplayItem retainReachableReplayItems validatedReplayItems; do
         extract_declaration "$declaration"
     done
 } > "$out/ProductionHelpers.ash.inc"

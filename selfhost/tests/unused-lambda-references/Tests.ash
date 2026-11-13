@@ -78,8 +78,13 @@ let recursive repeatReferenceMap remaining items trailing =
     else
         let kept = validatedReplayItems(items)(trailing)
         in
-            if Ashes.Collection.List.length(kept) == 2
-            then repeatReferenceMap(remaining - 1)(items)(trailing)
+            if Ashes.Collection.List.length(kept) == 0
+            then
+                let escaped = validatedReplayItems(items)(ExprVar("alias"))
+                in
+                    if Ashes.Collection.List.length(escaped) == 2
+                    then repeatReferenceMap(remaining - 1)(items)(trailing)
+                    else Ashes.IO.panic("repeated reachable alias lost dependencies")
             else Ashes.IO.panic("repeated reference map changed retained declarations")
 
 let plateauFromArguments unit =
@@ -136,7 +141,19 @@ Unit
     |> collect)))
 |> (given (_) -> checkProgram("unused lambda removed")(declaration + "true")(false))
 |> (given (_) -> checkProgram("callee-only reference kept")(declaration + "before(1)(2)")(true))
-|> (given (_) -> checkProgram("alias reference kept")(declaration + "let alias = before\ntrue")(true))
+|> (given (_) -> checkProgram("unused pure alias removed")(declaration + "let alias = before\ntrue")(false))
+|> (given (_) -> checkProgram("unused wrapper chain removed")(declaration + "let wrap x y = before(x)(y)\ntrue")(false))
+|> (given (_) -> checkProgram("called wrapper retains dependency")(declaration + "let wrap x y = before(x)(y)\nwrap(1)(2)")(true))
+|> (given (_) -> checkProgram("called alias retains dependency")(declaration + "let alias = before\nalias(1)(2)")(true))
+|> (given (_) -> checkProgram("unused alias chain removed")(declaration + "let alias = before\nlet next = alias\ntrue")(false))
+|> (given (_) -> checkProgram("escaped alias chain retained")(declaration + "let alias = before\nlet next = alias\n(next, true)")(true))
+|> (given (_) -> checkProgram("eager initializer retains alias")(declaration + "let alias = before\nlet eager = alias(1)(2)\ntrue")(true))
+|> (given (_) -> checkProgram("unused wrapper alias removed")(declaration + "let wrap x y = before(x)(y)\nlet alias = wrap\ntrue")(false))
+|> (given (_) -> checkProgram("recursive root retains alias")(declaration + "let alias = before\nlet recursive keep x = alias(x)(x)\ntrue")(true))
+|> (given (_) -> checkProgram("duplicate names keep all")(declaration + "let alias = before\nlet before x y = true\ntrue")(true))
+|> (given (_) -> checkProgram("eager effect alias is not a function candidate")("let before = Ashes.IO.print(1)\nlet alias = before\ntrue")(true))
+|> (given (_) -> checkProgram("local shadowing does not add a false outer edge")(declaration + "let keep before = before(1)(2)\nkeep(given x -> given y -> true)")(false))
+|> (given (_) -> checkProgram("captured earlier alias survives inner shadowing")(declaration + "let alias = before\nlet keep before = alias(1)(2)\nkeep(true)")(true))
 |> (given (_) -> checkProgram("result reference kept")(declaration + "before")(true))
 |> (given (_) -> checkProgram("aggregate reference kept")(declaration + "(before, true)")(true))
 |> (given (_) -> checkProgram("recursive body reference kept")(declaration + "let recursive keep x = before(x)(x)\ntrue")(true))

@@ -36450,31 +36450,123 @@ let recursive traitGoalMap (entries: List((Str, SemanticType))) (proven: MapTree
             |> Ashes.Collection.Map.setStr(key)(goalType)
             |> traitGoalMap(rest)
 
-// A successful discovery pass already validated every body. During its final replay
-// an entirely unreferenced, nonrecursive lambda needs no emitted body or unresolved
-// dictionary. The reference index is conservative: calls, escaped values, evidence
-// methods and providers all count. Eager initializers and recursive groups stay intact.
-let recursive unreferencedLambdaItem (uses: NonCalleeUses) item =
-    match item with
-        | TopLevelAt(_span, inner) -> unreferencedLambdaItem(uses)(inner)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) ->
-            match stripExprAt(value) with
-                | ExprLambda(_parameter, _body, _annotation) -> Ashes.Collection.Map.getStr(name)(uses.names) == None
-                | _ -> false
+// A successful discovery pass validated every body. Final emission only needs
+// lambda bodies reachable from executed code or an escaping value. References inside
+// an unused lambda are dependencies, not roots; otherwise unused wrapper chains keep
+// their abstract Ord goals alive. Reading an earlier proven function binding is also
+// pure, so aliases of those lambdas can join the same dependency graph.
+type ReplayDependencyGraph =
+    | candidates: MapTree(Str, NonCalleeUses)
+    | declared: MapTree(Str, Bool)
+    | roots: NonCalleeUses
+
+let emptyReplayUses unit = NonCalleeUses(names = Ashes.Collection.Map.empty, everyName = false, includeCallees = true)
+
+let replayLambdaOrAlias value (graph: ReplayDependencyGraph) =
+    match stripExprAt(value) with
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | ExprVar(name) ->
+            match Ashes.Collection.Map.getStr(name)(graph.candidates) with
+                | Some(_candidate) -> true
+                | None -> false
         | _ -> false
 
-let recursive retainReferencedLambdaItems items uses reversed =
+let declareReplayName name (graph: ReplayDependencyGraph) =
+    match Ashes.Collection.Map.getStr(name)(graph.declared) with
+        | Some(_duplicate) -> graph with roots = (graph.roots with everyName = true)
+        | None -> graph with declared = Ashes.Collection.Map.setStr(name)(true)(graph.declared)
+
+let recursive declareReplayGroup bindings graph =
+    match bindings with
+        | [] -> graph
+        | LetBindingSyntax { name = name } :: rest ->
+            graph
+            |> declareReplayName(name)
+            |> declareReplayGroup(rest)
+
+let addReplayCandidate name value (graph: ReplayDependencyGraph) =
+    (let dependencies =
+        Unit
+        |> emptyReplayUses
+        |> collectNonCalleeUses(value)(false)([])
+    in
+        let roots = graph.roots
+        in graph with candidates = Ashes.Collection.Map.setStr(name)(dependencies)(graph.candidates), roots = (roots with everyName = roots.everyName || dependencies.everyName))
+
+// One syntax walk builds the dependency maps. Recursive groups and every initializer
+// that is not a syntactic lambda or a proven function alias stay eager roots. The
+// existing all-reference walker includes methods, providers, exports and qualifiers;
+// unknown forms and duplicate declarations conservatively disable omission.
+let recursive buildReplayDependencyGraph items (graph: ReplayDependencyGraph) =
+    match items with
+        | [] -> graph
+        | TopLevelAt(_span, inner) :: rest -> buildReplayDependencyGraph(inner :: rest)(graph)
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+            let declared = declareReplayName(name)(graph)
+            in
+                buildReplayDependencyGraph(rest)((if replayLambdaOrAlias(value)(graph)
+                then addReplayCandidate(name)(value)(declared)
+                else declared with roots = collectNonCalleeUses(value)(false)([])(declared.roots)))
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
+            let declared = declareReplayName(name)(graph)
+            in buildReplayDependencyGraph(rest)((declared with roots = collectNonCalleeUses(value)(false)([])(declared.roots)))
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            let declared = declareReplayGroup(bindings)(graph)
+            in buildReplayDependencyGraph(rest)((declared with roots = letBindingValuesNonCalleeUses(bindings)(declared.roots)))
+        | item :: rest ->
+            let roots = programNonCalleeUses([item])(ExprBool(true))(graph.roots)
+            in buildReplayDependencyGraph(rest)((graph with roots = roots))
+
+let enqueueReplayReferences names pending =
+    Ashes.Collection.Map.foldLeft(given (rest) ->
+        given (name) ->
+            given (_used) -> name :: rest)(pending)(names)
+
+// Each declaration is expanded at most once; repeated edges cost map lookups, not
+// repeated AST walks or repeated whole-program pruning passes.
+let recursive reachableReplayNames candidates pending visited =
+    match pending with
+        | [] -> visited
+        | name :: rest ->
+            match Ashes.Collection.Map.getStr(name)(visited) with
+                | Some(_seen) -> reachableReplayNames(candidates)(rest)(visited)
+                | None ->
+                    let nextVisited = Ashes.Collection.Map.setStr(name)(true)(visited)
+                    in
+                        match Ashes.Collection.Map.getStr(name)(candidates) with
+                            | None -> reachableReplayNames(candidates)(rest)(nextVisited)
+                            | Some(NonCalleeUses { names = dependencies }) ->
+                                reachableReplayNames(candidates)(enqueueReplayReferences(dependencies)(rest))(nextVisited)
+
+let recursive unreachableReplayItem candidates reachable item =
+    match item with
+        | TopLevelAt(_span, inner) -> unreachableReplayItem(candidates)(reachable)(inner)
+        | TopLevelLet(LetBindingSyntax { name = name }, false) ->
+            match Ashes.Collection.Map.getStr(name)(candidates) with
+                | Some(_candidate) ->
+                    match Ashes.Collection.Map.getStr(name)(reachable) with
+                        | Some(_reachable) -> false
+                        | None -> true
+                | None -> false
+        | _ -> false
+
+let recursive retainReachableReplayItems items candidates reachable reversed =
     match items with
         | [] -> reverse(reversed)
         | item :: rest ->
-            if unreferencedLambdaItem(uses)(item)
-            then retainReferencedLambdaItems(rest)(uses)(reversed)
-            else retainReferencedLambdaItems(rest)(uses)(item :: reversed)
+            if unreachableReplayItem(candidates)(reachable)(item)
+            then retainReachableReplayItems(rest)(candidates)(reachable)(reversed)
+            else retainReachableReplayItems(rest)(candidates)(reachable)(item :: reversed)
 
 let validatedReplayItems items trailingBody =
-    match programNonCalleeUses(items)(trailingBody)(NonCalleeUses(names = Ashes.Collection.Map.empty, everyName = false, includeCallees = true)) with
-        | NonCalleeUses { everyName = true } -> items
-        | uses -> retainReferencedLambdaItems(items)(uses)([])
+    (let graph = buildReplayDependencyGraph(items)(ReplayDependencyGraph(candidates = Ashes.Collection.Map.empty, declared = Ashes.Collection.Map.empty, roots = emptyReplayUses(Unit)))
+    in
+        let roots = collectNonCalleeUses(trailingBody)(false)([])(graph.roots)
+        in
+            if roots.everyName
+            then items
+            else
+                retainReachableReplayItems(items)(graph.candidates)(reachableReplayNames(graph.candidates)(enqueueReplayReferences(roots.names)([]))(Ashes.Collection.Map.empty))([]))
 
 // Stage 0's discovery pass, run only for a program that needs one: a pass that met a trait goal
 // its substitution could not yet answer lowers the program a second time with what that pass went

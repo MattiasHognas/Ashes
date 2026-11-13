@@ -2389,15 +2389,18 @@ Missing evidence and unresolved goals at non-replaying entry points fail closed.
 This does not generalize ordinary constrained bindings at multiple concrete types: mixed `Int`
 and `Str` uses of the same such binding remain unsupported in stage 1 (TRT13/SEM22).
 
-Imported modules can also contribute an unused constrained function, such as `List.sort`
-when only `List.length` is used. After a successful discovery pass validates all bodies,
-final replay omits only nonrecursive top-level lambda declarations with no references in a
-conservative whole-program map. The map includes callees, function values, implementation
-and default-method bodies, providers, exports, and qualified record owners. Unknown expression
-forms prevent omission. Eager initializers and recursive groups remain; a failed discovery pass
-replays the original declarations so this cannot suppress their diagnostics. No provisional
-function body is retained and no unresolved operand is defaulted merely because it is unused.
-Unused dependency chains and recursive constrained functions are not generalized by this rule.
+Imported modules can contribute unused constrained functions, such as `List.sort` or
+`Map.get`. After a successful discovery pass validates every body, final replay builds a
+reference dependency graph for nonrecursive top-level lambdas and aliases that read an earlier
+proven function binding. References inside those bodies are edges; executed initializers,
+recursive groups, trailing code, method/default/provider bodies and exports supply roots.
+A worklist visits each reachable name once, so unused wrapper and alias chains are omitted
+without repeatedly scanning the program. Calls, captures and escaping function values retain
+their dependencies. Membership matches `Some`/`None` and requires no equality on node payloads.
+Unknown syntax and duplicate declarations conservatively disable omission. Every eager
+initializer remains; a failed discovery pass replays the original declarations. No provisional
+body is retained and no unresolved operand is defaulted merely because it is unused. Recursive
+declarations remain conservative roots; this does not generalize mixed constrained uses.
 
 A recursive group's disposable member pass keeps trait discovery enabled even inside a
 whole-program replay: later siblings still need to settle their result types. The retained member

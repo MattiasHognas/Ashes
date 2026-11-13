@@ -219,3 +219,52 @@ assertion counting the entry function inside `IrProgram.functions`; the entry is
 stored separately. The corrected entire module was rebuilt and passed. Final
 integrated stage-1 guards and stage-2 compilation remain required. These focused
 map checks do not resolve the separate pending-goal string leak documented above.
+
+
+## Reachable function chains during replay
+
+Bootstrap31 passed the final CLI logical-not and ordering guards, but compiling
+its reference-map lifetime fixture failed at `Ord(SemVariable(264))`. The actual
+Core driver reproduced this with the complete `Trait.ash` and `Collection.Map.ash`
+declarations and a concrete `getStr`/`setStr` call. GDB located the unresolved
+comparison in generic `Map.get`'s nested `go`, at `searchKey < key`: unused
+`contains` retained `get`. Omitting that wrapper exposed the analogous generic
+`set` chain through unused `insert = set` and `fromList`.
+
+The replay filter now builds a dependency map for nonrecursive lambdas and pure
+aliases of earlier proven functions. A visited-name worklist starts from executed
+initializers, trailing code, recursive declarations, methods, providers and
+exports. Unreachable wrapper/alias chains need no final body. Escaped aliases
+retain their target chain and still reject unresolved evidence. Unknown syntax
+and duplicate top-level names conservatively retain everything. The successful
+discovery prerequisite remains: malformed unused bodies cannot be hidden.
+
+`CoreOrderedInferenceTests` covers the complete Map declarations, unreachable and
+escaping chains, and both the original logical-not fixture and the new Map fixture
+through actual shipped-module stitching. The native dependency-map harness
+exercises both omitted chains and reachable worklists, with strict plain/poison
+live-cell equality at 1000/10000 rounds. Final-stage-1 compilation and execution
+of that lifetime fixture remain separate acceptance gates. Recursive declarations
+remain roots, ordinary mixed constrained polymorphism remains unsupported, and
+the pending-goal string leak is unchanged.
+
+The complete updated modules passed together, exit 0, with stdout
+`logical-not inference passed` and `ordered inference passed`:
+
+- Build: 3:46.14, peak 10,455,604 KiB, `--debug -O0`.
+- Run: 2.57s, peak 114,952 KiB.
+- Core source SHA256:
+  `70dd3cad3540b066a796be0ec497a8222c1fe53c9ac9b9ada1d02c096675cfdd`.
+- Ordered test module SHA256:
+  `2c387228941c39d8a9dfbad1abc8bb00c1420d2f3bae13782371c073b7edf6de`.
+- `tests/unused_ordered_map_helpers.ash`: plain and poisoned stage-0 passes,
+  exact stdout `kept|true`; suite times 1.21s/1.23s.
+- Native dependency-map assertions and plateau: **10 → 10 live cells**, normal
+  and poisoned, at 1000 and 10000 repetitions, including reachable worklists.
+
+Evidence is retained under `work/replay-chains/core-{build2,run2}.*` and
+`core-input2.sha256`. The first expanded compile caught an ambiguous record-field
+access and a nonexistent test-loader helper; both were corrected before this
+complete successful build. These results establish actual-Core behavior and
+stage-0 native ownership checks, not a successful stage-2 bootstrap or resolution
+of the separate stage-1 pending-goal leak.

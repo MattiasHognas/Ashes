@@ -1,8 +1,11 @@
 import AshesCompiler.Frontend.Parser
+import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.ShippedModuleStitching
+import AshesCompiler.Semantics.ProjectSyntaxStitching
 export (
     value runCoreOrderedInferenceTests,
 )
@@ -94,6 +97,44 @@ let checkUnusedComparator unit =
         | IrProgram { functions = [] } -> Unit
         | _ -> Ashes.IO.panic("unused comparator retained a provisional body")
 
+let checkUnusedFunctionChains unit =
+    match expectBool("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue") with
+        | IrProgram { functions = [] } -> Unit
+        | _ -> Ashes.IO.panic("unused function chain retained provisional bodies")
+
+let checkEscapingFunctionChain unit =
+    match lowerSource("let before left right = left <= right\nlet alias = before\nlet next = alias\n(next, true)") with
+        | CoreLoweringResult { error = Some(MissingCoreTraitEvidence("Ord", SemVariable(_id))) } -> Unit
+        | _ -> Ashes.IO.panic("escaping unresolved function chain did not fail closed")
+
+// Module export declarations are removed by project stitching. Preserve all actual
+// Map value declarations, including contains/get and insert/fromList/set chains.
+let recursive moduleExportItem item =
+    match item with
+        | TopLevelAt(_span, inner) -> moduleExportItem(inner)
+        | TopLevelExport(_exports) -> true
+        | _ -> false
+
+let recursive moduleValueItems items =
+    match items with
+        | [] -> []
+        | item :: rest ->
+            if moduleExportItem(item)
+            then moduleValueItems(rest)
+            else item :: moduleValueItems(rest)
+
+let checkUnusedLibraryMap traits unit =
+    match Ashes.IO.File.readText("lib/Ashes/Collection.Map.ash") with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match parseProgram(traits + "\n" + source + "\nmatch getStr(\"x\")(setStr(\"x\")(true)(empty)) with | Some(value) -> value | None -> false") with
+                | ProgramParseResult { program = ProgramSyntax { items = items, body = body }, diagnostics = [] } ->
+                    match lowerCoreProgram(ProgramSyntax(items = moduleValueItems(items), body = body)) with
+                        | CoreLoweringResult { semanticType = SemBool, error = None } -> Unit
+                        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("unused Map chain failed: " + Ashes.Trait.Show.show(error))
+                        | _ -> Ashes.IO.panic("Map chain returned unexpected type")
+                | _ -> Ashes.IO.panic("Map regression did not parse")
+
 let checkUnusedLibrarySort traits unit =
     match Ashes.IO.File.readText("lib/Ashes/Collection.List.ash") with
         | Error(message) -> Ashes.IO.panic(message)
@@ -120,6 +161,41 @@ let checkEagerInitializer unit =
             |> Ashes.Text.join("\n"))("PrintStr")
             then Unit
             else Ashes.IO.panic("replay omitted an eager initializer")
+
+let recursive readShippedSources names =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            if Ashes.Text.length(name) > 4 && Ashes.Text.substring(name)(Ashes.Text.length(name) - 4)(4) == ".ash"
+            then
+                let path = "lib/Ashes/" + name
+                in
+                    match Ashes.IO.File.readText(path) with
+                        | Error(message) -> Ashes.IO.panic(message)
+                        | Ok(source) -> ShippedModuleText(moduleName = "Ashes." + Ashes.Text.take(name)(Ashes.Text.length(name) - 4), sourcePath = path, source = source) :: readShippedSources(rest)
+            else readShippedSources(rest)
+
+let checkStitchedFixture shipped path =
+    match Ashes.IO.File.readText(path) with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(source) ->
+            match stitchWithShippedModules("regression")(path)(source)(shipped) with
+                | Error(error) -> Ashes.IO.panic("regression stitching failed: " + Ashes.Trait.Show.show(error))
+                | Ok(StitchedSyntaxProject { program = program }) ->
+                    match lowerCoreProgramWithSource(path)(source)(program) with
+                        | CoreLoweringResult { program = Some(_program), error = None } -> Unit
+                        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("stitched regression failed: " + Ashes.Trait.Show.show(error))
+                        | _ -> Ashes.IO.panic("stitched regression produced no program")
+
+let checkStitchedLibraryContext unit =
+    match Ashes.IO.Directory.entries("lib/Ashes") with
+        | Error(message) -> Ashes.IO.panic(message)
+        | Ok(names) ->
+            let shipped = readShippedSources(names)
+            in
+                Unit
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/logical_not_inferred_predicates.ash"))
+                |> (given (_) -> checkStitchedFixture(shipped)("tests/unused_ordered_map_helpers.ash"))
 
 let checkExpressionBoundary unit =
     match parseExpression("given left -> given right -> left <= right") with
@@ -150,7 +226,11 @@ let runCoreOrderedInferenceTests unit =
         |> checkExpressionBoundary
         |> checkStandardListSort(traits)
         |> checkUnusedComparator
+        |> checkUnusedFunctionChains
+        |> checkEscapingFunctionChain
+        |> checkUnusedLibraryMap(traits)
         |> checkUnusedLibrarySort(traits)
         |> checkUsedComparatorReferences
         |> checkUnusedBodyError
-        |> checkEagerInitializer)
+        |> checkEagerInitializer
+        |> checkStitchedLibraryContext)
