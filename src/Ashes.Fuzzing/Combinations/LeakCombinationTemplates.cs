@@ -245,6 +245,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new LoopResultPartOfTupleScrutineeTemplate());
         registry.Register(new UntypedFinderResultTemplate());
         registry.Register(new ConstrainedLoopLetBoundArgumentsTemplate());
+        registry.Register(new ConstrainedLoopLiteralArgumentsTemplate());
         registry.Register(new OwnFieldRecordTemplate());
         registry.Register(new ArenaRecordDerivedJoinTemplate());
         registry.Register(new TakenOverRecordTemplate());
