@@ -149,6 +149,9 @@ type TypeEnvironment =
     | handledCapabilities: List(Str)
     | externalFunctions: List(ExternalFunctionInferenceDefinition)
     | typeResolutionContext: TypeResolutionContext
+    // When present, the only schemes of `bindings` that can hold a free type variable; every
+    // other binding is closed. Generalization then scans these instead of the whole environment.
+    | generalizationSchemes: Maybe(List(TypeScheme))
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -274,7 +277,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -288,7 +291,12 @@ let inferencePackageId environment =
 
 let addTypeBinding name scheme (environment: TypeEnvironment) =
     match environment with
-        | TypeEnvironment { bindings = bindings } -> environment with bindings = (name, scheme) :: bindings
+        | TypeEnvironment { bindings = bindings, generalizationSchemes = schemes } ->
+            let extended =
+                match schemes with
+                    | Some(open) -> Some(scheme :: open)
+                    | None -> None
+            in environment with bindings = (name, scheme) :: bindings, generalizationSchemes = extended
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
     match addTypeBinding(name)(scheme)(environment) with
@@ -2211,7 +2219,8 @@ let checkInferenceAnnotation annotation expectedType environment substitution su
 
 let inferenceEnvironmentSchemes environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
+        | TypeEnvironment { generalizationSchemes = Some(open) } -> open
+        | TypeEnvironment { bindings = bindings } ->
             let recursive schemes values =
                 match values with
                     | [] -> []

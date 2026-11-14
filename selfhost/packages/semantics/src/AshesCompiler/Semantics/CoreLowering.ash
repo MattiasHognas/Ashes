@@ -262,6 +262,7 @@ type CoreConstructorLookupIndex =
     | byResult: MapTree(Str, List(CoreConstructorLayout))
     | byField: MapTree(Str, List(CoreConstructorLayout))
     | stableFields: MapTree(Str, Maybe(List(SemanticType)))
+    | taglessShapes: TaglessConstructorIndex
 
 // Only completely closed schemes share fields across inference states. Generic and
 // open schemes still instantiate at the query's current fresh-variable supply.
@@ -302,12 +303,12 @@ let stableConstructorFields (layout: CoreConstructorLayout) =
             else None
         | _ -> None
 
-let indexStableConstructorFields name layout (index: CoreConstructorLookupIndex) =
+let extendStableConstructorFields name layout (index: CoreConstructorLookupIndex) =
     (let fields =
         match (stableConstructorFields(layout), Ashes.Collection.Map.getStr(name)(index.stableFields)) with
             | (Some(current), Some(Some(previous))) ->
-                previous
-                |> append(current)
+                current
+                |> append(previous)
                 |> Some
             | (Some(current), None) -> Some(current)
             | _ -> None
@@ -335,33 +336,39 @@ let recursive constructorFieldNameOccurs (name: Str) (names: List(Str)) =
         | [] -> false
         | head :: rest -> head == name || constructorFieldNameOccurs(name)(rest)
 
-let recursive indexConstructorFields (layout: CoreConstructorLayout) (names: List(Str)) (index: CoreConstructorLookupIndex) =
+let recursive extendConstructorFields (layout: CoreConstructorLayout) (names: List(Str)) (index: CoreConstructorLookupIndex) =
     match names with
         | [] -> index
         | name :: rest ->
             if constructorFieldNameOccurs(name)(rest)
-            then indexConstructorFields(layout)(rest)(index)
+            then extendConstructorFields(layout)(rest)(index)
             else
-                let updated = index with byField = Ashes.Collection.Map.setStr(name)(layout :: lookupFieldConstructors(name)(index))(index.byField)
-                in indexConstructorFields(layout)(rest)(updated)
+                let updated =
+                    index with byField = Ashes.Collection.Map.setStr(name)(append(lookupFieldConstructors(name)(index))([layout]))(index.byField)
+                in extendConstructorFields(layout)(rest)(updated)
 
-let recursive collectConstructorLookupIndex (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
+// Adds layouts declared after every layout the index already holds, in declaration order. The
+// first constructor of a name wins, and every group lists its layouts in declaration order, so a
+// type declaration extends the index instead of rebuilding it over the whole program.
+let recursive extendConstructorLookupIndex (layouts: List(CoreConstructorLayout)) (index: CoreConstructorLookupIndex) =
     match layouts with
         | [] -> index
         | layout :: rest ->
-            let named = indexConstructorFields(layout)(layout.fieldNames)((index with byConstructor = Ashes.Collection.Map.setStr(layout.name)(layout)(index.byConstructor)))
+            let constructed =
+                match lookupFirstConstructor(layout.name)(index) with
+                    | Some(_earlier) -> index
+                    | None -> index with byConstructor = Ashes.Collection.Map.setStr(layout.name)(layout)(index.byConstructor)
             in
-                match layoutResultName(layout) with
-                    | None -> collectConstructorLookupIndex(rest)(named)
-                    | Some(resultName) ->
-                        let updated = named with byResult = Ashes.Collection.Map.setStr(resultName)(layout :: lookupResultConstructors(resultName)(named))(named.byResult)
-                        in
-                            updated
-                            |> indexStableConstructorFields(resultName)(layout)
-                            |> collectConstructorLookupIndex(rest)
+                let named = extendConstructorFields(layout)(layout.fieldNames)((constructed with taglessShapes = extendTaglessConstructorIndex([layout.scheme])(constructed.taglessShapes)))
+                in
+                    match layoutResultName(layout) with
+                        | None -> extendConstructorLookupIndex(rest)(named)
+                        | Some(resultName) ->
+                            (named with byResult = Ashes.Collection.Map.setStr(resultName)(append(lookupResultConstructors(resultName)(named))([layout]))(named.byResult))
+                            |> extendStableConstructorFields(resultName)(layout)
+                            |> extendConstructorLookupIndex(rest)
 
-let constructorLookupIndex (layouts: List(CoreConstructorLayout)) =
-    collectConstructorLookupIndex(reverse(layouts))(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty, stableFields = Ashes.Collection.Map.empty))
+let constructorLookupIndex (layouts: List(CoreConstructorLayout)) = extendConstructorLookupIndex(layouts)(CoreConstructorLookupIndex(byConstructor = Ashes.Collection.Map.empty, byResult = Ashes.Collection.Map.empty, byField = Ashes.Collection.Map.empty, stableFields = Ashes.Collection.Map.empty, taglessShapes = emptyTaglessConstructorIndex(Unit)))
 
 type CoreBindingLocation =
     | CoreLocal(Int)
@@ -767,6 +774,7 @@ type CoreProgramState =
     | constructorIndex: CoreConstructorLookupIndex
     | coverageTypes: TypeEnvironment
     | coverageEnvironmentVersion: Int
+    | coverageOpenSchemes: Maybe((Int, List(TypeScheme)))
     | heapQueryContext: CoreHeapQueryContext
     | dropperTypes: DropperTypes
     | builtinLayouts: List(CoreBuiltinLayout)
@@ -1256,9 +1264,11 @@ let stateConstructorLayouts (state: CoreLoweringState) =
     (let group = state.programState
     in group.constructorLayouts)
 
-let withStateConstructorLayouts value (state: CoreLoweringState) =
+// A type declaration's layouts follow every registered layout, so the lookup index is extended
+// rather than rebuilt.
+let withAppendedConstructorLayouts layouts (state: CoreLoweringState) =
     (let group = state.programState
-    in clearAdmissibilityAnswers((state with programState = (group with constructorLayouts = value, constructorIndex = constructorLookupIndex(value)))))
+    in clearAdmissibilityAnswers((state with programState = (group with constructorLayouts = append(group.constructorLayouts)(layouts), constructorIndex = extendConstructorLookupIndex(layouts)(group.constructorIndex)))))
 
 let stateConstructorsOfType (name: Str) (state: CoreLoweringState) =
     (let group = state.programState
@@ -3213,6 +3223,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 constructorIndex = constructorLookupIndex(constructorLayouts),
                 coverageTypes = coverageEnvironment,
                 coverageEnvironmentVersion = 0,
+                coverageOpenSchemes = None,
                 heapQueryContext = emptyCoreHeapQueryContext(coverageEnvironment),
                 heapLayoutFactsByType = coverageEnvironment |> heapLayoutFactsTableFor(constructorLayouts),
                 dropperTypes = constructorLayouts
@@ -34676,6 +34687,51 @@ let recursive appendConstrainedGlobalBindings bindings tail (state: CoreLowering
                 else scheme
             in (name, current) :: appendConstrainedGlobalBindings(rest)(tail)(state)
 
+let recursive openSchemesOf (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> []
+        | (_name, scheme) :: rest ->
+            match freeSchemeVariables(scheme) with
+                | [] -> openSchemesOf(rest)
+                | _variables -> scheme :: openSchemesOf(rest)
+
+// Registration is complete before any item is lowered, so the coverage bindings that can hold a
+// free variable are listed once. The version ties the list to the environment it describes.
+let recordCoverageOpenSchemes (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        let coverage = group.coverageTypes
+        in state with programState = (group with coverageOpenSchemes = Some((group.coverageEnvironmentVersion, openSchemesOf(coverage.bindings)))))
+
+let recursive prependBindingSchemes (bindings: List((Str, TypeScheme))) tail =
+    match bindings with
+        | [] -> tail
+        | (_name, scheme) :: rest -> scheme :: prependBindingSchemes(rest)(tail)
+
+let recursive openGlobalSchemes bindings tail (state: CoreLoweringState) =
+    match bindings with
+        | [] -> tail
+        | (_name, scheme, hasFreeVariables) :: rest ->
+            if hasFreeVariables
+            then applySchemeSubstitutionMap(state.substitution)(scheme) :: openGlobalSchemes(rest)(tail)(state)
+            else openGlobalSchemes(rest)(tail)(state)
+
+// Every scheme that can hold a free variable: the visible local bindings, the global references
+// stored with free IDs, and the open coverage bindings. All other bindings are closed.
+let constrainedGeneralizationSchemes local (state: CoreLoweringState) =
+    (let program = state.programState
+    in
+        match program.coverageOpenSchemes with
+            | Some((version, open)) ->
+                if version == program.coverageEnvironmentVersion
+                then
+                    state
+                    |> openGlobalSchemes(program.topLevelInferenceBindings)(open)
+                    |> prependBindingSchemes(local)
+                    |> Some
+                else None
+            | None -> None)
+
 let constrainedInferenceEnvironment (state: CoreLoweringState) =
     (let coverage = coverageEnvironment(state)
     in
@@ -34683,7 +34739,9 @@ let constrainedInferenceEnvironment (state: CoreLoweringState) =
         in
             let program = state.programState
             in
-                coverage with bindings = append(constrainedInferenceBindings(state.bindings)(state))(appendConstrainedGlobalBindings(program.topLevelInferenceBindings)(coverage.bindings)(state)), traits = traits.traits, traitImplementations = traits.traitImplementations, capabilities = traits.capabilities, providers = traits.providers)
+                let local = constrainedInferenceBindings(state.bindings)(state)
+                in
+                    coverage with generalizationSchemes = constrainedGeneralizationSchemes(local)(state), bindings = append(local)(appendConstrainedGlobalBindings(program.topLevelInferenceBindings)(coverage.bindings)(state)), traits = traits.traits, traitImplementations = traits.traitImplementations, capabilities = traits.capabilities, providers = traits.providers)
 
 let recursive mergeConstrainedSubstitution substitutions state =
     match substitutions with
@@ -34939,9 +34997,20 @@ let concreteCopyInferenceBindings (registry: CoreConcreteRegistry) =
 let concreteCopyInferenceEnvironment state =
     (let environment = constrainedInferenceEnvironment(state)
     in
-        environment with bindings = append(environment.bindings)(state
-        |> stateConcreteRegistry
-        |> concreteCopyInferenceBindings))
+        let copies =
+            state
+            |> stateConcreteRegistry
+            |> concreteCopyInferenceBindings
+        in
+            let open =
+                match environment.generalizationSchemes with
+                    | Some(schemes) ->
+                        copies
+                        |> openSchemesOf
+                        |> append(schemes)
+                        |> Some
+                    | None -> None
+            in environment with bindings = append(environment.bindings)(copies), generalizationSchemes = open)
 
 let concreteCandidateBindingMatches (candidate: CoreConcreteCandidate) (state: CoreLoweringState) =
     match lookupBinding(candidate.name)(state.bindings) with
@@ -34966,7 +35035,8 @@ let inferConcreteCopyType (candidate: CoreConcreteCandidate) arguments (state: C
                     in
                         let environment = concreteCopyInferenceEnvironment(state)
                         in
-                            let bound = environment with bindings = (name, emptyScheme(functionType)) :: environment.bindings
+                            let bound =
+                                addTypeBinding(name)(emptyScheme(functionType))(environment)
                             in
                                 match inferExpressionFrom(appendConstrainedArguments(ExprVar(name))(arguments))(bound)([])(supply) with
                                     | TypeInferenceResult { substitution = substitution, error = None } ->
@@ -37012,11 +37082,12 @@ let recursive markTaglessLayouts (state: CoreLoweringState) (index: TaglessConst
 // The layouts of one type declaration with their tagless flag decided (see TaglessAdtLayout). The
 // sibling count and the resource walk see every registered constructor scheme, the declaration's
 // own included, so a self-referential field and an earlier resource-bearing type are both visible.
-let decideTaglessLayouts (state: CoreLoweringState) (existingLayouts: List(CoreConstructorLayout)) (newLayouts: List(CoreConstructorLayout)) =
-    markTaglessLayouts(state)(newLayouts
-    |> append(existingLayouts)
-    |> layoutSchemes
-    |> prepareTaglessConstructorIndex)(newLayouts)
+let decideTaglessLayouts (state: CoreLoweringState) (newLayouts: List(CoreConstructorLayout)) =
+    (let group = state.programState
+    in
+        let registered = group.constructorIndex
+        in
+            markTaglessLayouts(state)(extendTaglessConstructorIndex(layoutSchemes(newLayouts))(registered.taglessShapes))(newLayouts))
 
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
@@ -37048,15 +37119,11 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                                 match buildUserConstructorLayoutsFromIndex(stateTypeAliases(state))(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
                                                     | Error(error) -> Error(error)
                                                     | Ok(newLayouts) ->
-                                                        let decidedLayouts = decideTaglessLayouts(state)(existingLayouts)(newLayouts)
+                                                        let decidedLayouts = decideTaglessLayouts(state)(newLayouts)
                                                         in
                                                             (state with typeSupply = nextSupply)
-                                                            |> withStateConstructorLayouts(append(existingLayouts)(decidedLayouts))
+                                                            |> withAppendedConstructorLayouts(decidedLayouts)
                                                             |> withStateCoverageTypes(extendCoverageEnvironment(stateCoverageTypes(state))(decidedLayouts))
-                                                            |> withStateDropperTypes(decidedLayouts
-                                                            |> append(existingLayouts)
-                                                            |> constructorInferenceDefinitionsFromLayouts
-                                                            |> prepareDropperTypes)
                                                             |> withDroppedHeapLayoutFacts
                                                             |> Ok
 
@@ -37315,6 +37382,10 @@ let registerProgramTypes (items: List(TopLevelItem)) (state: CoreLoweringState) 
         | Error(error) -> Error(error)
         | Ok(registered) ->
             registered
+            |> withStateDropperTypes(registered
+            |> stateConstructorLayouts
+            |> constructorInferenceDefinitionsFromLayouts
+            |> prepareDropperTypes)
             |> withQueryAliasContext
             |> withRefreshedHeapLayoutFacts
             |> Ok
@@ -37533,6 +37604,7 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                     |> ensureResultRcEligibility
                                     |> recordContractRecordFacts
                                     |> recordGeneralRcTypeFacts
+                                    |> recordCoverageOpenSchemes
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
 // The goals a pass recorded whose type its own substitution has since resolved to a concrete one.

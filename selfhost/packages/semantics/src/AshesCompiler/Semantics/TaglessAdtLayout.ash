@@ -18,6 +18,7 @@
 //   when one is reachable through a fresh, non-cyclic path.
 
 import AshesCompiler.Semantics.Types
+import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.Map.MapTree
@@ -35,6 +36,8 @@ export (
     value isTaglessAdtConstructor,
     type TaglessConstructorIndex,
     value prepareTaglessConstructorIndex,
+    value emptyTaglessConstructorIndex,
+    value extendTaglessConstructorIndex,
     value isTaglessAdtConstructorPrepared,
 )
 
@@ -190,6 +193,21 @@ let recursive indexConstructorSchemes (schemes: List(TypeScheme)) (index: Tagles
 let prepareTaglessConstructorIndex (schemes: List(TypeScheme)) =
     // Prepending the reversed input preserves constructor declaration order within each group.
     indexConstructorSchemes(reverse(schemes))(TaglessConstructorIndex(byName = Ashes.Collection.Map.empty))
+
+let emptyTaglessConstructorIndex unit = TaglessConstructorIndex(byName = Ashes.Collection.Map.empty)
+
+// Adds constructor schemes declared after every scheme the index already holds. Each group keeps
+// declaration order, so the result equals `prepareTaglessConstructorIndex` over the whole list.
+let recursive extendTaglessConstructorIndex (schemes: List(TypeScheme)) (index: TaglessConstructorIndex) =
+    match schemes with
+        | [] -> index
+        | scheme :: rest ->
+            match constructorSchemeFields(scheme) with
+                | (fields, SemNamed(_id, name, arguments)) ->
+                    let shape = TaglessConstructorShape(fields = fields, resultArguments = arguments)
+                    in
+                        extendTaglessConstructorIndex(rest)((index with byName = Ashes.Collection.Map.setStr(name)(append(indexedConstructorShapes(name)(index))([shape]))(index.byName)))
+                | _ -> extendTaglessConstructorIndex(rest)(index)
 
 let recursive indexedResourceBearing (isDeclaredResource: Str -> Bool) (index: TaglessConstructorIndex) (visiting: List(Str)) (semanticType: SemanticType) =
     match semanticType with
