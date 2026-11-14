@@ -1903,6 +1903,24 @@ let recursive findRecordFieldType : Str -> List(Str) -> List(SemanticType) -> Ma
                         else findRecordFieldType(fieldName)(nameTail)(typeTail)
                     | _ -> None
 
+// Field-name inference is allowed only for one visible record definition. Keep
+// first-match constructor shadowing, as ordinary constructor lookup does.
+let recursive recordFieldCandidates fieldName definitions seen found =
+    match definitions with
+        | [] -> found
+        | (ConstructorInferenceDefinition { name = name, fieldNames = fields } as definition) :: rest ->
+            match Ashes.Collection.Map.getStr(name)(seen) with
+                | Some(_present) -> recordFieldCandidates(fieldName)(rest)(seen)(found)
+                | None ->
+                    let nextSeen = Ashes.Collection.Map.setStr(name)(true)(seen)
+                    in
+                        if patternNameExists(fieldName)(fields)
+                        then
+                            match found with
+                                | [] -> recordFieldCandidates(fieldName)(rest)(nextSeen)([definition])
+                                | _ -> definition :: found
+                        else recordFieldCandidates(fieldName)(rest)(nextSeen)(found)
+
 let recursive findMissingRecordField requiredFields providedFields =
     match requiredFields with
         | [] -> None
@@ -1977,6 +1995,36 @@ let mergeUnification currentSubstitution result supply fallbackType =
                 supply,
                 InferenceUnificationError(error)
             )
+
+let inferRecordFieldDefinition receiverType fieldName (definition: ConstructorInferenceDefinition) substitution supply constraints =
+    match instantiate(definition.scheme)(supply) with
+        | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
+            match splitConstructorType(constructorType)([]) with
+                | ConstructorTypeShape { parameters = fieldTypes, resultType = recordType } ->
+                    match findRecordFieldType(fieldName)(definition.fieldNames)(fieldTypes) with
+                        | None ->
+                            fieldName
+                            |> UnknownRecordField(definition.name)
+                            |> inferenceFailure(SemNever)(substitution)(constructorSupply)
+                        | Some(fieldType) ->
+                            addConstraints(appendConstraints(constraints)(constructorConstraints))(
+                                mergeUnification(substitution)(unify(applySubstitution(substitution)(receiverType))(recordType))(constructorSupply)(fieldType)
+                            )
+
+let inferRecordField receiverType fieldName (environment: TypeEnvironment) substitution supply constraints =
+    match applySubstitution(substitution)(receiverType) with
+        | SemNamed(_symbolId, name, _arguments) ->
+            match resolveConstructorBinding(name)(environment) with
+                | Some(definition) -> inferRecordFieldDefinition(receiverType)(fieldName)(definition)(substitution)(supply)(constraints)
+                | None ->
+                    fieldName
+                    |> UnknownRecordField(name)
+                    |> inferenceFailure(SemNever)(substitution)(supply)
+        | SemVariable(_id) as unresolved ->
+            match recordFieldCandidates(fieldName)(environment.constructors)(Ashes.Collection.Map.empty)([]) with
+                | definition :: [] -> inferRecordFieldDefinition(unresolved)(fieldName)(definition)(substitution)(supply)(constraints)
+                | _ -> inferenceFailure(SemNever)(substitution)(supply)(RecordUpdateRequiresRecord(unresolved))
+        | other -> inferenceFailure(SemNever)(substitution)(supply)(RecordUpdateRequiresRecord(other))
 
 let recursive anyAbstractSemanticType values =
     match values with
@@ -3612,6 +3660,18 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                         )
                                     )
         | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+and inferQualifiedValue moduleName name environment substitution supply ambientRow =
+    (let qualified = moduleName + "." + name
+    in
+        match resolveTypeBinding(qualified)(environment) with
+            | Some(_scheme) -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
+            | None ->
+                match resolveTypeBinding(moduleName)(environment) with
+                    | None -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
+                    | Some(_receiver) ->
+                        match inferWith(ExprVar(moduleName))(environment)(substitution)(supply)(ambientRow) with
+                            | TypeInferenceResult { semanticType = receiverType, substitution = receiverSubstitution, supply = receiverSupply, constraints = receiverConstraints, error = None } -> inferRecordField(receiverType)(name)(environment)(receiverSubstitution)(receiverSupply)(receiverConstraints)
+                            | failed -> failed)
 and inferWith expression environment substitution supply ambientRow =
     match expression with
         | ExprAt(_span, inner) -> inferWith(inner)(environment)(substitution)(supply)(ambientRow)
@@ -3647,7 +3707,7 @@ and inferWith expression environment substitution supply ambientRow =
                                     )
         | ExprQualifiedVar(moduleName, name) ->
             match resolveCapabilityBinding(moduleName)(environment) with
-                | None -> inferWith(ExprVar(moduleName + "." + name))(environment)(substitution)(supply)(ambientRow)
+                | None -> inferQualifiedValue(moduleName)(name)(environment)(substitution)(supply)(ambientRow)
                 | Some(_) ->
                     match resolveCapabilityOperation(moduleName)(name)(environment) with
                         | None ->
