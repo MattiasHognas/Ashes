@@ -141,11 +141,15 @@ compiled by stage 0 (output and exit live-cell counts), and that stage 2 and sta
 
 What is known about the starting point:
 
-- `ProgramInference.ash` and `TypeInference.ash` cover every expression and pattern form, but the
-  compile command does not run them. They return binding schemes, one substitution and the trailing
-  type; no type is kept per expression, and errors carry no location.
-- The standalone inference has not inferred a real stitched program. Its substitution and its
-  binding lookup are linear lists.
+- `ProgramInference.ash` and `TypeInference.ash` cover every expression and pattern form. The
+  compile command runs them only when `ASHES_SHADOW_INFERENCE` is set, and discards the result.
+  They return binding schemes, one substitution and the trailing type; no type is kept per
+  expression. An error names its package, module, declaration and innermost located expression.
+- The standalone inference infers 917 of the 1,048 test programs that should compile and the
+  frontend package (573 declarations in 0.7 s). It does not yet infer the compiler: the compiler's
+  source annotates parameters with types their module never imports, which stage 0 accepts and
+  the standalone inference rejects. Task builtins, `async` and capability rows account for most
+  of the remaining test programs.
 - Syntax nodes have no stable identity. Spans collide across stitched modules and synthesized nodes
   have none.
 - Lowering decides about 30 things on whether a type is still open at a site, mirroring the order
@@ -1493,19 +1497,22 @@ Nothing open. Every item is in the [self-hosting log](SELF_HOSTING_LOG.md).
      exactly what would otherwise have exposed the self-mapping-substitution loop that
      `reservedBuiltinTypeVariableCount` records.
 
-     **What that leaves is one genuine type error in the shipped standard library.** Inference now
-     reaches the end of name resolution and type-checks the whole stitched stdlib, stopping on
-     `InferenceUnificationError(TypeMismatch(SemUInt(16), SemUInt(8)))` — on every program, including
-     `Ashes.IO.print("x")`, because the stitcher always pulls the same baseline modules in. It is not
-     the seeded traits colliding with the stitched `Ashes.Trait` source: the same mismatch appears
-     with the seeded traits omitted. The error carries no location, so finding it needs either a span
-     on the diagnostic or a bisection over the shipped modules.
+     **That mismatch was not a library error, and it is fixed** (2026-11-14). With a location on the
+     error it was `implement Show(u16)` in `Ashes.Trait` calling `Ashes.Number.UInt.toInt`, which
+     the builtin layout declares as `u8 -> Int` while both lowerings accept any unsigned width at
+     the call. Four more causes sat behind it and are fixed too: program inference wrapped a
+     binding's sugar parameters a second time, unary minus was typed as `Int` subtraction, the
+     stitched `Ashes_Trait_Eq` and the operators' `Eq` were two traits, and the compiler-provided
+     nominal types all shared symbol id 0. `Ashes.IO.print("x")` now infers, as do 917 of the 1,048
+     test programs that should compile. The base environment for a stitched program is
+     `withIntrinsicBuiltinSignatures` over an empty environment: the seeded standard traits overlap
+     the stitched `Ashes.Trait` source.
   4. **Concrete call sites still need evidence.** `rewriteTraitConstrainedTopLevelValue` rewrites
      references *inside* a constrained binding's value; a use in the trailing expression or in an
      unconstrained binding gets nothing. The existing test is explicit that it does not cover this —
      "No call site references `describe`: this proves the value-side rewrite alone".
 
-  So the order is: the `u16`/`u8` mismatch, then thread the environment through the CLI (a few
+  So the order is: thread the environment through the CLI (a few
   lines, built and reverted once already — it stays out while it would be inert), then concrete
   call-site evidence. Only the last is trait-dictionary work; the rest is what
   actually gates it.
