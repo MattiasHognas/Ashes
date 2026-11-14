@@ -1974,9 +1974,31 @@ public sealed partial class Lowering
         return plan is null ? EmitDummyTemp() : BuildTraitDictionary(plan, span).Temp;
     }
 
+    // A constrained binding whose value is not a lambda has no parameters for the binding's source
+    // type to seed, so the value itself is lowered against that type, behind one arrow per hidden
+    // dictionary parameter.
+    private LoweredValueRequest WithTraitDictionaryValueType(
+        LoweredValueRequest request,
+        Expr sourceValue,
+        TypeRef? sourceType,
+        TraitDictionaryFunctionInfo info)
+    {
+        if (sourceType is null || sourceValue is Expr.Lambda)
+        {
+            return request;
+        }
+        TypeRef physicalType = sourceType;
+        for (int index = 0; index < info.Dictionaries.Count; index++)
+        {
+            physicalType = new TypeRef.TFun(NewTypeVar(), physicalType) { Row = NewTypeVar() };
+        }
+        return request.WithExpectedType(physicalType);
+    }
+
     private (int Temp, TypeRef Type)? TryLowerActiveTraitDictionaryReference(
         Expr.Var reference,
-        Binding binding)
+        Binding binding,
+        LoweredValueRequest request)
     {
         if (_suppressActiveTraitDictionaryReferenceDepth > 0
             || !TryGetTraitDictionaryInfo(reference.Name, binding, out TraitDictionaryFunctionInfo? info))
@@ -2000,6 +2022,10 @@ public sealed partial class Lowering
                 return null;
         }
 
+        // The expected type identifies the reference's type variables with the enclosing binding's
+        // before a dictionary is chosen: several requirements of one trait are told apart only by
+        // their type arguments.
+        UnifyExpectedType(instantiated.Body, request);
         if (instantiated.Constraints.Count != info!.Dictionaries.Count
             || instantiated.Constraints.Any(constraint =>
                 FindActiveTraitDictionaryParameter(constraint) is null))
