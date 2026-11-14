@@ -274,6 +274,10 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task VisitedGenericMapsOwnPathsAfterPendingWorkDrops()
         => VerifyPlateauAndPoison("leak.visited-generic-map-owner");
 
+    [Test]
+    public Task LoopResultSomeOfAHeadMatchedOutOfATupleOfListsIsReleased()
+        => VerifyPlateauAndPoison("leak.loop-result-part-of-tuple-scrutinee");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())
