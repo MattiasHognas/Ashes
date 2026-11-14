@@ -174,23 +174,39 @@ Order of work. Each step lands separately and is useful if the later ones are de
 3. **Build the behavioural check.** Compile the test programs with stage 1 and with stage 0, run
    both, and compare output and exit live-cell counts. This replaces lowered-IR comparison with
    stage 0 as the acceptance check for the steps below.
-4. **Compare the two inferences.** With step 2 in place, report where the standalone result and
+4. **Make the standalone inference complete over the language.** Lowering does not read from it
+   until this holds. It is complete when:
+   - every test program that stage 0 compiles type-checks, and the standard library and the
+     compiler itself type-check;
+   - every test program stage 0 rejects for a type, trait or capability reason is rejected, with
+     a located error;
+   - the known gaps are closed: `async` and the `Ashes.Task` builtins, capability rows and the
+     capability checks (closed rows, unhandled and ambiguous operations, `provide`), checking a
+     concrete trait constraint against the available implementations, the `Ordering` constructors
+     under their bare names, derived-trait fields, and the remaining single failures listed by the
+     inference sweep;
+   - the stitching limits that keep programs from reaching it are closed: the shipped
+     `Ashes.Task` module, the `Ashes.Task.Parallel` self-import, `MapTree`, and selector imports of
+     intrinsic members such as `Ashes.Text.fromInt`.
+   Checks that belong to lowering stay there and are not part of this gate: resource and ownership
+   diagnostics.
+5. **Compare the two inferences.** With step 4 in place, report where the standalone result and
    lowering's own inference disagree per top-level binding. Operators and capability rows are the
    known differences. Each disagreement is settled against the language reference.
-5. **Give syntax nodes an identity and record types against it.** Assign identities after
+6. **Give syntax nodes an identity and record types against it.** Assign identities after
    stitching, including synthesized nodes, and have the inference pass fill a table: a type per
    expression, the resolved instance per operator, the instantiation and dictionaries per call,
    the scheme per binding. A body lowered at several types reads the table through its
    instantiation.
-6. **Lower from the table.** Lowering reads types instead of unifying. Remove the discovery and
+7. **Lower from the table.** Lowering reads types instead of unifying. Remove the discovery and
    replay passes, pending and proven trait goals, deferred operators and dictionaries, the
    per-binding plan, and body re-lowering.
-7. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
+8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.
-8. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
+9. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
    compiler; stage 1 stops mirroring its internals.
 
-Steps 1 to 4 do not change generated code. Steps 6 and 7 do, in the ownership-sensitive paths, so
+Steps 1 to 5 do not change generated code. Steps 7 and 8 do, in the ownership-sensitive paths, so
 step 3 must exist before they start.
 
 ## Start here
