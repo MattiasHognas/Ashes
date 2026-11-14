@@ -2102,6 +2102,17 @@ let recursive findRecordDefinitionByType typeName definitions =
                 | _ -> findRecordDefinitionByType(typeName)(rest)
         | _definition :: rest -> findRecordDefinitionByType(typeName)(rest)
 
+// The constructor a record update rebuilds. Under the program-only rules a type whose constructor
+// is spelled differently (an exported type with a private constructor in a stitched project) is
+// found by the type it constructs, as a field access finds it.
+let recordUpdateDefinition name (environment: TypeEnvironment) =
+    match resolveConstructorBinding(name)(environment) with
+        | Some(definition) -> Some(definition)
+        | None ->
+            if environment.programInferenceRules
+            then findRecordDefinitionByType(name)(environment.constructors)
+            else None
+
 let inferRecordField receiverType fieldName (environment: TypeEnvironment) substitution supply constraints =
     match applySubstitution(substitution)(receiverType) with
         | SemNamed(_symbolId, name, _arguments) ->
@@ -4167,7 +4178,7 @@ and inferWith expression environment substitution supply ambientRow =
                 | TypeInferenceResult { semanticType = targetType, substitution = targetSubstitution, supply = targetSupply, constraints = targetConstraints, error = None } ->
                     match applySubstitution(targetSubstitution)(targetType) with
                         | SemNamed(_symbolId, name, _arguments) ->
-                            match resolveConstructorBinding(name)(environment) with
+                            match recordUpdateDefinition(name)(environment) with
                                 | None ->
                                     inferenceFailure(
                                         SemNever,

@@ -2133,6 +2133,44 @@ let recursive registerExternalOpaqueTypes declarations state =
                 | failedState -> failedState
         | _declaration :: tail -> registerExternalOpaqueTypes(tail)(state)
 
+// External typing writes `void` and the argument of a parameterless external as the empty tuple.
+// The language gives both the built-in `Unit`, the type of the `Unit` value a call passes, so an
+// environment that defines `Unit` has them rewritten to it.
+let recursive withNominalUnit unitType semanticType =
+    match semanticType with
+        | SemTuple([]) -> unitType
+        | SemTuple(elements) ->
+            elements
+            |> withNominalUnitIn(unitType)
+            |> SemTuple
+        | SemList(element) ->
+            element
+            |> withNominalUnit(unitType)
+            |> SemList
+        | SemFunction(argument, result, row) ->
+            SemFunction(withNominalUnit(unitType)(argument))(withNominalUnit(unitType)(result))(row)
+        | SemNamed(symbolId, name, arguments) ->
+            arguments
+            |> withNominalUnitIn(unitType)
+            |> SemNamed(symbolId)(name)
+        | SemPointer(pointee) ->
+            pointee
+            |> withNominalUnit(unitType)
+            |> SemPointer
+        | other -> other
+and withNominalUnitIn unitType semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | head :: tail -> withNominalUnit(unitType)(head) :: withNominalUnitIn(unitType)(tail)
+
+let externalTypeWithUnit environment semanticType =
+    match environment
+    |> inferenceTypeResolutionContext
+    |> resolveTypeExpression(TypeNamed("Unit")) with
+        | TypeResolutionResult { semanticType = SemNamed(symbolId, name, []), error = None } ->
+            withNominalUnit(SemNamed(symbolId)(name)([]))(semanticType)
+        | _ -> semanticType
+
 let registerExternalFunction declaration declarations state =
     match state with
         | ProgramInferenceState { environment = environment, error = None } ->
@@ -2142,12 +2180,12 @@ let registerExternalFunction declaration declarations state =
                 inferenceTypeResolutionContext(environment)
             ) with
                 | ExternalFunctionTypingResult { typing = Some(ExternalFunctionTyping { name = name, directType = directType, firstClassType = firstClassType }), error = None } ->
-                    let directScheme = TypeScheme(quantified = [], body = directType, constraints = [])
+                    let directScheme = TypeScheme(quantified = [], body = externalTypeWithUnit(environment)(directType), constraints = [])
                     in
                         let firstClassScheme =
                             match firstClassType with
                                 | None -> None
-                                | Some(semanticType) -> Some(TypeScheme(quantified = [], body = semanticType, constraints = []))
+                                | Some(semanticType) -> Some(TypeScheme(quantified = [], body = externalTypeWithUnit(environment)(semanticType), constraints = []))
                         in
                             environment
                             |> addExternalFunctionBinding(
