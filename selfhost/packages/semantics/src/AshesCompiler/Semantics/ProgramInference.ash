@@ -979,7 +979,7 @@ let withBareStandardTypeName (name: Str) parameters resultType environment =
                 addInferenceTypeAlias(canonicalTraitName(name))([])(resultType)(environment)
         | _ -> environment
 
-let registerTypeDeclaration declaration state =
+let registerParameterizedTypeDeclaration declaration state =
     match (declaration, state) with
         | (TypeDecl { name = name, typeParameters = parameters, constructors = declaredConstructors, isRecord = _isRecord, derivingTraits = _derivingTraits }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = symbolId, error = None }) ->
             let constructors = selfAppliedConstructors(name)(parameters)(declaredConstructors)
@@ -1010,6 +1010,57 @@ let registerTypeDeclaration declaration state =
                                             ProgramTypeResolutionError(error)
                                         ))
         | (_declaration, failedState) -> failedState
+
+// A type declared without parameters takes one for each payload name that denotes no known type,
+// in the order the names first appear. The declaring type's own name and every declared or
+// built-in type stay concrete field types.
+let recursive implicitTypeParameterNames (owner: Str) context (typeExpr: TypeExpr) (found: List(Str)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> implicitTypeParameterNames(owner)(context)(inner)(found)
+        | TypeNamed(candidate) ->
+            if candidate == owner
+            then found
+            else
+                if nameExists(candidate)(found)
+                then found
+                else
+                    match resolveTypeExpression(typeExpr)(context) with
+                        | TypeResolutionResult { semanticType = _semanticType, error = Some(UnknownTypeName(_)) } -> candidate :: found
+                        | _ -> found
+        | TypeApplied(_name, arguments) -> implicitTypeParameterNamesIn(owner)(context)(arguments)(found)
+        | TypeArrow(argument, result, _capabilities, _tail) -> implicitTypeParameterNamesIn(owner)(context)([argument, result])(found)
+        | TypeTuple(elements) -> implicitTypeParameterNamesIn(owner)(context)(elements)(found)
+        | TypeUnit -> found
+and implicitTypeParameterNamesIn (owner: Str) context (typeExprs: List(TypeExpr)) (found: List(Str)) =
+    match typeExprs with
+        | [] -> found
+        | head :: tail ->
+            found
+            |> implicitTypeParameterNames(owner)(context)(head)
+            |> implicitTypeParameterNamesIn(owner)(context)(tail)
+
+let recursive implicitConstructorParameterNames (owner: Str) context (constructors: List(TypeConstructor)) (found: List(Str)) =
+    match constructors with
+        | [] -> found
+        | TypeConstructor { parameters = fields } :: rest ->
+            found
+            |> implicitTypeParameterNamesIn(owner)(context)(fields)
+            |> implicitConstructorParameterNames(owner)(context)(rest)
+
+let recursive typeParametersNamed (names: List(Str)) =
+    match names with
+        | [] -> []
+        | head :: tail -> TypeParameter(name = head) :: typeParametersNamed(tail)
+
+let registerTypeDeclaration declaration state =
+    match (declaration, state) with
+        | (TypeDecl { name = name, typeParameters = [], constructors = constructors, isRecord = isRecord, derivingTraits = derivingTraits }, ProgramInferenceState { environment = environment, error = None }) ->
+            match []
+            |> implicitConstructorParameterNames(name)(inferenceTypeResolutionContext(environment))(constructors)
+            |> reverse with
+                | [] -> registerParameterizedTypeDeclaration(declaration)(state)
+                | names -> registerParameterizedTypeDeclaration(TypeDecl(name = name, typeParameters = typeParametersNamed(names), constructors = constructors, isRecord = isRecord, derivingTraits = derivingTraits))(state)
+        | _ -> registerParameterizedTypeDeclaration(declaration)(state)
 
 let registerTypeAlias declaration state =
     match (declaration, state) with
