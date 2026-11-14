@@ -322,6 +322,33 @@ let recursive inferRecursiveBindings groupType pending environment boundaryEnvir
                         error
                     ))
 
+let recursive seedRecursiveBindings pending environment substitution supply =
+    match pending with
+        | [] -> RecursiveInference(resolved = [], substitution = substitution, supply = supply, error = None)
+        | PendingRecursiveBinding { annotation = annotation, placeholderType = placeholderType } :: tail ->
+            match seedRecursiveSignature(annotation)(placeholderType)(environment)(substitution)(supply) with
+                | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } -> seedRecursiveBindings(tail)(environment)(seededSubstitution)(seededSupply)
+                | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } ->
+                    RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(
+                        error
+                    ))
+
+// Every member's written signature is in place before any member's value is inferred, so a call
+// to a sibling or to the binding itself is typed by what was written.
+let inferSeededRecursiveBindings groupType pending environment boundaryEnvironment substitution supply =
+    match seedRecursiveBindings(pending)(boundaryEnvironment)(substitution)(supply) with
+        | RecursiveInference { resolved = _resolved, substitution = seededSubstitution, supply = seededSupply, error = None } ->
+            inferRecursiveBindings(
+                groupType,
+                pending,
+                environment,
+                boundaryEnvironment,
+                seededSubstitution,
+                seededSupply,
+                []
+            )
+        | failure -> failure
+
 let recursive generalizeRecursiveBindings bindings outerEnvironment substitution resultEnvironment =
     match bindings with
         | [] -> resultEnvironment
@@ -344,7 +371,7 @@ let inferRecursiveGroup bindings state =
         | ProgramInferenceState { environment = outerEnvironment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None } ->
             match prepareRecursiveBindings(bindings)(outerEnvironment)(supply)([]) with
                 | RecursivePreparation { environment = recursiveEnvironment, pending = pending, supply = preparedSupply } ->
-                    match inferRecursiveBindings(
+                    match inferSeededRecursiveBindings(
                         pending
                         |> pendingPlaceholderTypes
                         |> SemTuple,
@@ -352,8 +379,7 @@ let inferRecursiveGroup bindings state =
                         recursiveEnvironment,
                         outerEnvironment,
                         substitution,
-                        preparedSupply,
-                        []
+                        preparedSupply
                     ) with
                         | RecursiveInference { resolved = resolved, substitution = resolvedSubstitution, supply = resolvedSupply, error = None } ->
                             match recursiveGroupAmbiguity(resolved)(resolvedSubstitution)(outerEnvironment) with
