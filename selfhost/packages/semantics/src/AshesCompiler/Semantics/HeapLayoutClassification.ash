@@ -27,6 +27,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.length
+import AshesCompiler.Semantics.TypeInference
 export (
     value classifyHeapResourceIndexed,
     value classifyHeapOwnedChildrenDroppableIndexed,

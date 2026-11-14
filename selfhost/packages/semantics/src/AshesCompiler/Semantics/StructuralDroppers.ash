@@ -32,6 +32,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.IrOrigins
 export (
     type DropperLabelCache(..),
     type DropperSynthesis(..),
