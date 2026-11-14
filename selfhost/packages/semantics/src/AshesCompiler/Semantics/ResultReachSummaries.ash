@@ -627,13 +627,19 @@ type ReachConstructor =
     | soleNullary: Bool
     deriving {Eq, Show}
 
-let recursive lookupConstructor (name: Str) (constructors: List(ReachConstructor)) =
+// Files constructors by name, keeping the first of each name: the one a walk of the list meets.
+let recursive indexConstructors (constructors: List(ReachConstructor)) (index: MapTree(Str, ReachConstructor)) =
     match constructors with
-        | [] -> None
-        | (ReachConstructor { name = candidate } as constructor) :: rest ->
-            if candidate == name
-            then Some(constructor)
-            else lookupConstructor(name)(rest)
+        | [] -> index
+        | (ReachConstructor { name = name } as constructor) :: rest ->
+            match Ashes.Collection.Map.getStr(name)(index) with
+                | Some(_first) -> indexConstructors(rest)(index)
+                | None ->
+                    index
+                    |> Ashes.Collection.Map.setStr(name)(constructor)
+                    |> indexConstructors(rest)
+
+let lookupConstructor (name: Str) (constructorsByName: MapTree(Str, ReachConstructor)) = Ashes.Collection.Map.getStr(name)(constructorsByName)
 
 let recursive lookupTypeErasure (name: Str) (erasures: List((Str, TypeExpr))) =
     match erasures with
@@ -743,9 +749,11 @@ type ReachFunction =
 
 // `byKey` and `byIdentity` index `functions` by their key and by `name@identity`, so a call site
 // and a binding find their function without a walk over every function of the program.
+// `constructorsByName` holds the first constructor of each name in `constructors`.
 type ReachRegistry =
     | functions: List(ReachFunction)
     | constructors: List(ReachConstructor)
+    | constructorsByName: MapTree(Str, ReachConstructor)
     | valueNames: MapTree(Str, Bool)
     | byKey: MapTree(Str, ReachFunction)
     | byIdentity: MapTree(Str, ReachFunction)
@@ -1111,7 +1119,7 @@ let recursive indexFunctions (functions: List(ReachFunction)) (byKey: MapTree(St
 // A registry with its two function indexes built once over its functions.
 let indexedRegistry (functions: List(ReachFunction)) (constructors: List(ReachConstructor)) (valueNames: MapTree(Str, Bool)) =
     match indexFunctions(functions)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
-        | (byKey, byIdentity) -> ReachRegistry(functions = functions, constructors = constructors, valueNames = valueNames, byKey = byKey, byIdentity = byIdentity)
+        | (byKey, byIdentity) -> ReachRegistry(functions = functions, constructors = constructors, constructorsByName = indexConstructors(constructors)(Ashes.Collection.Map.empty), valueNames = valueNames, byKey = byKey, byIdentity = byIdentity)
 
 let buildReachRegistry (program: ProgramSyntax) =
     match program with
@@ -1243,9 +1251,9 @@ let recursive lookupEnv (name: Str) (env: List((Str, ResultReachState))) =
             then Some(reach)
             else lookupEnv(name)(rest)
 
-let constructorsOf (context: ReachContext) =
+let constructorsByNameOf (context: ReachContext) =
     match context with
-        | ReachContext { registry = ReachRegistry { constructors = constructors } } -> constructors
+        | ReachContext { registry = ReachRegistry { constructorsByName = constructorsByName } } -> constructorsByName
 
 let functionsOf (context: ReachContext) =
     match context with
@@ -1265,7 +1273,7 @@ let isCapitalized (name: Str) =
 // A bare pattern name that is a data constructor matches a nullary tag and binds nothing.
 let isConstructorName (context: ReachContext) (name: Str) =
     match context
-    |> constructorsOf
+    |> constructorsByNameOf
     |> lookupConstructor(name) with
         | Some(_constructor) -> true
         | None -> isCapitalized(name)
@@ -1278,7 +1286,7 @@ let variableReach (context: ReachContext) (env: List((Str, ResultReachState))) (
         | Some(reach) -> reach
         | None ->
             match context
-            |> constructorsOf
+            |> constructorsByNameOf
             |> lookupConstructor(name) with
                 | Some(ReachConstructor { arity = 0, soleNullary = true }) -> reachBottom(Unit)
                 | Some(_constructor) -> reachPoisoned(UnmodelledReach)
@@ -1492,7 +1500,7 @@ let recursive reachOf (context: ReachContext) (env: List((Str, ResultReachState)
             Unit
             |> reachBottom
             |> sumFields(context)(env)(scope)(token)(context
-            |> constructorsOf
+            |> constructorsByNameOf
             |> lookupConstructor(typeName))(fields)
             |> withRecordConstruction(context)
         | ExprRecordUpdate(target, fields) ->
@@ -1590,7 +1598,7 @@ and bindPatternReach (context: ReachContext) (pattern: Pattern) (parent: ResultR
                     bindPatternReach(context)(tail)(extendPaths(1)(parent))(headEnv)(afterHead)
         | PatternRecord(typeName, fields) ->
             match context
-            |> constructorsOf
+            |> constructorsByNameOf
             |> lookupConstructor(typeName) with
                 | Some(ReachConstructor { fieldNames = fieldNames }) -> bindRecordPatterns(context)(fieldNames)(fields)(parent)(env)(token)
                 | None -> (env, token)
@@ -1622,7 +1630,7 @@ and callReach (context: ReachContext) (env: List((Str, ResultReachState))) (scop
             then selfRecursiveReach(context)(env)(scope)(token)(arguments)
             else
                 match context
-                |> constructorsOf
+                |> constructorsByNameOf
                 |> lookupConstructor(name) with
                     | Some(constructor) -> constructorReach(context)(env)(scope)(token)(constructor)(arguments)
                     | None ->
@@ -2199,7 +2207,7 @@ and everyArmMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str)))
 and callMustReach (registry: ReachRegistry) (table: MapTree(Str, List(Str))) (scope: ReachScope) (name: Str) (spine: (Expr, List(Expr))) =
     match spine with
         | (ExprVar(callee), arguments) ->
-            match lookupConstructor(callee)(registry.constructors) with
+            match lookupConstructor(callee)(registry.constructorsByName) with
                 | Some(_constructor) -> anyMustReach(registry)(table)(scope)(name)(arguments)
                 | None ->
                     match lookupScope(callee)(scope) with
