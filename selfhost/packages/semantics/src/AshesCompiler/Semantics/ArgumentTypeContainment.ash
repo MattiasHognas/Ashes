@@ -1,6 +1,7 @@
 import AshesCompiler.Semantics.Types
 export (
     value mayContainArgumentType,
+    value mayContainAnyArgumentType,
 )
 
 // Ancestry retains complete type roots so ownership stays with their RC-managed graphs.
@@ -17,6 +18,11 @@ let recursive previouslyExpanded (semanticType: SemanticType) (expanded: List(Se
     match expanded with
         | [] -> false
         | previous :: rest -> previous == semanticType || previouslyExpanded(semanticType)(rest)
+
+let recursive matchesArgumentType (semanticType: SemanticType) (argumentTypes: List(SemanticType)) =
+    match argumentTypes with
+        | [] -> false
+        | argumentType :: rest -> semanticType == argumentType || matchesArgumentType(semanticType)(rest)
 
 let recursive hasTypeName (name: Str) (path: List(SemanticType)) =
     match path with
@@ -42,7 +48,7 @@ let recursive prependTypes (types: List(SemanticType)) (path: List(SemanticType)
 // structural arguments are inspected first, including when this name has already been visited.
 // Different sibling instantiations are searched separately. Only recursive expansion of the
 // same name at changing arguments is conservatively unknown, to bound non-regular recursion.
-let recursive search resolve fields (blocked: List(Str)) (argumentType: SemanticType) (pending: List(ContainmentWork)) (expanded: List(SemanticType)) =
+let recursive search resolve fields (blocked: List(Str)) (argumentTypes: List(SemanticType)) (pending: List(ContainmentWork)) (expanded: List(SemanticType)) =
     match pending with
         | [] -> false
         | InspectType(resultType, path) :: rest ->
@@ -51,24 +57,32 @@ let recursive search resolve fields (blocked: List(Str)) (argumentType: Semantic
                 | SemParameter(_id, _name) -> true
                 | SemFunction(_parameter, _result, _row) -> true
                 | resolved ->
-                    if resolved == argumentType
+                    if matchesArgumentType(resolved)(argumentTypes)
                     then true
                     else
                         match resolved with
                             | SemNamed(_id, _name, _arguments) ->
-                                search(resolve)(fields)(blocked)(argumentType)(prependTypes(components(resolved))(path)(ExpandNamedType(resolved)(path) :: rest))(expanded)
+                                search(resolve)(fields)(blocked)(argumentTypes)(prependTypes(components(resolved))(path)(ExpandNamedType(resolved)(path) :: rest))(expanded)
                             | _ ->
-                                search(resolve)(fields)(blocked)(argumentType)(prependTypes(components(resolved))(path)(rest))(expanded)
+                                search(resolve)(fields)(blocked)(argumentTypes)(prependTypes(components(resolved))(path)(rest))(expanded)
         | ExpandNamedType(resolved, path) :: rest ->
             match resolved with
                 | SemNamed(_id, name, _arguments) ->
                     if hasName(name)(blocked) || previouslyExpanded(resolved)(expanded)
-                    then search(resolve)(fields)(blocked)(argumentType)(rest)(expanded)
+                    then search(resolve)(fields)(blocked)(argumentTypes)(rest)(expanded)
                     else
                         if hasTypeName(name)(path)
                         then true
                         else
-                            search(resolve)(fields)(blocked)(argumentType)(prependTypes(fields(resolved))(resolved :: path)(rest))(resolved :: expanded)
-                | _ -> search(resolve)(fields)(blocked)(argumentType)(rest)(expanded)
+                            search(resolve)(fields)(blocked)(argumentTypes)(prependTypes(fields(resolved))(resolved :: path)(rest))(resolved :: expanded)
+                | _ -> search(resolve)(fields)(blocked)(argumentTypes)(rest)(expanded)
 
-let mayContainArgumentType resolve fields (blocked: List(Str)) (resultType: SemanticType) (argumentType: SemanticType) = search(resolve)(fields)(blocked)(argumentType)([InspectType(resultType)([])])([])
+// The result graph and callbacks are shared only within this query. In particular, resolving a
+// type never reuses a fact from another substitution. An empty candidate list must answer false
+// even when the result contains a variable, function, or non-regular recursive expansion.
+let mayContainAnyArgumentType resolve fields (blocked: List(Str)) (resultType: SemanticType) (argumentTypes: List(SemanticType)) =
+    match argumentTypes with
+        | [] -> false
+        | _ -> search(resolve)(fields)(blocked)(argumentTypes)([InspectType(resultType)([])])([])
+
+let mayContainArgumentType resolve fields (blocked: List(Str)) (resultType: SemanticType) (argumentType: SemanticType) = mayContainAnyArgumentType(resolve)(fields)(blocked)(resultType)([argumentType])

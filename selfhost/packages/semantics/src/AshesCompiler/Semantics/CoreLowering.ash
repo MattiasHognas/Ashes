@@ -14,6 +14,7 @@ import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import AshesCompiler.Semantics.ArgumentTypeContainment.mayContainArgumentType
+import AshesCompiler.Semantics.ArgumentTypeContainment.mayContainAnyArgumentType
 import Ashes.Collection.Map.MapTree
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
@@ -10047,6 +10048,12 @@ let typeMayContainArgumentType (instantiated: Bool) (resultType: SemanticType) (
 
 let callResultMayContainArgumentType (resultType: SemanticType) (argumentType: SemanticType) (expanded: List(Str)) (state: CoreLoweringState) = typeMayContainArgumentType(true)(resultType)(argumentType)(expanded)(state)
 
+let callResultMayContainAnyArgumentType (resultType: SemanticType) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    mayContainAnyArgumentType(resolveType(state))(given (semanticType) ->
+        match semanticType with
+            | SemNamed(_id, name, arguments) -> namedTypeFieldTypesAs(true)(name)(arguments)(state)
+            | _ -> [])([])(resultType)(argumentTypes)
+
 // Stage 0's `CollectHeapComponentTypes`: every heap type a value of the type is built from, itself
 // included, beside the type names already expanded, and whether all of them are known: false when
 // some part may be a value of any type.
@@ -10077,10 +10084,7 @@ and collectAllHeapComponentTypes (types: List(SemanticType)) (state: CoreLowerin
                 | (true, next) -> collectAllHeapComponentTypes(rest)(state)(next)
                 | (false, next) -> (false, next)
 
-let recursive anyPartMayBeInResult (resultType: SemanticType) (parts: List(SemanticType)) (state: CoreLoweringState) =
-    match parts with
-        | [] -> false
-        | part :: rest -> callResultMayContainArgumentType(resultType)(part)([])(state) || anyPartMayBeInResult(resultType)(rest)(state)
+let anyPartMayBeInResult (resultType: SemanticType) (parts: List(SemanticType)) (state: CoreLoweringState) = callResultMayContainAnyArgumentType(resultType)(parts)(state)
 
 // Stage 0's `ResultTypeMayHoldPartOf`: whether a value of the result's type can hold an owned value
 // of the owned type or one of its heap parts. An owned type with a part of unresolved type or a
@@ -20458,10 +20462,7 @@ let recursive heapPartTypesInto (pending: List(SemanticType)) (expanded: List(St
                             | other ->
                                 heapPartTypesInto(append(structuralComponentTypes(other))(rest))(expanded)(other :: parts)(state)
 
-let recursive resultMayHoldAnyPart (resultType: SemanticType) (parts: List(SemanticType)) (state: CoreLoweringState) =
-    match parts with
-        | [] -> false
-        | part :: rest -> callResultMayContainArgumentType(resultType)(part)([])(state) || resultMayHoldAnyPart(resultType)(rest)(state)
+let resultMayHoldAnyPart (resultType: SemanticType) (parts: List(SemanticType)) (state: CoreLoweringState) = callResultMayContainAnyArgumentType(resultType)(parts)(state)
 
 // Stage 0's `KeepHandedOverArgumentInOwnedSlot`: the owned slot a handed-over reference waits in
 // until the function's result or the loop's successors hold references of their own; a callee that

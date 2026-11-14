@@ -2753,6 +2753,15 @@ a negative answer for one instantiation must never justify a release for another
 arguments are checked before the visited-set test. Stage 0 already shares its expansion set
 across siblings.
 
+When checking whether a result may hold any heap part of one owned value, stage 1 searches the
+result graph once against the complete candidate list. This is the same existential answer as
+running a separate containment query for every candidate: expansion, path checks, and conservative
+unknown outcomes do not depend on the candidate until a match succeeds. Empty candidate lists
+answer false without entering the walk. The shared traversal is local to one immutable lowering
+state, so resolved types and constructor fields never survive into a different substitution or
+constructor environment. Exact structural equality and the existing recursive-type rules remain
+the release proof; no approximate membership answer is used.
+
 Types cannot answer that question when the result's element type equals the argument's — a map from
 strings to strings — and the hand-over is what a caller falls back on whenever the callee's result
 reach is unproven. A complete reach account settles it without types: a callee that provably never
