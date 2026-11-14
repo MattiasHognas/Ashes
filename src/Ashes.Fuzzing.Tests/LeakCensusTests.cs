@@ -282,6 +282,10 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task UntypedFinderSomeResultIsReleasedByItsCaller()
         => VerifyPlateauAndPoison("leak.untyped-finder-result");
 
+    [Test]
+    public Task ConstrainedLoopOverLetBoundArgumentsReleasesItsSnapshots()
+        => VerifyPlateauAndPoison("leak.constrained-loop-let-bound-arguments");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())
