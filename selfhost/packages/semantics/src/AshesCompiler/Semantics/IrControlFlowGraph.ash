@@ -24,6 +24,7 @@ export (
     value sortedSetContains,
     value sortedSetInsert,
     value buildCfgBlocks,
+    value blockBoundaryKinds,
     value findCfgBlock,
     value computeImmediateDominators,
     value dominates,
@@ -248,6 +249,26 @@ let buildCfgBlocks (instructions: List(IrInstruction)) =
                 assembleAllBlocks(spans)(predecessorsByBlock([]
                 |> edgesOf(successors)(0)([])
                 |> sortBy(edgeBefore))(0)(length(spans))([])([]))(successors))))
+
+// Per block, whether it opens with a label and whether it ends in a terminator, in one walk of the
+// instructions along the blocks.
+let recursive blockBoundaryKindsFrom (instructions: List(IrInstruction)) (position: Int) (blocks: List(IrCfgBlock)) (opensWithLabel: Bool) =
+    match blocks with
+        | [] -> []
+        | IrCfgBlock { blockStart = start, blockEnd = end } :: restBlocks ->
+            match instructions with
+                | [] -> (opensWithLabel, false) :: blockBoundaryKindsFrom([])(position)(restBlocks)(false)
+                | IrInstruction { instruction = kind } :: rest ->
+                    let opens =
+                        if position == start
+                        then isLabel(kind)
+                        else opensWithLabel
+                    in
+                        if position == end - 1
+                        then (opens, isTerminator(kind)) :: blockBoundaryKindsFrom(rest)(position + 1)(restBlocks)(false)
+                        else blockBoundaryKindsFrom(rest)(position + 1)(blocks)(opens)
+
+let blockBoundaryKinds (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) = blockBoundaryKindsFrom(instructions)(0)(blocks)(false)
 
 let recursive findCfgBlockFrom (blocks: List(IrCfgBlock)) (instructionIndex: Int) (index: Int) =
     match blocks with

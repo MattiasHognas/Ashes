@@ -35,13 +35,19 @@ export (
 )
 
 // placedDominators carries the function's immediate dominators from the first owner that needed
-// them to every later owner: an owner's edits move instruction indices and change the block graph
-// only by a split edge appended after the last block, so the table is recomputed only when the
-// block count has grown, as stage 0's PlaceOwner does.
+// them to every later owner: the table is recomputed only when the block count has changed, as
+// stage 0's PlaceOwner does. placedBlocks carries the block graph of placedInstructions the same
+// way, with per block whether it opens with a label and ends in a terminator (placedBlockKinds):
+// an owner's edits mostly move instruction indices inside the blocks, so the spans are shifted
+// and the edges kept. It is empty when the edits may have changed the blocks themselves (an
+// emptied block, a drop opening a block of its own, a split edge), and the next owner builds the
+// graph from the instructions.
 type PlacedInstructions =
     | placedInstructions: List(IrInstruction)
     | placedTempCount: Int
     | placedDominators: List(Int)
+    | placedBlocks: List(IrCfgBlock)
+    | placedBlockKinds: List((Bool, Bool))
 
 type OwnerRegion =
     | regionDefinitionIndex: Int
@@ -722,7 +728,96 @@ let borrowingArenaCells (instructions: List(IrInstruction)) (ownerAliases: List(
     then []
     else arenaAdtCells
 
-let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (region: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
+// Whether taking `removed` instructions out at `first` leaves every block in place: they sit in
+// one block that keeps an instruction of its own. They are an anchor and its load, neither a label
+// nor a terminator, so that block still opens and ends as it did.
+let recursive removalKeepsBlocks (blocks: List(IrCfgBlock)) (first: Int) (removed: Int) =
+    match blocks with
+        | [] -> false
+        | IrCfgBlock { blockStart = start, blockEnd = end } :: rest ->
+            if first >= end
+            then removalKeepsBlocks(rest)(first)(removed)
+            else first >= start && first + removed <= end && end - start > removed
+
+// The blocks once `removed` instructions are gone from the block holding `first`.
+let recursive blocksWithout (blocks: List(IrCfgBlock)) (first: Int) (removed: Int) (shift: Int) =
+    match blocks with
+        | [] -> []
+        | block :: rest ->
+            if shift > 0
+            then (block with blockStart = block.blockStart - shift, blockEnd = block.blockEnd - shift) :: blocksWithout(rest)(first)(removed)(shift)
+            else
+                if first >= block.blockEnd
+                then block :: blocksWithout(rest)(first)(removed)(0)
+                else (block with blockEnd = block.blockEnd - removed) :: blocksWithout(rest)(first)(removed)(removed)
+
+// The carried blocks after an anchor's removal, none when a block would be emptied.
+let carriedBlocksWithout (blocks: List(IrCfgBlock)) (first: Int) (removed: Int) =
+    if removalKeepsBlocks(blocks)(first)(removed)
+    then blocksWithout(blocks)(first)(removed)(0)
+    else []
+
+let recursive insertionsAt (index: Int) (insertions: List((Int, IrInstruction))) (count: Int) =
+    match insertions with
+        | [] -> count
+        | (candidate, _instruction) :: rest ->
+            if candidate == index
+            then insertionsAt(index)(rest)(count + 1)
+            else insertionsAt(index)(rest)(count)
+
+let recursive insertionCounts (indices: List(Int)) (insertions: List((Int, IrInstruction))) =
+    match indices with
+        | [] -> []
+        | index :: rest -> (index, insertionsAt(index)(insertions)(0)) :: insertionCounts(rest)(insertions)
+
+let nextOpensWithLabel (kinds: List((Bool, Bool))) =
+    match kinds with
+        | (opensWithLabel, _endsInTerminator) :: _ -> opensWithLabel
+        | [] -> false
+
+// How many of the inserted instructions each block takes, the insertions ascending by index;
+// `[-1]` when one of them would open a block of its own. Drops and dups are neither labels nor
+// terminators, so one inside a block grows it; one at the start of a block that opens after a
+// terminator leads that block; one before a block's opening label trails the block falling
+// through into it. One right after a terminator and before a label, or past the last
+// instruction, is a block no span covers.
+let recursive insertedByBlock (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (inserts: List((Int, Int))) (own: Int) (counts: List(Int)) =
+    match (blocks, kinds) with
+        | (IrCfgBlock { blockStart = start, blockEnd = end } :: restBlocks, (opensWithLabel, endsInTerminator) :: restKinds) ->
+            match inserts with
+                | [] -> insertedByBlock(restBlocks)(restKinds)([])(0)(own :: counts)
+                | (index, added) :: restInserts ->
+                    if index < start || index == start && opensWithLabel
+                    then [-1]
+                    else
+                        if index < end || index == end && endsInTerminator == false && nextOpensWithLabel(restKinds)
+                        then insertedByBlock(blocks)(kinds)(restInserts)(own + added)(counts)
+                        else insertedByBlock(restBlocks)(restKinds)(inserts)(0)(own :: counts)
+        | _ ->
+            match inserts with
+                | [] -> reverse(counts)
+                | _ -> [-1]
+
+let recursive blocksWithInserted (blocks: List(IrCfgBlock)) (counts: List(Int)) (shift: Int) =
+    match (blocks, counts) with
+        | (block :: restBlocks, own :: restCounts) -> (block with blockStart = block.blockStart + shift, blockEnd = block.blockEnd + shift + own) :: blocksWithInserted(restBlocks)(restCounts)(shift + own)
+        | _ -> []
+
+// The blocks of the instructions an owner's edits produce, out of the blocks they were placed
+// against: the same blocks with their spans moved while every edit stays inside a block, and none
+// (the next owner builds them again) once a jump was retargeted or an insertion opens a block.
+let carriedBlocksAfter (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (indicesDescending: List(Int)) (insertions: List((Int, IrInstruction))) (retargets: List((Int, IrInstruction))) =
+    match retargets with
+        | [] ->
+            match insertions with
+                | [] -> blocks
+                | _ ->
+                    match insertedByBlock(blocks)(kinds)(insertionCounts(reverse(indicesDescending))(insertions))(0)([]) with
+                        | -1 :: _ -> []
+                        | counts -> blocksWithInserted(blocks)(counts)(0)
+        | _ -> []
+
+let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (dominators: List(Int)) (definitionBlock: Int) (region: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
     arenaAdtCells
     |> collectOwnerAliases(blocks)(regionInstructions(instructions)(blocks)(region))(slot)
     |> (given (ownerAliases) ->
@@ -737,40 +832,49 @@ let placeOwnerInRegion (instructions: List(IrInstruction)) (slot: Int) (owner: O
                 |> borrowingArenaCells(instructions)(ownerAliases)
                 |> (given (cells) -> collectInsertions(instructions)(blocks)(region)(definitionBlock)(owner)(slot)(anchor)(label)(facts)(liveness)(region)(tempCount)([])([])(cells)(borrowedCalls))) with
                 | (insertions, retargets, nextTempCount) ->
-                    PlacedInstructions(placedInstructions = instructions
-                    |> applyRetargets(retargets)
-                    |> applyInsertions(distinctIndicesDescending(insertions)([]))(insertions), placedTempCount = nextTempCount, placedDominators = dominators)))
+                    let indices = distinctIndicesDescending(insertions)([])
+                    in
+                        PlacedInstructions(placedInstructions = instructions
+                        |> applyRetargets(retargets)
+                        |> applyInsertions(indices)(insertions), placedTempCount = nextTempCount, placedDominators = dominators, placedBlocks = carriedBlocksAfter(blocks)(kinds)(indices)(insertions)(retargets), placedBlockKinds = kinds)))
 
-let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
+let placeOwnerBetween (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (dominators: List(Int)) (definitionBlock: Int) (boundaryBlock: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
     []
     |> reachableBeforeBoundary(instructions)(label)(blocks)(dominators)(definitionBlock)(boundaryBlock)([definitionBlock])
     |> (given (visited) -> sortedBlocks(visited)(length(blocks) - 1)([]))
     |> (given (region) ->
         if length(region) == 0
-        then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = dominators)
-        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(region)(arenaAdtCells)(borrowedCalls))
+        then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = dominators, placedBlocks = blocks, placedBlockKinds = kinds)
+        else placeOwnerInRegion(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(kinds)(dominators)(definitionBlock)(region)(arenaAdtCells)(borrowedCalls))
 
-let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
-    instructions
-    |> buildCfgBlocks
-    |> (given (blocks) ->
-        match (findCfgBlock(blocks)(owner.regionDefinitionIndex), owner
-        |> boundaryIndexWithin(length(instructions))
-        |> findCfgBlock(blocks)) with
-            | (definitionBlock, boundaryBlock) ->
-                if definitionBlock < 0 || boundaryBlock < 0
-                then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators)
-                else
-                    let dominators =
-                        if length(knownDominators) == length(blocks)
-                        then knownDominators
-                        else computeImmediateDominators(blocks)
-                    in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(dominators)(definitionBlock)(boundaryBlock)(arenaAdtCells)(borrowedCalls))
+let placeOwnerAgainst (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) (blocks: List(IrCfgBlock)) (kinds: List((Bool, Bool))) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
+    match (findCfgBlock(blocks)(owner.regionDefinitionIndex), owner
+    |> boundaryIndexWithin(length(instructions))
+    |> findCfgBlock(blocks)) with
+        | (definitionBlock, boundaryBlock) ->
+            if definitionBlock < 0 || boundaryBlock < 0
+            then PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators, placedBlocks = blocks, placedBlockKinds = kinds)
+            else
+                let dominators =
+                    if length(knownDominators) == length(blocks)
+                    then knownDominators
+                    else computeImmediateDominators(blocks)
+                in placeOwnerBetween(instructions)(slot)(owner)(anchor)(label)(tempCount)(blocks)(kinds)(dominators)(definitionBlock)(boundaryBlock)(arenaAdtCells)(borrowedCalls)
+
+// The blocks are the ones carried from the owner before when its edits kept every block in place
+// (`carried`, with their kinds), and built from the instructions otherwise.
+let placeOwnerRegion (instructions: List(IrInstruction)) (slot: Int) (owner: OwnerRegion) (anchor: OwnerAnchor) (label: Str) (tempCount: Int) (knownDominators: List(Int)) (carried: List(IrCfgBlock)) (carriedKinds: List((Bool, Bool))) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) =
+    match carried with
+        | [] ->
+            let blocks = buildCfgBlocks(instructions)
+            in
+                placeOwnerAgainst(instructions)(slot)(owner)(anchor)(label)(tempCount)(knownDominators)(blocks)(blockBoundaryKinds(instructions)(blocks))(arenaAdtCells)(borrowedCalls)
+        | _ -> placeOwnerAgainst(instructions)(slot)(owner)(anchor)(label)(tempCount)(knownDominators)(carried)(carriedKinds)(arenaAdtCells)(borrowedCalls)
 
 // Removes the lexical anchor (and the owner load feeding it) and places the owner's drop.
 let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
     match placed with
-        | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators } ->
+        | PlacedInstructions { placedInstructions = instructions, placedTempCount = tempCount, placedDominators = knownDominators, placedBlocks = knownBlocks, placedBlockKinds = knownKinds } ->
             match (listAt(instructions)(anchorIndex), ownerDefinition(instructions)(slot)(0)) with
                 | (Some(IrInstruction { instruction = RcDrop(source, typeName, _slot, runtimeManaged, mayBeEmpty, dropper), location = location }), Some((definitionIndex, definitionTemp))) ->
                     anchorIndex
@@ -784,7 +888,8 @@ let placeOwner (label: Str) (slot: Int) (anchorIndex: Int) (arenaAdtCells: List(
                             | _ -> (withoutAnchor, anchorIndex))
                     |> (given (removed) ->
                         match removed with
-                            | (remaining, boundary) -> placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount)(knownDominators)(arenaAdtCells)(borrowedCalls))
+                            | (remaining, boundary) ->
+                                placeOwnerRegion(remaining)(slot)(OwnerRegion(regionDefinitionIndex = definitionIndex, regionBoundaryIndex = boundary, regionDefinitionTemp = definitionTemp))(OwnerAnchor(anchorTypeName = typeName, anchorRuntimeManaged = runtimeManaged, anchorMayBeEmpty = mayBeEmpty, anchorStructuralDropper = dropper, anchorLocation = location))(label)(tempCount)(knownDominators)(carriedBlocksWithout(knownBlocks)(boundary)(anchorIndex + 1 - boundary))(knownKinds)(arenaAdtCells)(borrowedCalls))
                 | _ -> placed
 
 let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (arenaAdtCells: List(Int)) (borrowedCalls: List(Int)) (placed: PlacedInstructions) =
@@ -799,7 +904,7 @@ let recursive placeOwnerSlots (label: Str) (slots: List(Int)) (arenaAdtCells: Li
 // the drop blocks that split a live branch edge. `borrowedCalls` are the result temps of the
 // body's closure calls that only borrow their argument, which get no compensating duplicate.
 let placeInstructionLifetimesBorrowing (label: Str) (borrowedCalls: List(Int)) (instructions: List(IrInstruction)) (tempCount: Int) =
-    placeOwnerSlots(label)(ownerSlots(instructions)([]))(collectArenaAdtCells(instructions)([]))(borrowedCalls)(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = []))
+    placeOwnerSlots(label)(ownerSlots(instructions)([]))(collectArenaAdtCells(instructions)([]))(borrowedCalls)(PlacedInstructions(placedInstructions = instructions, placedTempCount = tempCount, placedDominators = [], placedBlocks = [], placedBlockKinds = []))
 
 let placeInstructionLifetimesIn (label: Str) (instructions: List(IrInstruction)) (tempCount: Int) = placeInstructionLifetimesBorrowing(label)([])(instructions)(tempCount)
 
