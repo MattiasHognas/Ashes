@@ -15,10 +15,10 @@ Active implementation evidence still dispatches first. The seven public lowering
 entry points without replay start with pinned goals, preventing executable
 placeholder IR from escaping.
 
-Ordinary constrained generic `Not` bindings still lack mapped evidence in some
-paths. Non-Boolean and mixed Boolean/custom-type uses remain explicit errors.
-Boolean-only use-driven resolution is not full polymorphic `Not` support. Tests
-preserve that limitation rather than silently forcing every operand to Bool.
+Ordinary constrained generic `Not` bindings take their evidence per call. A custom
+operand keeps its own type, and one binding serves a Boolean and a custom-type use
+in the same program. The expression-only entry points have no replay and no
+standard trait module, so a constrained binding called there is still rejected.
 
 ## Focused real-Core checks
 
@@ -31,8 +31,8 @@ source without rebuilding the driver.
 
 `CoreLogicalNotInferenceTests.ash` checks inferred and annotated predicates,
 identity calls, single/mutual recursion, the bootstrap's list-predicate shape,
-invalid Int, active generic implementation evidence, unsupported explicit/inferred
-custom Not and mixed uses. Direct expression checks require an unresolved error,
+invalid Int, active generic implementation evidence, explicit/inferred custom Not
+and mixed Boolean/custom uses through per-call evidence. Direct expression checks require an error for a constrained binding,
 real `CmpIntEq` for a concrete Bool, and rejection of missing Show evidence.
 The module is also registered in the normal semantics suite.
 

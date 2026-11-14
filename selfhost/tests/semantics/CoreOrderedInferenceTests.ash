@@ -75,13 +75,21 @@ let checkMissingEvidence unit =
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("unexpected missing Ord diagnostic: " + Ashes.Trait.Show.show(error))
         | _ -> Ashes.IO.panic("ordered comparison accepted missing evidence")
 
-// Stage 1 does not yet generalize constrained bindings at multiple concrete types.
-// Preserve that documented boundary instead of silently choosing one comparison.
+// One constrained binding serves two concrete types: each call passes its own Ord evidence, so
+// the Int use keeps its primitive comparison and the Str use its byte comparison.
 let checkMixedUses traits unit =
     match lowerSource(traits + "\nlet before left right = left <= right\n(before(1)(2), before(\"a\")(\"z\"))") with
-        | CoreLoweringResult { error = Some(CoreCallTypeMismatch(_mismatch, _site)) } -> Unit
-        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("mixed Ord lost its type mismatch: " + Ashes.Trait.Show.show(error))
-        | _ -> Ashes.IO.panic("mixed constrained uses must fail closed")
+        | CoreLoweringResult { program = Some(program), semanticType = SemTuple(SemBool :: SemBool :: []), error = None } ->
+            let text =
+                None
+                |> formatIr(program)(LoweredIr)
+                |> Ashes.Text.join("\n")
+            in
+                if Ashes.Text.contains(text)("CmpIntLe") && Ashes.Text.contains(text)("BytesCompare")
+                then Unit
+                else Ashes.IO.panic("mixed Ord uses silently chose one comparison")
+        | CoreLoweringResult { error = Some(error) } -> Ashes.IO.panic("mixed Ord uses did not lower: " + Ashes.Trait.Show.show(error))
+        | _ -> Ashes.IO.panic("mixed Ord uses did not produce (Bool, Bool)")
 
 // Use the actual library declarations, including the unannotated comparator that
 // blocked the stage-2 bootstrap, rather than a reduced copy of its signature.
@@ -92,15 +100,24 @@ let checkStandardListSort traits unit =
             match expectBool(traits + "\n" + source + "\nmatch sort([\"z\", \"a\"]) with | first :: second :: [] -> first == \"a\" && second == \"z\" | _ -> false") with
                 | _ -> Unit
 
-let checkUnusedComparator unit =
-    match expectBool("let before left right = left <= right\ntrue") with
-        | IrProgram { functions = [] } -> Unit
-        | _ -> Ashes.IO.panic("unused comparator retained a provisional body")
+let recursive countFunctions (functions: List(IrFunction)) =
+    match functions with
+        | [] -> 0
+        | _function :: rest -> 1 + countFunctions(rest)
 
-let checkUnusedFunctionChains unit =
-    match expectBool("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue") with
-        | IrProgram { functions = [] } -> Unit
-        | _ -> Ashes.IO.panic("unused function chain retained provisional bodies")
+// An unused constrained binding is lowered once as a dictionary-taking function, as stage 0
+// emits it: one body per curried stage and no second copy left behind by a provisional pass.
+let expectFunctionCount expected message source =
+    match expectBool(source) with
+        | IrProgram { functions = functions } ->
+            if countFunctions(functions) == expected
+            then Unit
+            else
+                Ashes.IO.panic(message + ": " + Ashes.Text.fromInt(countFunctions(functions)) + " functions")
+
+let checkUnusedComparator unit = expectFunctionCount(3)("unused comparator retained a provisional body")("let before left right = left <= right\ntrue")
+
+let checkUnusedFunctionChains unit = expectFunctionCount(6)("unused function chain retained provisional bodies")("let before left right = left <= right\nlet wrap x y = before(x)(y)\nlet alias = wrap\nlet next = alias\ntrue")
 
 let checkEscapingFunctionChain unit =
     match lowerSource("let before left right = left <= right\nlet alias = before\nlet next = alias\n(next, true)") with
@@ -142,8 +159,10 @@ let checkUnusedLibrarySort traits unit =
             match expectBool(traits + "\n" + source + "\nlength([1, 2]) == 2") with
                 | _ -> Unit
 
-let checkUsedComparatorReferences unit =
-    match expectBool("let before left right = left <= right\nlet alias = before\nalias(1)(2)") with
+// A call through an alias takes the binding's Ord dictionary, whose methods are the standard trait
+// module's, so that program carries the module; the implementation body calls the binding directly.
+let checkUsedComparatorReferences traits unit =
+    match expectBool(traits + "\nlet before left right = left <= right\nlet alias = before\nalias(1)(2)") with
         | _ ->
             match expectBool("let before left right = left <= right\ntype Rank = | Rank(Int)\nimplement Eq(Rank) = | equal = given left -> given right -> match (left, right) with | (Rank(x), Rank(y)) -> before(x)(y)\nRank(1) == Rank(2)") with
                 | _ -> Unit
@@ -230,7 +249,7 @@ let runCoreOrderedInferenceTests unit =
         |> checkEscapingFunctionChain
         |> checkUnusedLibraryMap(traits)
         |> checkUnusedLibrarySort(traits)
-        |> checkUsedComparatorReferences
+        |> checkUsedComparatorReferences(traits)
         |> checkUnusedBodyError
         |> checkEagerInitializer
         |> checkStitchedLibraryContext)
