@@ -10,6 +10,7 @@ export (
     type InstantiationResult(..),
     value freeTypeVariables,
     value freeSchemeVariables,
+    value schemeIsClosed,
     value freeEnvironmentVariables,
     value generalize,
     value generalizeUnderSubstitution,
@@ -123,6 +124,68 @@ let freeSchemeVariables scheme =
                 |> freeConstraintsVariables
                 |> mergeVariables(freeTypeVariables(body))
             in removeQuantified(quantified)(allVariables)
+
+let recursive isQuantifiedVariable variableId (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: tail ->
+            if sameVariableId(variableId)(candidate)
+            then true
+            else isQuantifiedVariable(variableId)(tail)
+
+// Whether every variable of a type is quantified. The walk visits the same constructors as
+// freeTypeVariables, without building the variable list.
+let recursive typesAreClosed quantified semanticTypes =
+    match semanticTypes with
+        | [] -> true
+        | head :: tail ->
+            if typeIsClosed(quantified)(head)
+            then typesAreClosed(quantified)(tail)
+            else false
+and typeIsClosed quantified semanticType =
+    match semanticType with
+        | SemVariable(variableId) -> isQuantifiedVariable(variableId)(quantified)
+        | SemList(element) -> typeIsClosed(quantified)(element)
+        | SemTuple(elements) -> typesAreClosed(quantified)(elements)
+        | SemFunction(argument, result, capabilityRow) ->
+            if typeIsClosed(quantified)(argument)
+            then
+                if typeIsClosed(quantified)(result)
+                then
+                    match capabilityRow with
+                        | None -> true
+                        | Some(row) -> typeIsClosed(quantified)(row)
+                else false
+            else false
+        | SemCapability(_name, arguments) -> typesAreClosed(quantified)(arguments)
+        | SemRow(capabilities, tail) ->
+            if typesAreClosed(quantified)(capabilities)
+            then
+                match tail with
+                    | None -> true
+                    | Some(tailType) -> typeIsClosed(quantified)(tailType)
+            else false
+        | SemNamed(_symbolId, _name, arguments) -> typesAreClosed(quantified)(arguments)
+        | SemPointer(pointee) -> typeIsClosed(quantified)(pointee)
+        | _ -> true
+
+let recursive constraintsAreClosed quantified constraints =
+    match constraints with
+        | [] -> true
+        | TraitConstraint { typeArguments = arguments } :: tail ->
+            if typesAreClosed(quantified)(arguments)
+            then constraintsAreClosed(quantified)(tail)
+            else false
+
+// A scheme with no free type variable, the same answer as `freeSchemeVariables(scheme) == []`.
+// Applying a substitution to a closed scheme leaves it as it is, and a closed scheme holds back
+// nothing in a generalization, so both can pass it over.
+let schemeIsClosed scheme =
+    match scheme with
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } ->
+            if typeIsClosed(quantified)(body)
+            then constraintsAreClosed(quantified)(constraints)
+            else false
 
 let recursive freeEnvironmentVariables environment =
     match environment with

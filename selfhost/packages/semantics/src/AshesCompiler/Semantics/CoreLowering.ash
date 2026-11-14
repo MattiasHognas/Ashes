@@ -383,12 +383,16 @@ type CoreBindingLocation =
 // Perceus pattern owner) carries that fact: its reads borrow whatever its type, a tail self-call
 // argument or aggregate child reading it takes a protective duplicate, and the loop's finalize
 // pass decides whether those markers become real reference-count operations.
+// `closedScheme` is set only for a scheme known to have no free type variable: the substitution
+// leaves such a scheme as it is and it holds nothing back in a generalization, so both pass the
+// binding over. A binding without the mark is resolved through the substitution at every use.
 type CoreBinding =
     | name: Str
     | scheme: TypeScheme
     | location: CoreBindingLocation
     | ownedRead: Bool
     | patternOwner: Maybe(PatternBindingFact)
+    | closedScheme: Bool
 
 // What the context asks of the next expression lowered, stage 0's `LoweredValueRequest`: the type
 // it expects, whether it wants a fresh string placed on the reference-counted heap rather than in
@@ -868,6 +872,13 @@ type CoreProgramState =
     // environment.
     | topLevelFunctionRefs: List((Str, Str, TypeScheme))
     | topLevelInferenceBindings: List((Str, TypeScheme, Bool))
+    // The same references as the inference environment reads them, so a query shares them instead
+    // of copying them: the ones stored with a free variable, youngest first; whether a later
+    // reference took the name of one of those; and every reference with its stored scheme over
+    // the coverage bindings of the environment version it was built for.
+    | topLevelInferenceOpen: List((Str, TypeScheme))
+    | topLevelInferenceOpenShadowed: Bool
+    | topLevelInferenceEnvironment: Maybe((Int, List((Str, TypeScheme))))
     | topLevelFunctionRefByName: MapTree(Str, CoreTopLevelFunctionReference)
     // The standard trait environment with the program's own implementations registered, the
     // evidence a trait-mapped operator at a concrete operand type resolves against.
@@ -1659,9 +1670,39 @@ let stateTopLevelFunctionRefIndex (state: CoreLoweringState) =
     (let group = state.programState
     in group.topLevelFunctionRefByName)
 
+let recursive namesInferenceBinding (name: Str) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> false
+        | (candidate, _scheme) :: rest ->
+            if candidate == name
+            then true
+            else namesInferenceBinding(name)(rest)
+
+let recursive storedInferenceBindings (bindings: List((Str, TypeScheme, Bool))) (tail: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> tail
+        | (name, scheme, _hasFreeVariables) :: rest -> (name, scheme) :: storedInferenceBindings(rest)(tail)
+
+// The global references as inference bindings over the coverage bindings, extended by one cell per
+// registration and rebuilt only when the coverage environment was replaced since the last one.
+let registeredInferenceEnvironment (name: Str) (scheme: TypeScheme) (group: CoreProgramState) =
+    (let coverage = group.coverageTypes
+    in
+        match group.topLevelInferenceEnvironment with
+            | Some((version, bindings)) ->
+                if version == group.coverageEnvironmentVersion
+                then Some((version, (name, scheme) :: bindings))
+                else Some((group.coverageEnvironmentVersion, (name, scheme) :: storedInferenceBindings(group.topLevelInferenceBindings)(coverage.bindings)))
+            | None -> Some((group.coverageEnvironmentVersion, (name, scheme) :: storedInferenceBindings(group.topLevelInferenceBindings)(coverage.bindings))))
+
 let withRegisteredTopLevelFunctionRef name label scheme (state: CoreLoweringState) =
     (let group = state.programState
-    in state with programState = (group with topLevelFunctionRefs = (name, label, scheme) :: group.topLevelFunctionRefs, topLevelInferenceBindings = (name, scheme, freeSchemeVariables(scheme) != []) :: group.topLevelInferenceBindings, topLevelFunctionRefByName = registerFunctionReference(name)(label)(scheme)(group.topLevelFunctionRefByName)))
+    in
+        let open =
+            if schemeIsClosed(scheme)
+            then group.topLevelInferenceOpen
+            else (name, scheme) :: group.topLevelInferenceOpen
+        in state with programState = (group with topLevelFunctionRefs = (name, label, scheme) :: group.topLevelFunctionRefs, topLevelInferenceBindings = (name, scheme, schemeIsClosed(scheme) == false) :: group.topLevelInferenceBindings, topLevelInferenceOpen = open, topLevelInferenceOpenShadowed = group.topLevelInferenceOpenShadowed || namesInferenceBinding(name)(group.topLevelInferenceOpen), topLevelInferenceEnvironment = registeredInferenceEnvironment(name)(scheme)(group), topLevelFunctionRefByName = registerFunctionReference(name)(label)(scheme)(group.topLevelFunctionRefByName)))
 
 let stateInlinableHelpers (state: CoreLoweringState) =
     (let group = state.programState
@@ -3284,6 +3325,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 specializationCandidateByName = Ashes.Collection.Map.empty,
                 topLevelFunctionRefs = [],
                 topLevelInferenceBindings = [],
+                topLevelInferenceOpen = [],
+                topLevelInferenceOpenShadowed = false,
+                topLevelInferenceEnvironment = None,
                 topLevelFunctionRefByName = Ashes.Collection.Map.empty,
                 traitEnvironment = standardLoweringTraitEnvironment,
                 traitMethodLabels = Ashes.Collection.Map.empty,
@@ -3876,11 +3920,6 @@ let bindingScheme binding =
     match binding with
         | CoreBinding { scheme = scheme } -> scheme
 
-let recursive bindingSchemes bindings =
-    match bindings with
-        | [] -> []
-        | binding :: rest -> bindingScheme(binding) :: bindingSchemes(rest)
-
 let bindingRequirements (binding: CoreBinding) =
     (let scheme = binding.scheme
     in scheme.constraints)
@@ -3911,13 +3950,14 @@ let resolveType state semanticType =
 // an enclosing binding's type was unified with since its scheme was recorded (a captured
 // parameter whose variable now stands for a constructor field's) is the environment's and must
 // not be quantified, the Hindley-Milner rule stage 0 follows by pruning the environment first.
-let recursive resolveSchemes (schemes: List(TypeScheme)) (state: CoreLoweringState) =
-    match schemes with
+// A closed scheme has no variable to hold back, so the environment lists the open ones only.
+let recursive resolvedBindingSchemes (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
         | [] -> []
-        | scheme :: rest -> applySchemeSubstitutionMap(state.substitution)(scheme) :: resolveSchemes(rest)(state)
-
-let resolvedBindingSchemes (bindings: List(CoreBinding)) (state: CoreLoweringState) =
-    resolveSchemes(bindingSchemes(bindings))(state)
+        | CoreBinding { scheme = scheme, closedScheme = closed } :: rest ->
+            if closed
+            then resolvedBindingSchemes(rest)(state)
+            else applySchemeSubstitutionMap(state.substitution)(scheme) :: resolvedBindingSchemes(rest)(state)
 
 // A copy-typed value needs no heap ownership at all, so it always reports as `CopyValue` in the
 // explain report's `memory` representation, regardless of how it was produced.
@@ -5221,7 +5261,7 @@ and lowerBoundVariable binding state =
             |> coreConstrainedLayout(requirements) with
                 | CoreConstrainedLayout { parameterTypes = parameters, error = None } ->
                     let scheme = binding.scheme
-                    in lowerUnconstrainedBoundVariable((binding with scheme = (scheme with body = coreConstrainedPhysicalType(parameters)(scheme.body), constraints = [])))(state)
+                    in lowerUnconstrainedBoundVariable((binding with scheme = (scheme with body = coreConstrainedPhysicalType(parameters)(scheme.body), constraints = []), closedScheme = false))(state)
                 | CoreConstrainedLayout { error = Some(error) } ->
                     SemNever
                     |> UnsupportedCoreTraitDispatch(error)
@@ -5271,13 +5311,13 @@ and lowerUnconstrainedBoundVariable binding state =
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternOwner = None)
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false, patternOwner = None, closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 let addOwnedBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = None)
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = None, closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 // A pattern binding that owns a protective reference of its own (stage 0's
@@ -5285,7 +5325,7 @@ let addOwnedBinding name scheme location state =
 let addPatternOwnerBinding name scheme location (fact: PatternBindingFact) state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = Some(fact))
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true, patternOwner = Some(fact), closedScheme = schemeIsClosed(scheme))
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -7154,8 +7194,8 @@ let pruneDeadCaptures captures instructions =
 let recursive capturedScope captures index =
     match captures with
         | [] -> []
-        | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternOwner = None)
+        | CoreBinding { name = name, scheme = scheme, ownedRead = ownedRead, closedScheme = closedScheme } :: rest ->
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = ownedRead, patternOwner = None, closedScheme = closedScheme)
             in binding :: capturedScope(rest)(index + 1)
 
 let recursive sealOperatorDefaults label pending sealed =
@@ -7326,7 +7366,8 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin (sta
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
             ownedRead = false,
-            patternOwner = None
+            patternOwner = None,
+            closedScheme = false
         ) :: capturedScope(captures)(0)
     in
         state
@@ -25863,7 +25904,8 @@ let prepareRecursiveBodyState selfName parameter parameterType captures selfBind
             scheme = emptyScheme(parameterType),
             location = CoreLocal(1),
             ownedRead = false,
-            patternOwner = None
+            patternOwner = None,
+            closedScheme = false
         ) :: append(selfBindings)(capturedScope(captures)(0))
     in
         state
@@ -26039,7 +26081,8 @@ let preparedSelfBinding environmentSize prepared =
                 scheme = emptyScheme(semanticType),
                 location = CoreSelf(label)(environmentSize),
                 ownedRead = false,
-                patternOwner = None
+                patternOwner = None,
+                closedScheme = false
             )
 
 let recursive preparedSelfBindings environmentSize members =
@@ -34787,11 +34830,23 @@ let lowerReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: List(S
 
 // Logical binding schemes are inferred independently of their dictionary-prefixed
 // runtime closures. Resolve the visible environment before the inference query;
-// returned substitutions are merged into Core rather than discarded.
-let recursive constrainedInferenceBindings bindings (state: CoreLoweringState) =
+// returned substitutions are merged into Core rather than discarded. A closed scheme
+// is its own resolution, so only the open ones are read through the substitution.
+let recursive constrainedLocalBindings (bindings: List(CoreBinding)) (tail: List((Str, TypeScheme))) (state: CoreLoweringState) =
     match bindings with
-        | [] -> []
-        | CoreBinding { name = name, scheme = scheme } :: rest -> (name, applySchemeSubstitutionMap(state.substitution)(scheme)) :: constrainedInferenceBindings(rest)(state)
+        | [] -> tail
+        | CoreBinding { name = name, scheme = scheme, closedScheme = closed } :: rest ->
+            if closed
+            then (name, scheme) :: constrainedLocalBindings(rest)(tail)(state)
+            else (name, applySchemeSubstitutionMap(state.substitution)(scheme)) :: constrainedLocalBindings(rest)(tail)(state)
+
+let recursive openLocalSchemes (bindings: List(CoreBinding)) (tail: List(TypeScheme)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> tail
+        | CoreBinding { scheme = scheme, closedScheme = closed } :: rest ->
+            if closed
+            then openLocalSchemes(rest)(tail)(state)
+            else applySchemeSubstitutionMap(state.substitution)(scheme) :: openLocalSchemes(rest)(tail)(state)
 
 // Closed schemes can be reused unchanged. Only schemes with free IDs need the
 // current substitution; the flag is computed when the global reference is stored.
@@ -34821,22 +34876,19 @@ let recordCoverageOpenSchemes (state: CoreLoweringState) =
         let coverage = group.coverageTypes
         in state with programState = (group with coverageOpenSchemes = Some((group.coverageEnvironmentVersion, openSchemesOf(coverage.bindings)))))
 
-let recursive prependBindingSchemes (bindings: List((Str, TypeScheme))) tail =
-    match bindings with
+let recursive openGlobalSchemes (open: List((Str, TypeScheme))) (tail: List(TypeScheme)) (state: CoreLoweringState) =
+    match open with
         | [] -> tail
-        | (_name, scheme) :: rest -> scheme :: prependBindingSchemes(rest)(tail)
+        | (_name, scheme) :: rest -> applySchemeSubstitutionMap(state.substitution)(scheme) :: openGlobalSchemes(rest)(tail)(state)
 
-let recursive openGlobalSchemes bindings tail (state: CoreLoweringState) =
-    match bindings with
+let recursive openGlobalBindings (open: List((Str, TypeScheme))) (tail: List((Str, TypeScheme))) (state: CoreLoweringState) =
+    match open with
         | [] -> tail
-        | (_name, scheme, hasFreeVariables) :: rest ->
-            if hasFreeVariables
-            then applySchemeSubstitutionMap(state.substitution)(scheme) :: openGlobalSchemes(rest)(tail)(state)
-            else openGlobalSchemes(rest)(tail)(state)
+        | (name, scheme) :: rest -> (name, applySchemeSubstitutionMap(state.substitution)(scheme)) :: openGlobalBindings(rest)(tail)(state)
 
-// Every scheme that can hold a free variable: the visible local bindings, the global references
+// Every scheme that can hold a free variable: the open local bindings, the global references
 // stored with free IDs, and the open coverage bindings. All other bindings are closed.
-let constrainedGeneralizationSchemes local (state: CoreLoweringState) =
+let constrainedGeneralizationSchemes (state: CoreLoweringState) =
     (let program = state.programState
     in
         match program.coverageOpenSchemes with
@@ -34844,22 +34896,41 @@ let constrainedGeneralizationSchemes local (state: CoreLoweringState) =
                 if version == program.coverageEnvironmentVersion
                 then
                     state
-                    |> openGlobalSchemes(program.topLevelInferenceBindings)(open)
-                    |> prependBindingSchemes(local)
+                    |> openLocalSchemes(state.bindings)(openGlobalSchemes(program.topLevelInferenceOpen)(open)(state))
                     |> Some
                 else None
             | None -> None)
+
+// The global references and the coverage bindings a lookup falls through to after the local
+// ones. The stored list is shared as it is when it describes the current coverage environment:
+// each open reference is resolved in front of it, where a lookup by name finds it before its
+// stored copy, which is the same answer as resolving it in place while no later reference took
+// its name. Otherwise every reference is resolved in place.
+let constrainedGlobalBindings (generalizes: Bool) (state: CoreLoweringState) =
+    (let program = state.programState
+    in
+        let coverage = program.coverageTypes
+        in
+            match program.topLevelInferenceEnvironment with
+                | Some((version, stored)) ->
+                    if generalizes && version == program.coverageEnvironmentVersion && program.topLevelInferenceOpenShadowed == false
+                    then openGlobalBindings(program.topLevelInferenceOpen)(stored)(state)
+                    else appendConstrainedGlobalBindings(program.topLevelInferenceBindings)(coverage.bindings)(state)
+                | None -> appendConstrainedGlobalBindings(program.topLevelInferenceBindings)(coverage.bindings)(state))
 
 let constrainedInferenceEnvironment (state: CoreLoweringState) =
     (let coverage = coverageEnvironment(state)
     in
         let traits = stateTraitEnvironment(state)
         in
-            let program = state.programState
+            let schemes = constrainedGeneralizationSchemes(state)
             in
-                let local = constrainedInferenceBindings(state.bindings)(state)
+                let generalizes =
+                    match schemes with
+                        | Some(_open) -> true
+                        | None -> false
                 in
-                    coverage with generalizationSchemes = constrainedGeneralizationSchemes(local)(state), bindings = append(local)(appendConstrainedGlobalBindings(program.topLevelInferenceBindings)(coverage.bindings)(state)), traits = traits.traits, traitImplementations = traits.traitImplementations, capabilities = traits.capabilities, providers = traits.providers)
+                    coverage with generalizationSchemes = schemes, bindings = constrainedLocalBindings(state.bindings)(constrainedGlobalBindings(generalizes)(state))(state), traits = traits.traits, traitImplementations = traits.traitImplementations, capabilities = traits.capabilities, providers = traits.providers)
 
 let recursive mergeConstrainedSubstitution substitutions state =
     match substitutions with
@@ -34874,7 +34945,7 @@ let recursive replaceConstrainedScheme name scheme bindings =
         | [] -> []
         | (CoreBinding { name = candidate } as binding) :: rest ->
             if candidate == name
-            then (binding with scheme = scheme) :: rest
+            then (binding with scheme = scheme, closedScheme = schemeIsClosed(scheme)) :: rest
             else binding :: replaceConstrainedScheme(name)(scheme)(rest)
 
 let constrainedInferenceFailure error state =
@@ -35095,7 +35166,7 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
             let primed =
                 state
                 |> withTypeSupply(supply)
-                |> restoreBindings((binding with name = privateName, scheme = emptyScheme(sourceType)) :: state.bindings)
+                |> restoreBindings((binding with name = privateName, scheme = emptyScheme(sourceType), closedScheme = false) :: state.bindings)
             in
                 let inferenceSpine = collectCallSpine(expression)
                 in
@@ -35141,7 +35212,7 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                                                 in
                                                                                     let physicalState =
                                                                                         settled
-                                                                                        |> restoreBindings((binding with name = privateName, scheme = emptyScheme(physical)) :: state.bindings)
+                                                                                        |> restoreBindings((binding with name = privateName, scheme = emptyScheme(physical), closedScheme = false) :: state.bindings)
                                                                                         |> clearConsumerRequest
                                                                                     in
                                                                                         match lowerConstrainedDictionaries(settled
@@ -35188,7 +35259,7 @@ let tryConstrainedGlobalCall name expression lower state =
                         | LoweredCoreValue { state = closureState, temp = temp, error = None } ->
                             match freshLocal(closureState) with
                                 | FreshLocal { state = allocated, local = slot } ->
-                                    let binding = CoreBinding(name = name, scheme = scheme, location = CoreLocal(slot), ownedRead = false, patternOwner = None)
+                                    let binding = CoreBinding(name = name, scheme = scheme, location = CoreLocal(slot), ownedRead = false, patternOwner = None, closedScheme = false)
                                     in
                                         allocated
                                         |> emit(StoreLocal(slot)(temp))
@@ -35906,7 +35977,7 @@ let lowerConstrainedAlias (binding: CoreBinding) state =
         match state
         |> stateTraitEnvironment
         |> coreConstrainedLayout(bindingRequirements(binding)) with
-            | CoreConstrainedLayout { parameterTypes = parameters, error = None } -> lowerUnconstrainedBoundVariable((binding with scheme = (binding.scheme with body = coreConstrainedPhysicalType(parameters)(scheme.body), constraints = [])))(state)
+            | CoreConstrainedLayout { parameterTypes = parameters, error = None } -> lowerUnconstrainedBoundVariable((binding with scheme = (binding.scheme with body = coreConstrainedPhysicalType(parameters)(scheme.body), constraints = []), closedScheme = false))(state)
             | CoreConstrainedLayout { error = Some(error) } ->
                 scheme.body
                 |> UnsupportedCoreTraitDispatch(error)
