@@ -48,6 +48,7 @@ import AshesCompiler.Semantics.CallResultProvenance
 import AshesCompiler.Semantics.RecursiveTraitEvidence
 import AshesCompiler.Semantics.CoreConstrainedSpecialization
 import AshesCompiler.Semantics.CoreConstrainedBindings
+import AshesCompiler.Semantics.OperatorConstraintOrigins.mayOriginateOperatorConstraint
 import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
@@ -779,6 +780,9 @@ type CoreProgramState =
     | coverageTypes: TypeEnvironment
     | coverageEnvironmentVersion: Int
     | coverageOpenSchemes: Maybe((Int, List(TypeScheme)))
+    // The names among the coverage bindings whose scheme requires `Eq`, `Ord` or `Not`, for the
+    // environment version they were read from.
+    | coverageOperatorConstrainedNames: Maybe((Int, MapTree(Str, Bool)))
     | heapQueryContext: CoreHeapQueryContext
     | dropperTypes: DropperTypes
     | builtinLayouts: List(CoreBuiltinLayout)
@@ -3276,6 +3280,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 coverageTypes = coverageEnvironment,
                 coverageEnvironmentVersion = 0,
                 coverageOpenSchemes = None,
+                coverageOperatorConstrainedNames = None,
                 heapQueryContext = emptyCoreHeapQueryContext(coverageEnvironment),
                 heapLayoutFactsByType = coverageEnvironment |> heapLayoutFactsTableFor(constructorLayouts),
                 dropperTypes = constructorLayouts
@@ -36001,17 +36006,95 @@ let recursive constrainedOperatorsSupported constraints =
         | [] -> true
         | TraitConstraint { traitName = name } :: rest -> (name == "Eq" || name == "Ord" || name == "Not") && constrainedOperatorsSupported(rest)
 
+let recursive hasOperatorConstraint (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> false
+        | TraitConstraint { traitName = name } :: rest -> name == "Eq" || name == "Ord" || name == "Not" || hasOperatorConstraint(rest)
+
+let recursive operatorConstrainedNames (bindings: List((Str, TypeScheme))) (names: MapTree(Str, Bool)) =
+    match bindings with
+        | [] -> names
+        | (name, TypeScheme { constraints = constraints }) :: rest ->
+            if hasOperatorConstraint(constraints)
+            then
+                names
+                |> Ashes.Collection.Map.setStr(name)(true)
+                |> operatorConstrainedNames(rest)
+            else operatorConstrainedNames(rest)(names)
+
+let recursive namedOperatorConstrained (name: Str) (bindings: List((Str, TypeScheme))) =
+    match bindings with
+        | [] -> false
+        | (candidate, TypeScheme { constraints = constraints }) :: rest -> candidate == name && hasOperatorConstraint(constraints) || namedOperatorConstrained(name)(rest)
+
+// Registration is complete before any item is lowered, so the coverage bindings are read once.
+let recordCoverageOperatorConstrainedNames (state: CoreLoweringState) =
+    (let group = state.programState
+    in
+        let coverage = group.coverageTypes
+        in
+            let names : MapTree(Str, Bool) =
+                Ashes.Collection.Map.empty
+                |> operatorConstrainedNames(coverage.bindings)
+                |> operatorConstrainedNames(coverage.fallbackBindings)
+            in state with programState = (group with coverageOperatorConstrainedNames = Some((group.coverageEnvironmentVersion, names))))
+
+let coverageNameCarriesOperatorConstraint (name: Str) (state: CoreLoweringState) =
+    (let program = state.programState
+    in
+        let coverage = program.coverageTypes
+        in
+            let scanned =
+                given (_unit) -> namedOperatorConstrained(name)(coverage.bindings) || namedOperatorConstrained(name)(coverage.fallbackBindings)
+            in
+                match program.coverageOperatorConstrainedNames with
+                    | Some((version, names)) ->
+                        if version == program.coverageEnvironmentVersion
+                        then
+                            match Ashes.Collection.Map.getStr(name)(names) with
+                                | Some(_present) -> true
+                                | None -> false
+                        else scanned(Unit)
+                    | None -> scanned(Unit))
+
+// A name resolves as `constrainedInferenceEnvironment` resolves it: the nearest local binding,
+// then the youngest top-level function reference, then the coverage bindings.
+let nameCarriesOperatorConstraint (state: CoreLoweringState) (name: Str) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(binding) ->
+            binding
+            |> bindingRequirements
+            |> hasOperatorConstraint
+        | None ->
+            match state
+            |> stateTopLevelFunctionRefIndex
+            |> lookupTopLevelFunctionRef(name) with
+                | Some((_label, TypeScheme { constraints = constraints })) -> hasOperatorConstraint(constraints)
+                | None -> coverageNameCarriesOperatorConstraint(name)(state)
+
+// A plan needs a generalized `Eq`, `Ord` or `Not` requirement on the binding's scheme. With no
+// written `requires`, the scheme's requirements are the ones its value produced, so a value that
+// can produce none of the three has no plan and the inference that would say so is not run.
+let constrainedPlanCannotApply (value: Expr) (requirements: List(TraitConstraintSyntax)) (state: CoreLoweringState) =
+    match requirements with
+        | [] ->
+            mayOriginateOperatorConstraint(nameCarriesOperatorConstraint(state))(value) == false
+        | _ -> false
+
 let constrainedBindingPlan name isRecursive value annotation requirements (state: CoreLoweringState) =
     match lambdaParts(value) with
         | None -> None
         | Some(_parts) ->
-            match inferCoreConstrainedBinding(name)(isRecursive)(value)(annotation)(requirements)(constrainedInferenceEnvironment(state))(state.typeSupply) with
-                | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
-                | CoreConstrainedInference { error = Some(_error) } -> None
-                | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
-                    if constrainedOperatorsSupported(constraints)
-                    then Some(plan)
-                    else None
+            if constrainedPlanCannotApply(value)(requirements)(state)
+            then None
+            else
+                match inferCoreConstrainedBinding(name)(isRecursive)(value)(annotation)(requirements)(constrainedInferenceEnvironment(state))(state.typeSupply) with
+                    | CoreConstrainedInference { scheme = TypeScheme { constraints = [] } } -> None
+                    | CoreConstrainedInference { error = Some(_error) } -> None
+                    | CoreConstrainedInference { scheme = TypeScheme { constraints = constraints } } as plan ->
+                        if constrainedOperatorsSupported(constraints)
+                        then Some(plan)
+                        else None
 
 let recursive constrainedPlanAvailable plan state =
     match plan with
@@ -38155,6 +38238,7 @@ let lowerProgramWithCapabilities items trailingBody environment state =
                                     |> recordContractRecordFacts
                                     |> recordGeneralRcTypeFacts
                                     |> recordCoverageOpenSchemes
+                                    |> recordCoverageOperatorConstrainedNames
                                     |> lowerCoreProgramItems(items)(trailingBody)(Ashes.Collection.Map.empty)(environment)(programLoweringAnalysis(items)(trailingBody))([])
 
 // The goals a pass recorded whose type its own substitution has since resolved to a concrete one.

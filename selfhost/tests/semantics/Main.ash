@@ -42,6 +42,7 @@ import IrFunctionSelectionTests
 import IrTextTests
 import CoreLoweringTests
 import CoreLogicalNotInferenceTests
+import OperatorConstraintOriginsTests
 import CoreOrderedInferenceTests
 import CoreConstrainedBindingsTests
 import CoreConstrainedSpecializationTests
@@ -140,6 +141,7 @@ let run unit =
     |> (given (_) -> IrTextTests.runIrTextTests(Unit))
     |> (given (_) -> CoreLoweringTests.runCoreLoweringTests(Unit))
     |> (given (_) -> CoreLogicalNotInferenceTests.runCoreLogicalNotInferenceTests(Unit))
+    |> (given (_) -> OperatorConstraintOriginsTests.runOperatorConstraintOriginsTests(Unit))
     |> (given (_) -> CoreOrderedInferenceTests.runCoreOrderedInferenceTests(Unit))
     |> (given (_) -> CoreConstrainedBindingsTests.runCoreConstrainedBindingsTests(Unit))
     |> (given (_) -> CoreConstrainedSpecializationTests.runCoreConstrainedSpecializationTests(Unit))
