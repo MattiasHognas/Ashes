@@ -278,6 +278,10 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task LoopResultSomeOfAHeadMatchedOutOfATupleOfListsIsReleased()
         => VerifyPlateauAndPoison("leak.loop-result-part-of-tuple-scrutinee");
 
+    [Test]
+    public Task UntypedFinderSomeResultIsReleasedByItsCaller()
+        => VerifyPlateauAndPoison("leak.untyped-finder-result");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())

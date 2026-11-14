@@ -1560,6 +1560,15 @@ public sealed partial class Lowering
             specializationLambda,
             functionType,
             concreteParameterTypes);
+        TypeRef resultType = Prune(loweredArguments.Result);
+        bool takesOwnedResult = TraitOperatorCopyReturnsOwnedResult(label, arguments.Count, resultType);
+        int windowCursorSlot = takesOwnedResult ? NewLocal() : -1;
+        int windowEndSlot = takesOwnedResult ? NewLocal() : -1;
+        if (takesOwnedResult)
+        {
+            Emit(new IrInst.SaveArenaState(windowCursorSlot, windowEndSlot));
+        }
+
         int applied = LowerTraitOperatorSpecializationClosure(label);
         foreach (int argumentTemp in loweredArguments.Temps)
         {
@@ -1567,9 +1576,36 @@ public sealed partial class Lowering
             Emit(new IrInst.CallClosure(next, applied, argumentTemp));
             applied = next;
         }
-        TypeRef resultType = Prune(loweredArguments.Result);
         HandOverDictionaryCallArgumentsToOwnedSlots(loweredArguments.HandedOver, resultType);
-        return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
+        return takesOwnedResult
+            ? (LowerGeneralRcCallResult(windowCursorSlot, windowEndSlot, applied, resultType, calleeReturnsOwned: true), resultType)
+            : (NormalizeStaticEvidenceResult(applied, resultType), resultType);
+    }
+
+    // A copy lowered at concrete types returns a result of the contract's types as its own function
+    // does: normalized, holding its own references. The call takes that result over into an owned
+    // slot like any call to a function known to return its result owned, where the dictionary call
+    // it stands in for returned an arena value nobody owns.
+    private bool TraitOperatorCopyReturnsOwnedResult(string label, int argumentCount, TypeRef resultType)
+    {
+        if (Environment.GetEnvironmentVariable("GRC_NO_TRAITOPERATORCOPYOWNEDRESULT") is not null
+            || _inCoroutineBody
+            || !IsGeneralRcValueType(resultType))
+        {
+            return false;
+        }
+
+        for (int stage = 1; stage < argumentCount; stage++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(label, out string? returned))
+            {
+                return false;
+            }
+
+            label = returned;
+        }
+
+        return _generalRcOwnedResultLabels.Contains(label);
     }
 
     private bool TrySelectTraitOperatorSpecializationLambda(
