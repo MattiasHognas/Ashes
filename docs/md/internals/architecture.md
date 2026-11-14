@@ -2807,6 +2807,13 @@ while independent bindings still generalize. The value type and constraints pass
 to this helper are already resolved. A closed candidate skips the environment scan.
 `CapturedEnvironmentInferenceTests` covers these boundaries and independent polymorphism.
 
+`RecursiveTraitEvidence` provides the pure self-reference elaboration for a monomorphic
+recursive body: each free reference receives its ordered dictionary parameters before
+dictionary lambdas are wrapped and recursive call-shape analysis runs. Lexical binders
+shadow the recursive name; a binder that would capture an inserted dictionary reference
+or an unsupported syntax variant makes elaboration fail. Call spans and layout survive.
+Its caller must then use the physical self type, without inserting evidence a second time.
+
 The source surface, coherence rules, and type-system behavior are specified in
 [Language Reference](../reference/language.md) section 21. Trait selection is entirely static; there
 is no runtime registry, name lookup, or open-world dispatch.

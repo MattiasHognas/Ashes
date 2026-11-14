@@ -23,6 +23,7 @@ import TraitMethodConstructionOrderTests
 import TraitEvidenceValueTransportTests
 import TraitEvidenceRewritingTests
 import TraitEvidenceCallRewritingTests
+import RecursiveTraitEvidenceTests
 import TraitDictionaryRewritingTests
 import StandardTraitsTests
 import StandardTraitSourceBindingTests
@@ -116,6 +117,7 @@ let run unit =
     |> (given (_) -> TraitEvidenceValueTransportTests.runTraitEvidenceValueTransportTests(Unit))
     |> (given (_) -> TraitEvidenceRewritingTests.runTraitEvidenceRewritingTests(Unit))
     |> (given (_) -> TraitEvidenceCallRewritingTests.runTraitEvidenceCallRewritingTests(Unit))
+    |> (given (_) -> RecursiveTraitEvidenceTests.runRecursiveTraitEvidenceTests(Unit))
     |> (given (_) -> TraitDictionaryRewritingTests.runTraitDictionaryRewritingTests(Unit))
     |> (given (_) -> StandardTraitsTests.runStandardTraitsTests(Unit))
     |> (given (_) -> StandardTraitSourceBindingTests.runStandardTraitSourceBindingTests(Unit))
