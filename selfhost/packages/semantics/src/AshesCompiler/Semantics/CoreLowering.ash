@@ -14166,16 +14166,28 @@ let recursive withoutPartDuplicateSlots (origin: Maybe(IrFunctionOrigin)) (slots
             then withoutPartDuplicateSlots(origin)(rest)(state)
             else (owner, slot, semanticType) :: withoutPartDuplicateSlots(origin)(rest)(state)
 
+let recursive leaveWithdrawnPartDuplicatesToTheirCells (origin: Maybe(IrFunctionOrigin)) (slots: List((Maybe(IrFunctionOrigin), Int, SemanticType))) (state: CoreLoweringState) =
+    match slots with
+        | [] -> state
+        | (owner, slot, _semanticType) :: rest ->
+            if owner == origin && isPartDuplicateSlot(origin)(slot)(state)
+            then leaveWithdrawnPartDuplicatesToTheirCells(origin)(rest)((state with reversedInstructions = leaveWithdrawnPartDuplicateToItsCell(slot)(state.reversedInstructions)))
+            else leaveWithdrawnPartDuplicatesToTheirCells(origin)(rest)(state)
+
 // Stage 0's `DropPartDuplicateSlotsWhenTheResultCopiesAnyway`: a result its own rules copy or
 // normalize anyway (a contract type, a reference-counted result, another owned value) settles a
 // part's duplicate by those rules, so the part's slot is withdrawn; only a result nothing else copies
-// keeps it, which makes the return copy the result and release the slot behind the copy.
+// keeps it, which makes the return copy the result and release the slot behind the copy. A withdrawn
+// slot nothing reads has its store take the borrowed value, so the cell is the duplicate's only reader.
 let dropPartDuplicateSlotsWhenTheResultCopiesAnyway (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
     (let origin = stateActiveFunctionOrigin(state)
     in
         if isGeneralRcValueType(bodyType)(state) || isRuntimeTemp(bodyTemp)(state) || anyOtherOwnedSlotOf(origin)(stateGeneralRcOwnedSlots(state))(state)
         then
-            withStateGeneralRcOwnedSlots(withoutPartDuplicateSlots(origin)(stateGeneralRcOwnedSlots(state))(state))(state)
+            state
+            |> leaveWithdrawnPartDuplicatesToTheirCells(origin)(stateGeneralRcOwnedSlots(state))
+            |> (given (settled: CoreLoweringState) ->
+                withStateGeneralRcOwnedSlots(withoutPartDuplicateSlots(origin)(stateGeneralRcOwnedSlots(settled))(settled))(settled))
         else state)
 
 let finishGeneralRcFunctionResultWithoutPartSlots (producedOwned: Bool) (label: Str) (bodyTemp: Int) (bodyType: SemanticType) (state: CoreLoweringState) =
@@ -16892,10 +16904,15 @@ let recursive loopParametersWithActiveSlots (slots: List(Int)) (pairs: List((Int
 // `LoopParametersOf`).
 let frameLoopParameters (frame: CoreTcoLoopFrame) = loopParametersWithActiveSlots(frame.parameterSlots)(frame.listActiveSlots)
 
-let withdrawCopiedLoopResultRetains (parameters: List((Int, Int))) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+let recursive patternOwnerSiteSlots (sites: List(PatternOwnerSite)) =
+    match sites with
+        | [] -> []
+        | site :: rest -> site.siteSlot :: patternOwnerSiteSlots(rest)
+
+let withdrawCopiedLoopResultRetains (ownerSlots: List(Int)) (parameters: List((Int, Int))) (bodyTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match (isGeneralRcValueType(semanticType)(state), generalCopyPlanOf(semanticType)(state)) with
         | (true, Some(_plan)) ->
-            state with reversedInstructions = withdrawLoopParameterRetainsOfCopiedCells(stateTransientFlagClears(state))(bodyTemp)(parameters)(state.reversedInstructions)
+            state with reversedInstructions = withdrawLoopResultRetainsOfCopiedCells(ownerSlots)(stateReleasedPatternOwnerDuplicates(state))(stateTransientFlagClears(state))(bodyTemp)(parameters)(state.reversedInstructions)
         | _ -> state
 
 let recursive heapFieldsOf (types: List(SemanticType)) (index: Int) (state: CoreLoweringState) =
@@ -17082,19 +17099,21 @@ let recursive emitExitOwnFieldReleasesOf (entries: List((Int, Int, Int))) (resul
 // releases the function's owned slots there too, and is never transferred either. The return that
 // follows finds the result finished and leaves it. The copy of an arena result borrows its
 // children ahead of the exit releases, so the retains of loop-parameter reads its cells were built
-// with are withdrawn (stage 0's `EmitGeneralRcOwnedFunctionResult`).
-let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (parameters: List((Int, Int))) (bodyTemp: Int) (loopType: SemanticType) (state: CoreLoweringState) =
+// with are withdrawn (stage 0's `EmitGeneralRcOwnedFunctionResult`), after the part duplicates' slots
+// are, so a withdrawn slot's store is no second reader of its duplicate.
+let finishLoopResultAheadOfExit (producedOwned: Bool) (label: Str) (ownerSlots: List(Int)) (parameters: List((Int, Int))) (bodyTemp: Int) (loopType: SemanticType) (state: CoreLoweringState) =
     (let semanticType = resolvePhantomResultLayout(label)(loopType)(state)
     in
         if isGeneralRcValueType(semanticType)(state) || resultSurvivesReset(semanticType)(state) && !isRuntimeTemp(bodyTemp)(state) && isCopyTypeSemantic(resolveType(state)(semanticType))
         then
             match state
-            |> withdrawCopiedLoopResultRetains(parameters)(bodyTemp)(semanticType)
+            |> dropPartDuplicateSlotsWhenTheResultCopiesAnyway(bodyTemp)(semanticType)
+            |> withdrawCopiedLoopResultRetains(ownerSlots)(parameters)(bodyTemp)(semanticType)
             |> finishGeneralRcFunctionResultWithLayout(producedOwned)(label)(bodyTemp)(semanticType) with
                 | (finished, resultTemp) -> (withGeneralRcFinishedResult(resultTemp)(finished), resultTemp)
         else (state, bodyTemp))
 
-let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
+let finishTcoManagedPlacement (label: Str) (ownerSlots: List(Int)) (frame: CoreTcoLoopFrame) (loop: CoreTcoLoop) (bodyTemp: Int) (semanticType: SemanticType) (candidates: List(TcoManagedCandidate)) (managedLists: List((Int, Int, SemanticType))) (managedAdts: List((Int, Int, SemanticType, Str))) (managedStrs: List((Int, Int))) (state: CoreLoweringState) =
     match tcoEntryNormalizationEntries(candidates)(managedLists)(managedAdts)(managedStrs)(state) with
         | [] ->
             state
@@ -17107,7 +17126,7 @@ let finishTcoManagedPlacement (label: Str) (frame: CoreTcoLoopFrame) (loop: Core
             |> markRuntimeListResult(bodyTemp)(managedLists)(managedAdts)(managedStrs)
             |> recordTcoNormalizedArgumentLabel(label)(entries)
             |> spliceTcoEntryNormalization(frame.entrySpliceCount)(entries)
-            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(frameLoopParameters(frame))(bodyTemp)(semanticType)
+            |> finishLoopResultAheadOfExit(tempIsProducedOwned(bodyTemp)(state) || isClosedProducerChain(bodyTemp)(state))(label)(ownerSlots)(frameLoopParameters(frame))(bodyTemp)(semanticType)
             |> (given (finished: (CoreLoweringState, Int)) ->
                 match finished with
                     | (finishedState, resultTemp) ->
@@ -17213,7 +17232,9 @@ let finalizeTcoManagedPlacementResolved (label: Str) (frame: CoreTcoLoopFrame) (
                     |> promoteTcoParameterRetains(managedLists)(managedAdts)(candidates)
                     |> resolvePendingArgumentFlags(managedLists)(managedAdts)(candidates)
                     |> withdrawBorrowedScrutineeRetains(frameLoopParameters(frame))
-                    |> finishTcoManagedPlacement(label)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
+                    |> finishTcoManagedPlacement(label)(state
+                    |> placedPatternOwnerSites(statePatternOwnerSites(state))(managedLists)(managedAdts)(candidates)
+                    |> patternOwnerSiteSlots)(frame)(loop)(bodyTemp)(semanticType)(candidates)(managedLists)(managedAdts)(managedStrs)))(tcoRuntimeManagedListSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots))(tcoRuntimeManagedAdtSlotsOf(unblockedCandidates(candidates)(loop)(state))(frame.listActiveSlots)))
 
 // Stage 0's post-body refresh allocates the active flag of every candidate the loop entry and
 // the back edges left without one, ahead of the entry normalization's own locals.
