@@ -2126,45 +2126,45 @@ and resolveProvidedCapabilityRow semanticType environment =
                                     ), error = None)
         | _ -> ProviderRowResolution(semanticType = semanticType, error = None)
 
+// The ambient row is resolved only where it is unified. A call whose row is empty never reads
+// it, and resolving an open row walks the whole substitution.
 let subsumeCapabilityRow capabilityRow environment ambientRow substitution supply resultType =
     (let resolvedRow = applySubstitution(substitution)(capabilityRow)
     in
-        let resolvedAmbient = applySubstitution(substitution)(ambientRow)
-        in
-            match resolveProvidedCapabilityRow(resolvedRow)(environment) with
-                | ProviderRowResolution { semanticType = _providerResolvedRow, error = Some(error) } ->
-                    inferenceFailure(
-                        resultType,
-                        substitution,
-                        supply,
-                        error
-                    )
-                | ProviderRowResolution { semanticType = providerResolvedRow, error = None } ->
-                    match providerResolvedRow with
-                        | SemRow([], None) ->
-                            inferenceSuccess(
-                                applySubstitution(substitution)(resultType),
-                                substitution,
-                                supply
-                            )
-                        | SemRow(capabilities, None) ->
-                            match freshTypeVariable(supply) with
-                                | (tailType, nextSupply) ->
-                                    mergeUnification(
-                                        substitution,
-                                        Some(tailType)
-                                        |> SemRow(capabilities)
-                                        |> unify(resolvedAmbient),
-                                        nextSupply,
-                                        resultType
-                                    )
-                        | _ ->
-                            mergeUnification(
-                                substitution,
-                                unify(resolvedAmbient)(providerResolvedRow),
-                                supply,
-                                resultType
-                            ))
+        match resolveProvidedCapabilityRow(resolvedRow)(environment) with
+            | ProviderRowResolution { semanticType = _providerResolvedRow, error = Some(error) } ->
+                inferenceFailure(
+                    resultType,
+                    substitution,
+                    supply,
+                    error
+                )
+            | ProviderRowResolution { semanticType = providerResolvedRow, error = None } ->
+                match providerResolvedRow with
+                    | SemRow([], None) ->
+                        inferenceSuccess(
+                            applySubstitution(substitution)(resultType),
+                            substitution,
+                            supply
+                        )
+                    | SemRow(capabilities, None) ->
+                        match freshTypeVariable(supply) with
+                            | (tailType, nextSupply) ->
+                                mergeUnification(
+                                    substitution,
+                                    Some(tailType)
+                                    |> SemRow(capabilities)
+                                    |> unify(applySubstitution(substitution)(ambientRow)),
+                                    nextSupply,
+                                    resultType
+                                )
+                    | _ ->
+                        mergeUnification(
+                            substitution,
+                            unify(applySubstitution(substitution)(ambientRow))(providerResolvedRow),
+                            supply,
+                            resultType
+                        ))
 
 let recursive capabilityOperationCallRoot expression sawArgument =
     match expression with
