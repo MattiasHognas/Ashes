@@ -9,6 +9,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.TraitConstraintSyntax
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
@@ -51,6 +52,8 @@ export (
     value resolveCapabilityOperation,
     value addCapabilityProvider,
     value resolveCapabilityProvider,
+    value canonicalTraitName,
+    value withCanonicalStandardTraits,
     value addTraitBinding,
     value resolveTraitBinding,
     value resolveTraitMethod,
@@ -63,6 +66,10 @@ export (
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value inferExpressionFrom,
+    value inferExpressionFromLocated,
+    value inferTopLevelBindingLocated,
+    value inferenceErrorSpan,
+    value unlocatedInferenceError,
     value inferTopLevelBinding,
     value inferExpression,
     value matchCoverageError,
@@ -154,6 +161,10 @@ type TypeEnvironment =
     | generalizationSchemes: Maybe(List(TypeScheme))
     // Bindings a lookup by name reaches only after `bindings` has no entry for the name.
     | fallbackBindings: List((Str, TypeScheme))
+    // Whether a stitched standard trait's compiler name (`Ashes_Trait_Eq`) is stored and looked
+    // up under its bare name. Program inference turns it on; an environment built for lowering
+    // leaves it off.
+    | canonicalStandardTraits: Bool
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -188,6 +199,9 @@ type TypeInferenceError =
     | ConstructorPatternsFromDifferentAdts(List(Str))
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
+    // An error with the span of the innermost located expression it was raised in. Only the
+    // `Located` entry points return it; every other entry point reports the bare error.
+    | InferenceErrorAt(TextSpan, TypeInferenceError)
     deriving {Eq, Show}
 
 type TypeInferenceResult =
@@ -279,7 +293,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], canonicalStandardTraits = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -451,10 +465,26 @@ let resolveCapabilityOperation capabilityName operationName environment =
                 operations
             )
 
+// A trait declared by the stitched `Ashes.Trait` module keeps its module-qualified compiler name
+// (`Ashes_Trait_Eq`), while the operators, derived implementations and the seeded standard
+// environment name the same trait bare (`Eq`). The environment stores and looks traits up under
+// the bare name, so every spelling reaches one trait.
+let canonicalTraitName (name: Str) =
+    if Ashes.Text.startsWith(name)("Ashes_Trait_")
+    then Ashes.Text.substring(name)(12)(Ashes.Text.length(name) - 12)
+    else name
+
+let traitNameIn (environment: TypeEnvironment) (name: Str) =
+    if environment.canonicalStandardTraits
+    then canonicalTraitName(name)
+    else name
+
+let withCanonicalStandardTraits (environment: TypeEnvironment) = environment with canonicalStandardTraits = true
+
 let addTraitBinding name parameterCount parameters methods supertraits (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { packageId = packageId, traits = traits } ->
-            environment with traits = TraitInferenceDefinition(name = name, parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = canonicalizeTraitConstraints(
+            environment with traits = TraitInferenceDefinition(name = traitNameIn(environment)(name), parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = canonicalizeTraitConstraints(
                 supertraits
             ), provenance = DeclarationProvenance(packageId = packageId)) :: traits
 
@@ -473,7 +503,7 @@ let resolveTraitBinding name environment =
     match environment with
         | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, traits = traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
             findTraitBinding(
-                name,
+                traitNameIn(environment)(name),
                 traits
             )
 
@@ -500,7 +530,7 @@ let resolveTraitMethod traitName methodName environment =
 let addTraitImplementation traitName typeArguments requirements methods (environment: TypeEnvironment) =
     match environment with
         | TypeEnvironment { traitImplementations = traitImplementations } ->
-            let definition = TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = methods)
+            let definition = TraitImplementationInferenceDefinition(traitName = traitNameIn(environment)(traitName), typeArguments = typeArguments, requirements = requirements, methods = methods)
             in environment with traitImplementations = definition :: traitImplementations
 
 let recursive filterTraitImplementations traitName implementations =
@@ -517,7 +547,7 @@ let resolveTraitImplementations traitName environment =
     match environment with
         | TypeEnvironment { traitImplementations = implementations } ->
             filterTraitImplementations(
-                traitName,
+                traitNameIn(environment)(traitName),
                 implementations
             )
 
@@ -785,6 +815,38 @@ let inferenceFailure semanticType substitution supply error =
         error
     ))
 
+// Unary `-x` reaches inference as `0 - x`: the parser has no negation node. A subtraction whose
+// left operand is the literal zero is therefore the operand's own negation, at the operand's type.
+let recursive isZeroLiteralExpression expression =
+    match expression with
+        | ExprAt(_span, inner) -> isZeroLiteralExpression(inner)
+        | ExprInt(0) -> true
+        | _ -> false
+
+// Attaches `span` to a failure that has no location yet, so the innermost located expression
+// around the failing node is the one reported.
+let locateInferenceError span (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = None } -> result
+        | TypeInferenceResult { error = Some(InferenceErrorAt(_, _)) } -> result
+        | TypeInferenceResult { error = Some(error) } ->
+            result with error = Some(InferenceErrorAt(span)(error))
+
+let inferenceErrorSpan error =
+    match error with
+        | InferenceErrorAt(span, _) -> Some(span)
+        | _ -> None
+
+let unlocatedInferenceError error =
+    match error with
+        | InferenceErrorAt(_, inner) -> inner
+        | _ -> error
+
+let unlocatedInferenceResult (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(InferenceErrorAt(_, inner)) } -> result with error = Some(inner)
+        | _ -> result
+
 let recursive appendConstraints left right =
     match left with
         | [] -> right
@@ -981,7 +1043,7 @@ let recursive resolveBindingRequirements requirements context environment revers
                                         tail,
                                         context,
                                         environment,
-                                        TraitConstraint(traitName = traitName, typeArguments = resolvedArguments) :: reversed
+                                        TraitConstraint(traitName = traitNameIn(environment)(traitName), typeArguments = resolvedArguments) :: reversed
                                     )
                                 | (_resolvedArguments, Some(error)) ->
                                     BindingRequirementResolution(constraints = reverse(
@@ -3645,7 +3707,11 @@ and inferHandler body arms environment substitution supply ambientRow =
                                                             | failure -> failure
 and inferCalledFunction expression environment substitution supply ambientRow =
     match expression with
-        | ExprAt(_span, inner) -> inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
+        | ExprAt(span, inner) ->
+            locateInferenceError(
+                span,
+                inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
+            )
         | ExprVar(name) ->
             match resolveExternalFunctionBinding(name)(environment) with
                 | None -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
@@ -3685,7 +3751,7 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                     )
         | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
 and inferQualifiedValue moduleName name environment substitution supply ambientRow =
-    (let qualified = moduleName + "." + name
+    (let qualified = traitNameIn(environment)(moduleName) + "." + name
     in
         match resolveTypeBinding(qualified)(environment) with
             | Some(_scheme) -> inferWith(ExprVar(qualified))(environment)(substitution)(supply)(ambientRow)
@@ -3698,7 +3764,11 @@ and inferQualifiedValue moduleName name environment substitution supply ambientR
                             | failed -> failed)
 and inferWith expression environment substitution supply ambientRow =
     match expression with
-        | ExprAt(_span, inner) -> inferWith(inner)(environment)(substitution)(supply)(ambientRow)
+        | ExprAt(span, inner) ->
+            locateInferenceError(
+                span,
+                inferWith(inner)(environment)(substitution)(supply)(ambientRow)
+            )
         | ExprInt(_) -> inferenceSuccess(SemInt)(substitution)(supply)
         | ExprBigInt(_) -> inferenceSuccess(SemBigInt)(substitution)(supply)
         | ExprUInt(_value, bits, _text) -> inferenceSuccess(SemUInt(bits))(substitution)(supply)
@@ -4202,16 +4272,19 @@ and inferWith expression environment substitution supply ambientRow =
                 ambientRow
             )
         | ExprSubtract(left, right) ->
-            inferBinaryTrait(
-                "Subtract",
-                false,
-                left,
-                right,
-                environment,
-                substitution,
-                supply,
-                ambientRow
-            )
+            if isZeroLiteralExpression(left)
+            then inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow)
+            else
+                inferBinaryTrait(
+                    "Subtract",
+                    false,
+                    left,
+                    right,
+                    environment,
+                    substitution,
+                    supply,
+                    ambientRow
+                )
         | ExprMultiply(left, right) ->
             inferBinaryTrait(
                 "Multiply",
@@ -4424,12 +4497,17 @@ and inferWith expression environment substitution supply ambientRow =
                 UnsupportedInferenceExpression("expression case is not implemented yet")
             )
 
-let inferExpressionFrom expression environment substitution supply =
+let inferExpressionFromLocated expression environment substitution supply =
     match freshTypeVariable(supply) with
         | (ambientRow, nextSupply) -> inferWith(expression)(environment)(substitution)(nextSupply)(ambientRow)
 
-let inferTopLevelBinding name value annotation requirements environment substitution supply =
-    match inferExpressionFrom(value)(environment)(substitution)(supply) with
+let inferExpressionFrom expression environment substitution supply =
+    unlocatedInferenceResult(
+        inferExpressionFromLocated(expression)(environment)(substitution)(supply)
+    )
+
+let inferTopLevelBindingLocated name value annotation requirements environment substitution supply =
+    match inferExpressionFromLocated(value)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
             match checkInferenceBindingSignature(
                 annotation,
@@ -4464,6 +4542,14 @@ let inferTopLevelBinding name value annotation requirements environment substitu
             TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(
                 error
             ))
+
+let inferTopLevelBinding name value annotation requirements environment substitution supply =
+    match inferTopLevelBindingLocated(name)(value)(annotation)(requirements)(environment)(substitution)(supply) with
+        | TopLevelBindingInferenceResult { environment = failedEnvironment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(InferenceErrorAt(_, inner)) } ->
+            TopLevelBindingInferenceResult(environment = failedEnvironment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(
+                inner
+            ))
+        | result -> result
 
 // Starts above the reserved ids for the same reason `initialProgramInferenceState` does: an
 // environment carrying statically embedded schemes (the builtin signatures, the standard traits'

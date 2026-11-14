@@ -100,6 +100,7 @@ let projectInferenceError baseEnvironment error =
         substitution = [],
         environment = baseEnvironment,
         externalAbi = None,
+        errorLocation = None,
         error = Some(error)
     )
 
@@ -123,12 +124,47 @@ let inferProjectUnits baseEnvironment assembled =
                 InvalidStitchedProgram("missing entry package")
             )
 
+let recursive entryRegion regions =
+    match regions with
+        | [] -> None
+        | region :: tail ->
+            match region with
+                | StitchedModuleRegion { isEntry = true } -> Some(region)
+                | _ -> entryRegion(tail)
+
+let recursive regionAt index regions =
+    match regions with
+        | [] -> None
+        | region :: tail ->
+            if index == 0
+            then Some(region)
+            else regionAt(index - 1)(tail)
+
+let errorRegion regions (location: InferenceErrorLocation) =
+    if location.unitIndex < 0
+    then entryRegion(regions)
+    else regionAt(location.unitIndex)(regions)
+
+// Names the module an error was raised in: units are inferred in region order, so the failing
+// unit's index selects its region, and the trailing expression belongs to the entry module.
+let withErrorModule regions (result: ProgramInferenceResult) =
+    match result with
+        | ProgramInferenceResult { errorLocation = Some(location) } ->
+            match errorRegion(regions)(location) with
+                | Some(StitchedModuleRegion { moduleName = moduleName, sourcePath = sourcePath }) ->
+                    result with errorLocation = Some(
+                        location with moduleName = Some(moduleName), sourcePath = Some(sourcePath)
+                    )
+                | None -> result
+        | _ -> result
+
 let inferStitchedProjectFrom baseEnvironment project =
     match project with
         | StitchedSyntaxProject { program = ProgramSyntax { items = items, body = body }, moduleRegions = regions } ->
             body
             |> assembleInferenceUnits(regions)(items)(0)([])(None)
             |> inferProjectUnits(baseEnvironment)
+            |> withErrorModule(regions)
 
 let inferStitchedProject project =
     inferStitchedProjectFrom(emptyTypeEnvironmentForPackage("standalone"))(project)
