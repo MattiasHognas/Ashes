@@ -450,7 +450,7 @@ let recursive findTypeBinding name bindings =
             then Some(scheme)
             else findTypeBinding(name)(tail)
 
-let resolveTypeBinding name environment =
+let resolveWrittenTypeBinding name environment =
     match environment with
         | TypeEnvironment { lookupIndex = Some(BindingLookupIndex { valuesByName = values }), fallbackBindings = fallback } ->
             match Ashes.Collection.Map.getStr(name)(values) with
@@ -474,7 +474,7 @@ let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinitio
                         )
                     else findConstructorBinding(name)(tail)
 
-let resolveConstructorBinding name environment =
+let resolveWrittenConstructorBinding name environment =
     match environment with
         | TypeEnvironment { lookupIndex = Some(BindingLookupIndex { constructorsByName = indexed }) } -> Ashes.Collection.Map.getStr(name)(indexed)
         | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
@@ -482,6 +482,28 @@ let resolveConstructorBinding name environment =
                 name,
                 constructors
             )
+
+// `Ordering` and its constructors are declared by the stitched `Ashes.Trait` module under
+// module-qualified compiler names, and are in scope everywhere under their bare names. Under the
+// program rules a constructor name nothing else declares is looked up under that module's spelling.
+let resolveConstructorBinding (name: Str) (environment: TypeEnvironment) =
+    match resolveWrittenConstructorBinding(name)(environment) with
+        | Some(definition) -> Some(definition)
+        | None ->
+            if environment.programInferenceRules
+            then resolveWrittenConstructorBinding("Ashes_Trait_" + name)(environment)
+            else None
+
+let resolveTypeBinding (name: Str) (environment: TypeEnvironment) =
+    match resolveWrittenTypeBinding(name)(environment) with
+        | Some(scheme) -> Some(scheme)
+        | None ->
+            if environment.programInferenceRules
+            then
+                match resolveWrittenConstructorBinding("Ashes_Trait_" + name)(environment) with
+                    | Some(ConstructorInferenceDefinition { scheme = scheme }) -> Some(scheme)
+                    | None -> None
+            else None
 
 let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition) -> Maybe(CapabilityInferenceDefinition) =
     given (name) ->
@@ -1364,12 +1386,13 @@ let coverageConstructorName pattern environment =
     match coverageUnwrap(pattern) with
         | PatternConstructor(name, _patterns) ->
             match resolveConstructorBinding(name)(environment) with
-                | Some(_) -> Some(name)
+                | Some(ConstructorInferenceDefinition { name = declaredName }) -> Some(declaredName)
                 | None -> None
         | PatternVar(name) ->
-            if isNullaryConstructorName(name)(environment)
-            then Some(name)
-            else None
+            match resolveConstructorBinding(name)(environment) with
+                | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = SemFunction(_, _, _) } }) -> None
+                | Some(ConstructorInferenceDefinition { name = declaredName }) -> Some(declaredName)
+                | None -> None
         | _ -> None
 
 // Every constructor of an ADT, in declaration order, as (name, arity).

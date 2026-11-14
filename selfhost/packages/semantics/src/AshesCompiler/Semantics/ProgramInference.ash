@@ -968,6 +968,17 @@ let recursive selfAppliedConstructors (name: Str) (parameters: List(TypeParamete
         | [] -> []
         | TypeConstructor { name = constructorName, parameters = fields, fieldNames = fieldNames } :: rest -> TypeConstructor(name = constructorName, parameters = selfAppliedTypeExprs(name)(parameters)(fields), fieldNames = fieldNames) :: selfAppliedConstructors(name)(parameters)(rest)
 
+// A type the stitched `Ashes.Trait` module declares is also known by its bare name, as its
+// constructors are: `Ordering` can be written in a signature without an import.
+let withBareStandardTypeName (name: Str) parameters resultType environment =
+    match parameters with
+        | [] ->
+            if canonicalTraitName(name) == name
+            then environment
+            else
+                addInferenceTypeAlias(canonicalTraitName(name))([])(resultType)(environment)
+        | _ -> environment
+
 let registerTypeDeclaration declaration state =
     match (declaration, state) with
         | (TypeDecl { name = name, typeParameters = parameters, constructors = declaredConstructors, isRecord = _isRecord, derivingTraits = _derivingTraits }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = symbolId, error = None }) ->
@@ -993,7 +1004,7 @@ let registerTypeDeclaration declaration state =
                                     context,
                                     typedEnvironment
                                 ) with
-                                    | ConstructorRegistration { environment = constructorEnvironment, error = None } -> ProgramInferenceState(environment = constructorEnvironment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = None)
+                                    | ConstructorRegistration { environment = constructorEnvironment, error = None } -> ProgramInferenceState(environment = withBareStandardTypeName(name)(parameters)(resultType)(constructorEnvironment), substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = None)
                                     | ConstructorRegistration { environment = _constructorEnvironment, error = Some(error) } ->
                                         ProgramInferenceState(environment = environment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = Some(
                                             ProgramTypeResolutionError(error)
