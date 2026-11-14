@@ -2014,7 +2014,9 @@ let registerTraitImplementation declaration state =
                                                                                                     traitName,
                                                                                                     bindings,
                                                                                                     resolvedTypeArguments,
-                                                                                                    environment,
+                                                                                                    // The implementation is in scope for its own methods: one that calls itself at the type it
+                                                                                                    // is being written for is supplied by this implementation.
+                                                                                                    addTraitImplementation(traitName)(resolvedTypeArguments)(simplifyTraitConstraints(environment)(resolvedRequirements))([])(environment),
                                                                                                     substitution,
                                                                                                     supply,
                                                                                                     []
@@ -2480,7 +2482,9 @@ let inferProgramUnitBody body entryPackageId state =
                         error = None
                     )
                 | Some(expression) ->
-                    match inferTopLevelExpressionLocated(expression)(environment)(substitution)(supply) with
+                    match supply
+                    |> inferTopLevelExpressionLocated(expression)(environment)(substitution)
+                    |> checkTrailingRequirements(expression)(environment) with
                         | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } ->
                             ProgramInferenceResult(
                                 semanticType = semanticType,

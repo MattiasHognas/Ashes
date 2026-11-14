@@ -606,6 +606,9 @@ let textFromIntArgumentTrait = "$TextFromIntArgument"
 
 let textToHexArgumentTrait = "$TextToHexArgument"
 
+// `Ashes.IO.print` takes an `Int`, an unsigned width below 64 bits, a `Str` or a `Bool`.
+let printArgumentTrait = "$PrintArgument"
+
 let recursive addArgumentWidthImplementations traitName heads environment =
     match heads with
         | [] -> environment
@@ -629,9 +632,14 @@ let withArgumentWidthSignatures environment =
     |> addArgumentWidthTrait(unsignedIntegerArgumentTrait)([SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(64)])
     |> addArgumentWidthTrait(textFromIntArgumentTrait)([SemInt, SemUInt(8), SemUInt(16), SemUInt(32)])
     |> addArgumentWidthTrait(textToHexArgumentTrait)([SemInt, SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(64)])
+    |> addArgumentWidthTrait(printArgumentTrait)([SemInt, SemUInt(8), SemUInt(16), SemUInt(32), SemString, SemBool])
     |> addTypeBinding("Ashes.Number.UInt.toInt")(argumentWidthScheme(unsignedIntegerArgumentTrait)(SemInt))
     |> addTypeBinding("Ashes.Text.fromInt")(argumentWidthScheme(textFromIntArgumentTrait)(SemString))
     |> addTypeBinding("Ashes.Text.toHex")(argumentWidthScheme(textToHexArgumentTrait)(SemString))
+    |> addTypeBinding("Ashes.IO.print")([]
+    |> SemNamed(4)("Unit")
+    |> argumentWidthScheme(printArgumentTrait)
+    |> schemeWithRuntimeCapability("Ashes.IO")("print"))
 
 let withIntrinsicBuiltinSignatures environment =
     environment

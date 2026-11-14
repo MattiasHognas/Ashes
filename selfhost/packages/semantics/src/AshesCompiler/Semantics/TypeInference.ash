@@ -72,6 +72,7 @@ export (
     value inferExpressionFrom,
     value inferExpressionFromLocated,
     value inferTopLevelExpressionLocated,
+    value checkTrailingRequirements,
     value isBuiltinRuntimeCapability,
     value inferTopLevelBindingLocated,
     value inferenceErrorSpan,
@@ -213,6 +214,7 @@ type TypeInferenceError =
     | MissingWrittenTraitRequirement(Str)
     | UnjustifiedWrittenTraitRequirement(Str)
     | AmbiguousTraitRequirement(Str)
+    | NoTraitImplementation(Str, List(SemanticType))
     | ExternalFunctionRequiresDirectCall(Str)
     | NonExhaustiveMatch(Str)
     | UnreachableMatchArm(Str)
@@ -2616,6 +2618,195 @@ let bindingRequirementAmbiguity constraints bindingType environment substitution
     then firstAmbiguousTraitRequirementUnder(substitution)(constraints)(bindingType)(environment)
     else firstAmbiguousTraitRequirement(constraints)(bindingType)(environment)
 
+// Whether the implementations in scope supply a requirement. A requirement on a type that is not
+// settled yet, or on a type parameter the enclosing declaration may itself require, is open: only
+// one whose outermost types are known and that no implementation head can fit has failed.
+type ImplementationHeadFit =
+    | HeadFits(List((Int, SemanticType)))
+    | HeadMayFit
+    | HeadDiffers
+
+type RequirementStanding =
+    | RequirementHolds
+    | RequirementOpen
+    | RequirementFails
+
+let recursive headParameterType (parameterId: Int) (bindings: List((Int, SemanticType))) =
+    match bindings with
+        | [] -> None
+        | (candidateId, bound) :: tail ->
+            if parameterId == candidateId
+            then Some(bound)
+            else headParameterType(parameterId)(tail)
+
+let recursive withHeadParameters (bindings: List((Int, SemanticType))) semanticType =
+    match semanticType with
+        | SemParameter(parameterId, _name) ->
+            match headParameterType(parameterId)(bindings) with
+                | Some(bound) -> bound
+                | None -> semanticType
+        | SemList(element) ->
+            element
+            |> withHeadParameters(bindings)
+            |> SemList
+        | SemTuple(elements) ->
+            elements
+            |> withHeadParametersIn(bindings)
+            |> SemTuple
+        | SemFunction(argument, result, row) ->
+            SemFunction(withHeadParameters(bindings)(argument))(withHeadParameters(bindings)(result))(row)
+        | SemNamed(symbolId, name, arguments) ->
+            arguments
+            |> withHeadParametersIn(bindings)
+            |> SemNamed(symbolId)(name)
+        | SemPointer(pointee) ->
+            pointee
+            |> withHeadParameters(bindings)
+            |> SemPointer
+        | other -> other
+and withHeadParametersIn (bindings: List((Int, SemanticType))) semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | head :: tail -> withHeadParameters(bindings)(head) :: withHeadParametersIn(bindings)(tail)
+
+let recursive requirementsWithHeadParameters (bindings: List((Int, SemanticType))) (requirements: List(TraitConstraint)) =
+    match requirements with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: tail -> TraitConstraint(traitName = traitName, typeArguments = withHeadParametersIn(bindings)(typeArguments)) :: requirementsWithHeadParameters(bindings)(tail)
+
+let recursive implementationHeadsFit heads semanticTypes (bindings: List((Int, SemanticType))) (uncertain: Bool) =
+    match (heads, semanticTypes) with
+        | ([], []) ->
+            if uncertain
+            then HeadMayFit
+            else HeadFits(bindings)
+        | (head :: otherHeads, semanticType :: otherTypes) ->
+            match implementationHeadFits(head)(semanticType)(bindings) with
+                | HeadDiffers -> HeadDiffers
+                | HeadMayFit -> implementationHeadsFit(otherHeads)(otherTypes)(bindings)(true)
+                | HeadFits(nextBindings) -> implementationHeadsFit(otherHeads)(otherTypes)(nextBindings)(uncertain)
+        | _ -> HeadDiffers
+and implementationHeadFits head semanticType (bindings: List((Int, SemanticType))) =
+    match head with
+        | SemParameter(parameterId, _name) -> HeadFits((parameterId, semanticType) :: bindings)
+        | SemVariable(_) -> HeadFits(bindings)
+        | _ ->
+            match semanticType with
+                | SemVariable(_) -> HeadMayFit
+                | SemParameter(_, _) -> HeadMayFit
+                | SemNever -> HeadMayFit
+                | _ ->
+                    match (head, semanticType) with
+                        | (SemList(headElement), SemList(element)) -> implementationHeadFits(headElement)(element)(bindings)
+                        | (SemTuple(headElements), SemTuple(elements)) -> implementationHeadsFit(headElements)(elements)(bindings)(false)
+                        | (SemFunction(headArgument, headResult, _headRow), SemFunction(argument, result, _row)) -> implementationHeadsFit([headArgument, headResult])([argument, result])(bindings)(false)
+                        | (SemNamed(headId, headName, headArguments), SemNamed(symbolId, name, arguments)) ->
+                            if headId == symbolId
+                            then implementationHeadsFit(headArguments)(arguments)(bindings)(false)
+                            else
+                                if headName == name
+                                then implementationHeadsFit(headArguments)(arguments)(bindings)(false)
+                                else HeadDiffers
+                        | (SemPointer(headPointee), SemPointer(pointee)) -> implementationHeadFits(headPointee)(pointee)(bindings)
+                        | _ ->
+                            if head == semanticType
+                            then HeadFits(bindings)
+                            else HeadDiffers
+
+let recursive requirementStanding (fuel: Int) (environment: TypeEnvironment) (constraint: TraitConstraint) =
+    if fuel <= 0
+    then RequirementOpen
+    else
+        match resolveTraitBinding(constraint.traitName)(environment) with
+            | None -> RequirementOpen
+            | Some(_) ->
+                implementationsStanding(fuel)(environment)(constraint.typeArguments)(resolveTraitImplementations(constraint.traitName)(environment))(false)
+and implementationsStanding (fuel: Int) (environment: TypeEnvironment) typeArguments (implementations: List(TraitImplementationInferenceDefinition)) (uncertain: Bool) =
+    match implementations with
+        | [] ->
+            if uncertain
+            then RequirementOpen
+            else RequirementFails
+        | implementation :: tail ->
+            match implementationHeadsFit(implementation.typeArguments)(typeArguments)([])(false) with
+                | HeadDiffers -> implementationsStanding(fuel)(environment)(typeArguments)(tail)(uncertain)
+                | HeadMayFit -> implementationsStanding(fuel)(environment)(typeArguments)(tail)(true)
+                | HeadFits(bindings) ->
+                    implementation.requirements
+                    |> requirementsWithHeadParameters(bindings)
+                    |> requirementsStanding(fuel - 1)(environment)
+and requirementsStanding (fuel: Int) (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> RequirementHolds
+        | head :: tail ->
+            match requirementStanding(fuel)(environment)(head) with
+                | RequirementFails -> RequirementFails
+                | RequirementHolds -> requirementsStanding(fuel)(environment)(tail)
+                | RequirementOpen ->
+                    match requirementsStanding(fuel)(environment)(tail) with
+                        | RequirementFails -> RequirementFails
+                        | _ -> RequirementOpen
+
+let recursive firstFailedRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> None
+        | head :: tail ->
+            match requirementStanding(16)(environment)(head) with
+                | RequirementFails -> Some(head)
+                | _ -> firstFailedRequirement(environment)(tail)
+
+let recursive requirementsNotHeld (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | head :: tail ->
+            match requirementStanding(16)(environment)(head) with
+                | RequirementHolds -> requirementsNotHeld(environment)(tail)
+                | _ -> head :: requirementsNotHeld(environment)(tail)
+
+// Under the program rules a binding's requirements are weighed against the implementations: one
+// that no implementation supplies is an error where it arises, and one an implementation settles
+// is not something the binding's written `requires` has to repeat.
+let failedBindingRequirement (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then firstFailedRequirement(environment)(constraints)
+    else None
+
+let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
+    if environment.programInferenceRules
+    then requirementsNotHeld(environment)(constraints)
+    else constraints
+
+// A requirement no implementation can fit, on a type that is still partly unknown, is reported as
+// ambiguous: nothing says which type was meant. On a known type it has no implementation.
+let failedRequirementError (traitName: Str) (typeArguments: List(SemanticType)) =
+    match freeTypeVariables(SemTuple(typeArguments)) with
+        | [] -> NoTraitImplementation(traitName)(typeArguments)
+        | _ -> AmbiguousTraitRequirement(traitName)
+
+// The trailing expression is generalized by nothing, so a requirement that has failed there has
+// failed for good.
+let checkSettledTrailingRequirements (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    if environment.programInferenceRules
+    then
+        match result with
+            | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = supply, constraints = constraints, error = None } ->
+                let settled =
+                    constraints
+                    |> applyInferenceConstraints(substitution)
+                    |> simplifyTraitConstraints(environment)
+                in
+                    match firstFailedRequirement(environment)(settled) with
+                        | Some(TraitConstraint { traitName = traitName, typeArguments = typeArguments }) ->
+                            inferenceFailure(
+                                semanticType,
+                                substitution,
+                                supply,
+                                failedRequirementError(traitName)(typeArguments)
+                            )
+                        | None -> result
+            | _ -> result
+    else result
+
 let bindingSignatureSuccess semanticType substitution supply constraints = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = constraints, error = None)
 
 let validateWrittenBindingRequirements inferred written semanticType substitution supply =
@@ -2638,24 +2829,36 @@ let validateWrittenBindingRequirements inferred written semanticType substitutio
                     )
                 | None -> bindingSignatureSuccess(semanticType)(substitution)(supply)(written)
 
+let validateSettledBindingRequirements requirements inferred written selected semanticType environment substitution supply =
+    match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
+        | Some(traitName) ->
+            inferenceFailure(
+                semanticType,
+                substitution,
+                supply,
+                AmbiguousTraitRequirement(traitName)
+            )
+        | None ->
+            match requirements with
+                | [] -> bindingSignatureSuccess(semanticType)(substitution)(supply)(selected)
+                | _ ->
+                    validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
+
 let validateBindingRequirementSet requirements inferred written semanticType environment substitution supply =
     (let selected =
         match requirements with
             | [] -> inferred
             | _ -> written
     in
-        match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
-            | Some(traitName) ->
+        match failedBindingRequirement(environment)(inferred) with
+            | Some(TraitConstraint { traitName = failedTrait, typeArguments = failedArguments }) ->
                 inferenceFailure(
                     semanticType,
                     substitution,
                     supply,
-                    AmbiguousTraitRequirement(traitName)
+                    failedRequirementError(failedTrait)(failedArguments)
                 )
-            | None ->
-                match requirements with
-                    | [] -> bindingSignatureSuccess(semanticType)(substitution)(supply)(selected)
-                    | _ -> validateWrittenBindingRequirements(inferred)(written)(semanticType)(substitution)(supply))
+            | None -> validateSettledBindingRequirements(requirements)(inferred)(written)(selected)(semanticType)(environment)(substitution)(supply))
 
 let finishInferenceBindingSignature requirements context checkedType inferredConstraints environment substitution supply =
     match resolveBindingRequirements(requirements)(context)(environment)([]) with
@@ -2726,6 +2929,14 @@ let checkInferenceBindingSignature annotation requirements expectedType inferred
                             checkedSupply
                         )
                     | failure -> failure
+
+let checkTrailingRequirements expression (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    match expression with
+        | ExprAt(span, _inner) ->
+            result
+            |> checkSettledTrailingRequirements(environment)
+            |> locateInferenceError(span)
+        | _ -> checkSettledTrailingRequirements(environment)(result)
 
 let recursive inferExpressions expressions environment substitution supply ambientRow reversedTypes =
     match expressions with
