@@ -8944,6 +8944,27 @@ let isGeneralRcValueType semanticType state =
     match isGeneralRcValueTypeIndexed(semanticType)(state) with
         | (answer, _queried) -> answer
 
+// The copy of a managed list into the reference-counted heap. A list of the contract's elements
+// (stage 0's `IsGeneralRcTcoListElement`, an accumulator of call results) copies its heads through
+// their normalization helper. Any other list has the inline copies, and one they do not express
+// whose element reaches the contract's types through a tuple or a list (stage 0's
+// `IsGeneralRcValueType`, a list of keyed call results) has the general copy, its heads' parts
+// normalized at any depth. A list with neither cannot be placed at all.
+let managedListCopyPlanOf (listType: SemanticType) (element: SemanticType) (state: CoreLoweringState) =
+    if isGeneralRcNamedType(element)(state)
+    then generalCopyPlanOf(listType)(state)
+    else
+        match argumentCopyPlanOf(listType)(state) with
+            | Some(plan) -> Some(plan)
+            | None ->
+                if isGeneralRcValueType(element)(state)
+                then generalCopyPlanOf(listType)(state)
+                else None
+
+// The copy of a list loop parameter into the reference-counted heap, which is also what decides
+// whether it can be placed at all.
+let tcoListCopyPlanOf (element: SemanticType) (state: CoreLoweringState) = managedListCopyPlanOf(SemList(element))(element)(state)
+
 let isCallResultAccumulatorElement (element: SemanticType) (state: CoreLoweringState) = isGeneralRcValueType(element)(state) && !containsUnresolvedLayout(element)(state) || !resultSurvivesReset(element)(state) && placesTcoListElement(element)(state)
 
 // A list placed on the reference-counted heap as an accumulator rebuild is normalized and released
@@ -10387,10 +10408,8 @@ let recursive normalizeRuntimeManagedBackEdgeArguments (arguments: List(TcoReset
                             |> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, duplicate) :: reversedStores)
                 else
                     // A list of the contract's values has only the general plan, which copies its
-                    // elements through their normalizer.
-                    match if isGeneralRcNamedType(elementType)(state)
-                    then generalCopyPlanOf(argumentType)(state)
-                    else argumentCopyPlanOf(argumentType)(state) with
+                    // elements through their normalizer; the plan is the one the slot was placed by.
+                    match managedListCopyPlanOf(argumentType)(elementType)(state) with
                         | None -> normalizeRuntimeManagedBackEdgeArguments(rest)((slot, activeSlot, temp) :: reversedStores)(state)
                         | Some(plan) ->
                             match emitBackEdgeReferenceOrCopy(temp)(argumentType)(backEdgeListCopy(temp)(plan))(state) with
@@ -15741,15 +15760,6 @@ let isUnconditionallyRcManagedType (semanticType: SemanticType) =
 // whose promoted release walks an aggregate head through its structural dropper); a grown
 // accumulator only when every back edge allocated its cons cell on the reference-counted heap.
 // Answers the element type of an admitted slot.
-// The copy of a list loop parameter into the reference-counted heap. A list of the contract's
-// elements (stage 0's `IsGeneralRcTcoListElement`, an accumulator of call results) copies its heads
-// through their normalization helper; any other list has the inline copies alone, which is also
-// what decides whether it can be placed at all.
-let tcoListCopyPlanOf (element: SemanticType) (state: CoreLoweringState) =
-    if isGeneralRcNamedType(element)(state)
-    then generalCopyPlanOf(SemList(element))(state)
-    else argumentCopyPlanOf(SemList(element))(state)
-
 // Stage 0's `IsWalkedOrRefilledElement`: a walked-or-refilled list of strings, or of lists of
 // strings (a worklist of paths), whose heads are protected wherever they escape, or of inline
 // values, whose heads need no protection.
@@ -27610,12 +27620,40 @@ let keepCopiedCellFreshHeadOwned (headExpression: Expr) (headTemp: Int) (headTyp
                     |> registerGeneralRcOwnedSlot(ownedSlot)(resolveType(state)(headType))
         | _ -> state
 
-// A successor cell the back edge copies borrows its parts: the head keeps the tail's state, and
-// neither takes a duplicate.
+// Stage 0's `CollectCopiedHeadTuple`: a tuple written as the head of a successor cell the back edge
+// copies, and each tuple written inside it, is copied with the cell, the copy taking references of
+// its own. Left in the arena it borrows its parts like the cell does: a duplicate one of them took
+// of a pattern owner would be promoted to a retain the arena never releases. A tuple placed on the
+// reference-counted heap owns its duplicates and keeps them, and a duplicate with another reader is
+// left alone.
+let recursive withdrawCopiedHeadTupleMarkers (head: Expr) (temp: Int) (state: CoreLoweringState) =
+    match unspanArgument(head) with
+        | ExprTuple(elements) ->
+            if isArenaCell(temp)(state.reversedInstructions)
+            then
+                withdrawCopiedHeadTupleElementMarkers(elements)(storedValuesOf(temp)(state.reversedInstructions)([]))(state)
+            else state
+        | _ -> state
+and withdrawCopiedHeadTupleElementMarkers (elements: List(Expr)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (elements, temps) with
+        | (element :: restElements, temp :: restTemps) ->
+            if isPromotableCellMarker(temp)(state) && countTempUses(temp)(state.reversedInstructions)(0) == 1
+            then withdrawCopiedHeadTupleElementMarkers(restElements)(restTemps)((state with reversedInstructions = borrowElementDuplicate(temp)(state.reversedInstructions)))
+            else
+                state
+                |> withdrawCopiedHeadTupleMarkers(element)(temp)
+                |> withdrawCopiedHeadTupleElementMarkers(restElements)(restTemps)
+        | _ -> state
+
+// A successor cell the back edge copies borrows its parts: the head keeps the tail's state, neither
+// takes a duplicate, and a head tuple left in the arena gives back the ones it took.
 let borrowedConsParts (headExpression: Expr) (head: LoweredCoreValue) (tail: LoweredCoreValue) =
     match (head, tail) with
         | (LoweredCoreValue { temp = headTemp, semanticType = headType, error = None }, LoweredCoreValue { state = tailState, error = None }) ->
-            let kept = keepCopiedCellFreshHeadOwned(headExpression)(headTemp)(headType)(tailState)
+            let kept =
+                tailState
+                |> keepCopiedCellFreshHeadOwned(headExpression)(headTemp)(headType)
+                |> withdrawCopiedHeadTupleMarkers(headExpression)(headTemp)
             in ((head with state = kept), (tail with state = kept))
         | _ -> (head, tail)
 
