@@ -27336,7 +27336,8 @@ let copiesFreshScalarListHeadIntoLoopCell (headTemp: Int) (resolved: SemanticTyp
 // Stage 0's `CopyFreshStringHeadIntoArenaCell`: an arena cell never releases its head, so a newly
 // produced reference-counted string, or a reference the cell took on a binding's string, is stored
 // as an arena copy and released right away. A cell whose parts the back edge copies, or whose
-// duplicate a late release still names, keeps its head as it is.
+// duplicate a late release still names, keeps its head as it is. A retain the call the cell is an
+// argument of collected is released here, so it leaves the frame either way.
 let arenaCellHeadOf (request: ConsumerRequest) (headTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
     (let retained =
         match definitionOfTemp(headTemp)(state.reversedInstructions) with
@@ -27354,7 +27355,10 @@ let arenaCellHeadOf (request: ConsumerRequest) (headTemp: Int) (headType: Semant
                             emit(CopyOutArena(copyTemp)(headTemp)(-1)(false)(IndependentClone)(None))(allocated)
                         in
                             if fresh
-                            then (releaseConsumedOperand(headTemp)(copied), copyTemp)
+                            then
+                                (copied
+                                |> releaseConsumedOperand(headTemp)
+                                |> forgetCallArgumentTransferRetain(headTemp), copyTemp)
                             else
                                 (copied
                                 |> emit(RcDrop(headTemp)("String")(-1)(true)(false)(None))
@@ -28297,13 +28301,14 @@ let keepCopiedLiteralHeadOwned (request: ConsumerRequest) (expression: Expr) (he
 // there (a constructor placed on the reference-counted heap because it owns a fresh string) is that
 // value's only holder, and an arena cell releases nothing, so its reference goes to an owned slot.
 // A fresh string is retained wherever a callee keeps it, so its cell's reference goes to an owned
-// slot too (stage 0's `IsLiteralFreshStringHead`).
+// slot too (stage 0's `IsLiteralFreshStringHead`). A retain the call the literal is an argument of
+// collected is released by that call, and takes no slot.
 let keepArenaListLiteralFreshHeadOwned (cellTemp: Int) (headTemp: Int) (cellHeadTemp: Int) (headType: SemanticType) (state: CoreLoweringState) =
     if cellHeadTemp == headTemp && !isFreshReferenceCountedCell(cellTemp)(state)
     then
         if resolveType(state)(headType) == SemString
         then
-            if isFreshRuntimeTemp(headTemp)(state)
+            if isFreshRuntimeTemp(headTemp)(state) && !collectsCallArgumentRetain(headTemp)(stateCallArgumentRecordRetains(state))
             then
                 match freshLocal(state) with
                     | FreshLocal { state = allocated, local = ownedSlot } ->
