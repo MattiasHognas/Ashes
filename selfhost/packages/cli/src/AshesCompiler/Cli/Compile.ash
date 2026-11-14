@@ -59,6 +59,10 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.ModuleSemanticStitching
+import AshesCompiler.Semantics.ProgramInference.ProgramInferenceResult
+import AshesCompiler.Semantics.ProjectInference.inferStitchedProjectFrom
+import AshesCompiler.Semantics.StandardTraits.withIntrinsicBuiltinSignatures
+import AshesCompiler.Semantics.TypeInference.emptyTypeEnvironmentForPackage
 import AshesCompiler.Semantics.ProjectCompilationPlanning.readSourceText
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectManifest
@@ -523,18 +527,53 @@ let emitAndLink outputPath optimized =
                 | Error(message) -> Error(message)
                 | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
+// With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
+// the stitched program before it is lowered and reports one line to stderr: whether it succeeded
+// and how long it took. Its result is discarded, so the emitted image is the same either way; with
+// the variable unset nothing but the environment lookup happens.
+let shadowInferenceLocation (result: ProgramInferenceResult) =
+    match result.errorLocation with
+        | Some(location) -> Ashes.Trait.Show.show(location)
+        | None -> "no location"
+
+let shadowInferenceReport (result: ProgramInferenceResult) (elapsedMillis: Int) =
+    match result.error with
+        | None -> "shadow inference: ok in " + Ashes.Text.fromInt(elapsedMillis) + " ms"
+        | Some(error) -> "shadow inference: error in " + Ashes.Text.fromInt(elapsedMillis) + " ms: " + Ashes.Trait.Show.show(error) + " at " + shadowInferenceLocation(result)
+
+let runShadowInference stitched =
+    match Ashes.IO.Environment.get("ASHES_SHADOW_INFERENCE") with
+        | Ok(Some("")) -> Unit
+        | Ok(Some(_value)) ->
+            let start = Ashes.IO.Console.monotonicMillis(Unit)
+            in
+                let result =
+                    inferStitchedProjectFrom(
+                        "standalone"
+                        |> emptyTypeEnvironmentForPackage
+                        |> withIntrinsicBuiltinSignatures,
+                        stitched
+                    )
+                in
+                    Ashes.IO.Console.monotonicMillis(Unit) - start
+                    |> shadowInferenceReport(result)
+                    |> Ashes.IO.writeErrorLine
+        | _ -> Unit
+
 // Lowers, reports, emits, and links an already stitched program to `outputPath`, returning the
 // written byte count; `inputPath` and `source` are the text source locations are computed from.
 let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabled: Bool) inputPath source stitched =
-    match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
-        | Error(message) -> Error(message)
-        | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
-            optimized
-            |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
-            |> (given (_) ->
-                match writeDiagnosticIrDump(lowered)(optimized) with
-                    | Error(message) -> Error(message)
-                    | Ok(_) -> emitAndLink(outputPath)(optimized))
+    (let _ = runShadowInference(stitched)
+    in
+        match lowerStitched(reuseEnabled)(inputPath)(source)(stitched) with
+            | Error(message) -> Error(message)
+            | Ok((stitchedProject, lowered, optimized, valuePlacements)) ->
+                optimized
+                |> writeExplainReport(explain)(stitchedProject)(lowered)(valuePlacements)
+                |> (given (_) ->
+                    match writeDiagnosticIrDump(lowered)(optimized) with
+                        | Error(message) -> Error(message)
+                        | Ok(_) -> emitAndLink(outputPath)(optimized)))
 
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
