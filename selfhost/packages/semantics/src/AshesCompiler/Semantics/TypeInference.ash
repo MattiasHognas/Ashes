@@ -2011,10 +2011,24 @@ let inferRecordFieldDefinition receiverType fieldName (definition: ConstructorIn
                                 mergeUnification(substitution)(unify(applySubstitution(substitution)(receiverType))(recordType))(constructorSupply)(fieldType)
                             )
 
+// A record's constructor is found by the type it constructs: a stitched project
+// spells the type and its constructor differently, so the names cannot be compared.
+let recursive findRecordDefinitionByType typeName definitions =
+    match definitions with
+        | [] -> None
+        | (ConstructorInferenceDefinition { scheme = TypeScheme { body = body }, fieldNames = _field :: _rest } as definition) :: rest ->
+            match splitConstructorType(body)([]) with
+                | ConstructorTypeShape { resultType = SemNamed(_symbolId, candidate, _arguments) } ->
+                    if candidate == typeName
+                    then Some(definition)
+                    else findRecordDefinitionByType(typeName)(rest)
+                | _ -> findRecordDefinitionByType(typeName)(rest)
+        | _definition :: rest -> findRecordDefinitionByType(typeName)(rest)
+
 let inferRecordField receiverType fieldName (environment: TypeEnvironment) substitution supply constraints =
     match applySubstitution(substitution)(receiverType) with
         | SemNamed(_symbolId, name, _arguments) ->
-            match resolveConstructorBinding(name)(environment) with
+            match findRecordDefinitionByType(name)(environment.constructors) with
                 | Some(definition) -> inferRecordFieldDefinition(receiverType)(fieldName)(definition)(substitution)(supply)(constraints)
                 | None ->
                     fieldName
