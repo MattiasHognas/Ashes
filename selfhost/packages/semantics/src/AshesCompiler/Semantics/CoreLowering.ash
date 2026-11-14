@@ -35360,6 +35360,15 @@ let recursive pinConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (s
                 | (pinnedState, _pinnedType) -> pinConstrainedGoals(index + 1)(rest)(pinnedState)
         | _goal :: rest -> pinConstrainedGoals(index + 1)(rest)(state)
 
+// The site a dictionary still waiting on a type is recorded under. Unlike an operator's goal, it is
+// recorded in a pass lowering with proofs pinned too: the body that settles the type is lowered
+// again from its entry state, where the call builds the real dictionary and the record made by
+// the abandoned lowering is gone. A record that outlives its pass is a goal no pass answered.
+let openDictionaryGoalKey (traitName: Str) (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+    match freeTypeVariables(operandType) with
+        | [] -> None
+        | _variables -> traitGoalKey(traitName)(methodName)(state)
+
 // The requirements a call cannot build a dictionary for yet: the type argument is still open (the
 // caller's own parameter, settled by a later use in its body) and no active evidence answers it.
 // Each is a trait goal a later pass answers once this one has resolved the type.
@@ -35369,7 +35378,7 @@ let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (
         | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as goal) :: rest ->
             let resolved = resolveType(state)(argument)
             in
-                match (unprovenTraitGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), state |> stateTraitEnvironment |> resolveTraitEvidence((goal with typeArguments = [resolved]))) with
+                match (openDictionaryGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), state |> stateTraitEnvironment |> resolveTraitEvidence((goal with typeArguments = [resolved]))) with
                     | (Some(key), TraitEvidenceResolution { plan = Some(plan), error = None }) ->
                         if constrainedPlanLacksEvidence(plan)(state)
                         then (key, resolved) :: openConstrainedGoals(index + 1)(rest)(state)
@@ -38456,6 +38465,26 @@ let structuralEqualityGoals (state: CoreLoweringState) =
 // constant standing in for a dispatch, so every pass that deferred one is followed by a pass that
 // either dispatches it or reports it. A speculative `==` whose operands the pass went on to
 // resolve to a type the integer comparison does not compare is such a site too.
+// A goal key's trait: the third of its colon-separated parts.
+let traitOfGoalKey (key: Str) =
+    match Ashes.Text.split(key)(":") with
+        | _start :: _end :: traitName :: _rest -> traitName
+        | _parts -> key
+
+// The final pass's result, refused when a dictionary it deferred was never built: the call still
+// holds the constant standing in for it.
+let refuseUnansweredGoals (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = state, error = None } ->
+            match statePendingTraitGoals(state) with
+                | [] -> lowered
+                | (key, goalType) :: _rest ->
+                    goalType
+                    |> resolveType(state)
+                    |> MissingCoreTraitEvidence(traitOfGoalKey(key))
+                    |> failure(state)
+        | failed -> failed
+
 let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
@@ -38471,6 +38500,7 @@ let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) 
                         |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
                         |> withStateTraitGoalsPinned(true)
                         |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
+                        |> refuseUnansweredGoals
 
 // The label ids the deferred reset blocks are numbered with as the whole program is lowered:
 // the next id past the program's own and the base each group was given, by its range start.
