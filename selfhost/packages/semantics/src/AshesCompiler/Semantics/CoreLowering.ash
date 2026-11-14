@@ -34968,6 +34968,61 @@ let restoreConstrainedCall (original: CoreLoweringState) lowered =
     match lowered with
         | LoweredCoreValue { state = state } -> lowered with state = (state with bindings = original.bindings)
 
+// Whether a plan's evidence, or any evidence it is built from, is a hidden parameter the body
+// being lowered does not carry: the dictionary cannot be built here whatever the plan says.
+let recursive constrainedPlanLacksEvidence (plan: TraitEvidencePlan) (state: CoreLoweringState) =
+    match plan with
+        | TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = argument :: [] }) -> !hasActiveTraitEvidence(traitName)(argument)(state)
+        | TraitEvidenceParameter(_constraint) -> false
+        | TraitEvidenceInstance(_constraint, _implementation, requirements, supertraits) -> constrainedPlansLackEvidence(requirements)(state) || constrainedPlansLackEvidence(supertraits)(state)
+and constrainedPlansLackEvidence (plans: List(TraitEvidencePlan)) (state: CoreLoweringState) =
+    match plans with
+        | [] -> false
+        | plan :: rest -> constrainedPlanLacksEvidence(plan)(state) || constrainedPlansLackEvidence(rest)(state)
+
+// A constrained call's dictionary sites are named by their slot: one call asks for one dictionary
+// per requirement, all under the call's own span.
+let constrainedGoalMethod (index: Int) = "dictionary" + Ashes.Text.fromInt(index)
+
+// The call's requirements with an earlier pass's proof pinned at each one whose type argument is
+// still open.
+let recursive pinConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (state: CoreLoweringState) =
+    match goals with
+        | [] -> state
+        | TraitConstraint { traitName = traitName, typeArguments = argument :: [] } :: rest ->
+            match pinProvenTraitGoal(traitName)(constrainedGoalMethod(index))(resolveType(state)(argument))(state) with
+                | (pinnedState, _pinnedType) -> pinConstrainedGoals(index + 1)(rest)(pinnedState)
+        | _goal :: rest -> pinConstrainedGoals(index + 1)(rest)(state)
+
+// The requirements a call cannot build a dictionary for yet: the type argument is still open (the
+// caller's own parameter, settled by a later use in its body) and no active evidence answers it.
+// Each is a trait goal a later pass answers once this one has resolved the type.
+let recursive openConstrainedGoals (index: Int) (goals: List(TraitConstraint)) (state: CoreLoweringState) =
+    match goals with
+        | [] -> []
+        | (TraitConstraint { traitName = traitName, typeArguments = argument :: [] } as goal) :: rest ->
+            let resolved = resolveType(state)(argument)
+            in
+                match (unprovenTraitGoalKey(traitName)(constrainedGoalMethod(index))(resolved)(state), state |> stateTraitEnvironment |> resolveTraitEvidence((goal with typeArguments = [resolved]))) with
+                    | (Some(key), TraitEvidenceResolution { plan = Some(plan), error = None }) ->
+                        if constrainedPlanLacksEvidence(plan)(state)
+                        then (key, resolved) :: openConstrainedGoals(index + 1)(rest)(state)
+                        else openConstrainedGoals(index + 1)(rest)(state)
+                    | _ -> openConstrainedGoals(index + 1)(rest)(state)
+        | _goal :: rest -> openConstrainedGoals(index + 1)(rest)(state)
+
+// The value a call lowers to while any of its dictionaries waits on a type: every open requirement
+// joins the pass's record and the call stands as a constant of its own result type.
+let recursive deferConstrainedGoals (goals: List((Str, SemanticType))) (resultType: SemanticType) (state: CoreLoweringState) =
+    match goals with
+        | [] ->
+            lowerConstant(given (target) -> LoadConstInt(target)(0))(resultType)(state)
+        | (key, goalType) :: [] -> deferTraitGoal(key)(goalType)(resultType)(state)
+        | (key, goalType) :: rest ->
+            state
+            |> withStatePendingTraitGoals((key, goalType) :: statePendingTraitGoals(state))
+            |> deferConstrainedGoals(rest)(resultType)
+
 let lowerConstrainedCallWithName expression name privateName (binding: CoreBinding) lower (state: CoreLoweringState) =
     match instantiatePreservingConstraintOrder(binding.scheme)(state.typeSupply) with
         | InstantiationResult { semanticType = sourceType, constraints = constraints, supply = supply } ->
@@ -34992,46 +35047,54 @@ let lowerConstrainedCallWithName expression name privateName (binding: CoreBindi
                                                 | None -> (inferred, None)
                                                 | Some(expectedResult) -> bindType(resultType)(expectedResult)(inferred) with
                                                 | (failed, Some(error)) -> failure(failed)(error)
-                                                | (settled, None) ->
-                                                    let goals =
-                                                        map((given (constraint: TraitConstraint) ->
-                                                            constraint with typeArguments = map(resolveType(settled))(constraint.typeArguments)))(constraints)
-                                                    in
-                                                        match settled
-                                                        |> stateTraitEnvironment
-                                                        |> coreConstrainedLayout(goals) with
-                                                            | CoreConstrainedLayout { error = Some(error) } ->
-                                                                sourceType
-                                                                |> UnsupportedCoreTraitDispatch(error)
-                                                                |> failure(settled)
-                                                            | CoreConstrainedLayout { parameterTypes = dictionaryTypes, error = None } ->
-                                                                let physical =
-                                                                    sourceType
-                                                                    |> resolveType(settled)
-                                                                    |> coreConstrainedPhysicalType(dictionaryTypes)
-                                                                in
-                                                                    let physicalState =
+                                                | (bound, None) ->
+                                                    match pinConstrainedGoals(0)(constraints)(bound) with
+                                                        | settled ->
+                                                            let goals =
+                                                                map((given (constraint: TraitConstraint) ->
+                                                                    constraint with typeArguments = map(resolveType(settled))(constraint.typeArguments)))(constraints)
+                                                            in
+                                                                match openConstrainedGoals(0)(goals)(settled) with
+                                                                    | _first :: _rest as open ->
                                                                         settled
-                                                                        |> restoreBindings((binding with name = privateName, scheme = emptyScheme(physical)) :: state.bindings)
-                                                                        |> clearConsumerRequest
-                                                                    in
-                                                                        match lowerConstrainedDictionaries(settled
+                                                                        |> deferConstrainedGoals(open)(resolveType(settled)(resultType))
+                                                                        |> restoreConstrainedCall(state)
+                                                                    | [] ->
+                                                                        match settled
                                                                         |> stateTraitEnvironment
-                                                                        |> coreConstrainedShapes(goals))(lower)((physicalState with reuseTokens = []))([])([]) with
-                                                                            | (failed, _values, _closes, Some(error)) ->
-                                                                                error
-                                                                                |> failure(failed)
-                                                                                |> restoreConstrainedCall(state)
-                                                                            | (dictionaryState, dictionaries, closes, None) ->
-                                                                                let spine = collectCallSpine(expression)
+                                                                        |> coreConstrainedLayout(goals) with
+                                                                            | CoreConstrainedLayout { error = Some(error) } ->
+                                                                                sourceType
+                                                                                |> UnsupportedCoreTraitDispatch(error)
+                                                                                |> failure(settled)
+                                                                            | CoreConstrainedLayout { parameterTypes = dictionaryTypes, error = None } ->
+                                                                                let physical =
+                                                                                    sourceType
+                                                                                    |> resolveType(settled)
+                                                                                    |> coreConstrainedPhysicalType(dictionaryTypes)
                                                                                 in
-                                                                                    let expanded =
-                                                                                        appendConstrainedArguments(appendConstrainedArguments(ExprVar(privateName))(dictionaries))(spine.arguments)
+                                                                                    let physicalState =
+                                                                                        settled
+                                                                                        |> restoreBindings((binding with name = privateName, scheme = emptyScheme(physical)) :: state.bindings)
+                                                                                        |> clearConsumerRequest
                                                                                     in
-                                                                                        (dictionaryState with reuseTokens = state.reuseTokens, consumerRequest = state.consumerRequest)
-                                                                                        |> lower(expanded)
-                                                                                        |> closeConstrainedTemporaries(closes)
-                                                                                        |> restoreConstrainedCall(state)
+                                                                                        match lowerConstrainedDictionaries(settled
+                                                                                        |> stateTraitEnvironment
+                                                                                        |> coreConstrainedShapes(goals))(lower)((physicalState with reuseTokens = []))([])([]) with
+                                                                                            | (failed, _values, _closes, Some(error)) ->
+                                                                                                error
+                                                                                                |> failure(failed)
+                                                                                                |> restoreConstrainedCall(state)
+                                                                                            | (dictionaryState, dictionaries, closes, None) ->
+                                                                                                let spine = collectCallSpine(expression)
+                                                                                                in
+                                                                                                    let expanded =
+                                                                                                        appendConstrainedArguments(appendConstrainedArguments(ExprVar(privateName))(dictionaries))(spine.arguments)
+                                                                                                    in
+                                                                                                        (dictionaryState with reuseTokens = state.reuseTokens, consumerRequest = state.consumerRequest)
+                                                                                                        |> lower(expanded)
+                                                                                                        |> closeConstrainedTemporaries(closes)
+                                                                                                        |> restoreConstrainedCall(state)
 
 let lowerConstrainedCall expression name binding lower state =
     match freshLocal(state) with
