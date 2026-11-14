@@ -229,7 +229,45 @@ let recursive prepareRecursiveBindings bindings environment supply reversedPendi
                                 pending :: reversedPending
                             )
 
-let recursive inferRecursiveBindings pending environment boundaryEnvironment substitution supply reversedResolved =
+let recursive appendProgramConstraints left right =
+    match left with
+        | [] -> right
+        | head :: tail -> head :: appendProgramConstraints(tail)(right)
+
+let recursive pendingPlaceholderTypes pending =
+    match pending with
+        | [] -> []
+        | PendingRecursiveBinding { placeholderType = placeholderType } :: tail -> placeholderType :: pendingPlaceholderTypes(tail)
+
+// The boundary a recursive member's signature is checked against, with the group's own types in
+// scope: a requirement on a type a sibling has yet to settle is not ambiguous while the group
+// is still being inferred. The group as a whole is checked once every member is typed.
+let recursiveGroupBoundary groupType substitution boundaryEnvironment = addTypeBinding("$recursive group")(TypeScheme(quantified = [], body = applySubstitution(substitution)(groupType), constraints = []))(boundaryEnvironment)
+
+let recursive resolvedGroupTypes substitution resolved =
+    match resolved with
+        | [] -> []
+        | ResolvedRecursiveBinding { semanticType = semanticType } :: tail -> applySubstitution(substitution)(semanticType) :: resolvedGroupTypes(substitution)(tail)
+
+let recursive resolvedGroupConstraints substitution resolved =
+    match resolved with
+        | [] -> []
+        | ResolvedRecursiveBinding { constraints = constraints } :: tail ->
+            tail
+            |> resolvedGroupConstraints(substitution)
+            |> appendProgramConstraints(applyInferenceConstraints(substitution)(constraints))
+
+let recursiveGroupAmbiguity resolved substitution outerEnvironment =
+    firstAmbiguousTraitRequirementUnder(
+        substitution,
+        resolvedGroupConstraints(substitution)(resolved),
+        resolved
+        |> resolvedGroupTypes(substitution)
+        |> SemTuple,
+        outerEnvironment
+    )
+
+let recursive inferRecursiveBindings groupType pending environment boundaryEnvironment substitution supply reversedResolved =
     match pending with
         | [] ->
             RecursiveInference(resolved = reverse(
@@ -255,7 +293,7 @@ let recursive inferRecursiveBindings pending environment boundaryEnvironment sub
                                         requirements,
                                         unifiedType,
                                         valueConstraints,
-                                        boundaryEnvironment,
+                                        recursiveGroupBoundary(groupType)(unifiedSubstitution)(boundaryEnvironment),
                                         unifiedSubstitution,
                                         valueSupply
                                     ) with
@@ -263,6 +301,7 @@ let recursive inferRecursiveBindings pending environment boundaryEnvironment sub
                                             let resolvedBinding = ResolvedRecursiveBinding(name = name, semanticType = annotatedType, constraints = selectedConstraints)
                                             in
                                                 inferRecursiveBindings(
+                                                    groupType,
                                                     tail,
                                                     environment,
                                                     boundaryEnvironment,
@@ -306,6 +345,9 @@ let inferRecursiveGroup bindings state =
             match prepareRecursiveBindings(bindings)(outerEnvironment)(supply)([]) with
                 | RecursivePreparation { environment = recursiveEnvironment, pending = pending, supply = preparedSupply } ->
                     match inferRecursiveBindings(
+                        pending
+                        |> pendingPlaceholderTypes
+                        |> SemTuple,
                         pending,
                         recursiveEnvironment,
                         outerEnvironment,
@@ -314,14 +356,20 @@ let inferRecursiveGroup bindings state =
                         []
                     ) with
                         | RecursiveInference { resolved = resolved, substitution = resolvedSubstitution, supply = resolvedSupply, error = None } ->
-                            let finalEnvironment =
-                                generalizeRecursiveBindings(
-                                    resolved,
-                                    outerEnvironment,
-                                    resolvedSubstitution,
-                                    outerEnvironment
-                                )
-                            in ProgramInferenceState(environment = finalEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                            match recursiveGroupAmbiguity(resolved)(resolvedSubstitution)(outerEnvironment) with
+                                | Some(traitName) ->
+                                    ProgramInferenceState(environment = outerEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
+                                        ProgramExpressionError(AmbiguousTraitRequirement(traitName))
+                                    ))
+                                | None ->
+                                    let finalEnvironment =
+                                        generalizeRecursiveBindings(
+                                            resolved,
+                                            outerEnvironment,
+                                            resolvedSubstitution,
+                                            outerEnvironment
+                                        )
+                                    in ProgramInferenceState(environment = finalEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
                         | RecursiveInference { resolved = _resolved, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } ->
                             ProgramInferenceState(environment = outerEnvironment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                 ProgramExpressionError(error)

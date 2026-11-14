@@ -65,6 +65,7 @@ export (
     value inferenceEnvironmentSchemes,
     value applyInferenceConstraints,
     value simplifyTraitConstraints,
+    value firstAmbiguousTraitRequirementUnder,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value inferExpressionFrom,
@@ -2413,6 +2414,44 @@ let recursive firstAmbiguousTraitRequirement constraints bindingType environment
                         then Some(traitName)
                         else firstAmbiguousTraitRequirement(tail)(bindingType)(environment)
 
+let recursive resolvedVariablesOf substitution variables =
+    match variables with
+        | [] -> []
+        | variable :: rest ->
+            rest
+            |> resolvedVariablesOf(substitution)
+            |> append(SemVariable(variable)
+            |> applySubstitution(substitution)
+            |> freeTypeVariables)
+
+let recursive firstAmbiguousResolvedRequirement constraints bodyVariables environmentVariables =
+    match constraints with
+        | [] -> None
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: tail ->
+            if firstAmbiguousRequirementVariable(freeTypeVariables(SemTuple(typeArguments)))(bodyVariables)(environmentVariables)
+            then Some(traitName)
+            else firstAmbiguousResolvedRequirement(tail)(bodyVariables)(environmentVariables)
+
+// The ambiguity check with the environment's free variables resolved first, as generalization
+// resolves them: a monomorphic variable in scope can have become an arrow while the binding was
+// inferred, and a requirement on its parameter or result still belongs to the environment.
+let firstAmbiguousTraitRequirementUnder substitution constraints bindingType environment =
+    firstAmbiguousResolvedRequirement(
+        applyInferenceConstraints(substitution)(constraints),
+        bindingType
+        |> applySubstitution(substitution)
+        |> freeTypeVariables,
+        environment
+        |> inferenceEnvironmentSchemes
+        |> freeEnvironmentVariables
+        |> resolvedVariablesOf(substitution)
+    )
+
+let bindingRequirementAmbiguity constraints bindingType environment substitution =
+    if appliesProgramInferenceRules(environment)
+    then firstAmbiguousTraitRequirementUnder(substitution)(constraints)(bindingType)(environment)
+    else firstAmbiguousTraitRequirement(constraints)(bindingType)(environment)
+
 let bindingSignatureSuccess semanticType substitution supply constraints = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = constraints, error = None)
 
 let validateWrittenBindingRequirements inferred written semanticType substitution supply =
@@ -2441,7 +2480,7 @@ let validateBindingRequirementSet requirements inferred written semanticType env
             | [] -> inferred
             | _ -> written
     in
-        match firstAmbiguousTraitRequirement(selected)(semanticType)(environment) with
+        match bindingRequirementAmbiguity(selected)(semanticType)(environment)(substitution) with
             | Some(traitName) ->
                 inferenceFailure(
                     semanticType,
