@@ -1,0 +1,892 @@
+// The semantic stitching module as it stood before its lookups were indexed, kept as the oracle
+// the indexed module is compared with. The scope and project types and the exported functions
+// are renamed, as is the pending collection's `reversed` field, whose access by field name two
+// copies of the type would make ambiguous; the types both modules share are imported from the
+// indexed module. Nothing else differs from the original.
+
+import Ashes.Collection.List.append as appendList
+import Ashes.Collection.List.reverse as reverseList
+import Ashes.Internal.deepCopy as deepCopy
+import AshesCompiler.Frontend.ImportResolution
+import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Frontend.Token
+import AshesCompiler.Semantics.CoreBuiltinLowering.coreBuiltinKind
+import AshesCompiler.Semantics.CoreBuiltinLowering.isIntrinsicBuiltinModule
+import AshesCompiler.Semantics.ExprMentions.programMentionsVariable
+import AshesCompiler.Semantics.ModuleSemanticStitching
+export (
+    type FrozenModuleScope(..),
+    type FrozenSemanticProject(..),
+    value frozenBuildStitchedSemanticProject,
+    value frozenResolveStitchedUnqualified,
+    value frozenResolveStitchedQualified,
+    value frozenResolveStitchedShippedType,
+    value frozenResolveStitchedModuleAlias,
+    value frozenResolveStitchedIntrinsicSelector,
+    value frozenStitchedModulePlainImports,
+)
+
+type FrozenModuleScope =
+    | name: Str
+    | packageId: Str
+    | sourcePath: Str
+    | imports: List(StitchedImportBinding)
+    | moduleAliases: List((Str, Str))
+    | plainWholeModuleImports: List(Str)
+    | intrinsicSelectors: List(IntrinsicSelector)
+    | definitions: List(StitchedDefinition)
+    deriving {Eq, Show}
+
+type FrozenSemanticProject =
+    | scopes: List(FrozenModuleScope)
+    | nextDefinitionId: Int
+    deriving {Eq, Show}
+
+// `global` marks a definition whose compiler name is its source name in every module: an
+// external opaque type, which stage 0 never renames (its private-member renaming covers the
+// module's declared types only), so a bare reference to the handle type from a module that
+// imports the declaring module whole names the same declaration.
+type PendingDefinition =
+    | name: Str
+    | kind: StitchedNameKind
+    | span: Maybe(TextSpan)
+    | order: Int
+    | recursiveVisible: Bool
+    | global: Bool
+
+type DefinitionCollection =
+    | frozenReversed: List(PendingDefinition)
+    | nextOrder: Int
+
+type StitchState =
+    | reversedModules: List(FrozenModuleScope)
+    | nextDefinitionId: Int
+
+let both left right =
+    if left
+    then right
+    else false
+
+let sameNamespace left right =
+    match (left, right) with
+        | (StitchedValue, StitchedValue) -> true
+        | (StitchedValue, StitchedConstructor) -> true
+        | (StitchedValue, StitchedExternal) -> true
+        | (StitchedConstructor, StitchedValue) -> true
+        | (StitchedConstructor, StitchedConstructor) -> true
+        | (StitchedConstructor, StitchedExternal) -> true
+        | (StitchedExternal, StitchedValue) -> true
+        | (StitchedExternal, StitchedConstructor) -> true
+        | (StitchedExternal, StitchedExternal) -> true
+        | (StitchedType, StitchedType) -> true
+        | (StitchedType, StitchedCapability) -> true
+        | (StitchedType, StitchedTrait) -> true
+        | (StitchedCapability, StitchedType) -> true
+        | (StitchedCapability, StitchedCapability) -> true
+        | (StitchedCapability, StitchedTrait) -> true
+        | (StitchedTrait, StitchedType) -> true
+        | (StitchedTrait, StitchedCapability) -> true
+        | (StitchedTrait, StitchedTrait) -> true
+        | _ -> false
+
+// The scope is returned as it sits in the list: the reference rewriter looks a module up once
+// per name it resolves, and copying the scope with its thousands of definitions at every lookup
+// cost the stage-1 compiler more memory than a machine has while rewriting its own sources.
+let recursive findModule (name: Str) (modules: List(FrozenModuleScope)) =
+    match modules with
+        | [] -> None
+        | (FrozenModuleScope { name = candidate, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = _definitions } as moduleScope) :: rest ->
+            if candidate == name
+            then Some(moduleScope)
+            else findModule(name)(rest)
+
+let hasModule (name: Str) (modules: List(FrozenModuleScope)) =
+    match findModule(name)(modules) with
+        | Some(_moduleScope) -> true
+        | None -> false
+
+let recursive findExportedDefinition (name: Str) (kind: StitchedNameKind) (definitions: List(StitchedDefinition)) =
+    match definitions with
+        | [] -> None
+        | (StitchedDefinition { sourceName = candidate, kind = candidateKind, exported = exported, id = _id, qualifiedName = _qualifiedName, compilerName = _compilerName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom } as definition) :: rest ->
+            if candidateKind
+            |> sameNamespace(kind)
+            |> both(candidate == name)
+            |> both(exported)
+            then
+                definition
+                |> deepCopy
+                |> Some
+            else findExportedDefinition(name)(kind)(rest)
+
+let recursive hasPendingDefinition name kind definitions =
+    match definitions with
+        | [] -> false
+        | PendingDefinition { name = candidate, kind = candidateKind, span = _span, order = _order, recursiveVisible = _recursiveVisible } :: rest ->
+            if candidateKind
+            |> sameNamespace(kind)
+            |> both(candidate == name)
+            then true
+            else hasPendingDefinition(name)(kind)(rest)
+
+let addPendingWith (global: Bool) name kind span order recursiveVisible collection =
+    match collection with
+        | DefinitionCollection { frozenReversed = reversed, nextOrder = nextOrder } -> DefinitionCollection(frozenReversed = PendingDefinition(name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible, global = global) :: reversed, nextOrder = nextOrder)
+
+let addPending name kind span order recursiveVisible collection = addPendingWith(false)(name)(kind)(span)(order)(recursiveVisible)(collection)
+
+let recursive addConstructors constructors span order collection =
+    match constructors with
+        | [] -> collection
+        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest ->
+            addConstructors(
+                rest,
+                span,
+                order,
+                addPending(name)(StitchedConstructor)(span)(order)(false)(collection)
+            )
+
+let addTypeDeclaration declaration span order collection =
+    match declaration with
+        | TypeDecl { name = name, typeParameters = _parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits } ->
+            addConstructors(
+                constructors,
+                span,
+                order,
+                addPending(name)(StitchedType)(span)(order)(true)(collection)
+            )
+
+let addZeroCostDeclaration declaration span order collection =
+    match declaration with
+        | ZeroCostTypeDecl { name = name, typeParameters = _parameters, constructor = TypeConstructor { name = constructorName, parameters = _constructorParameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits } ->
+            addPending(
+                constructorName,
+                StitchedConstructor,
+                span,
+                order,
+                false,
+                addPending(name)(StitchedType)(span)(order)(true)(collection)
+            )
+
+let recursive addBindings bindings span order recursiveVisible collection =
+    match bindings with
+        | [] -> collection
+        | LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements } :: rest ->
+            addBindings(
+                rest,
+                span,
+                order,
+                recursiveVisible,
+                addPending(name)(StitchedValue)(span)(order)(recursiveVisible)(collection)
+            )
+
+let addExternal declaration span order collection =
+    match declaration with
+        | ExternalOpaqueType(name, _resource) -> addPendingWith(true)(name)(StitchedType)(span)(order)(false)(collection)
+        | ExternalFunction(name, _parameters, _result, _symbol, _ownership, _needs) ->
+            // Stage 0 hoists an `external` function program-wide under its own name (never
+            // exported, never renamed), so a destructor reference inside a native-string
+            // signature or a resource declaration keeps naming it.
+            addPendingWith(true)(
+                name,
+                StitchedExternal,
+                span,
+                order,
+                false,
+                collection
+            )
+
+let addUnspannedItem item span collection =
+    match collection with
+        | DefinitionCollection { frozenReversed = _reversed, nextOrder = order } ->
+            let next =
+                match item with
+                    | TopLevelType(declaration) -> addTypeDeclaration(declaration)(span)(order)(collection)
+                    | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _parameters, target = _target }) ->
+                        addPending(
+                            name,
+                            StitchedType,
+                            span,
+                            order,
+                            false,
+                            collection
+                        )
+                    | TopLevelZeroCostType(declaration) -> addZeroCostDeclaration(declaration)(span)(order)(collection)
+                    | TopLevelExternal(declaration) -> addExternal(declaration)(span)(order)(collection)
+                    | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) ->
+                        addPending(
+                            name,
+                            StitchedCapability,
+                            span,
+                            order,
+                            true,
+                            collection
+                        )
+                    | TopLevelTrait(TraitDecl { name = name, typeParameters = _parameters, supertraits = _supertraits, methods = _methods }) ->
+                        addPending(
+                            name,
+                            StitchedTrait,
+                            span,
+                            order,
+                            true,
+                            collection
+                        )
+                    | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements }, isRecursive) ->
+                        addPending(
+                            name,
+                            StitchedValue,
+                            span,
+                            order,
+                            isRecursive,
+                            collection
+                        )
+                    | TopLevelRecursiveGroup(bindings) -> addBindings(bindings)(span)(order)(true)(collection)
+                    | _ -> collection
+            in DefinitionCollection(frozenReversed = next.frozenReversed, nextOrder = order + 1)
+
+let addItem item collection =
+    match item with
+        | TopLevelAt(span, inner) -> addUnspannedItem(inner)(Some(span))(collection)
+        | _ -> addUnspannedItem(item)(None)(collection)
+
+let recursive collectPendingDefinitions items collection =
+    match items with
+        | [] -> reverseList(collection.frozenReversed)
+        | item :: rest ->
+            collection
+            |> addItem(item)
+            |> collectPendingDefinitions(rest)
+
+let recursive interfaceExports (name: Str) (kind: StitchedNameKind) (exports: List(ModuleImportExport)) =
+    match exports with
+        | [] -> false
+        | ImportValueExport(candidate) :: rest ->
+            if both(candidate == name)(kind == StitchedValue)
+            then true
+            else interfaceExports(name)(kind)(rest)
+        | ImportTypeExport(candidate) :: rest ->
+            if StitchedType
+            |> sameNamespace(kind)
+            |> both(candidate == name)
+            then true
+            else interfaceExports(name)(kind)(rest)
+        | ImportConstructorExport(candidate) :: rest ->
+            if both(candidate == name)(kind == StitchedConstructor)
+            then true
+            else interfaceExports(name)(kind)(rest)
+        | ImportModuleExport(_candidate) :: rest -> interfaceExports(name)(kind)(rest)
+
+let sanitizeModuleName : Str -> Str =
+    given (name) ->
+        "."
+        |> Ashes.Text.split(name)
+        |> Ashes.Text.join("_")
+
+let privateCompilerName : Str -> Str -> StitchedNameKind -> Str =
+    given (moduleName) ->
+        given (sourceName) ->
+            given (kind) ->
+                let prefix =
+                    match kind with
+                        | StitchedValue -> "__ashes_private_value_"
+                        | StitchedExternal -> "__ashes_private_external_"
+                        | StitchedConstructor -> "AshesPrivateConstructor_"
+                        | _ -> "AshesPrivateType_"
+                in prefix + sanitizeModuleName(moduleName) + "_" + sourceName
+
+let publicCompilerName : Str -> Str -> Bool -> Str =
+    given (moduleName) ->
+        given (sourceName) ->
+            given (isEntry) ->
+                if isEntry
+                then deepCopy(sourceName)
+                else sanitizeModuleName(moduleName) + "_" + sourceName
+
+let compilerName : Str -> Str -> StitchedNameKind -> Bool -> Bool -> Str =
+    given (moduleName) ->
+        given (sourceName) ->
+            given (kind) ->
+                given (isEntry) ->
+                    given (exported) ->
+                        if exported
+                        then publicCompilerName(moduleName)(sourceName)(isEntry)
+                        else privateCompilerName(moduleName)(sourceName)(kind)
+
+let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId reversed =
+    match unit with
+        | SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = _imports, interface = ModuleImportInterface { name = _interfaceName, exports = exports }, program = _program, isEntry = isEntry } ->
+            match pending with
+                | [] -> (reverseList(reversed), nextId)
+                | PendingDefinition { name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible, global = global } :: rest ->
+                    let exported = interfaceExports(name)(kind)(exports)
+                    in
+                        let definition =
+                            StitchedDefinition(id = nextId, sourceName = name, qualifiedName = moduleName + "." + name, compilerName = if global
+                            then deepCopy(name)
+                            else
+                                compilerName(
+                                    moduleName,
+                                    name,
+                                    kind,
+                                    isEntry,
+                                    exported
+                                ), moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, kind = kind, definitionSpan = span, declarationOrder = order, visibleFrom = if recursiveVisible
+                            then order
+                            else order + 1, exported = exported)
+                        in materializeDefinitions(rest)(unit)(nextId + 1)(definition :: reversed)
+
+let recursive duplicateDefinition definitions seen =
+    match definitions with
+        | [] -> None
+        | PendingDefinition { name = name, kind = kind, span = _span, order = _order, recursiveVisible = _recursiveVisible } :: rest ->
+            if hasPendingDefinition(name)(kind)(seen)
+            then Some(name)
+            else
+                duplicateDefinition(
+                    rest,
+                    PendingDefinition(name = name, kind = kind, span = None, order = 0, recursiveVisible = false, global = false) :: seen
+                )
+
+let recursive compilerNameOwner name definitions =
+    match definitions with
+        | [] -> None
+        | StitchedDefinition { compilerName = candidate, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
+            if candidate == name
+            then Some(qualifiedName)
+            else compilerNameOwner(name)(rest)
+
+// The owner of a compiler name among the completed modules' definitions, searched module by module
+// in order rather than over a concatenation of them, which every module rebuilt and left behind.
+let recursive compilerNameOwnerInModules name modules =
+    match modules with
+        | [] -> None
+        | FrozenModuleScope { name = _name, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } :: rest ->
+            match compilerNameOwner(name)(definitions) with
+                | Some(owner) -> Some(owner)
+                | None -> compilerNameOwnerInModules(name)(rest)
+
+let recursive validateCompilerNames definitions existingModules =
+    match definitions with
+        | [] -> None
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
+            match compilerNameOwnerInModules(compilerName)(existingModules) with
+                | Some(owner) ->
+                    qualifiedName
+                    |> CompilerPrivateNameCollision(compilerName)(owner)
+                    |> Some
+                | None -> validateCompilerNames(rest)(existingModules)
+
+let resolvedModule resolved =
+    match resolved with
+        | ResolvedValueImport(moduleName, _exportName, _localName, _line, _written) -> moduleName
+        | ResolvedTypeImport(moduleName, _exportName, _localName, _line, _written) -> moduleName
+        | ResolvedModuleImport(moduleName, _alias, _line, _written) -> moduleName
+
+let recursive exportedBindings qualifier definitions =
+    match definitions with
+        | [] -> []
+        | (StitchedDefinition { sourceName = sourceName, exported = true, id = _id, qualifiedName = _qualifiedName, compilerName = _compilerName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom } as definition) :: rest ->
+            StitchedImportBinding(localName = sourceName, qualifier = qualifier, target = deepCopy(
+                definition
+            )) :: exportedBindings(
+                qualifier,
+                rest
+            )
+        | _definition :: rest -> exportedBindings(qualifier)(rest)
+
+let moduleLeaf name =
+    match "."
+    |> Ashes.Text.split(name)
+    |> reverseList with
+        | leaf :: _rest -> leaf
+        | [] -> name
+
+let recursive qualifierOwner qualifier bindings =
+    match bindings with
+        | [] -> None
+        | StitchedImportBinding { localName = _localName, qualifier = Some(candidate), target = StitchedDefinition { moduleName = moduleName, id = _id, sourceName = _sourceName, qualifiedName = _qualifiedName, compilerName = _compilerName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } } :: rest ->
+            if candidate == qualifier
+            then Some(moduleName)
+            else qualifierOwner(qualifier)(rest)
+        | _binding :: rest -> qualifierOwner(qualifier)(rest)
+
+let qualifierConflicts qualifier importedName bindings =
+    match qualifierOwner(qualifier)(bindings) with
+        | None -> false
+        | Some(owner) -> owner != importedName
+
+let recursive unqualifiedConflict (binding: StitchedImportBinding) bindings =
+    match binding with
+        | StitchedImportBinding { localName = bindingName, qualifier = bindingQualifier, target = StitchedDefinition { qualifiedName = bindingTargetName, kind = bindingTargetKind, id = _bindingId, sourceName = _bindingSourceName, compilerName = _bindingCompilerName, moduleName = _bindingModuleName, packageId = _bindingPackageId, sourcePath = _bindingSourcePath, definitionSpan = _bindingSpan, declarationOrder = _bindingOrder, visibleFrom = _bindingVisibleFrom, exported = _bindingExported } } ->
+            match bindings with
+                | [] -> false
+                | StitchedImportBinding { localName = existingName, qualifier = existingQualifier, target = StitchedDefinition { qualifiedName = existingTargetName, kind = existingTargetKind, id = _existingId, sourceName = _existingSourceName, compilerName = _existingCompilerName, moduleName = _existingModuleName, packageId = _existingPackageId, sourcePath = _existingSourcePath, definitionSpan = _existingSpan, declarationOrder = _existingOrder, visibleFrom = _existingVisibleFrom, exported = _existingExported } } :: rest ->
+                    if both(
+                        bindingQualifier == None,
+                        both(
+                            existingQualifier == None,
+                            both(
+                                bindingName == existingName,
+                                both(
+                                    bindingTargetName != existingTargetName,
+                                    sameNamespace(bindingTargetKind)(existingTargetKind)
+                                )
+                            )
+                        )
+                    )
+                    then true
+                    else unqualifiedConflict(binding)(rest)
+
+let recursive localDefinitionShadows name kind definitions =
+    match definitions with
+        | [] -> false
+        | definition :: rest ->
+            if definition.kind
+            |> sameNamespace(kind)
+            |> both(definition.sourceName == name)
+            then true
+            else localDefinitionShadows(name)(kind)(rest)
+
+let valueNamespace kind =
+    match kind with
+        | StitchedValue -> true
+        | StitchedConstructor -> true
+        | StitchedExternal -> true
+        | _ -> false
+
+// Whether an unqualified import binding that collides with an earlier one is an error for this
+// module. Language.md makes unqualified ACCESS to a name two imported modules both export the
+// error, not the pair of imports themselves (`import Ashes.Collection.List as list` beside
+// `import Ashes.Text as text` is routine, and both export `length`): a value-namespace collision
+// is fatal only where the module's own top-level values or trailing expression mention the name,
+// the surface stage 0's referenced-name walk covers, and never when a local top-level definition
+// of the same namespace shadows every import. A type-namespace collision stays an error at the
+// import, since a type name's uses are not scanned here.
+let importConflictIsFatal (program: ProgramSyntax) definitions (binding: StitchedImportBinding) =
+    match binding with
+        | StitchedImportBinding { localName = name, qualifier = _qualifier, target = target } ->
+            if localDefinitionShadows(name)(target.kind)(definitions)
+            then false
+            else
+                if valueNamespace(target.kind)
+                then programMentionsVariable(name)(program)
+                else true
+
+// An unused collision keeps the first import's binding; `fatalConflict` decides the rest.
+let recursive addImportBindings moduleName fatalConflict additions current =
+    match additions with
+        | [] -> Ok(current)
+        | (StitchedImportBinding { localName = bindingName, qualifier = _qualifier, target = _target } as binding) :: rest ->
+            if unqualifiedConflict(binding)(current)
+            then
+                if fatalConflict(binding)
+                then
+                    bindingName
+                    |> ConflictingStitchedImport(moduleName)
+                    |> Error
+                else addImportBindings(moduleName)(fatalConflict)(rest)(current)
+            else addImportBindings(moduleName)(fatalConflict)(rest)(binding :: current)
+
+let addWholeModuleImport ownerModule fatalConflict (imported: FrozenModuleScope) alias bindings =
+    match imported with
+        | FrozenModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
+            let primaryQualifier =
+                match alias with
+                    | Some(name) -> name
+                    | None -> importedName
+            in
+                if qualifierConflicts(primaryQualifier)(importedName)(bindings)
+                then
+                    primaryQualifier
+                    |> ConflictingModuleQualifier(ownerModule)
+                    |> Error
+                else
+                    let qualified = exportedBindings(Some(primaryQualifier))(definitions)
+                    in
+                        let withShort =
+                            match alias with
+                                // A qualified reference through the module's own canonical name
+                                // (`Ashes.Collection.List.length(xs)`) must resolve regardless of
+                                // whatever alias the import chose, matching stage 0's algorithmic
+                                // qualifier resolution (`ResolveModuleAlias`, consulted only to
+                                // rewrite an alias to its target before mangling — a canonical
+                                // name that is not itself a registered alias resolves unchanged).
+                                // Registered unconditionally, with no `qualifierConflicts` check:
+                                // stage 0 has none either for a directly-written canonical name.
+                                | Some(_name) ->
+                                    if importedName == primaryQualifier
+                                    then qualified
+                                    else
+                                        definitions
+                                        |> exportedBindings(Some(importedName))
+                                        |> appendList(qualified)
+                                | None ->
+                                    let leaf = moduleLeaf(importedName)
+                                    in
+                                        if leaf == importedName
+                                        then qualified
+                                        else
+                                            if qualifierConflicts(leaf)(importedName)(bindings)
+                                            then []
+                                            else
+                                                definitions
+                                                |> exportedBindings(Some(leaf))
+                                                |> appendList(qualified)
+                        in
+                            match alias with
+                                | Some(_name) ->
+                                    addImportBindings(
+                                        ownerModule,
+                                        fatalConflict,
+                                        appendList(exportedBindings(None)(definitions))(withShort),
+                                        bindings
+                                    )
+                                | None ->
+                                    let leaf = moduleLeaf(importedName)
+                                    in
+                                        if bindings
+                                        |> qualifierConflicts(leaf)(importedName)
+                                        |> both(leaf != importedName)
+                                        then
+                                            leaf
+                                            |> ConflictingModuleQualifier(ownerModule)
+                                            |> Error
+                                        else
+                                            addImportBindings(
+                                                ownerModule,
+                                                fatalConflict,
+                                                appendList(exportedBindings(None)(definitions))(withShort),
+                                                bindings
+                                            )
+
+// A selector import of an intrinsic builtin module's member binds no definition: the module has
+// none, and the reference rewriter resolves the local name through the scope's
+// `intrinsicSelectors` instead.
+let isIntrinsicMember (moduleName: Str) (memberName: Str) =
+    if isIntrinsicBuiltinModule(moduleName)
+    then
+        match coreBuiltinKind(moduleName)(memberName) with
+            | Some(_kind) -> true
+            | None -> false
+    else false
+
+let addSelectorImport ownerModule fatalConflict (imported: FrozenModuleScope) exportName localName kind bindings =
+    match imported with
+        | FrozenModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
+            match findExportedDefinition(exportName)(kind)(definitions) with
+                | None ->
+                    if isIntrinsicMember(importedName)(exportName)
+                    then Ok(bindings)
+                    else
+                        exportName
+                        |> MissingStitchedImportExport(ownerModule)(importedName)
+                        |> Error
+                | Some(definition) ->
+                    addImportBindings(
+                        ownerModule,
+                        fatalConflict,
+                        [StitchedImportBinding(localName = localName, qualifier = None, target = definition)],
+                        bindings
+                    )
+
+// Stage 0 normalizes a type selector import (`import M.Type`) into a whole-module import of `M`
+// beside the selector (`NormalizeTypeSelectors`), so the module's exports, its constructors
+// among them, are in scope unqualified and qualified as by `import M`; a module the scope
+// already imports wholesale is not imported again.
+let addTypeSelectorImport ownerModule fatalConflict (imported: FrozenModuleScope) exportName localName bindings =
+    match imported with
+        | FrozenModuleScope { name = importedName } ->
+            let withModule =
+                match qualifierOwner(importedName)(bindings) with
+                    | Some(_owner) -> Ok(bindings)
+                    | None -> addWholeModuleImport(ownerModule)(fatalConflict)(imported)(None)(bindings)
+            in
+                match withModule with
+                    | Error(error) -> Error(error)
+                    | Ok(moduleBindings) -> addSelectorImport(ownerModule)(fatalConflict)(imported)(exportName)(localName)(StitchedType)(moduleBindings)
+
+let recursive buildImportBindings ownerModule fatalConflict imports completed bindings =
+    match imports with
+        | [] ->
+            bindings
+            |> reverseList
+            |> Ok
+        | resolved :: rest ->
+            match findModule(resolvedModule(resolved))(completed) with
+                | None ->
+                    resolved
+                    |> resolvedModule
+                    |> MissingStitchedImportModule(ownerModule)
+                    |> Error
+                | Some(imported) ->
+                    let added =
+                        match resolved with
+                            | ResolvedModuleImport(_moduleName, alias, _line, _written) ->
+                                addWholeModuleImport(
+                                    ownerModule,
+                                    fatalConflict,
+                                    imported,
+                                    alias,
+                                    bindings
+                                )
+                            | ResolvedValueImport(_moduleName, exportName, localName, _line, _written) ->
+                                addSelectorImport(
+                                    ownerModule,
+                                    fatalConflict,
+                                    imported,
+                                    exportName,
+                                    localName,
+                                    StitchedValue,
+                                    bindings
+                                )
+                            | ResolvedTypeImport(_moduleName, exportName, localName, _line, _written) ->
+                                addTypeSelectorImport(
+                                    ownerModule,
+                                    fatalConflict,
+                                    imported,
+                                    exportName,
+                                    localName,
+                                    bindings
+                                )
+                    in
+                        match added with
+                            | Error(error) -> Error(error)
+                            | Ok(next) -> buildImportBindings(ownerModule)(fatalConflict)(rest)(completed)(next)
+
+// The qualifier shorthands a module's whole-module imports establish: an explicit alias
+// (`import Ashes.IO as io` maps `io`) and the module-path leaf (`import Ashes.IO` maps `IO`),
+// each to the imported module's full name. Consulted by the reference rewriter when a qualified
+// name matches no stitched binding — an intrinsic builtin module contributes no bindings at all,
+// so its members are reachable only by rewriting the alias back to the full module name and
+// letting the no-import-required qualified-access path resolve them.
+let recursive collectModuleAliases resolvedImports =
+    match resolvedImports with
+        | [] -> []
+        | ResolvedModuleImport(importedName, alias, _line, _written) :: rest ->
+            let leafEntries =
+                let leaf = moduleLeaf(importedName)
+                in
+                    if leaf == importedName
+                    then []
+                    else [(deepCopy(leaf), deepCopy(importedName))]
+            in
+                match alias with
+                    | Some(name) ->
+                        (deepCopy(name), deepCopy(importedName)) :: appendList(leafEntries)(collectModuleAliases(rest))
+                    | None ->
+                        rest
+                        |> collectModuleAliases
+                        |> appendList(leafEntries)
+        | _ :: rest -> collectModuleAliases(rest)
+
+// The selector imports naming an intrinsic builtin module's member, each as the local name the
+// importing module reads it by, the module, and the member.
+let recursive collectIntrinsicSelectors resolvedImports =
+    match resolvedImports with
+        | [] -> []
+        | ResolvedValueImport(importedName, exportName, localName, _line, _written) :: rest ->
+            if isIntrinsicMember(importedName)(exportName)
+            then IntrinsicSelector(localName = deepCopy(localName), moduleName = deepCopy(importedName), memberName = deepCopy(exportName)) :: collectIntrinsicSelectors(rest)
+            else collectIntrinsicSelectors(rest)
+        | _ :: rest -> collectIntrinsicSelectors(rest)
+
+let recursive findModuleAlias (qualifier: Str) (aliases: List((Str, Str))) =
+    match aliases with
+        | [] -> None
+        | (alias, target) :: rest ->
+            if alias == qualifier
+            then
+                target
+                |> deepCopy
+                |> Some
+            else findModuleAlias(qualifier)(rest)
+
+let frozenResolveStitchedModuleAlias moduleName qualifier (project: FrozenSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> None
+        | Some(moduleScope) -> findModuleAlias(qualifier)(moduleScope.moduleAliases)
+
+// A whole-module import with no `as` alias (`import Ashes.IO`, not `import Ashes.IO as io`)
+// exposes its exported names unqualified as well as qualified (language.md's "Import and use
+// unqualified names": `import M` | "module M (qualified access; exported names also unqualified)").
+// `collectModuleAliases` above also records this SAME import's leaf-qualifier shorthand (`IO` ->
+// `Ashes.IO`), but an aliased import (`import Ashes.IO as io`) gets a leaf entry too, so the alias
+// map alone can't distinguish "this import exposes unqualified names" from "this import only
+// exposes a leaf/alias qualifier" — this list tracks the narrower, alias-free set the reference
+// rewriter needs for bare-name resolution.
+let recursive collectPlainWholeModuleImports resolvedImports =
+    match resolvedImports with
+        | [] -> []
+        | ResolvedModuleImport(importedName, None, _line, _written) :: rest -> deepCopy(importedName) :: collectPlainWholeModuleImports(rest)
+        | _ :: rest -> collectPlainWholeModuleImports(rest)
+
+let frozenStitchedModulePlainImports moduleName (project: FrozenSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> []
+        | Some(moduleScope) -> moduleScope.plainWholeModuleImports
+
+// The intrinsic module and member a module's selector import binds `localName` to, if any.
+let recursive findIntrinsicSelector (localName: Str) (selectors: List(IntrinsicSelector)) =
+    match selectors with
+        | [] -> None
+        | IntrinsicSelector { localName = candidate, moduleName = moduleName, memberName = memberName } :: rest ->
+            if candidate == localName
+            then Some((deepCopy(moduleName), deepCopy(memberName)))
+            else findIntrinsicSelector(localName)(rest)
+
+let frozenResolveStitchedIntrinsicSelector moduleName localName (project: FrozenSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> None
+        | Some(moduleScope) -> findIntrinsicSelector(localName)(moduleScope.intrinsicSelectors)
+
+let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
+    match (unit, state) with
+        | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = _moduleInterface, program = program, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId }) ->
+            if hasModule(moduleName)(completedModules)
+            then Error(DuplicateStitchedModule(moduleName))
+            else
+                let pending = collectPendingDefinitions(program.items)(DefinitionCollection(frozenReversed = [], nextOrder = 0))
+                in
+                    match duplicateDefinition(pending)([]) with
+                        | Some(name) ->
+                            name
+                            |> DuplicateModuleDeclaration(moduleName)
+                            |> Error
+                        | None ->
+                            match materializeDefinitions(pending)(unit)(nextDefinitionId)([]) with
+                                | (definitions, nextId) ->
+                                    match completedModules |> validateCompilerNames(definitions) with
+                                        | Some(error) -> Error(error)
+                                        | None ->
+                                            match buildImportBindings(
+                                                moduleName,
+                                                importConflictIsFatal(program)(definitions),
+                                                resolvedImports,
+                                                completedModules,
+                                                []
+                                            ) with
+                                                | Error(error) -> Error(error)
+                                                | Ok(imports) ->
+                                                    Ok(
+                                                        StitchState(reversedModules = FrozenModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, moduleAliases = collectModuleAliases(resolvedImports), plainWholeModuleImports = collectPlainWholeModuleImports(resolvedImports), intrinsicSelectors = collectIntrinsicSelectors(resolvedImports), definitions = definitions) :: completedModules, nextDefinitionId = nextId)
+                                                    )
+
+let recursive buildModules (units: List(SemanticStitchUnit)) (state: StitchState) =
+    match state with
+        | StitchState { reversedModules = reversedModules, nextDefinitionId = nextDefinitionId } ->
+            match units with
+                | [] ->
+                    Ok(
+                        FrozenSemanticProject(scopes = reverseList(reversedModules), nextDefinitionId = nextDefinitionId)
+                    )
+                | unit :: rest ->
+                    match buildModule(unit)(state) with
+                        | Error(error) -> Error(error)
+                        | Ok(next) -> buildModules(rest)(next)
+
+let frozenBuildStitchedSemanticProject : List(SemanticStitchUnit) -> Result(ModuleSemanticStitchError, FrozenSemanticProject) =
+    given (units) -> buildModules(units)(StitchState(reversedModules = [], nextDefinitionId = 0))
+
+let definitionVisibleAt boundary (definition: StitchedDefinition) = definition.visibleFrom <= boundary
+
+let recursive resolveLocalAt name kind boundary definitions =
+    match definitions with
+        | [] -> None
+        | definition :: rest ->
+            if definition.sourceName == name && definitionVisibleAt(boundary)(definition) && sameNamespace(kind)(definition.kind)
+            then
+                definition
+                |> deepCopy
+                |> Some
+            else resolveLocalAt(name)(kind)(boundary)(rest)
+
+let recursive resolveImported name qualifier kind bindings =
+    match bindings with
+        | [] -> None
+        | StitchedImportBinding { localName = localName, qualifier = bindingQualifier, target = target } :: rest ->
+            if localName == name && sameNamespace(kind)(target.kind) && bindingQualifier == qualifier
+            then
+                target
+                |> deepCopy
+                |> Some
+            else resolveImported(name)(qualifier)(kind)(rest)
+
+let frozenResolveStitchedUnqualified moduleName boundary kind name (project: FrozenSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> None
+        | Some(moduleScope) ->
+            match resolveLocalAt(name)(kind)(boundary)(moduleScope.definitions) with
+                | Some(definition) -> Some(definition)
+                | None -> resolveImported(name)(None)(kind)(moduleScope.imports)
+
+// A qualifier naming a shipped module outright (`Ashes.Text` in `Ashes.Text.join`) resolves to
+// that module's export with no import in scope, language.md's "qualified access, no import
+// required"; the reserved namespace keeps a user module from ever matching this way. The module
+// is in the project only when a stitcher loaded it for exactly such a reference.
+let resolveShippedModuleExport qualifier kind name (project: FrozenSemanticProject) =
+    if Ashes.Text.startsWith(qualifier)("Ashes.")
+    then
+        match findModule(qualifier)(project.scopes) with
+            | None -> None
+            | Some(moduleScope) ->
+                match findExportedDefinition(name)(kind)(moduleScope.definitions) with
+                    | None -> None
+                    | Some(definition) ->
+                        definition
+                        |> deepCopy
+                        |> Some
+    else None
+
+// A type a shipped module exports is in scope by its bare name wherever the program reaches that
+// module, imported or not, as stage 0's one type namespace holds every loaded standard-library
+// type: `MapTree(Str, Bool)` names the map type in a program that reaches `Ashes.Collection.Map`
+// through qualified references alone.
+let recursive resolveShippedTypeIn name (scopes: List(FrozenModuleScope)) =
+    match scopes with
+        | [] -> None
+        | moduleScope :: rest ->
+            if Ashes.Text.startsWith(moduleScope.name)("Ashes.")
+            then
+                match findExportedDefinition(name)(StitchedType)(moduleScope.definitions) with
+                    | Some(definition) ->
+                        if definition.kind == StitchedType
+                        then Some(definition)
+                        else resolveShippedTypeIn(name)(rest)
+                    | None -> resolveShippedTypeIn(name)(rest)
+            else resolveShippedTypeIn(name)(rest)
+
+let frozenResolveStitchedShippedType name (project: FrozenSemanticProject) = resolveShippedTypeIn(name)(project.scopes)
+
+// A file reaches its own inline modules by qualified path with no import (`Geometry.area` in the
+// file that declares `module Geometry =`). Their scopes are named `<file>#<module>`.
+let resolveOwnInlineModuleExport (referencing: FrozenModuleScope) qualifier kind name (project: FrozenSemanticProject) =
+    match findModule(qualifier)(project.scopes) with
+        | None -> None
+        | Some(target) ->
+            let separator = Ashes.Text.indexOf(referencing.sourcePath)("#")
+            in
+                let file =
+                    if separator < 0
+                    then referencing.sourcePath
+                    else Ashes.Text.take(referencing.sourcePath)(separator)
+                in
+                    if target.sourcePath == file + "#" + qualifier
+                    then
+                        match findExportedDefinition(name)(kind)(target.definitions) with
+                            | None -> None
+                            | Some(definition) ->
+                                definition
+                                |> deepCopy
+                                |> Some
+                    else None
+
+let frozenResolveStitchedQualified moduleName qualifier kind name (project: FrozenSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> None
+        | Some(moduleScope) ->
+            match resolveImported(name)(Some(qualifier))(kind)(moduleScope.imports) with
+                | Some(definition) -> Some(definition)
+                | None ->
+                    match resolveShippedModuleExport(qualifier)(kind)(name)(project) with
+                        | Some(definition) -> Some(definition)
+                        | None -> resolveOwnInlineModuleExport(moduleScope)(qualifier)(kind)(name)(project)

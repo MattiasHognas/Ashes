@@ -7,6 +7,7 @@
 
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
+import Ashes.Collection.Map.MapTree
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.Syntax
@@ -89,12 +90,13 @@ type StitchedModuleScope =
     | plainWholeModuleImports: List(Str)
     | intrinsicSelectors: List(IntrinsicSelector)
     | definitions: List(StitchedDefinition)
-    deriving {Eq, Show}
+    | unqualifiedImportsByLocalName: MapTree(Str, List(StitchedImportBinding))
+    | qualifiedImportsByQualifier: MapTree(Str, List(MapTree(Str, List(StitchedDefinition))))
+    | definitionsBySourceName: MapTree(Str, List(StitchedDefinition))
 
 type StitchedSemanticProject =
     | scopes: List(StitchedModuleScope)
     | nextDefinitionId: Int
-    deriving {Eq, Show}
 
 type ModuleSemanticStitchError =
     | DuplicateStitchedModule(Str)
@@ -122,9 +124,23 @@ type DefinitionCollection =
     | reversed: List(PendingDefinition)
     | nextOrder: Int
 
+// `compilerNameOwners` maps every compiler name of the completed modules to the qualified name of
+// the definition a walk over `reversedModules` would meet first: the first such definition of the
+// most recently completed module declaring it.
 type StitchState =
     | reversedModules: List(StitchedModuleScope)
     | nextDefinitionId: Int
+    | compilerNameOwners: MapTree(Str, Str)
+
+// A module's import bindings while they accumulate, newest first. `unqualifiedByLocalName` files
+// the unqualified ones by local name, each group oldest first. `qualifiedByQualifier` lists, for
+// each qualifier, the definition indexes of the modules whose exports were bound under it, in
+// import order, and `qualifierOwners` names the last of those modules.
+type ImportBindingAccumulator =
+    | newestFirst: List(StitchedImportBinding)
+    | unqualifiedByLocalName: MapTree(Str, List(StitchedImportBinding))
+    | qualifiedByQualifier: MapTree(Str, List(MapTree(Str, List(StitchedDefinition))))
+    | qualifierOwners: MapTree(Str, Str)
 
 let both left right =
     if left
@@ -152,6 +168,27 @@ let sameNamespace left right =
         | (StitchedTrait, StitchedCapability) -> true
         | (StitchedTrait, StitchedTrait) -> true
         | _ -> false
+
+// The entries filed under a name, in the order the list they index holds them; a scan for that
+// name over the whole list meets exactly these, in this order.
+let definitionsNamed (name: Str) (index: MapTree(Str, List(StitchedDefinition))) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(definitions) -> definitions
+        | None -> []
+
+let bindingsNamed (name: Str) (index: MapTree(Str, List(StitchedImportBinding))) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(bindings) -> bindings
+        | None -> []
+
+// Files definitions by source name. Taking them last first leaves every group in list order.
+let recursive indexDefinitionsBySourceName (reversedDefinitions: List(StitchedDefinition)) (index: MapTree(Str, List(StitchedDefinition))) =
+    match reversedDefinitions with
+        | [] -> index
+        | (StitchedDefinition { sourceName = sourceName } as definition) :: rest ->
+            index
+            |> Ashes.Collection.Map.setStr(sourceName)(definition :: definitionsNamed(sourceName)(index))
+            |> indexDefinitionsBySourceName(rest)
 
 // The scope is returned as it sits in the list: the reference rewriter looks a module up once
 // per name it resolves, and copying the scope with its thousands of definitions at every lookup
@@ -182,16 +219,6 @@ let recursive findExportedDefinition (name: Str) (kind: StitchedNameKind) (defin
                 |> deepCopy
                 |> Some
             else findExportedDefinition(name)(kind)(rest)
-
-let recursive hasPendingDefinition name kind definitions =
-    match definitions with
-        | [] -> false
-        | PendingDefinition { name = candidate, kind = candidateKind, span = _span, order = _order, recursiveVisible = _recursiveVisible } :: rest ->
-            if candidateKind
-            |> sameNamespace(kind)
-            |> both(candidate == name)
-            then true
-            else hasPendingDefinition(name)(kind)(rest)
 
 let addPendingWith (global: Bool) name kind span order recursiveVisible collection =
     match collection with
@@ -340,6 +367,29 @@ let recursive interfaceExports (name: Str) (kind: StitchedNameKind) (exports: Li
             else interfaceExports(name)(kind)(rest)
         | ImportModuleExport(_candidate) :: rest -> interfaceExports(name)(kind)(rest)
 
+let importExportName (entry: ModuleImportExport) =
+    match entry with
+        | ImportValueExport(name) -> name
+        | ImportTypeExport(name) -> name
+        | ImportConstructorExport(name) -> name
+        | ImportModuleExport(name) -> name
+
+let exportsNamed (name: Str) (index: MapTree(Str, List(ModuleImportExport))) =
+    match Ashes.Collection.Map.getStr(name)(index) with
+        | Some(exports) -> exports
+        | None -> []
+
+// Files an interface's exports by name. Taking them last first leaves every group in list order.
+let recursive indexExportsByName (reversedExports: List(ModuleImportExport)) (index: MapTree(Str, List(ModuleImportExport))) =
+    match reversedExports with
+        | [] -> index
+        | entry :: rest ->
+            let name = importExportName(entry)
+            in
+                index
+                |> Ashes.Collection.Map.setStr(name)(entry :: exportsNamed(name)(index))
+                |> indexExportsByName(rest)
+
 let sanitizeModuleName : Str -> Str =
     given (name) ->
         "."
@@ -376,13 +426,16 @@ let compilerName : Str -> Str -> StitchedNameKind -> Bool -> Bool -> Str =
                         then publicCompilerName(moduleName)(sourceName)(isEntry)
                         else privateCompilerName(moduleName)(sourceName)(kind)
 
-let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId reversed =
+let recursive materializeDefinitions (exportsByName: MapTree(Str, List(ModuleImportExport))) pending (unit: SemanticStitchUnit) nextId reversed =
     match unit with
-        | SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = _imports, interface = ModuleImportInterface { name = _interfaceName, exports = exports }, program = _program, isEntry = isEntry } ->
+        | SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = _imports, interface = _interface, program = _program, isEntry = isEntry } ->
             match pending with
                 | [] -> (reverseList(reversed), nextId)
                 | PendingDefinition { name = name, kind = kind, span = span, order = order, recursiveVisible = recursiveVisible, global = global } :: rest ->
-                    let exported = interfaceExports(name)(kind)(exports)
+                    let exported =
+                        exportsByName
+                        |> exportsNamed(name)
+                        |> interfaceExports(name)(kind)
                     in
                         let definition =
                             StitchedDefinition(id = nextId, sourceName = name, qualifiedName = moduleName + "." + name, compilerName = if global
@@ -397,48 +450,52 @@ let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId r
                                 ), moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, kind = kind, definitionSpan = span, declarationOrder = order, visibleFrom = if recursiveVisible
                             then order
                             else order + 1, exported = exported)
-                        in materializeDefinitions(rest)(unit)(nextId + 1)(definition :: reversed)
+                        in materializeDefinitions(exportsByName)(rest)(unit)(nextId + 1)(definition :: reversed)
 
-let recursive duplicateDefinition definitions seen =
-    match definitions with
-        | [] -> None
-        | PendingDefinition { name = name, kind = kind, span = _span, order = _order, recursiveVisible = _recursiveVisible } :: rest ->
-            if hasPendingDefinition(name)(kind)(seen)
-            then Some(name)
+let recursive hasEarlierNamesake (id: Int) (kind: StitchedNameKind) (namesakes: List(StitchedDefinition)) =
+    match namesakes with
+        | [] -> false
+        | StitchedDefinition { id = candidateId, kind = candidateKind } :: rest ->
+            if candidateId == id
+            then false
             else
-                duplicateDefinition(
-                    rest,
-                    PendingDefinition(name = name, kind = kind, span = None, order = 0, recursiveVisible = false, global = false) :: seen
-                )
+                if sameNamespace(kind)(candidateKind)
+                then true
+                else hasEarlierNamesake(id)(kind)(rest)
 
-let recursive compilerNameOwner name definitions =
+// The first definition an earlier one of the same name and namespace precedes. A definition's
+// namesakes are filed in declaration order, so the earlier ones are those ahead of it there.
+let recursive duplicateDefinition (definitions: List(StitchedDefinition)) (bySourceName: MapTree(Str, List(StitchedDefinition))) =
     match definitions with
         | [] -> None
-        | StitchedDefinition { compilerName = candidate, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            if candidate == name
-            then Some(qualifiedName)
-            else compilerNameOwner(name)(rest)
+        | StitchedDefinition { id = id, sourceName = name, kind = kind } :: rest ->
+            if bySourceName
+            |> definitionsNamed(name)
+            |> hasEarlierNamesake(id)(kind)
+            then Some(name)
+            else duplicateDefinition(rest)(bySourceName)
 
-// The owner of a compiler name among the completed modules' definitions, searched module by module
-// in order rather than over a concatenation of them, which every module rebuilt and left behind.
-let recursive compilerNameOwnerInModules name modules =
-    match modules with
-        | [] -> None
-        | StitchedModuleScope { name = _name, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } :: rest ->
-            match compilerNameOwner(name)(definitions) with
-                | Some(owner) -> Some(owner)
-                | None -> compilerNameOwnerInModules(name)(rest)
-
-let recursive validateCompilerNames definitions existingModules =
+// The completed modules' owner of each compiler name a new module's definitions carry.
+let recursive validateCompilerNames definitions (owners: MapTree(Str, Str)) =
     match definitions with
         | [] -> None
         | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName, id = _id, sourceName = _sourceName, moduleName = _definitionModule, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } :: rest ->
-            match compilerNameOwnerInModules(compilerName)(existingModules) with
+            match Ashes.Collection.Map.getStr(compilerName)(owners) with
                 | Some(owner) ->
                     qualifiedName
                     |> CompilerPrivateNameCollision(compilerName)(owner)
                     |> Some
-                | None -> validateCompilerNames(rest)(existingModules)
+                | None -> validateCompilerNames(rest)(owners)
+
+// Records a completed module's compiler names over the earlier modules'. Taking the definitions
+// last first leaves each name with the module's first definition carrying it.
+let recursive recordCompilerNames (reversedDefinitions: List(StitchedDefinition)) (owners: MapTree(Str, Str)) =
+    match reversedDefinitions with
+        | [] -> owners
+        | StitchedDefinition { compilerName = compilerName, qualifiedName = qualifiedName } :: rest ->
+            owners
+            |> Ashes.Collection.Map.setStr(compilerName)(qualifiedName)
+            |> recordCompilerNames(rest)
 
 let resolvedModule resolved =
     match resolved with
@@ -465,16 +522,43 @@ let moduleLeaf name =
         | leaf :: _rest -> leaf
         | [] -> name
 
-let recursive qualifierOwner qualifier bindings =
-    match bindings with
-        | [] -> None
-        | StitchedImportBinding { localName = _localName, qualifier = Some(candidate), target = StitchedDefinition { moduleName = moduleName, id = _id, sourceName = _sourceName, qualifiedName = _qualifiedName, compilerName = _compilerName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom, exported = _exported } } :: rest ->
-            if candidate == qualifier
-            then Some(moduleName)
-            else qualifierOwner(qualifier)(rest)
-        | _binding :: rest -> qualifierOwner(qualifier)(rest)
+let noImportBindings = ImportBindingAccumulator(newestFirst = [], unqualifiedByLocalName = Ashes.Collection.Map.empty, qualifiedByQualifier = Ashes.Collection.Map.empty, qualifierOwners = Ashes.Collection.Map.empty)
 
-let qualifierConflicts qualifier importedName bindings =
+// The module of the newest binding carrying the qualifier.
+let qualifierOwner (qualifier: Str) (bindings: ImportBindingAccumulator) = Ashes.Collection.Map.getStr(qualifier)(bindings.qualifierOwners)
+
+let definitionIndexesUnder (qualifier: Str) (index: MapTree(Str, List(MapTree(Str, List(StitchedDefinition))))) =
+    match Ashes.Collection.Map.getStr(qualifier)(index) with
+        | Some(indexes) -> indexes
+        | None -> []
+
+let ownedBy (moduleName: Str) (owner: Maybe(Str)) =
+    match owner with
+        | Some(name) -> name == moduleName
+        | None -> false
+
+// Adds a qualified binding as the newest one. A whole-module import binds the module's exports
+// under a qualifier in one run, in definition order, so the module's definition index joins the
+// qualifier's list where a run starts: where the qualifier's owner is not that module already. A
+// run that follows another of the same module adds nothing, the index being listed last already.
+let pushQualifiedBinding (qualifier: Str) (binding: StitchedImportBinding) (importedDefinitions: MapTree(Str, List(StitchedDefinition))) (bindings: ImportBindingAccumulator) =
+    match (binding, bindings) with
+        | (StitchedImportBinding { target = StitchedDefinition { moduleName = moduleName } }, ImportBindingAccumulator { newestFirst = newestFirst, unqualifiedByLocalName = unqualifiedByLocalName, qualifiedByQualifier = qualifiedByQualifier, qualifierOwners = qualifierOwners }) ->
+            if qualifierOwners
+            |> Ashes.Collection.Map.getStr(qualifier)
+            |> ownedBy(moduleName)
+            then ImportBindingAccumulator(newestFirst = binding :: newestFirst, unqualifiedByLocalName = unqualifiedByLocalName, qualifiedByQualifier = qualifiedByQualifier, qualifierOwners = qualifierOwners)
+            else
+                ImportBindingAccumulator(newestFirst = binding :: newestFirst, unqualifiedByLocalName = unqualifiedByLocalName, qualifiedByQualifier = Ashes.Collection.Map.setStr(qualifier)(appendList(definitionIndexesUnder(qualifier)(qualifiedByQualifier))([importedDefinitions]))(qualifiedByQualifier), qualifierOwners = Ashes.Collection.Map.setStr(qualifier)(moduleName)(qualifierOwners))
+
+// Adds an unqualified binding as the newest one; `namesakes` are the unqualified bindings already
+// filed under its local name.
+let pushUnqualifiedBinding (binding: StitchedImportBinding) (namesakes: List(StitchedImportBinding)) (bindings: ImportBindingAccumulator) =
+    match (binding, bindings) with
+        | (StitchedImportBinding { localName = localName }, ImportBindingAccumulator { newestFirst = newestFirst, unqualifiedByLocalName = unqualifiedByLocalName, qualifiedByQualifier = qualifiedByQualifier, qualifierOwners = qualifierOwners }) ->
+            ImportBindingAccumulator(newestFirst = binding :: newestFirst, unqualifiedByLocalName = Ashes.Collection.Map.setStr(localName)(appendList(namesakes)([binding]))(unqualifiedByLocalName), qualifiedByQualifier = qualifiedByQualifier, qualifierOwners = qualifierOwners)
+
+let qualifierConflicts qualifier importedName (bindings: ImportBindingAccumulator) =
     match qualifierOwner(qualifier)(bindings) with
         | None -> false
         | Some(owner) -> owner != importedName
@@ -536,24 +620,38 @@ let importConflictIsFatal (program: ProgramSyntax) definitions (binding: Stitche
                 then programMentionsVariable(name)(program)
                 else true
 
-// An unused collision keeps the first import's binding; `fatalConflict` decides the rest.
-let recursive addImportBindings moduleName fatalConflict additions current =
+// An unused collision keeps the first import's binding; `fatalConflict` decides the rest. Only
+// unqualified bindings of one local name can conflict, so a qualified binding is added outright
+// and an unqualified one is compared with the unqualified bindings filed under its name.
+// `importedDefinitions` is the definition index of the module the additions come from.
+let recursive addImportBindings moduleName fatalConflict (importedDefinitions: MapTree(Str, List(StitchedDefinition))) additions (current: ImportBindingAccumulator) =
     match additions with
         | [] -> Ok(current)
-        | (StitchedImportBinding { localName = bindingName, qualifier = _qualifier, target = _target } as binding) :: rest ->
-            if unqualifiedConflict(binding)(current)
-            then
-                if fatalConflict(binding)
-                then
-                    bindingName
-                    |> ConflictingStitchedImport(moduleName)
-                    |> Error
-                else addImportBindings(moduleName)(fatalConflict)(rest)(current)
-            else addImportBindings(moduleName)(fatalConflict)(rest)(binding :: current)
+        | (StitchedImportBinding { localName = bindingName, qualifier = bindingQualifier, target = _target } as binding) :: rest ->
+            match bindingQualifier with
+                | Some(qualifier) ->
+                    current
+                    |> pushQualifiedBinding(qualifier)(binding)(importedDefinitions)
+                    |> addImportBindings(moduleName)(fatalConflict)(importedDefinitions)(rest)
+                | None ->
+                    let namesakes = bindingsNamed(bindingName)(current.unqualifiedByLocalName)
+                    in
+                        if unqualifiedConflict(binding)(namesakes)
+                        then
+                            if fatalConflict(binding)
+                            then
+                                bindingName
+                                |> ConflictingStitchedImport(moduleName)
+                                |> Error
+                            else addImportBindings(moduleName)(fatalConflict)(importedDefinitions)(rest)(current)
+                        else
+                            current
+                            |> pushUnqualifiedBinding(binding)(namesakes)
+                            |> addImportBindings(moduleName)(fatalConflict)(importedDefinitions)(rest)
 
-let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScope) alias bindings =
+let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScope) alias (bindings: ImportBindingAccumulator) =
     match imported with
-        | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
+        | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions, definitionsBySourceName = bySourceName } ->
             let primaryQualifier =
                 match alias with
                     | Some(name) -> name
@@ -602,6 +700,7 @@ let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScop
                                     addImportBindings(
                                         ownerModule,
                                         fatalConflict,
+                                        bySourceName,
                                         appendList(exportedBindings(None)(definitions))(withShort),
                                         bindings
                                     )
@@ -619,6 +718,7 @@ let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScop
                                             addImportBindings(
                                                 ownerModule,
                                                 fatalConflict,
+                                                bySourceName,
                                                 appendList(exportedBindings(None)(definitions))(withShort),
                                                 bindings
                                             )
@@ -634,10 +734,12 @@ let isIntrinsicMember (moduleName: Str) (memberName: Str) =
             | None -> false
     else false
 
-let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName kind bindings =
+let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName kind (bindings: ImportBindingAccumulator) =
     match imported with
-        | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
-            match findExportedDefinition(exportName)(kind)(definitions) with
+        | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitionsBySourceName = bySourceName } ->
+            match bySourceName
+            |> definitionsNamed(exportName)
+            |> findExportedDefinition(exportName)(kind) with
                 | None ->
                     if isIntrinsicMember(importedName)(exportName)
                     then Ok(bindings)
@@ -649,6 +751,7 @@ let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) 
                     addImportBindings(
                         ownerModule,
                         fatalConflict,
+                        bySourceName,
                         [StitchedImportBinding(localName = localName, qualifier = None, target = definition)],
                         bindings
                     )
@@ -657,7 +760,7 @@ let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) 
 // beside the selector (`NormalizeTypeSelectors`), so the module's exports, its constructors
 // among them, are in scope unqualified and qualified as by `import M`; a module the scope
 // already imports wholesale is not imported again.
-let addTypeSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName bindings =
+let addTypeSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName (bindings: ImportBindingAccumulator) =
     match imported with
         | StitchedModuleScope { name = importedName } ->
             let withModule =
@@ -669,12 +772,9 @@ let addTypeSelectorImport ownerModule fatalConflict (imported: StitchedModuleSco
                     | Error(error) -> Error(error)
                     | Ok(moduleBindings) -> addSelectorImport(ownerModule)(fatalConflict)(imported)(exportName)(localName)(StitchedType)(moduleBindings)
 
-let recursive buildImportBindings ownerModule fatalConflict imports completed bindings =
+let recursive buildImportBindings ownerModule fatalConflict imports completed (bindings: ImportBindingAccumulator) =
     match imports with
-        | [] ->
-            bindings
-            |> reverseList
-            |> Ok
+        | [] -> Ok(bindings)
         | resolved :: rest ->
             match findModule(resolvedModule(resolved))(completed) with
                 | None ->
@@ -805,35 +905,37 @@ let resolveStitchedIntrinsicSelector moduleName localName (project: StitchedSema
 
 let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
     match (unit, state) with
-        | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = _moduleInterface, program = program, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId }) ->
+        | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = ModuleImportInterface { name = _interfaceName, exports = exports }, program = program, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId, compilerNameOwners = compilerNameOwners }) ->
             if hasModule(moduleName)(completedModules)
             then Error(DuplicateStitchedModule(moduleName))
             else
-                let pending = collectPendingDefinitions(program.items)(DefinitionCollection(reversed = [], nextOrder = 0))
-                in
-                    match duplicateDefinition(pending)([]) with
-                        | Some(name) ->
-                            name
-                            |> DuplicateModuleDeclaration(moduleName)
-                            |> Error
-                        | None ->
-                            match materializeDefinitions(pending)(unit)(nextDefinitionId)([]) with
-                                | (definitions, nextId) ->
-                                    match completedModules |> validateCompilerNames(definitions) with
-                                        | Some(error) -> Error(error)
-                                        | None ->
-                                            match buildImportBindings(
-                                                moduleName,
-                                                importConflictIsFatal(program)(definitions),
-                                                resolvedImports,
-                                                completedModules,
-                                                []
-                                            ) with
-                                                | Error(error) -> Error(error)
-                                                | Ok(imports) ->
-                                                    Ok(
-                                                        StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, moduleAliases = collectModuleAliases(resolvedImports), plainWholeModuleImports = collectPlainWholeModuleImports(resolvedImports), intrinsicSelectors = collectIntrinsicSelectors(resolvedImports), definitions = definitions) :: completedModules, nextDefinitionId = nextId)
-                                                    )
+                match materializeDefinitions(indexExportsByName(reverseList(exports))(Ashes.Collection.Map.empty))(collectPendingDefinitions(program.items)(DefinitionCollection(reversed = [], nextOrder = 0)))(unit)(nextDefinitionId)([]) with
+                    | (definitions, nextId) ->
+                        let reversedDefinitions = reverseList(definitions)
+                        in
+                            let bySourceName = indexDefinitionsBySourceName(reversedDefinitions)(Ashes.Collection.Map.empty)
+                            in
+                                match duplicateDefinition(definitions)(bySourceName) with
+                                    | Some(name) ->
+                                        name
+                                        |> DuplicateModuleDeclaration(moduleName)
+                                        |> Error
+                                    | None ->
+                                        match compilerNameOwners |> validateCompilerNames(definitions) with
+                                            | Some(error) -> Error(error)
+                                            | None ->
+                                                match buildImportBindings(
+                                                    moduleName,
+                                                    importConflictIsFatal(program)(definitions),
+                                                    resolvedImports,
+                                                    completedModules,
+                                                    noImportBindings
+                                                ) with
+                                                    | Error(error) -> Error(error)
+                                                    | Ok(bindings) ->
+                                                        Ok(
+                                                            StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = reverseList(bindings.newestFirst), moduleAliases = collectModuleAliases(resolvedImports), plainWholeModuleImports = collectPlainWholeModuleImports(resolvedImports), intrinsicSelectors = collectIntrinsicSelectors(resolvedImports), definitions = definitions, unqualifiedImportsByLocalName = bindings.unqualifiedByLocalName, qualifiedImportsByQualifier = bindings.qualifiedByQualifier, definitionsBySourceName = bySourceName) :: completedModules, nextDefinitionId = nextId, compilerNameOwners = recordCompilerNames(reversedDefinitions)(compilerNameOwners))
+                                                        )
 
 let recursive buildModules (units: List(SemanticStitchUnit)) (state: StitchState) =
     match state with
@@ -849,7 +951,7 @@ let recursive buildModules (units: List(SemanticStitchUnit)) (state: StitchState
                         | Ok(next) -> buildModules(rest)(next)
 
 let buildStitchedSemanticProject : List(SemanticStitchUnit) -> Result(ModuleSemanticStitchError, StitchedSemanticProject) =
-    given (units) -> buildModules(units)(StitchState(reversedModules = [], nextDefinitionId = 0))
+    given (units) -> buildModules(units)(StitchState(reversedModules = [], nextDefinitionId = 0, compilerNameOwners = Ashes.Collection.Map.empty))
 
 let definitionVisibleAt boundary (definition: StitchedDefinition) = definition.visibleFrom <= boundary
 
@@ -875,13 +977,30 @@ let recursive resolveImported name qualifier kind bindings =
                 |> Some
             else resolveImported(name)(qualifier)(kind)(rest)
 
+// The first export of the name among the modules bound under a qualifier, in import order: the
+// target of the first import binding carrying that qualifier and local name.
+let recursive resolveQualifiedImport name kind (indexes: List(MapTree(Str, List(StitchedDefinition)))) =
+    match indexes with
+        | [] -> None
+        | index :: rest ->
+            match index
+            |> definitionsNamed(name)
+            |> findExportedDefinition(name)(kind) with
+                | Some(definition) -> Some(definition)
+                | None -> resolveQualifiedImport(name)(kind)(rest)
+
 let resolveStitchedUnqualified moduleName boundary kind name (project: StitchedSemanticProject) =
     match findModule(moduleName)(project.scopes) with
         | None -> None
         | Some(moduleScope) ->
-            match resolveLocalAt(name)(kind)(boundary)(moduleScope.definitions) with
+            match moduleScope.definitionsBySourceName
+            |> definitionsNamed(name)
+            |> resolveLocalAt(name)(kind)(boundary) with
                 | Some(definition) -> Some(definition)
-                | None -> resolveImported(name)(None)(kind)(moduleScope.imports)
+                | None ->
+                    moduleScope.unqualifiedImportsByLocalName
+                    |> bindingsNamed(name)
+                    |> resolveImported(name)(None)(kind)
 
 // A qualifier naming a shipped module outright (`Ashes.Text` in `Ashes.Text.join`) resolves to
 // that module's export with no import in scope, language.md's "qualified access, no import
@@ -893,7 +1012,9 @@ let resolveShippedModuleExport qualifier kind name (project: StitchedSemanticPro
         match findModule(qualifier)(project.scopes) with
             | None -> None
             | Some(moduleScope) ->
-                match findExportedDefinition(name)(kind)(moduleScope.definitions) with
+                match moduleScope.definitionsBySourceName
+                |> definitionsNamed(name)
+                |> findExportedDefinition(name)(kind) with
                     | None -> None
                     | Some(definition) ->
                         definition
@@ -911,7 +1032,9 @@ let recursive resolveShippedTypeIn name (scopes: List(StitchedModuleScope)) =
         | moduleScope :: rest ->
             if Ashes.Text.startsWith(moduleScope.name)("Ashes.")
             then
-                match findExportedDefinition(name)(StitchedType)(moduleScope.definitions) with
+                match moduleScope.definitionsBySourceName
+                |> definitionsNamed(name)
+                |> findExportedDefinition(name)(StitchedType) with
                     | Some(definition) ->
                         if definition.kind == StitchedType
                         then Some(definition)
@@ -936,7 +1059,9 @@ let resolveOwnInlineModuleExport (referencing: StitchedModuleScope) qualifier ki
                 in
                     if target.sourcePath == file + "#" + qualifier
                     then
-                        match findExportedDefinition(name)(kind)(target.definitions) with
+                        match target.definitionsBySourceName
+                        |> definitionsNamed(name)
+                        |> findExportedDefinition(name)(kind) with
                             | None -> None
                             | Some(definition) ->
                                 definition
@@ -948,7 +1073,9 @@ let resolveStitchedQualified moduleName qualifier kind name (project: StitchedSe
     match findModule(moduleName)(project.scopes) with
         | None -> None
         | Some(moduleScope) ->
-            match resolveImported(name)(Some(qualifier))(kind)(moduleScope.imports) with
+            match moduleScope.qualifiedImportsByQualifier
+            |> definitionIndexesUnder(qualifier)
+            |> resolveQualifiedImport(name)(kind) with
                 | Some(definition) -> Some(definition)
                 | None ->
                     match resolveShippedModuleExport(qualifier)(kind)(name)(project) with
