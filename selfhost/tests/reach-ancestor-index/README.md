@@ -1,10 +1,10 @@
 # Indexed proper path-ancestor pairs
 
-`perl selfhost/tests/reach-ancestor-index/render.pl` generates the ignored project
+`bash selfhost/tests/reach-ancestor-index/render.sh` generates the ignored project
 `work/reach-ancestor-index/ashes.json`. Format its `.ash` files before compiling.
 The full old result-reach implementation is frozen at ac493aa2, with only local
 types/constructors and exported names prefixed to avoid importer collisions.
-The original snapshot is retained byte-for-byte as `.ash.inc`. The direct Boolean
+The original snapshot is retained byte-for-byte as an ignored raw-source dump. The direct Boolean
 helper is extracted from both actual old and candidate production source.
 
 `check` compares every pair of strings over `a`, `/`, `*` up to length three,

@@ -16,9 +16,11 @@ export (
     value countTempUses,
     value isArenaCell,
     value isUnrealizedConstructionRetain,
+    value leaveWithdrawnPartDuplicateToItsCell,
     value retainsHeldPastTheCopy,
     value storedValuesOf,
     value withdrawLoopParameterRetainsOfCopiedCells,
+    value withdrawLoopResultRetainsOfCopiedCells,
 )
 
 // The temp the construction of `cellTemp` stored into field `fieldIndex`.
@@ -153,13 +155,13 @@ let recursive countTempUses (temp: Int) (instructions: List(IrInstruction)) (cou
                 else countTempUses(temp)(rest)(count)
 
 // Withdraws the retain `storedTemp` names when it reads a parameter of `heldSlots` and the cell
-// storing it is its only reader (stage 0's `WithdrawLoopParameterRetain`); true beside the
-// instructions when `storedTemp` was a retain at all.
-let withdrawLoopParameterRetain (storedTemp: Int) (heldSlots: List(Int)) (instructions: List(IrInstruction)) =
+// storing it is its only reader (stage 0's `WithdrawLoopParameterRetain`), as is one of
+// `withdrawable`; true beside the instructions when `storedTemp` was a retain at all.
+let withdrawLoopParameterRetain (storedTemp: Int) (heldSlots: List(Int)) (withdrawable: List(Int)) (instructions: List(IrInstruction)) =
     match retainDefinitionOf(storedTemp)(instructions) with
         | None -> (instructions, false)
         | Some(IrInstruction { instruction = RcDup(_target, source, runtimeManaged, _mayBeEmpty) } :: _rest) ->
-            if runtimeManaged && readsLoopParameter(source)(heldSlots)(0)(instructions) && countTempUses(storedTemp)(instructions)(0) == 1
+            if runtimeManaged && (readsLoopParameter(source)(heldSlots)(0)(instructions) || containsInt(storedTemp)(withdrawable)) && countTempUses(storedTemp)(instructions)(0) == 1
             then (withdrawRetainDefining(storedTemp)(instructions), true)
             else (instructions, true)
         | Some(definition) ->
@@ -169,6 +171,43 @@ let withdrawLoopParameterRetain (storedTemp: Int) (heldSlots: List(Int)) (instru
                     if readsLoopParameter(source)(heldSlots)(0)(instructions) && countTempUses(storedTemp)(instructions)(0) == 1
                     then (zeroFlagDefining(flag)(instructions), true)
                     else (instructions, true)
+
+let recursive loadsSlot (slot: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(_target, loaded) } :: rest -> loaded == slot || loadsSlot(slot)(rest)
+        | _instruction :: rest -> loadsSlot(slot)(rest)
+
+// The value the most recent retain defining `temp` reads.
+let recursive retainedSourceOf (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = RcDup(target, source, _runtimeManaged, _mayBeEmpty) } :: rest ->
+            if target == temp
+            then Some(source)
+            else retainedSourceOf(temp)(rest)
+        | _instruction :: rest -> retainedSourceOf(temp)(rest)
+
+let recursive storeBorrowedValueInto (slot: Int) (all: List(IrInstruction)) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> []
+        | (IrInstruction { instruction = StoreLocal(stored, source) } as instruction) :: rest ->
+            if stored == slot
+            then
+                match retainedSourceOf(source)(all) with
+                    | Some(borrowed) -> (instruction with instruction = StoreLocal(stored)(borrowed)) :: storeBorrowedValueInto(slot)(all)(rest)
+                    | None -> instruction :: storeBorrowedValueInto(slot)(all)(rest)
+            else instruction :: storeBorrowedValueInto(slot)(all)(rest)
+        | instruction :: rest -> instruction :: storeBorrowedValueInto(slot)(all)(rest)
+
+// A withdrawn part duplicate's slot is never read, yet its store still reads the duplicate, and
+// `withdrawLoopParameterRetain` acts only on a retain the cell alone reads. The store takes the
+// borrowed value instead, in place, which leaves the cell the duplicate's only reader (stage 0's
+// `LeaveWithdrawnPartDuplicateToItsCell`). A slot some path does read keeps its store.
+let leaveWithdrawnPartDuplicateToItsCell (slot: Int) (instructions: List(IrInstruction)) =
+    if loadsSlot(slot)(instructions)
+    then instructions
+    else storeBorrowedValueInto(slot)(instructions)(instructions)
 
 // The values the construction of `cellTemp` stored.
 let recursive storedValuesOf (cellTemp: Int) (instructions: List(IrInstruction)) (values: List(Int)) =
@@ -184,23 +223,23 @@ let recursive storedValuesOf (cellTemp: Int) (instructions: List(IrInstruction))
             else storedValuesOf(cellTemp)(rest)(values)
         | _instruction :: rest -> storedValuesOf(cellTemp)(rest)(values)
 
-let recursive withdrawCellRetains (cellTemp: Int) (slots: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
+let recursive withdrawCellRetains (cellTemp: Int) (slots: List(Int)) (withdrawable: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
     if containsInt(cellTemp)(visited)
     then (instructions, visited)
     else
-        withdrawStoredRetains(storedValuesOf(cellTemp)(instructions)([]))(slots)(cellTemp :: visited)(instructions)
-and withdrawStoredRetains (values: List(Int)) (slots: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
+        withdrawStoredRetains(storedValuesOf(cellTemp)(instructions)([]))(slots)(withdrawable)(cellTemp :: visited)(instructions)
+and withdrawStoredRetains (values: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
     match values with
         | [] -> (instructions, visited)
         | value :: rest ->
-            match withdrawLoopParameterRetain(value)(slots)(instructions) with
-                | (withdrawn, true) -> withdrawStoredRetains(rest)(slots)(visited)(withdrawn)
+            match withdrawLoopParameterRetain(value)(slots)(withdrawable)(instructions) with
+                | (withdrawn, true) -> withdrawStoredRetains(rest)(slots)(withdrawable)(visited)(withdrawn)
                 | (unchanged, false) ->
                     if isArenaCell(value)(unchanged)
                     then
-                        match withdrawCellRetains(value)(slots)(visited)(unchanged) with
-                            | (nested, nestedVisited) -> withdrawStoredRetains(rest)(slots)(nestedVisited)(nested)
-                    else withdrawStoredRetains(rest)(slots)(visited)(unchanged)
+                        match withdrawCellRetains(value)(slots)(withdrawable)(visited)(unchanged) with
+                            | (nested, nestedVisited) -> withdrawStoredRetains(rest)(slots)(withdrawable)(nestedVisited)(nested)
+                    else withdrawStoredRetains(rest)(slots)(withdrawable)(visited)(unchanged)
 
 let definesCarrier (temp: Int) (instruction: IrInstruction) =
     match instruction with
@@ -318,12 +357,12 @@ let retainsHeldPastTheCopy (valueTemp: Int) (slots: List(Int)) (instructions: Li
     |> reverse)(instructions)(([], [])) with
         | (retains, _visited) -> retains
 
-let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
+let recursive withdrawCells (cells: List(Int)) (slots: List(Int)) (withdrawable: List(Int)) (visited: List(Int)) (instructions: List(IrInstruction)) =
     match cells with
         | [] -> instructions
         | cell :: rest ->
-            match withdrawCellRetains(cell)(slots)(visited)(instructions) with
-                | (withdrawn, nextVisited) -> withdrawCells(rest)(slots)(nextVisited)(withdrawn)
+            match withdrawCellRetains(cell)(slots)(withdrawable)(visited)(instructions) with
+                | (withdrawn, nextVisited) -> withdrawCells(rest)(slots)(withdrawable)(nextVisited)(withdrawn)
 
 let recursive zeroConstantTemps (transientClears: List(Int)) (instructions: List(IrInstruction)) (temps: List(Int)) =
     match instructions with
@@ -371,8 +410,44 @@ let recursive parameterSlotsOf (parameters: List((Int, Int))) =
 // before the loop releases its parameters. Each parameter is its slot beside its active flag, or
 // -1; a retain is withdrawn only when the cell holds its sole reference and the parameter it reads
 // is not released ahead of the loop's end.
-let withdrawLoopParameterRetainsOfCopiedCells (transientClears: List(Int)) (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
+let withdrawRetainsOfCopiedCells (withdrawable: List(Int)) (transientClears: List(Int)) (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
     match parameters with
         | [] -> instructions
         | _parameters ->
-            withdrawCells(arenaCellsCarrying([valueTemp])([])(parameterSlotsOf(parameters))(instructions)([]))(parametersHeldToTheEnd(transientClears)(parameters)(instructions))([])(instructions)
+            withdrawCells(arenaCellsCarrying([valueTemp])([])(parameterSlotsOf(parameters))(instructions)([]))(parametersHeldToTheEnd(transientClears)(parameters)(instructions))(withdrawable)([])(instructions)
+
+let withdrawLoopParameterRetainsOfCopiedCells (transientClears: List(Int)) (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) = withdrawRetainsOfCopiedCells([])(transientClears)(valueTemp)(parameters)(instructions)
+
+// The slot `temp` reads, through borrows, or -1.
+let recursive slotReadThroughBorrows (temp: Int) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> -1
+        | IrInstruction { instruction = LoadLocal(target, slot) } :: rest ->
+            if target == temp
+            then slot
+            else slotReadThroughBorrows(temp)(rest)
+        | IrInstruction { instruction = Borrow(target, source) } :: rest ->
+            if target == temp
+            then slotReadThroughBorrows(source)(rest)
+            else slotReadThroughBorrows(temp)(rest)
+        | _instruction :: rest -> slotReadThroughBorrows(temp)(rest)
+
+// Stage 0's `IsWithdrawablePatternOwnerDuplicate`: the promoted duplicates of a read of a pattern
+// owner (a slot of `ownerSlots`) no promoted release was paired with (`released`).
+let recursive withdrawablePatternOwnerDuplicates (ownerSlots: List(Int)) (released: List(Int)) (instructions: List(IrInstruction)) (found: List(Int)) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = RcDup(target, source, true, _mayBeEmpty) } :: rest ->
+            if !containsInt(target)(released) && containsInt(slotReadThroughBorrows(source)(rest))(ownerSlots)
+            then withdrawablePatternOwnerDuplicates(ownerSlots)(released)(rest)(target :: found)
+            else withdrawablePatternOwnerDuplicates(ownerSlots)(released)(rest)(found)
+        | _instruction :: rest -> withdrawablePatternOwnerDuplicates(ownerSlots)(released)(rest)(found)
+
+// The same withdrawal for a loop's copied result: a pattern owner's duplicate an arena cell of the
+// result stores is promoted to a retain like a loop-parameter read's, and the arena cell releases
+// it just as little, so it is withdrawn the same way.
+let withdrawLoopResultRetainsOfCopiedCells (ownerSlots: List(Int)) (released: List(Int)) (transientClears: List(Int)) (valueTemp: Int) (parameters: List((Int, Int))) (instructions: List(IrInstruction)) =
+    match parameters with
+        | [] -> instructions
+        | _parameters ->
+            withdrawRetainsOfCopiedCells(withdrawablePatternOwnerDuplicates(ownerSlots)(released)(instructions)([]))(transientClears)(valueTemp)(parameters)(instructions)

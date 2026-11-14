@@ -20,6 +20,7 @@ export (
     value occursInType,
     value applySubstitution,
     value applySubstitutionMap,
+    value applySubstitutionUsing,
     value extendSubstitutionMap,
     value formatSemanticType,
     value traitConstraintStableKey,
@@ -250,6 +251,9 @@ let resolveIn : (Int -> Maybe(SemanticType)) -> SemanticType -> SemanticType =
             if hasBoundVariable(lookup)(semanticType)
             then applySubstitutionIn(lookup)(semanticType)
             else semanticType
+
+// Scheme application supplies a lookup that hides bound quantified variables.
+let applySubstitutionUsing lookup semanticType = resolveIn(lookup)(semanticType)
 
 let substituteTypes : List((Int, SemanticType)) -> List(SemanticType) -> List(SemanticType) =
     given (substitution) ->

@@ -242,6 +242,10 @@ internal static class LeakCombinationTemplates
         registry.Register(new LoopResultUpdateFieldTemplate());
         registry.Register(new LoopResultConstructorOfParameterFieldsTemplate());
         registry.Register(new LoopResultPartDuplicateTemplate());
+        registry.Register(new LoopResultPartOfTupleScrutineeTemplate());
+        registry.Register(new UntypedFinderResultTemplate());
+        registry.Register(new ConstrainedLoopLetBoundArgumentsTemplate());
+        registry.Register(new ConstrainedLoopLiteralArgumentsTemplate());
         registry.Register(new OwnFieldRecordTemplate());
         registry.Register(new ArenaRecordDerivedJoinTemplate());
         registry.Register(new TakenOverRecordTemplate());
@@ -264,6 +268,7 @@ internal static class LeakCombinationTemplates
         registry.Register(new CopiedGenericEnumArgumentTemplate());
         registry.Register(new TmcConstructorHeadRetainsTemplate());
         registry.Register(new VisitedGenericMapOwnerTemplate());
+        registry.Register(new GenericTupleBorrowedBytesTemplate());
     }
 }
 

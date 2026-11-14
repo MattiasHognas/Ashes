@@ -10,9 +10,13 @@ export (
     type InstantiationResult(..),
     value freeTypeVariables,
     value freeSchemeVariables,
+    value schemeIsClosed,
     value freeEnvironmentVariables,
     value generalize,
+    value generalizeUnderSubstitution,
     value instantiate,
+    value instantiatePreservingConstraintOrder,
+    value applySchemeSubstitutionMap,
 )
 
 type InstantiationResult =
@@ -121,6 +125,68 @@ let freeSchemeVariables scheme =
                 |> mergeVariables(freeTypeVariables(body))
             in removeQuantified(quantified)(allVariables)
 
+let recursive isQuantifiedVariable variableId (quantified: List((Int, Str))) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: tail ->
+            if sameVariableId(variableId)(candidate)
+            then true
+            else isQuantifiedVariable(variableId)(tail)
+
+// Whether every variable of a type is quantified. The walk visits the same constructors as
+// freeTypeVariables, without building the variable list.
+let recursive typesAreClosed quantified semanticTypes =
+    match semanticTypes with
+        | [] -> true
+        | head :: tail ->
+            if typeIsClosed(quantified)(head)
+            then typesAreClosed(quantified)(tail)
+            else false
+and typeIsClosed quantified semanticType =
+    match semanticType with
+        | SemVariable(variableId) -> isQuantifiedVariable(variableId)(quantified)
+        | SemList(element) -> typeIsClosed(quantified)(element)
+        | SemTuple(elements) -> typesAreClosed(quantified)(elements)
+        | SemFunction(argument, result, capabilityRow) ->
+            if typeIsClosed(quantified)(argument)
+            then
+                if typeIsClosed(quantified)(result)
+                then
+                    match capabilityRow with
+                        | None -> true
+                        | Some(row) -> typeIsClosed(quantified)(row)
+                else false
+            else false
+        | SemCapability(_name, arguments) -> typesAreClosed(quantified)(arguments)
+        | SemRow(capabilities, tail) ->
+            if typesAreClosed(quantified)(capabilities)
+            then
+                match tail with
+                    | None -> true
+                    | Some(tailType) -> typeIsClosed(quantified)(tailType)
+            else false
+        | SemNamed(_symbolId, _name, arguments) -> typesAreClosed(quantified)(arguments)
+        | SemPointer(pointee) -> typeIsClosed(quantified)(pointee)
+        | _ -> true
+
+let recursive constraintsAreClosed quantified constraints =
+    match constraints with
+        | [] -> true
+        | TraitConstraint { typeArguments = arguments } :: tail ->
+            if typesAreClosed(quantified)(arguments)
+            then constraintsAreClosed(quantified)(tail)
+            else false
+
+// A scheme with no free type variable, the same answer as `freeSchemeVariables(scheme) == []`.
+// Applying a substitution to a closed scheme leaves it as it is, and a closed scheme holds back
+// nothing in a generalization, so both can pass it over.
+let schemeIsClosed scheme =
+    match scheme with
+        | TypeScheme { quantified = quantified, body = body, constraints = constraints } ->
+            if typeIsClosed(quantified)(body)
+            then constraintsAreClosed(quantified)(constraints)
+            else false
+
 let recursive freeEnvironmentVariables environment =
     match environment with
         | [] -> []
@@ -159,6 +225,34 @@ let generalize environment semanticType constraints =
             TypeScheme(quantified = quantifyVariables(
                 generalizedVariables
             ), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
+
+let recursive resolveEnvironmentVariables substitution variables resolved =
+    match variables with
+        | [] -> resolved
+        | variable :: rest ->
+            resolved
+            |> mergeVariables(SemVariable(variable)
+            |> applySubstitution(substitution)
+            |> freeTypeVariables)
+            |> resolveEnvironmentVariables(substitution)(rest)
+
+// A captured monomorphic variable can become an arrow while the binding is inferred.
+// Its parameter/result variables still belong to the outer environment. Resolve its free
+// variables before excluding them, rather than quantifying those newly exposed variables.
+// Removing each scheme's quantified IDs first also preserves independent polymorphic bindings.
+// The value type and requirements have already been resolved by the inference boundary.
+let generalizeUnderSubstitution environment substitution semanticType constraints =
+    (let candidateVariables =
+        constraints
+        |> freeConstraintsVariables
+        |> mergeVariables(freeTypeVariables(semanticType))
+    in
+        let generalizedVariables =
+            match candidateVariables with
+                | [] -> []
+                | _ ->
+                    removeEnvironmentVariables(resolveEnvironmentVariables(substitution)(freeEnvironmentVariables(environment))([]))(candidateVariables)
+        in TypeScheme(quantified = quantifyVariables(generalizedVariables), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
 
 // Build the whole quantified-variable renaming from one supply before applying it to the body and
 // constraints, so separate instantiations cannot accidentally share inference variables.
@@ -208,3 +302,29 @@ let instantiate scheme supply =
                                 applyConstraintSubstitutions(substitution)(constraints)
                             )
                         in InstantiationResult(semanticType = instantiatedBody, constraints = instantiatedConstraints, supply = nextSupply)
+
+// Runtime dictionary slots are ordered by the definition's scheme. Instantiation
+// must rename their types without sorting or coalescing the physical parameters.
+let instantiatePreservingConstraintOrder (scheme: TypeScheme) supply =
+    match instantiateQuantifiers(scheme.quantified)(supply)([]) with
+        | (substitution, nextSupply) -> InstantiationResult(semanticType = applySubstitution(substitution)(scheme.body), constraints = applyConstraintSubstitutions(substitution)(scheme.constraints), supply = nextSupply)
+
+let recursive quantifiedVariableIds quantified =
+    match quantified with
+        | [] -> []
+        | (variable, _name) :: rest -> variable :: quantifiedVariableIds(rest)
+
+// Quantifiers bind their IDs even if the surrounding lowering substitution has
+// older entries for those IDs. Preserve constraint order: emitted dictionaries
+// already use these positions as their physical ABI.
+let applySchemeSubstitutionMap substitution (scheme: TypeScheme) =
+    (let bound = quantifiedVariableIds(scheme.quantified)
+    in
+        let lookup =
+            given (variable) ->
+                if containsVariable(variable)(bound)
+                then None
+                else Ashes.Collection.Map.getInt(variable)(substitution)
+        in
+            scheme with body = applySubstitutionUsing(lookup)(scheme.body), constraints = Ashes.Collection.List.map((given (constraint: TraitConstraint) ->
+                constraint with typeArguments = Ashes.Collection.List.map(applySubstitutionUsing(lookup))(constraint.typeArguments)))(scheme.constraints))

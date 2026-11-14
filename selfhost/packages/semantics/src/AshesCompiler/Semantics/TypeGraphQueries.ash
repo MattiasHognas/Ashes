@@ -13,7 +13,7 @@ export (
 let typeGraphResolvedNode (semanticType: SemanticType) (index: TypeGraphIndex) =
     match typeGraphNode(semanticType)(index) with
         | (node, next) ->
-            if node.sourceType == node.resolvedType
+            if node.sourceMatchesResolved
             then (node, next)
             else typeGraphNode(node.resolvedType)(next)
 
@@ -55,11 +55,22 @@ let recursive coveredPath (path: QueryPath) (previous: List(QueryPath)) =
 
 type QueryWork =
     | VisitIndexedType(SemanticType, QueryPath)
+    | VisitIndexedChild(TypeGraphFactKind, Int, Int, SemanticType, QueryPath)
 
-let recursive prependWork (types: List(SemanticType)) (path: QueryPath) (pending: List(QueryWork)) =
+let recursive prependWork kind parentId position (types: List(SemanticType)) (path: QueryPath) (pending: List(QueryWork)) =
     match types with
         | [] -> pending
-        | head :: rest -> VisitIndexedType(head)(path) :: prependWork(rest)(path)(pending)
+        | head :: rest -> VisitIndexedChild(kind)(parentId)(position)(head)(path) :: prependWork(kind)(parentId)(position + 1)(rest)(path)(pending)
+
+let resolveWork work index =
+    match work with
+        | VisitIndexedType(semanticType, _path) -> typeGraphResolvedNode(semanticType)(index)
+        | VisitIndexedChild(kind, parentId, position, semanticType, _path) -> typeGraphResolvedChild(kind)(parentId)(position)(semanticType)(index)
+
+let workPath work =
+    match work with
+        | VisitIndexedType(_semanticType, path) -> path
+        | VisitIndexedChild(_kind, _parentId, _position, _semanticType, path) -> path
 
 let matches kind (node: TypeGraphNode) =
     match kind with
@@ -82,56 +93,60 @@ type QueryResult =
 let recursive regularSearch kind (pending: List(QueryWork)) (visited: MapTree(Int, Bool)) (completed: List(SemanticType)) (index: TypeGraphIndex) =
     match pending with
         | [] -> QueryResult(answer = Some(false), completed = completed, index = index)
-        | VisitIndexedType(semanticType, path) :: rest ->
-            match typeGraphResolvedNode(semanticType)(index) with
-                | (node, next) ->
-                    if matches(kind)(node)
-                    then QueryResult(answer = Some(true), completed = [], index = next)
-                    else
-                        match node.resolvedType with
-                            | SemNamed(symbolId, name, _) ->
-                                let changed =
-                                    match pathNode(symbolId)(name)(path) with
-                                        | None -> false
-                                        | Some(previousId) -> previousId != node.nodeId
-                                in
-                                    if changed
-                                    then QueryResult(answer = None, completed = [], index = next)
-                                    else
-                                        match Ashes.Collection.Map.getInt(node.nodeId)(visited) with
-                                            | Some(_) -> regularSearch(kind)(rest)(visited)(completed)(next)
-                                            | None ->
-                                                regularSearch(kind)(prependWork(children(kind)(node))(extendPath(node)(path))(rest))(Ashes.Collection.Map.setInt(node.nodeId)(true)(visited))(node.resolvedType :: completed)(next)
-                            | _ ->
-                                regularSearch(kind)(prependWork(children(kind)(node))(path)(rest))(visited)(completed)(next)
+        | work :: rest ->
+            let path = workPath(work)
+            in
+                match resolveWork(work)(index) with
+                    | (node, next) ->
+                        if matches(kind)(node)
+                        then QueryResult(answer = Some(true), completed = [], index = next)
+                        else
+                            match node.resolvedType with
+                                | SemNamed(symbolId, name, _) ->
+                                    let changed =
+                                        match pathNode(symbolId)(name)(path) with
+                                            | None -> false
+                                            | Some(previousId) -> previousId != node.nodeId
+                                    in
+                                        if changed
+                                        then QueryResult(answer = None, completed = [], index = next)
+                                        else
+                                            match Ashes.Collection.Map.getInt(node.nodeId)(visited) with
+                                                | Some(_) -> regularSearch(kind)(rest)(visited)(completed)(next)
+                                                | None ->
+                                                    regularSearch(kind)(prependWork(kind)(node.nodeId)(0)(children(kind)(node))(extendPath(node)(path))(rest))(Ashes.Collection.Map.setInt(node.nodeId)(true)(visited))(node.resolvedType :: completed)(next)
+                                | _ ->
+                                    regularSearch(kind)(prependWork(kind)(node.nodeId)(0)(children(kind)(node))(path)(rest))(visited)(completed)(next)
 
 // These blocked-path entries are query-local, never whole-root facts. An earlier
 // less-blocked visit covers this visit only because all its successors stay pending.
 let recursive pathSearch kind (pending: List(QueryWork)) (visited: MapTree(Int, List(QueryPath))) (index: TypeGraphIndex) =
     match pending with
         | [] -> (false, index)
-        | VisitIndexedType(semanticType, path) :: rest ->
-            match typeGraphResolvedNode(semanticType)(index) with
-                | (node, next) ->
-                    if matches(kind)(node)
-                    then (true, next)
-                    else
-                        match node.resolvedType with
-                            | SemNamed(symbolId, name, _) ->
-                                match pathNode(symbolId)(name)(path) with
-                                    | Some(_) -> pathSearch(kind)(rest)(visited)(next)
-                                    | None ->
-                                        let bucket =
-                                            match Ashes.Collection.Map.getInt(node.nodeId)(visited) with
-                                                | None -> []
-                                                | Some(found) -> found
-                                        in
-                                            if coveredPath(path)(bucket)
-                                            then pathSearch(kind)(rest)(visited)(next)
-                                            else
-                                                pathSearch(kind)(prependWork(children(kind)(node))(extendPath(node)(path))(rest))(Ashes.Collection.Map.setInt(node.nodeId)(path :: bucket)(visited))(next)
-                            | _ ->
-                                pathSearch(kind)(prependWork(children(kind)(node))(path)(rest))(visited)(next)
+        | work :: rest ->
+            let path = workPath(work)
+            in
+                match resolveWork(work)(index) with
+                    | (node, next) ->
+                        if matches(kind)(node)
+                        then (true, next)
+                        else
+                            match node.resolvedType with
+                                | SemNamed(symbolId, name, _) ->
+                                    match pathNode(symbolId)(name)(path) with
+                                        | Some(_) -> pathSearch(kind)(rest)(visited)(next)
+                                        | None ->
+                                            let bucket =
+                                                match Ashes.Collection.Map.getInt(node.nodeId)(visited) with
+                                                    | None -> []
+                                                    | Some(found) -> found
+                                            in
+                                                if coveredPath(path)(bucket)
+                                                then pathSearch(kind)(rest)(visited)(next)
+                                                else
+                                                    pathSearch(kind)(prependWork(kind)(node.nodeId)(0)(children(kind)(node))(extendPath(node)(path))(rest))(Ashes.Collection.Map.setInt(node.nodeId)(path :: bucket)(visited))(next)
+                                | _ ->
+                                    pathSearch(kind)(prependWork(kind)(node.nodeId)(0)(children(kind)(node))(path)(rest))(visited)(next)
 
 let graphQuery kind (semanticType: SemanticType) (index: TypeGraphIndex) =
     match typeGraphResolvedNode(semanticType)(index) with
@@ -176,52 +191,54 @@ let dropLeaf (node: TypeGraphNode) =
 let recursive dropSearch (pending: List(QueryWork)) (visited: MapTree(Int, List(QueryPath))) (index: TypeGraphIndex) (pathCuts: Bool) =
     match pending with
         | [] -> QueryResult(answer = Some(true), completed = [], index = index)
-        | VisitIndexedType(semanticType, path) :: rest ->
-            match typeGraphResolvedNode(semanticType)(index) with
-                | (node, next) ->
-                    if dropLeaf(node)
-                    then dropSearch(rest)(visited)(next)(pathCuts)
-                    else
-                        match node.resolvedType with
-                            | SemList(_) ->
-                                dropSearch(prependWork(node.resourceChildren)(path)(rest))(visited)(next)(pathCuts)
-                            | SemTuple(_) ->
-                                dropSearch(prependWork(node.resourceChildren)(path)(rest))(visited)(next)(pathCuts)
-                            | SemNamed(symbolId, name, _) ->
-                                match typeGraphResource(node.resolvedType)(next) with
-                                    | (true, afterResource) -> QueryResult(answer = Some(false), completed = [], index = afterResource)
-                                    | (false, afterResource) ->
-                                        let previous = pathNode(symbolId)(name)(path)
-                                        in
-                                            let changed =
-                                                match previous with
-                                                    | Some(previousId) -> previousId != node.nodeId
-                                                    | None -> false
+        | work :: rest ->
+            let path = workPath(work)
+            in
+                match resolveWork(work)(index) with
+                    | (node, next) ->
+                        if dropLeaf(node)
+                        then dropSearch(rest)(visited)(next)(pathCuts)
+                        else
+                            match node.resolvedType with
+                                | SemList(_) ->
+                                    dropSearch(prependWork(ResourceFact)(node.nodeId)(0)(node.resourceChildren)(path)(rest))(visited)(next)(pathCuts)
+                                | SemTuple(_) ->
+                                    dropSearch(prependWork(ResourceFact)(node.nodeId)(0)(node.resourceChildren)(path)(rest))(visited)(next)(pathCuts)
+                                | SemNamed(symbolId, name, _) ->
+                                    match typeGraphResource(node.resolvedType)(next) with
+                                        | (true, afterResource) -> QueryResult(answer = Some(false), completed = [], index = afterResource)
+                                        | (false, afterResource) ->
+                                            let previous = pathNode(symbolId)(name)(path)
                                             in
-                                                if !pathCuts && changed
-                                                then QueryResult(answer = None, completed = [], index = afterResource)
-                                                else
+                                                let changed =
                                                     match previous with
-                                                        | Some(_) -> dropSearch(rest)(visited)(afterResource)(pathCuts)
-                                                        | None ->
-                                                            let bucket =
-                                                                match Ashes.Collection.Map.getInt(node.nodeId)(visited) with
-                                                                    | None -> []
-                                                                    | Some(found) -> found
-                                                            in
-                                                                let covered =
-                                                                    if pathCuts
-                                                                    then coveredPath(path)(bucket)
-                                                                    else
-                                                                        match bucket with
-                                                                            | [] -> false
-                                                                            | _ -> true
+                                                        | Some(previousId) -> previousId != node.nodeId
+                                                        | None -> false
+                                                in
+                                                    if !pathCuts && changed
+                                                    then QueryResult(answer = None, completed = [], index = afterResource)
+                                                    else
+                                                        match previous with
+                                                            | Some(_) -> dropSearch(rest)(visited)(afterResource)(pathCuts)
+                                                            | None ->
+                                                                let bucket =
+                                                                    match Ashes.Collection.Map.getInt(node.nodeId)(visited) with
+                                                                        | None -> []
+                                                                        | Some(found) -> found
                                                                 in
-                                                                    if covered
-                                                                    then dropSearch(rest)(visited)(afterResource)(pathCuts)
-                                                                    else
-                                                                        dropSearch(prependWork(node.resourceChildren)(extendPath(node)(path))(rest))(Ashes.Collection.Map.setInt(node.nodeId)(path :: bucket)(visited))(afterResource)(pathCuts)
-                            | _ -> QueryResult(answer = Some(false), completed = [], index = next)
+                                                                    let covered =
+                                                                        if pathCuts
+                                                                        then coveredPath(path)(bucket)
+                                                                        else
+                                                                            match bucket with
+                                                                                | [] -> false
+                                                                                | _ -> true
+                                                                    in
+                                                                        if covered
+                                                                        then dropSearch(rest)(visited)(afterResource)(pathCuts)
+                                                                        else
+                                                                            dropSearch(prependWork(ResourceFact)(node.nodeId)(0)(node.resourceChildren)(extendPath(node)(path))(rest))(Ashes.Collection.Map.setInt(node.nodeId)(path :: bucket)(visited))(afterResource)(pathCuts)
+                                | _ -> QueryResult(answer = Some(false), completed = [], index = next)
 
 let typeGraphDroppable (semanticType: SemanticType) (index: TypeGraphIndex) =
     (let work = [VisitIndexedType(semanticType)(emptyQueryPath)]

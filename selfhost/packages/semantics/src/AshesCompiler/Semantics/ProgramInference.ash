@@ -281,7 +281,7 @@ let recursive generalizeRecursiveBindings bindings outerEnvironment substitution
                     let scheme =
                         resolvedConstraints
                         |> simplifyTraitConstraints(outerEnvironment)
-                        |> generalize(inferenceEnvironmentSchemes(outerEnvironment))(resolvedType)
+                        |> generalizeUnderSubstitution(inferenceEnvironmentSchemes(outerEnvironment))(substitution)(resolvedType)
                     in
                         resultEnvironment
                         |> addTypeBinding(name)(scheme)

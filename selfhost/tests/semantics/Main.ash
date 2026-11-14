@@ -5,10 +5,12 @@ import AshesCompiler.Semantics.Types
 import UnificationTests
 import TypeSchemeTests
 import TypeInferenceTests
+import CapturedEnvironmentInferenceTests
 import PatternInferenceTests
 import TypeResolutionTests
 import ProgramInferenceTests
 import RecordInferenceTests
+import RecordFieldInferenceTests
 import ResultInferenceTests
 import CapabilityInferenceTests
 import TraitInferenceTests
@@ -22,6 +24,7 @@ import TraitMethodConstructionOrderTests
 import TraitEvidenceValueTransportTests
 import TraitEvidenceRewritingTests
 import TraitEvidenceCallRewritingTests
+import RecursiveTraitEvidenceTests
 import TraitDictionaryRewritingTests
 import StandardTraitsTests
 import StandardTraitSourceBindingTests
@@ -39,6 +42,10 @@ import IrFunctionSelectionTests
 import IrTextTests
 import CoreLoweringTests
 import CoreLogicalNotInferenceTests
+import CoreOrderedInferenceTests
+import CoreConstrainedBindingsTests
+import CoreConstrainedSpecializationTests
+import CoreConstrainedSpecializationInferenceTests
 import CoreProgramLoweringTests
 import RecursiveProducerResultTests
 import TcoParameterHeadCellTests
@@ -96,10 +103,12 @@ let run unit =
     |> UnificationTests.runUnificationTests
     |> (given (_) -> TypeSchemeTests.runTypeSchemeTests(Unit))
     |> (given (_) -> TypeInferenceTests.runTypeInferenceTests(Unit))
+    |> (given (_) -> CapturedEnvironmentInferenceTests.runCapturedEnvironmentInferenceTests(Unit))
     |> (given (_) -> PatternInferenceTests.runPatternInferenceTests(Unit))
     |> (given (_) -> TypeResolutionTests.runTypeResolutionTests(Unit))
     |> (given (_) -> ProgramInferenceTests.runProgramInferenceTests(Unit))
     |> (given (_) -> RecordInferenceTests.runRecordInferenceTests(Unit))
+    |> (given (_) -> RecordFieldInferenceTests.runRecordFieldInferenceTests(Unit))
     |> (given (_) -> ResultInferenceTests.runResultInferenceTests(Unit))
     |> (given (_) -> CapabilityInferenceTests.runCapabilityInferenceTests(Unit))
     |> (given (_) -> TraitInferenceTests.runTraitInferenceTests(Unit))
@@ -113,6 +122,7 @@ let run unit =
     |> (given (_) -> TraitEvidenceValueTransportTests.runTraitEvidenceValueTransportTests(Unit))
     |> (given (_) -> TraitEvidenceRewritingTests.runTraitEvidenceRewritingTests(Unit))
     |> (given (_) -> TraitEvidenceCallRewritingTests.runTraitEvidenceCallRewritingTests(Unit))
+    |> (given (_) -> RecursiveTraitEvidenceTests.runRecursiveTraitEvidenceTests(Unit))
     |> (given (_) -> TraitDictionaryRewritingTests.runTraitDictionaryRewritingTests(Unit))
     |> (given (_) -> StandardTraitsTests.runStandardTraitsTests(Unit))
     |> (given (_) -> StandardTraitSourceBindingTests.runStandardTraitSourceBindingTests(Unit))
@@ -130,6 +140,10 @@ let run unit =
     |> (given (_) -> IrTextTests.runIrTextTests(Unit))
     |> (given (_) -> CoreLoweringTests.runCoreLoweringTests(Unit))
     |> (given (_) -> CoreLogicalNotInferenceTests.runCoreLogicalNotInferenceTests(Unit))
+    |> (given (_) -> CoreOrderedInferenceTests.runCoreOrderedInferenceTests(Unit))
+    |> (given (_) -> CoreConstrainedBindingsTests.runCoreConstrainedBindingsTests(Unit))
+    |> (given (_) -> CoreConstrainedSpecializationTests.runCoreConstrainedSpecializationTests(Unit))
+    |> (given (_) -> CoreConstrainedSpecializationInferenceTests.runCoreConstrainedSpecializationInferenceTests(Unit))
     |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
     |> (given (_) -> RecursiveProducerResultTests.runRecursiveProducerResultTests(Unit))
     |> (given (_) -> TcoParameterHeadCellTests.runTcoParameterHeadCellTests(Unit))

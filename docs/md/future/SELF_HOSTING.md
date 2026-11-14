@@ -9,6 +9,106 @@ See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broad
 [self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
 for package boundaries and commands.
 
+## Known gaps deferred during Step F
+
+Scope updated on **2026-11-14**. Step F currently targets a complete, fast stage-1-to-stage-2
+compiler build. It is not a claim of full stage-0 feature parity or completion of step E. The
+following known work remains open; keep this list updated when an item is promoted or resolved.
+
+| Area | Known limitation and evidence | Deferred work / return condition |
+| --- | --- | --- |
+| Constrained let-polymorphism (TRT-13, SEM-22), active F blocker | Bootstrap32 failed naturally after 9:58.05. Diagnostic replay captured the original `Int`/`Str` mismatch in `IrOptimizer.lookupAssociation`, called by `countBranchRefsToLabels`; the final missing `Ord` evidence diagnostic was secondary. The compiler itself needs mixed constrained instantiations. | Required dictionary inference, recursive/ordinary binding elaboration, and ownership-safe specialization are in scope for F. Focused Core results do not establish final stage-1 CLI or stage-2 acceptance. Do not split or annotate compiler helpers to hide the missing rule. |
+| Ordinary generic `Not` evidence | Ordinary custom-type and mixed Boolean/custom-type `Not` bindings lower at Core level through per-call dictionary evidence. The expression-only lowering entry points carry no replay and no standard trait module, so a constrained binding called there at a built-in type is rejected (`UnknownLoweringBinding` for the module's method), as is an alias call of a constrained binding in a program lowered without the module. [Cases and current limits](../../../selfhost/tests/logical-not-inference/README.md). | Core lowering results do not establish native stage-1 runtime or lifetime acceptance of generic `Not` calls; that validation remains pending. |
+| Constrained specialization and generic-loop ownership, active F blocker | Actual bootstrap32 stage 1 compiled `SnapshotLoop` but retained 6/5001/50001 cells at 1/1000/10000 rounds, reproducing +5 per round. Stage 0 is flat at 1/1/1; disabling only `GRC_NO_CONSTRAINEDSPECIALIZATION` reproduces the growth. Watchpoints attribute the five retained references to string labels. See `Lowering.ConstrainedSpecialization.cs` and the [strict mixed-constrained runner](../../../selfhost/tests/mixed-constrained-bootstrap/README.md). | Mirror the required concrete ownership path and prove actual stage-1 native plateaus, including aliases and escaping evidence. Core typing or copy-selection tests alone are not lifetime acceptance; final runtime validation remains pending. |
+| Custom capability context in constrained-call queries | Core capability declarations and operation schemes are not projected into the constrained-call inference environment. An argument that invokes a user capability may therefore fail re-inference even when ordinary Core lowering supports it. [Small retained probe](../../../selfhost/tests/constrained-bindings/deferred/CapabilityArgument.ash); no bootstrap dependency has been demonstrated. | Project the declared operation/provider context and validate effect/evidence handling when required. This remains deferred and is not included in the constructor/alias/external/record-field query fixes. |
+| Generic arithmetic and bitwise dictionaries | Ordinary generic operator dispatch for `Add`, `Subtract`, `Multiply`, `Divide`, `Modulo`, and bitwise traits is not implemented by the current constrained-binding path. That path admits only `Eq`, `Ord`, and `Not`; other constraints retain the existing primitive/deferred operator lowering and its type-mismatch or unsupported/missing-evidence diagnostics. Concrete primitive arithmetic support does not establish generic dictionary dispatch. | Add operator-to-dictionary lowering, physical evidence forwarding, and ownership checks for these traits when required. Preserve existing diagnostics; do not claim this broader parity from the Eq/Ord/Not bootstrap fix. |
+| Derived trait execution (TRT-14 / TRT-15) | Declaration expansion and evidence planning do not establish complete physical dictionary/method lowering. The existing milestone records rejection of equality on a list of a derived record in `tests/reuse_specialization_declines_unreachable_helper.ash`; this case has not been revalidated in the current bootstrap round. | Remaining runtime evidence and method lowering beyond what the compiler build requires. Reproduce the recorded case before claiming it still fails or is fixed. |
+| Pending trait-goal string ownership | Frozen bootstrap28 leaks one key string per round through unchanged `resolvedTraitGoals` when the pending list comes from lowering state. The reproducer without the new negation helper reports 2/1001/10001 live cells at 1/1000/10000 rounds; the literal-list control is flat. [Tracked sources, watchpoint evidence, and strict plateau runner](../../../selfhost/tests/pending-goal-lifetime/README.md). | Attribute the exact missing ownership operation and fix it under the mirror rule. This existing defect is newly exercised by negation; neither semantic success nor a stage-0-only flat result counts as stage-1 lifetime acceptance. |
+| Stage-1 poison instrumentation | Stage 1 does not implement the stage-0 `ASHES_RC_POISON=1` backend switch. Current stage-1-produced program checks are plain; poison checks use stage 0. [Validation limits](../../../selfhost/tests/logical-not-inference/README.md). | Implement and verify stage-1 poisoning separately. Do not report a poisoned stage-1 pass merely because the environment variable was set. |
+| Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E after F with a clean committed-tree census and fresh reproductions. Promote any item that blocks F or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
+
+The removed Round11 handoff is preserved locally, with a SHA256 manifest, under the main
+checkout's `.claude/step-f-archive/round2-20261112/artifacts/selfhost-dev/handoff-step-e/`.
+It is intentionally not restored under tracked `artifacts/`. The historical list and measurements
+remain available there; the current tracked pending-goal reproducer is linked above.
+
+**Still in scope for F:** complete the mixed constrained `IrOptimizer.lookupAssociation` path,
+its concrete ownership specialization, and measured repeated graph traversal or lookup costs.
+Bootstrap32 reached compiler lowering but produced no stage-2 executable. Its diagnostic replay
+identified the original mixed-key mismatch; the final missing `Ord` evidence error did not identify
+the first failure. Earlier bootstrap29 failed in `List.sort` after 9:04.34; later focused CLI checks
+passed that path and logical negation, but they do not establish a full bootstrap. Keep final-binary
+regressions, strict native lifetime checks, and the next complete stage-2 attempt as separate gates.
+See [PR #1155's earlier build outcome](https://github.com/MattiasHognas/Ashes/pull/1155).
+
+An item leaves this list only with a linked fix and relevant stage-1 regression/lifetime evidence,
+or with a fresh reproduction proving the recorded defect no longer applies. Full suites and a
+compiler census remain required at their agreed milestones; focused checks are not substitutes.
+
+## Type inference before lowering
+
+Decided on **2026-11-14**. Stage 1 lowers and infers types in the same walk, as stage 0 does.
+Because lowering meets types it does not know yet, it runs a discovery pass and then replays the
+whole program with proven types pinned, runs a speculative inference on every lambda `let` to ask
+whether the binding is trait-constrained, lowers a recursive body again when a call's result type
+resolves late, and defers operators and dictionaries it cannot decide at the site. These are the
+dominant costs of stage 1 compiling itself and the source of most Step F blockers.
+
+The direction is a dedicated inference pass that runs first and produces a typed program, with
+lowering reduced to one pass that reads types. Stage 1 no longer has to emit the same IR as stage 0
+for this work. The checks that matter are that programs compiled by stage 1 behave the same as when
+compiled by stage 0 (output and exit live-cell counts), and that stage 2 and stage 3 are identical.
+
+What is known about the starting point:
+
+- `ProgramInference.ash` and `TypeInference.ash` cover every expression and pattern form, but the
+  compile command does not run them. They return binding schemes, one substitution and the trailing
+  type; no type is kept per expression, and errors carry no location.
+- The standalone inference has not inferred a real stitched program. Its substitution and its
+  binding lookup are linear lists.
+- Syntax nodes have no stable identity. Spans collide across stitched modules and synthesized nodes
+  have none.
+- Lowering decides about 30 things on whether a type is still open at a site, mirroring the order
+  in which stage 0 discovers types. Final types alone do not reproduce those decisions.
+- The two inferences disagree on operators: the standalone one gives `a + b` and `a == b` a trait
+  constraint and generalizes; lowering holds the operand monomorphic, emits the integer form and
+  seals it to `Int` when nothing resolves it.
+- Of the roughly 350 type queries in lowering, about 260 classify ownership and heap layout and
+  need a type for nearly every lowered value; about 55 choose an instruction or build trait
+  evidence.
+
+Order of work. Each step lands separately and is useful if the later ones are delayed.
+
+1. **Skip the constrained-binding plan when the binding cannot be constrained.** A syntactic check
+   answers "not constrained" when the value contains no operator that maps to a trait, no reference
+   to a name whose scheme carries constraints, and no written `requires`. The generated code does
+   not change.
+2. **Make the standalone inference run on real programs.** Fix the standard-library type mismatch
+   it reports, give its errors locations, replace the association-list substitution and the linear
+   binding lookup, and run it from the compile command with its result discarded. The deliverable
+   is that it infers every test program and the compiler itself, and how long that takes.
+3. **Build the behavioural check.** Compile the test programs with stage 1 and with stage 0, run
+   both, and compare output and exit live-cell counts. This replaces lowered-IR comparison with
+   stage 0 as the acceptance check for the steps below.
+4. **Compare the two inferences.** With step 2 in place, report where the standalone result and
+   lowering's own inference disagree per top-level binding. Operators and capability rows are the
+   known differences. Each disagreement is settled against the language reference.
+5. **Give syntax nodes an identity and record types against it.** Assign identities after
+   stitching, including synthesized nodes, and have the inference pass fill a table: a type per
+   expression, the resolved instance per operator, the instantiation and dictionaries per call,
+   the scheme per binding. A body lowered at several types reads the table through its
+   instantiation.
+6. **Lower from the table.** Lowering reads types instead of unifying. Remove the discovery and
+   replay passes, pending and proven trait goals, deferred operators and dictionaries, the
+   per-binding plan, and body re-lowering.
+7. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
+   site as rules over the final type, each with a lifetime regression.
+8. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
+   compiler; stage 1 stops mirroring its internals.
+
+Steps 1 to 4 do not change generated code. Steps 6 and 7 do, in the ownership-sensitive paths, so
+step 3 must exist before they start.
+
 ## Start here
 
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own

@@ -1566,6 +1566,13 @@ constructor lookup retains the first declaration; type buckets retain declaratio
 Replacing the layout list rebuilds both indexes, while inference and generic substitution
 remain at the use site. Dropper preparation separately indexes its freshly renumbered definitions,
 preserving first-seen type IDs and rebuilding when the definition environment changes.
+The constructor index also retains an ordered field view for a result-name bucket only when
+every constructor scheme is unquantified and contains no inference variables or rigid parameters.
+Instantiating these closed schemes and applying any substitution leave their fields unchanged,
+so declared-field and instantiated-field queries may share this view across fresh-variable supplies.
+One open or generic constructor disables the view for the entire bucket. Layout replacement
+rebuilds it with the other constructor maps; generic/open queries retain fresh instantiation and
+resolution at the use site. This is a field-list cache, not a cached containment or lifetime verdict.
 Heap classification retains exact `(symbol ID, type name)` maps for constructor groups and
 first-constructor record status in prepared environments. Incremental declarations extend those
 maps with the same first-match behavior as the ordered lists; unprepared environments retain
@@ -2123,6 +2130,21 @@ function's such tuple, or a result of unresolved type, as a generic `apply f x =
 forwards its own caller's request and address to that call, in place of a request of its own, and
 takes no parts itself; the callee answers the caller that asked.
 
+Known `Str` and `Bytes` fields can use the same tuple-part hand-over instead of copying their
+payload into the arena and then back onto the reference-counted heap. This applies only to a
+borrowed field stored once in the sole returned arena tuple, outside a loop, whose exact earlier
+demotion has one user. The interval between that demotion and the field's store must contain only
+non-releasing construction operations and local branches; calls, releases, resets and unproved
+operations retain the copy. A caller requesting parts skips the demotion, the store retains each
+counted alias separately, and the mask makes the caller release each handed reference after its
+own normalization retains it. The requested ownership analysis follows only these proved guarded
+demotions back to their original source owners. Without a request the original copy remains;
+fixed-copyout callers continue withdrawing the request. Fresh unowned fields, deferred
+materializations and multiple possible result cells keep their existing behavior
+(`GRC_NO_TUPLESTRINGPARTS`, stage 0; mirrored in stage 1). The regression is
+`selfhost/tests/generic-tuple-byte-parts`: this avoids repeated whole-source byte copies in the
+parser's legitimately polymorphic state updaters without adding source type annotations.
+
 A result outside the contract's types can also be one of the function's owned values returned as it
 is: a generic `Result(e, T)` whose `Ok` arm returns an owned call result of type `Result(Never, T)`,
 say. The function cannot release that value, and its caller, which may know the concrete type, does
@@ -2368,6 +2390,41 @@ expression and recursive-group entry points do not replay discovery, so they pin
 and reject unresolved evidence rather than emit provisional IR. Ordinary generic `Not` bindings
 without mapped evidence remain unsupported for non-Boolean uses; this is not full polymorphic
 operator support.
+
+Stage 1 orders the operands of `<`, `<=`, `>`, and `>=` through the same typed trait-goal
+replay before numeric defaulting. It first unifies both operands, then records an unresolved
+`Ord` goal with a Boolean result. Later callers can settle the shared operand type to `Str`,
+for example in the unannotated comparator inside `List.sort`. Replay emits the concrete primitive
+comparison or the existing `Ord` method dispatch; active generic implementation evidence is used
+immediately. Required dictionaries build the standard ordering predicates through those same
+mapped expressions inside a wrapper pinned to the implementation head; otherwise their bare
+`Ord.compare` sibling reference has no value binding. Explicit implementation overrides are
+preserved. Structural heads with available requirement evidence dispatch without deferral.
+Missing evidence and unresolved goals at non-replaying entry points fail closed.
+This does not generalize ordinary constrained bindings at multiple concrete types: mixed `Int`
+and `Str` uses of the same such binding remain unsupported in stage 1 (TRT13/SEM22).
+
+Imported modules can contribute unused constrained functions, such as `List.sort` or
+`Map.get`. After a successful discovery pass validates every body, final replay builds a
+reference dependency graph for nonrecursive top-level lambdas and aliases that read an earlier
+proven function binding. References inside those bodies are edges; executed initializers,
+recursive groups, trailing code, method/default/provider bodies and exports supply roots.
+A worklist visits each reachable name once, so unused wrapper and alias chains are omitted
+without repeatedly scanning the program. Calls, captures and escaping function values retain
+their dependencies. Membership matches `Some`/`None` and requires no equality on node payloads.
+Unknown syntax and duplicate declarations conservatively disable omission. Every eager
+initializer remains; a failed discovery pass replays the original declarations. No provisional
+body is retained and no unresolved operand is defaulted merely because it is unused. Recursive
+declarations remain conservative roots; this does not generalize mixed constrained uses.
+
+A recursive group's disposable member pass keeps trait discovery enabled even inside a
+whole-program replay: later siblings still need to settle their result types. The retained member
+pass starts again from the original group state with the proved sibling results and the caller's
+original pinned-goal flag. If no sibling result settled and discovery's append-only pending-goal
+list is empty, the first result is already final: restore the caller's pinned flag and reuse it.
+This constant-time check avoids lowering every recursive group twice during whole-program replay.
+A nonempty pending-goal list still requires the pinned final pass, so provisional operator values
+cannot escape through expression entry points.
 
 A successor consing a freshly built cell onto a list (`Site(creator = facts) :: sites`) has its
 arena head copied the same way, so the retains that head was built with for loop-parameter reads are
@@ -2696,6 +2753,15 @@ a negative answer for one instantiation must never justify a release for another
 arguments are checked before the visited-set test. Stage 0 already shares its expansion set
 across siblings.
 
+When checking whether a result may hold any heap part of one owned value, stage 1 searches the
+result graph once against the complete candidate list. This is the same existential answer as
+running a separate containment query for every candidate: expansion, path checks, and conservative
+unknown outcomes do not depend on the candidate until a match succeeds. Empty candidate lists
+answer false without entering the walk. The shared traversal is local to one immutable lowering
+state, so resolved types and constructor fields never survive into a different substitution or
+constructor environment. Exact structural equality and the existing recursive-type rules remain
+the release proof; no approximate membership answer is used.
+
 Types cannot answer that question when the result's element type equals the argument's — a map from
 strings to strings — and the hand-over is what a caller falls back on whenever the callee's result
 reach is unproven. A complete reach account settles it without types: a callee that provably never
@@ -2731,6 +2797,30 @@ recursion depth is bounded by these sizes:
 ---
 
 ## Trait Lowering
+
+Stage 0 records how each emitted dictionary parameter maps to the generalized
+scheme's constraint ordinal. The declaration fixes the physical parameter order,
+but type inference may allocate variables in a different order (for example,
+tuple-pattern fields versus curried arguments). Calls and active dictionary
+references use that mapping rather than assuming matching ordinals. The
+`constrained_lookup_preserves_dictionary_positions.ash` regression exercises three
+same-trait requirements with string and integer arguments in differing field order.
+
+Self-hosted let, let-rec, top-level, and recursive-group inference generalize against
+the surrounding environment after applying the binding's checked substitution.
+`generalizeUnderSubstitution` follows only the environment schemes' free variables;
+quantified variables are excluded first. This keeps newly exposed argument, result,
+constraint, and capability-row variables of a captured monomorphic value monomorphic,
+while independent bindings still generalize. The value type and constraints passed
+to this helper are already resolved. A closed candidate skips the environment scan.
+`CapturedEnvironmentInferenceTests` covers these boundaries and independent polymorphism.
+
+`RecursiveTraitEvidence` provides the pure self-reference elaboration for a monomorphic
+recursive body: each free reference receives its ordered dictionary parameters before
+dictionary lambdas are wrapped and recursive call-shape analysis runs. Lexical binders
+shadow the recursive name; a binder that would capture an inserted dictionary reference
+or an unsupported syntax variant makes elaboration fail. Call spans and layout survive.
+Its caller must then use the physical self type, without inserting evidence a second time.
 
 The source surface, coherence rules, and type-system behavior are specified in
 [Language Reference](../reference/language.md) section 21. Trait selection is entirely static; there
@@ -2787,6 +2877,51 @@ in the same context with the same captures emits only the environment and the cl
 the recorded function. Nested instances built inside a method body (a field type's own `Eq`, a
 list element's `Show`) are compiled inside that single body, so the emitted code grows with the
 number of instances a program uses rather than with the number of places it uses them.
+
+### Self-hosted constrained bindings
+
+The self-hosted Core lowerer keeps a constrained binding's source scheme separate from its physical
+closure type. The closure receives the ordered dictionary parameters before its source parameters;
+method projections remain inside that complete lambda prefix so recursive calls retain their
+physical tail-call arity. Free recursive references forward the existing dictionaries, including
+references used as values. Each call instantiates the source scheme independently and uses a private
+callee binding, leaving references to the original polymorphic name in argument expressions intact.
+
+Dictionary slots keep their definition order through generalization and instantiation, even when two
+requirements instantiate to the same type. Ordinary methods precede supertrait dictionaries in the
+physical layout. Newly emitted bindings resolve their provisional types before publishing a logical
+scheme; already-generalized aliases preserve their quantified variables. Query environments apply
+substitution only to free variables of a scheme. Concrete and outer-fixed requirements remain the
+responsibility of the scope that introduced them.
+
+Call inference reads the same registered constructor schemes, nominal and alias types, intrinsic
+builtins, seeded trait methods, and external direct/first-class contracts as Core lowering. Static
+query bindings are cached when their metadata is registered. Closed global references retain their
+logical schemes; a registration-time flag identifies schemes with free IDs that must be resolved
+against the current substitution at a query. Current lexical bindings take precedence. This context
+projection avoids rebuilding all static constructor and builtin bindings at every constrained call;
+it does not eliminate the separate traversal of live bindings or argument re-inference.
+
+Dictionary closures and tuples use ordinary lexical ownership scopes. Their owners close after the
+normal call-result normalization, so a returned closure or aggregate must preserve any evidence it
+captures. Dictionary construction cannot consume reuse tokens belonging to the source arguments.
+The supported ordinary operator evidence path currently covers `Eq`, `Ord`, and `Not`; the
+[self-hosting deferred work table](../future/SELF_HOSTING.md#known-gaps-deferred-during-step-f)
+records the remaining operator dispatch and runtime validation limits.
+
+The self-hosted concrete-copy registry retains original source and logical schemes for constrained
+top-level functions and wrappers that reference them, including wrappers with fully concrete types.
+A bound candidate must match its original program-entry local slot; ambiguous captures keep the
+ordinary dictionary path. Copies require saturated source arity, closed ordinary arguments and
+results, and proven empty capability rows. Only quantified source row variables may receive a pure
+instantiation. Higher-order arguments and unresolved or effectful rows decline this path.
+
+Copy generation starts without caller locals, active dictionaries, reuse tokens, or special fresh-input
+ownership flags. It resolves transitive candidates through the registry and accepts only a closed
+result without surviving non-tail self references. A failed trial discards its generated state and
+uses the ordinary dictionary call. Accepted copies use ordinary ownership lowering and closure-call
+normalization; their cache is keyed by candidate identity and exact concrete argument types, with
+separate variants per candidate. These structural gates do not substitute for native lifetime tests.
 
 ### Specialization and observability
 
@@ -3323,11 +3458,28 @@ within that index lineage. Nodes retain both source and runtime-resolved
 constructor groups, record shape and query-specific child edges. Complete type
 fingerprints select integer-AVL buckets; full semantic-type equality resolves
 collisions. A hash alone never establishes type identity.
+Each node also records whether its source and resolved types are structurally equal,
+computed once in that immutable environment. Alias resolution and named layout views
+reuse that boolean instead of comparing the same trees on every visit. A lookup followed
+by insertion or fact update shares one fingerprint within the operation; collision checks
+still compare complete types, and the cached resolution fact stays within its index lineage.
 
 `TypeGraphQueries` reuses those nodes for resource, unresolved-type and drop
 queries. Only completed context-free root facts are published. Regular negative
 searches may publish their fully visited named closure; nonregular fallback
 publishes only its queried root. Blocked-path visits remain query-local.
+
+Traversal work records a parent's node ID, edge policy and child position. The
+index caches the resolved child node at that coordinate only when the work item
+is visited and the canonical node was already interned before that visit. A new
+node gets no extra edge-map entry until sharing or a revisit demonstrates reuse.
+Repeated edges therefore avoid structural hashing and equality;
+initial interning still checks complete types. Resource and unresolved edges
+have separate maps, and each map belongs to its immutable environment lineage.
+Enqueuing never discovers a child, preserving short-circuit order and lazy
+nonregular recursion. These entries cache adjacency, not path-dependent answers.
+They retain immutable nodes that contain type roots but no index references, so
+recursive type edges do not create RC reference cycles.
 
 Every indexed heap-layout view returns its updated index alongside its answer.
 Layout gates retain their original nominal cycle paths and short-circuit order;
@@ -3353,7 +3505,16 @@ nominal cycle key is preserved: if one key identifies different exact types,
 the query falls back to the original path-only traversal with its discovered
 view context retained. Caller-supplied blocked paths still precede constructor
 and resource checks, and body-local full facts remain authoritative. No final
-path-dependent Boolean is persisted in the shared context.
+path-dependent Boolean is persisted in the shared context. The query-local
+visited set keeps bare named types separate from types with rendered keys,
+preserving the cycle relation's distinction between those classes. Each pending
+named visit computes its key once; previous rendered keys are retained alongside
+their exact types instead of being reformatted at each comparison. Membership
+remains a linear search. Bare names use their existing cheap name comparison.
+The first entry of a caller-supplied path wins when that path contains multiple
+exact types with one nominal key. Initial paths are built in linear order without
+deduplicating aliases; a match still compares the exact types before deciding
+whether alias fallback is needed.
 
 Core lowering has a separate `CoreHeapQueryContext` for its coverage environment,
 whose symbol IDs differ from the prepared dropper environment. Copy-plan,

@@ -6,11 +6,11 @@ From the repository root, use an already built stage-0 compiler:
 bash selfhost/tests/core-query-context/validate.sh /absolute/path/to/ashes
 ```
 
-`render.pl` extracts the current production cache, indexed query/decision engines,
+`render.sh` extracts the current production cache, indexed query/decision engines,
 coverage-environment setter, and frame-context restoration helper into the ignored
 `work/core-query-context` project. Missing extraction boundaries fail generation.
 The fixture uses the real heap-layout classifiers, graph index and dropper context.
-`Oracle.ash.inc` freezes the pre-change decision functions from `cc50f0f5`.
+`Oracle.ash` freezes the pre-change decision functions from `cc50f0f5`.
 
 The reduced Core state supplies deterministic seams for inference resolution,
 constructor lookup, scalar reset eligibility, live-handler state and specialization
@@ -56,3 +56,8 @@ pure callers use the same indexed decision engine but discard cold updates at
 their answer-only boundary. Full-layout and owned-child views, raw tuple-element
 and recursive-copy gates, and closure-capture's settled-cache bypass remain
 unmigrated. The benchmark is a focused query workload, not a stage2 build timing.
+
+The renderer runs with `bash selfhost/tests/core-query-context/render.sh`, including
+from fish. Ash declarations and assertions are checked-in `.ash` files. The
+import-only `Prelude.imports` fragment is formatted as part of the generated
+project because the formatter requires a declaration or expression after imports.

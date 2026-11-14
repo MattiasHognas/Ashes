@@ -99,7 +99,7 @@ public sealed partial class Lowering
     // The contract elements of a tuple type, by index.
     private int[] ContractElementParts(TypeRef type)
         => Prune(type) is TypeRef.TTuple tuple
-            ? [.. Enumerable.Range(0, tuple.Elements.Count).Where(index => IsGeneralRcValueType(tuple.Elements[index]))]
+            ? [.. Enumerable.Range(0, tuple.Elements.Count).Where(index => IsTupleResultPartType(tuple.Elements[index]))]
             : [];
 
     // The hidden ownership word with the tuple-parts request beside whatever the call already
@@ -241,7 +241,7 @@ public sealed partial class Lowering
             return [];
         }
 
-        return [.. Enumerable.Range(0, tuple.Elements.Count).Where(index => IsGeneralRcValueType(tuple.Elements[index]))];
+        return [.. Enumerable.Range(0, tuple.Elements.Count).Where(index => IsTupleResultPartType(tuple.Elements[index]))];
     }
 
     /// <summary>
@@ -277,7 +277,8 @@ public sealed partial class Lowering
         List<GeneralRcOwnedSlot> handedOver = kept;
         if (cells is { Count: > 0 })
         {
-            handedOver = OwnedSlotsReleasedBehindTupleParts((TypeRef.TTuple)Prune(resultType), cells, parts, out List<IrInst.StoreMemOffset> retainedStores);
+            Dictionary<int, int> borrowedParts = PreserveRequestedBorrowedStringParts((TypeRef.TTuple)Prune(resultType), cells, parts);
+            handedOver = OwnedSlotsReleasedBehindTupleParts((TypeRef.TTuple)Prune(resultType), cells, parts, borrowedParts, out List<IrInst.StoreMemOffset> retainedStores);
             RetainTuplePartStoresWhenRequested(retainedStores);
         }
 
@@ -693,7 +694,7 @@ public sealed partial class Lowering
     /// the part stores of a value other than a fresh one, which the cell's reference already hands
     /// over.
     /// </summary>
-    private List<GeneralRcOwnedSlot> OwnedSlotsReleasedBehindTupleParts(TypeRef.TTuple tuple, List<int> cells, int[] parts, out List<IrInst.StoreMemOffset> retainedStores)
+    private List<GeneralRcOwnedSlot> OwnedSlotsReleasedBehindTupleParts(TypeRef.TTuple tuple, List<int> cells, int[] parts, IReadOnlyDictionary<int, int> borrowedParts, out List<IrInst.StoreMemOffset> retainedStores)
     {
         retainedStores = [];
         HashSet<int> ownedSlots = [.. _generalRcOwnedSlots.Select(owned => owned.Slot)];
@@ -715,15 +716,18 @@ public sealed partial class Lowering
                 continue;
             }
 
-            bool fresh = IsNewlyProducedRcTemp(store.Source);
+            // On the requested path a guarded demotion stores the original borrowed part.
+            // Its arena-copy alternative is still required by callers that request no parts.
+            int source = borrowedParts.TryGetValue(store.Source, out int borrowed) ? borrowed : store.Source;
+            bool fresh = IsNewlyProducedRcTemp(source);
             if (!fresh)
             {
                 retainedStores.Add(store);
             }
 
-            if (fresh || !IsReadOutOfOwnedValue(store.Source, ownedSlots, []))
+            if (fresh || !IsReadOutOfOwnedValue(source, ownedSlots, []))
             {
-                pinning.Add(store.Source);
+                pinning.Add(source);
             }
         }
 

@@ -1,6 +1,6 @@
 # Indexed whole-program ownership approval
 
-`perl selfhost/tests/handoff-ownership-index/render.pl` generates the focused
+`bash selfhost/tests/handoff-ownership-index/render.sh` generates the focused
 project under `work/handoff-ownership-index`. It extracts the production Core
 approval and its overlay/name guards, with a narrow state adapter. The old
 approval is frozen at `ce3fbd27`; its only adaptations are its local function name

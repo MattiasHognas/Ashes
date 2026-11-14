@@ -742,16 +742,73 @@ let recursive prependDropperAdmissibilityChildren children pending =
         | [] -> pending
         | (semanticType, dropKind) :: rest -> CheckDropperAdmissibilityChild(semanticType)(dropKind) :: prependDropperAdmissibilityChildren(rest)(pending)
 
-let recursive dropperAdmissibilityVisitStatus semanticType visited =
-    match visited with
-        | [] -> Some(false)
-        | previous :: rest ->
-            if sameTypeKey(previous)(semanticType)
-            then
-                if previous == semanticType
-                then Some(true)
-                else None
-            else dropperAdmissibilityVisitStatus(semanticType)(rest)
+// The cycle relation has two disjoint key classes: bare named types compare
+// names, while every other path entry compares its rendered text. Keep them
+// separate even when their strings match, and retain the first initial-path
+// entry so alias fallback has exactly the same priority as the linear search.
+type DropperAdmissibilityKey =
+    | BareDropperAdmissibilityKey(Str)
+    | RenderedDropperAdmissibilityKey(Str)
+
+type DropperAdmissibilityVisited =
+    | bare: List(SemanticType)
+    | rendered: List((Str, SemanticType))
+
+let dropperAdmissibilityKey semanticType =
+    match semanticType with
+        | SemNamed(_id, name, []) -> BareDropperAdmissibilityKey(name)
+        | _ ->
+            semanticType
+            |> formatSemanticType
+            |> RenderedDropperAdmissibilityKey
+
+let recursive bareDropperAdmissibilityVisitedType name remaining =
+    match remaining with
+        | [] -> None
+        | (SemNamed(_id, previousName, []) as previous) :: rest ->
+            if previousName == name
+            then Some(previous)
+            else bareDropperAdmissibilityVisitedType(name)(rest)
+        | _ :: rest -> bareDropperAdmissibilityVisitedType(name)(rest)
+
+let recursive renderedDropperAdmissibilityVisitedType text remaining =
+    match remaining with
+        | [] -> None
+        | (previousKey, previous) :: rest ->
+            if previousKey == text
+            then Some(previous)
+            else renderedDropperAdmissibilityVisitedType(text)(rest)
+
+let dropperAdmissibilityVisitedType key (visited: DropperAdmissibilityVisited) =
+    match key with
+        | BareDropperAdmissibilityKey(name) -> bareDropperAdmissibilityVisitedType(name)(visited.bare)
+        | RenderedDropperAdmissibilityKey(text) -> renderedDropperAdmissibilityVisitedType(text)(visited.rendered)
+
+let withDropperAdmissibilityVisit key semanticType (visited: DropperAdmissibilityVisited) =
+    match key with
+        | BareDropperAdmissibilityKey(_name) -> visited with bare = semanticType :: visited.bare
+        | RenderedDropperAdmissibilityKey(text) -> visited with rendered = (text, semanticType) :: visited.rendered
+
+let recursive prependInitialDropperAdmissibilityVisits path visited =
+    match path with
+        | [] -> visited
+        | semanticType :: rest ->
+            visited
+            |> withDropperAdmissibilityVisit(dropperAdmissibilityKey(semanticType))(semanticType)
+            |> prependInitialDropperAdmissibilityVisits(rest)
+
+let initialDropperAdmissibilityVisited path =
+    // Prepending the reversed path preserves its first-match priority without
+    // repeated membership searches or removing duplicate nominal aliases.
+    prependInitialDropperAdmissibilityVisits(reverse(path))(DropperAdmissibilityVisited(bare = [], rendered = []))
+
+let dropperAdmissibilityVisitStatus key semanticType visited =
+    match dropperAdmissibilityVisitedType(key)(visited) with
+        | None -> Some(false)
+        | Some(previous) ->
+            if previous == semanticType
+            then Some(true)
+            else None
 
 let recursive searchDropperAdmissibility pending visited body =
     match pending with
@@ -770,27 +827,31 @@ let recursive searchDropperAdmissibility pending visited body =
                 | SemNamed(_symbolId, name, _arguments) ->
                     // Match the dropper's cycle check before inspecting constructors
                     // or resource facts; its contract differs from Core's predicate.
-                    match dropperAdmissibilityVisitStatus(semanticType)(visited) with
-                        | None -> (None, body)
-                        | Some(true) -> searchDropperAdmissibility(rest)(visited)(body)
-                        | Some(false) ->
-                            match dropperAdmissibilityFactsIndexed(semanticType)(body) with
-                                | (facts, queried) ->
-                                    match (dropperConstructorsOfType(name)(queried), facts) with
-                                        | ([], _facts) -> (Some(false), queried)
-                                        | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> (Some(false), queried)
-                                        | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (Some(false), queried)
-                                        | (_constructors, HeapAdmissibilityFacts { children = children }) ->
-                                            searchDropperAdmissibility(prependDropperAdmissibilityChildren(children)(rest))(semanticType :: visited)(queried)
+                    let key = dropperAdmissibilityKey(semanticType)
+                    in
+                        match dropperAdmissibilityVisitStatus(key)(semanticType)(visited) with
+                            | None -> (None, body)
+                            | Some(true) -> searchDropperAdmissibility(rest)(visited)(body)
+                            | Some(false) ->
+                                match dropperAdmissibilityFactsIndexed(semanticType)(body) with
+                                    | (facts, queried) ->
+                                        match (dropperConstructorsOfType(name)(queried), facts) with
+                                            | ([], _facts) -> (Some(false), queried)
+                                            | (_constructors, HeapAdmissibilityFacts { containsResource = true }) -> (Some(false), queried)
+                                            | (_constructors, HeapAdmissibilityFacts { containsUnresolvedType = true }) -> (Some(false), queried)
+                                            | (_constructors, HeapAdmissibilityFacts { children = children }) ->
+                                                searchDropperAdmissibility(prependDropperAdmissibilityChildren(children)(rest))(withDropperAdmissibilityVisit(key)(semanticType)(visited))(queried)
                 | other ->
                     if canArenaResetLayout(other)
                     then searchDropperAdmissibility(rest)(visited)(body)
                     else (Some(false), body)
 
 let generalRcAdmissible (semanticType: SemanticType) (path: List(SemanticType)) (body: DropperBody) =
-    match searchDropperAdmissibility([VisitDropperAdmissibilityType(semanticType)])(path)(body) with
-        | (Some(answer), queried) -> (answer, queried)
-        | (None, queried) -> originalGeneralRcAdmissible(semanticType)(path)(queried)
+    (let visited = initialDropperAdmissibilityVisited(path)
+    in
+        match searchDropperAdmissibility([VisitDropperAdmissibilityType(semanticType)])(visited)(body) with
+            | (Some(answer), queried) -> (answer, queried)
+            | (None, queried) -> originalGeneralRcAdmissible(semanticType)(path)(queried))
 
 // Stage 0's `NeedsRuntimeManagedAdtNormalizer`: an admissible named type that neither the fixed
 // copy-out nor the inline runtime-managed layouts express. Its values are released through a

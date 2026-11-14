@@ -354,7 +354,7 @@ and indexedNamed gate (named: SemanticType) path (index: TypeGraphIndex) =
             let groups = node.sourceConstructorGroups
             in
                 let fields =
-                    if node.sourceType == node.resolvedType
+                    if node.sourceMatchesResolved
                     then node.fields
                     else heapFlattenFieldGroups(groups)
                 in

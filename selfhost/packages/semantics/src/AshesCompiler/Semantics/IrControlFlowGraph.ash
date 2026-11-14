@@ -13,6 +13,9 @@ import Ashes.Collection.List.filter
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
+import Ashes.Collection.List.sortBy
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.IrInstructions
 export (
     type IrCfgBlock(..),
@@ -21,6 +24,7 @@ export (
     value sortedSetContains,
     value sortedSetInsert,
     value buildCfgBlocks,
+    value blockBoundaryKinds,
     value findCfgBlock,
     value computeImmediateDominators,
     value dominates,
@@ -117,24 +121,37 @@ let recursive blockSpans (starts: List(Int)) (count: Int) =
                 | next :: _ -> (start, next) :: blockSpans(rest)(count)
                 | [] -> [(start, count)]
 
-// `(label, block index)` for every block that opens with a label.
-let recursive labelBlocks (instructions: List(IrInstruction)) (spans: List((Int, Int))) (index: Int) =
+// The block index of every label that opens a block, found in one walk of the instructions along
+// the spans. A label that opens two blocks names the first.
+let recursive labelBlocksInto (instructions: List(IrInstruction)) (position: Int) (spans: List((Int, Int))) (index: Int) (labels: MapTree(Str, Int)) =
     match spans with
-        | [] -> []
-        | (start, _end) :: rest ->
-            match listAt(instructions)(start) with
-                | Some(IrInstruction { instruction = Label(name) }) -> (name, index) :: labelBlocks(instructions)(rest)(index + 1)
-                | _ -> labelBlocks(instructions)(rest)(index + 1)
+        | [] -> labels
+        | (start, end) :: restSpans ->
+            match instructions with
+                | [] -> labels
+                | IrInstruction { instruction = kind } :: rest ->
+                    if position >= end
+                    then labelBlocksInto(instructions)(position)(restSpans)(index + 1)(labels)
+                    else
+                        if position == start
+                        then
+                            match kind with
+                                | Label(name) ->
+                                    match Ashes.Collection.Map.getStr(name)(labels) with
+                                        | Some(_first) -> labelBlocksInto(rest)(position + 1)(spans)(index)(labels)
+                                        | None ->
+                                            labels
+                                            |> Ashes.Collection.Map.setStr(name)(index)
+                                            |> labelBlocksInto(rest)(position + 1)(spans)(index)
+                                | _ -> labelBlocksInto(rest)(position + 1)(spans)(index)(labels)
+                        else labelBlocksInto(rest)(position + 1)(spans)(index)(labels)
 
-let recursive labelBlock (name: Str) (labels: List((Str, Int))) =
-    match labels with
-        | [] -> -1
-        | (candidate, index) :: rest ->
-            if candidate == name
-            then index
-            else labelBlock(name)(rest)
+let labelBlock (name: Str) (labels: MapTree(Str, Int)) =
+    match Ashes.Collection.Map.getStr(name)(labels) with
+        | Some(index) -> index
+        | None -> -1
 
-let recursive caseTargets (cases: List(IrSwitchCase)) (labels: List((Str, Int))) (acc: List(Int)) =
+let recursive caseTargets (cases: List(IrSwitchCase)) (labels: MapTree(Str, Int)) (acc: List(Int)) =
     match cases with
         | [] -> acc
         | IrSwitchCase { label = label } :: rest ->
@@ -150,33 +167,40 @@ let recursive appendAllUnique (items: List(Int)) (acc: List(Int)) =
             |> appendUnique(head)
             |> appendAllUnique(rest)
 
-// The successors of block `index`, read off the last instruction of its span.
-let blockSuccessorsOf (instructions: List(IrInstruction)) (labels: List((Str, Int))) (blockCount: Int) (index: Int) (span: (Int, Int)) =
-    match span with
-        | (_start, end) ->
-            ((given (fallThrough) ->
-                match listAt(instructions)(end - 1) with
-                    | Some(IrInstruction { instruction = Jump(target) }) -> [labelBlock(target)(labels)]
-                    | Some(IrInstruction { instruction = JumpIfFalse(_condition, target) }) -> appendAllUnique(fallThrough)([labelBlock(target)(labels)])
-                    | Some(IrInstruction { instruction = SwitchTag(_scrutinee, cases, default) }) ->
-                        []
-                        |> caseTargets(cases)(labels)
-                        |> appendUnique(labelBlock(default)(labels))
-                    | Some(IrInstruction { instruction = Return(_source) }) -> []
-                    | _ -> fallThrough))(if index + 1 < blockCount
-            then [index + 1]
-            else [])
+let fallThroughOf (blockCount: Int) (index: Int) =
+    if index + 1 < blockCount
+    then [index + 1]
+    else []
 
-let recursive indexedSuccessors (instructions: List(IrInstruction)) (labels: List((Str, Int))) (blockCount: Int) (spans: List((Int, Int))) (index: Int) =
+// The successors of block `index`, read off the last instruction of its span.
+let blockSuccessorsAfter (kind: IrInstructionKind) (labels: MapTree(Str, Int)) (blockCount: Int) (index: Int) =
+    match kind with
+        | Jump(target) -> [labelBlock(target)(labels)]
+        | JumpIfFalse(_condition, target) ->
+            appendAllUnique(fallThroughOf(blockCount)(index))([labelBlock(target)(labels)])
+        | SwitchTag(_scrutinee, cases, default) ->
+            []
+            |> caseTargets(cases)(labels)
+            |> appendUnique(labelBlock(default)(labels))
+        | Return(_source) -> []
+        | _ -> fallThroughOf(blockCount)(index)
+
+// Every block's successors, in one walk of the instructions along the spans.
+let recursive indexedSuccessors (instructions: List(IrInstruction)) (position: Int) (labels: MapTree(Str, Int)) (blockCount: Int) (spans: List((Int, Int))) (index: Int) =
     match spans with
         | [] -> []
-        | span :: rest -> (index, blockSuccessorsOf(instructions)(labels)(blockCount)(index)(span)) :: indexedSuccessors(instructions)(labels)(blockCount)(rest)(index + 1)
+        | (_start, end) :: restSpans ->
+            match instructions with
+                | [] -> (index, fallThroughOf(blockCount)(index)) :: indexedSuccessors([])(position)(labels)(blockCount)(restSpans)(index + 1)
+                | IrInstruction { instruction = kind } :: rest ->
+                    if position == end - 1
+                    then (index, blockSuccessorsAfter(kind)(labels)(blockCount)(index)) :: indexedSuccessors(rest)(position + 1)(labels)(blockCount)(restSpans)(index + 1)
+                    else indexedSuccessors(rest)(position + 1)(labels)(blockCount)(spans)(index)
 
-// Every edge as a (target, source) pair, gathered once so a block's predecessors come from a scan
-// over plain integers rather than from a membership test against each block's successor list.
-// One flat self-recursive walk over both the remaining groups and the current group's remaining
-// targets (rather than one recursive function calling another to extend the same accumulator)
-// avoids a stage-0 codegen bug on that shape when the accumulator is a List of tuples.
+// Every edge as a (target, source) pair. One flat self-recursive walk over both the remaining
+// groups and the current group's remaining targets (rather than one recursive function calling
+// another to extend the same accumulator) avoids a stage-0 codegen bug on that shape when the
+// accumulator is a List of tuples.
 let recursive edgesOf (groups: List((Int, List(Int)))) (currentFrom: Int) (currentTargets: List(Int)) (acc: List((Int, Int))) =
     match currentTargets with
         | target :: rest -> edgesOf(groups)(currentFrom)(rest)((target, currentFrom) :: acc)
@@ -185,17 +209,31 @@ let recursive edgesOf (groups: List((Int, List(Int)))) (currentFrom: Int) (curre
                 | [] -> acc
                 | (from, targets) :: rest -> edgesOf(rest)(from)(targets)(acc)
 
-let recursive predecessorsFromEdges (index: Int) (edges: List((Int, Int))) (acc: List(Int)) =
-    match edges with
-        | [] -> acc
-        | (target, from) :: rest ->
-            if target == index
-            then predecessorsFromEdges(index)(rest)(from :: acc)
-            else predecessorsFromEdges(index)(rest)(acc)
+// Orders the edges by target, and for one target by source, latest first.
+let edgeBefore (left: (Int, Int)) (right: (Int, Int)) =
+    match (left, right) with
+        | ((leftTarget, leftFrom), (rightTarget, rightFrom)) -> leftTarget < rightTarget || leftTarget == rightTarget && leftFrom >= rightFrom
 
-let recursive assembleAllBlocks (spans: List((Int, Int))) (edges: List((Int, Int))) (remaining: List((Int, List(Int)))) (index: Int) =
-    match (spans, remaining) with
-        | ((start, end) :: spanRest, (_index, targets) :: successorRest) -> IrCfgBlock(blockStart = start, blockEnd = end, blockSuccessors = targets, blockPredecessors = predecessorsFromEdges(index)(edges)([])) :: assembleAllBlocks(spanRest)(edges)(successorRest)(index + 1)
+// The predecessors of every block from `index` up, each in ascending order, out of the ordered
+// edges: one flat walk that conses a block's sources as it passes them and closes the block at the
+// first edge into a later one. An edge into no block (an unknown label) is passed over.
+let recursive predecessorsByBlock (edges: List((Int, Int))) (index: Int) (blockCount: Int) (current: List(Int)) (finished: List(List(Int))) =
+    if index >= blockCount
+    then reverse(finished)
+    else
+        match edges with
+            | [] -> predecessorsByBlock([])(index + 1)(blockCount)([])(current :: finished)
+            | (target, from) :: rest ->
+                if target < index
+                then predecessorsByBlock(rest)(index)(blockCount)(current)(finished)
+                else
+                    if target == index
+                    then predecessorsByBlock(rest)(index)(blockCount)(from :: current)(finished)
+                    else predecessorsByBlock(edges)(index + 1)(blockCount)([])(current :: finished)
+
+let recursive assembleAllBlocks (spans: List((Int, Int))) (predecessors: List(List(Int))) (remaining: List((Int, List(Int)))) =
+    match (spans, predecessors, remaining) with
+        | ((start, end) :: spanRest, sources :: predecessorRest, (_index, targets) :: successorRest) -> IrCfgBlock(blockStart = start, blockEnd = end, blockSuccessors = targets, blockPredecessors = sources) :: assembleAllBlocks(spanRest)(predecessorRest)(successorRest)
         | _ -> []
 
 let buildCfgBlocks (instructions: List(IrInstruction)) =
@@ -206,9 +244,31 @@ let buildCfgBlocks (instructions: List(IrInstruction)) =
         |> blockSpans(collectBlockStarts(instructions)(count))
         |> (given (spans) ->
             0
-            |> indexedSuccessors(instructions)(labelBlocks(instructions)(spans)(0))(length(spans))(spans)
+            |> indexedSuccessors(instructions)(0)(labelBlocksInto(instructions)(0)(spans)(0)(Ashes.Collection.Map.empty))(length(spans))(spans)
             |> (given (successors) ->
-                assembleAllBlocks(spans)(edgesOf(successors)(0)([])([]))(successors)(0))))
+                assembleAllBlocks(spans)(predecessorsByBlock([]
+                |> edgesOf(successors)(0)([])
+                |> sortBy(edgeBefore))(0)(length(spans))([])([]))(successors))))
+
+// Per block, whether it opens with a label and whether it ends in a terminator, in one walk of the
+// instructions along the blocks.
+let recursive blockBoundaryKindsFrom (instructions: List(IrInstruction)) (position: Int) (blocks: List(IrCfgBlock)) (opensWithLabel: Bool) =
+    match blocks with
+        | [] -> []
+        | IrCfgBlock { blockStart = start, blockEnd = end } :: restBlocks ->
+            match instructions with
+                | [] -> (opensWithLabel, false) :: blockBoundaryKindsFrom([])(position)(restBlocks)(false)
+                | IrInstruction { instruction = kind } :: rest ->
+                    let opens =
+                        if position == start
+                        then isLabel(kind)
+                        else opensWithLabel
+                    in
+                        if position == end - 1
+                        then (opens, isTerminator(kind)) :: blockBoundaryKindsFrom(rest)(position + 1)(restBlocks)(false)
+                        else blockBoundaryKindsFrom(rest)(position + 1)(blocks)(opens)
+
+let blockBoundaryKinds (instructions: List(IrInstruction)) (blocks: List(IrCfgBlock)) = blockBoundaryKindsFrom(instructions)(0)(blocks)(false)
 
 let recursive findCfgBlockFrom (blocks: List(IrCfgBlock)) (instructionIndex: Int) (index: Int) =
     match blocks with

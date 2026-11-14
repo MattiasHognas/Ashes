@@ -1,0 +1,18 @@
+argument_requirements	tests/constrained_binding_argument_requirements.ash	argument requirements passed
+builtin-argument	selfhost/tests/constrained-bindings/cases/builtin-argument.ash	builtin-argument passed
+dictionary_order	tests/constrained_binding_dictionary_order.ash	inherited dictionary layout passed
+dictionary_positions	tests/constrained_lookup_preserves_dictionary_positions.ash	dictionary positions passed
+distinct_dictionary_slots	tests/constrained_binding_distinct_dictionary_slots.ash	distinct dictionary slots passed
+escaped	selfhost/tests/constrained-bindings/cases/escaped.ash	escaped passed
+forward-one	selfhost/tests/constrained-bindings/cases/forward-one.ash	forward-one passed
+nested-alias	selfhost/tests/constrained-bindings/cases/nested-alias.ash	nested-alias passed
+nested-binder	selfhost/tests/constrained-bindings/cases/nested-binder.ash	nested-binder passed
+nested-one-int	selfhost/tests/constrained-bindings/cases/nested-one-int.ash	nested-one-int passed
+nested-one-str	selfhost/tests/constrained-bindings/cases/nested-one-str.ash	nested-one-str passed
+nested_independent_evidence	tests/constrained_binding_nested_independent_evidence.ash	nested constrained evidence passed
+partial	selfhost/tests/constrained-bindings/cases/partial.ash	partial passed
+plain-before	selfhost/tests/constrained-bindings/cases/plain-before.ash	plain-before passed
+recursive-member	selfhost/tests/constrained-bindings/cases/recursive-member.ash	recursive-member passed
+top-alias	selfhost/tests/constrained-bindings/cases/top-alias.ash	top-alias passed
+nested-shadow	selfhost/tests/constrained-bindings/cases/nested-shadow.ash	nested-shadow passed
+captured_monomorphic_error	tests/constrained_binding_captured_monomorphic_error.ash	compile must fail with Int/Str type mismatch

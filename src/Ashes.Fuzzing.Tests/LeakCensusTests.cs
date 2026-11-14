@@ -274,6 +274,22 @@ public sealed class CompilerOwnershipLeakRegressionTests
     public Task VisitedGenericMapsOwnPathsAfterPendingWorkDrops()
         => VerifyPlateauAndPoison("leak.visited-generic-map-owner");
 
+    [Test]
+    public Task LoopResultSomeOfAHeadMatchedOutOfATupleOfListsIsReleased()
+        => VerifyPlateauAndPoison("leak.loop-result-part-of-tuple-scrutinee");
+
+    [Test]
+    public Task UntypedFinderSomeResultIsReleasedByItsCaller()
+        => VerifyPlateauAndPoison("leak.untyped-finder-result");
+
+    [Test]
+    public Task ConstrainedLoopOverLetBoundArgumentsReleasesItsSnapshots()
+        => VerifyPlateauAndPoison("leak.constrained-loop-let-bound-arguments");
+
+    [Test]
+    public Task ConstrainedLoopOverLiteralArgumentsReleasesItsKeys()
+        => VerifyPlateauAndPoison("leak.constrained-loop-literal-arguments");
+
     private static async Task VerifyPlateauAndPoison(string template)
     {
         if (!OperatingSystem.IsLinux())

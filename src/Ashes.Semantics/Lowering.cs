@@ -3444,7 +3444,9 @@ public sealed partial class Lowering
         // needs the same early expected-type unification an ordinary Expr.Lambda argument gets
         // below, so its parameter type is pinned before its body's constraint is resolved instead of
         // staying an unconstrained variable that can never be discharged.
-        bool forwardsExpectedType = e is Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
+        // A variable reference takes the expected type too: a reference to a constrained binding
+        // settles its instantiation against it before choosing among the dictionaries in scope.
+        bool forwardsExpectedType = e is Expr.Var or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
             or RecursiveGroupExpr or Expr.If or Expr.Match or Expr.Handle or Expr.Call
             or Expr.ListLit or Expr.Cons or Expr.TupleLit
             || e is Expr.QualifiedVar qualifiedTraitMethod && TryGetTraitMethod(qualifiedTraitMethod, out _, out _);
@@ -3452,7 +3454,7 @@ public sealed partial class Lowering
         var lowered = LowerExprDispatch(
             e,
             forwardsExpectedType ? request : request.WithoutExpectedType());
-        if (expectedType is not null && !forwardsExpectedType)
+        if (expectedType is not null && (!forwardsExpectedType || e is Expr.Var))
         {
             UnifyUnderRequest(expectedType, lowered.Type, request);
             lowered = (lowered.Temp, Prune(lowered.Type));
@@ -3591,11 +3593,11 @@ public sealed partial class Lowering
         RecordInlinedFreshArgumentRead(b, v.Name, materialized: false);
         if (b is null)
         {
-            return LowerVarUnbound(v, request);
+            return LowerVarUnbound(v, request.WithoutExpectedType());
         }
 
         RecordElementSpecializationRecursion(v.Name);
-        var result = LowerVarBound(v, b);
+        var result = LowerVarBound(v, b, request);
 
         RecordHoverType(
             GetSpan(v),
@@ -3723,9 +3725,9 @@ public sealed partial class Lowering
             : LowerExpr(BuildConstructorLambda(ctorSym)).AsPair();
     }
 
-    private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b)
+    private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b, LoweredValueRequest request)
     {
-        if (TryLowerActiveTraitDictionaryReference(v, b) is { } traitReference)
+        if (TryLowerActiveTraitDictionaryReference(v, b, request) is { } traitReference)
         {
             return traitReference;
         }
@@ -4534,7 +4536,7 @@ public sealed partial class Lowering
             CountSourceLambdaParameters(let.Value),
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
         LoweredValueRequest valueRequest = usesTraitDictionary
-            ? request
+            ? WithTraitDictionaryValueType(request, let.Value, inferenceSeedType, traitDictionaryInfo!)
             : ApplyInferenceSeedType(request, inferenceSeedType);
         (int valueTemp, TypeRef runtimeValueType) = usesTraitDictionary
             ? LowerExpr(loweredValue, valueRequest).AsPair()
@@ -7685,7 +7687,7 @@ public sealed partial class Lowering
         var outerTcoCtx = LowerLambdaCoreSuspendOuterTco(isChainLambda, lam);
         var savedTcoCtx = isInnermostTco ? outerTcoCtx : null;
         if (savedTcoCtx is not null) savedTcoCtx.ResultType = retTy;
-        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBodyWithNormalizedParameter(lam, label, paramTy, argSlot, rowTy, selfName);
+        var (bodyTemp, bodyType) = LowerLambdaCoreLowerBodyWithNormalizedParameter(lam, label, paramTy, argSlot, rowTy, retTy, selfName);
         if (isInnermostTco && savedTcoCtx is not null) savedTcoCtx.InTailPosition = false;
 
         LowerLambdaCoreFinalizeTcoOwnership(
@@ -8305,6 +8307,7 @@ public sealed partial class Lowering
         TypeRef paramTy,
         int argSlot,
         TypeRef rowTy,
+        TypeRef resultType,
         string? selfName)
     {
         (string, int, TypeRef)? outerNormalizedParameter = _normalizedAlwaysReturnedParameter;
@@ -8319,7 +8322,7 @@ public sealed partial class Lowering
         _normalizedParameterMovedIntoAggregate = false;
         bool outerParameterCloned = _normalizedParameterClonedIntoArenaTuple;
         _normalizedParameterClonedIntoArenaTuple = false;
-        (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, selfName);
+        (int, TypeRef) body = LowerLambdaCoreLowerBody(lam, rowTy, resultType, selfName);
         if (_normalizedParameterMovedIntoAggregate)
         {
             _normalizedParameterMovedLabels.Add(label);
@@ -10593,7 +10596,7 @@ public sealed partial class Lowering
         return outerTcoCtx;
     }
 
-    private (int Temp, TypeRef Type) LowerLambdaCoreLowerBody(Expr.Lambda lam, TypeRef rowTy, string? selfName)
+    private (int Temp, TypeRef Type) LowerLambdaCoreLowerBody(Expr.Lambda lam, TypeRef rowTy, TypeRef resultType, string? selfName)
     {
         bool paramShadowsInlinable = PushInlinableShadow(lam.ParamName);
         // If this lambda parameter is a capability op-parameter, mark it active so a call at a
@@ -10608,10 +10611,16 @@ public sealed partial class Lowering
         // AllowsOrdinaryRcPlacement — every other function reachable from a live handler post keeps
         // the plain LowerExpr fallback it always had, since LowerEscapingResult's WithEscapingConsumerOwnership
         // treatment is not just an RC-placement question.
+        // A hidden dictionary parameter's body is the binding's own value: once the binding's source
+        // type is known it is the type that value is lowered against, so a reference to another
+        // constrained binding there is settled before its evidence is chosen.
+        LoweredValueRequest bodyRequest = traitDictionaryScope is not null && Prune(resultType) is not TypeRef.TVar
+            ? default(LoweredValueRequest).WithExpectedType(resultType)
+            : default;
         var (bodyTemp, bodyType) = AllowsAsyncIndependentRcPlacement
             && (AllowsOrdinaryRcPlacement || _loweringHandlerArmOwnResult)
-            ? LowerEscapingResult(lam.Body, normalizeStaticString: true)
-            : LowerExpr(lam.Body).AsPair();
+            ? LowerEscapingResult(lam.Body, normalizeStaticString: true, request: bodyRequest)
+            : LowerExpr(lam.Body, bodyRequest).AsPair();
         _ambientRow = savedAmbientRow;
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
         ExitTraitDictionaryParameterScope(traitDictionaryScope);

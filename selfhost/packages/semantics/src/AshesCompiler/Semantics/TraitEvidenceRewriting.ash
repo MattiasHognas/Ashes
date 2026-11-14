@@ -18,7 +18,9 @@ export (
     type TraitConstrainedReferenceRewriting(..),
     type TraitConstrainedTopLevelValueRewriting(..),
     value selectedTraitMethodBindingName,
+    value traitMethodParameterName,
     value rewriteTraitConstrainedValue,
+    value rewriteCoreConstrainedValue,
     value rewriteTraitConstrainedReference,
     value rewriteSelectedTraitMethodImplementation,
     value bindingTraitConstraints,
@@ -432,6 +434,43 @@ let rewriteTraitConstrainedValue value constraints environment =
             value
             |> rewriteTraitMethodReferences(TraitMethodRewriteActive(shapes))
             |> prependTraitDictionaryParameters(shapes)
+
+// Core's curried-loop analysis must see every physical parameter before the
+// first body expression. Dictionary destructuring is a pure, type-proven
+// projection, so place it after the original source lambda chain.
+let recursive destructureCoreDictionaries shapes body =
+    match shapes with
+        | [] -> body
+        | (TraitDictionaryAbiShape { parameterIndex = index } as shape) :: rest ->
+            body
+            |> destructureCoreDictionaries(rest)
+            |> destructureTraitDictionary(shape)("root")(index
+            |> traitEvidenceParameterName
+            |> ExprVar)
+
+let recursive destructureCoreLambdaBody shapes value =
+    match value with
+        | ExprAt(span, inner) ->
+            inner
+            |> destructureCoreLambdaBody(shapes)
+            |> ExprAt(span)
+        | ExprLambda(name, body, annotation) ->
+            ExprLambda(name)(destructureCoreLambdaBody(shapes)(body))(annotation)
+        | body -> destructureCoreDictionaries(shapes)(body)
+
+let recursive prependCoreDictionaryParameters shapes body =
+    match shapes with
+        | [] -> body
+        | TraitDictionaryAbiShape { parameterIndex = index } :: rest ->
+            ExprLambda(traitEvidenceParameterName(index))(prependCoreDictionaryParameters(rest)(body))(None)
+
+let rewriteCoreConstrainedValue value constraints environment =
+    (let shapes = planTraitEvidenceAbi(constraints)(environment)
+    in
+        value
+        |> rewriteTraitMethodReferences(TraitMethodRewriteActive(shapes))
+        |> destructureCoreLambdaBody(shapes)
+        |> prependCoreDictionaryParameters(shapes))
 
 let rewriteSelectedTraitMethodImplementation traitName methodName implementation =
     (let rewritten =

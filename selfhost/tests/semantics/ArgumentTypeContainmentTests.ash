@@ -2,6 +2,7 @@ import Ashes.Test as test
 import Ashes.Collection.List.append
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ArgumentTypeContainment.mayContainArgumentType
+import AshesCompiler.Semantics.ArgumentTypeContainment.mayContainAnyArgumentType
 export (
     value runArgumentTypeContainmentTests,
 )
@@ -142,5 +143,17 @@ let runArgumentTypeContainmentTests unit =
     |> (given (_) ->
         SemString
         |> mayContainArgumentType(unchanged)(boxFields)([])(SemTuple([boxType(SemInt), boxType(SemBool)]))
+        |> test.assertEqual(false))
+    |> (given (_) ->
+        []
+        |> mayContainAnyArgumentType(unchanged)(boxFields)([])(SemVariable(1))
+        |> test.assertEqual(false))
+    |> (given (_) ->
+        [SemBytes, SemList(SemString), SemList(SemString)]
+        |> mayContainAnyArgumentType(unchanged)(boxFields)([])(SemTuple([boxType(SemInt), boxType(SemString)]))
+        |> test.assertEqual(true))
+    |> (given (_) ->
+        [SemBytes, SemList(SemString)]
+        |> mayContainAnyArgumentType(unchanged)(boxFields)([])(SemTuple([boxType(SemInt), boxType(SemBool)]))
         |> test.assertEqual(false))
     |> (given (_) -> Ashes.IO.print("all argument type containment tests passed"))

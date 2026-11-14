@@ -310,6 +310,28 @@ let expectInclusiveComparisonsTestTwoTags unit =
                 |> occurrences("OrInt")
                 |> test.assertEqual(1))
 
+let memberSource = "let recursive member key entries =\n    match entries with\n        | [] -> false\n        | head :: tail ->\n            if head == key\n            then true\n            else member(key)(tail)\n\n"
+
+// A function body reads a constrained generic function through a capture. A call there that
+// settles every parameter type is routed to a copy of the function lowered at those types, so
+// `member` is lowered twice: its dictionary-passing body and the copy at `Int`. The alias keeps
+// the entry from routing `hasSeven` itself.
+let expectConcreteCallInAFunctionBodyRoutesToACopy unit =
+    memberSource + "let hasSeven (entries: List(Int)) = member(7)(entries)\n\nlet check = hasSeven\n\ncheck([1, 7])"
+    |> withStandardTraits
+    |> loweredDump
+    |> occurrences("[SourceFunction from member]")
+    |> test.assertEqual(2)
+
+// A parameter named like the constrained function is not that function: its call stays a call
+// to the parameter.
+let expectAShadowingParameterIsNotRoutedToACopy unit =
+    memberSource + "let shadowed member (entries: List(Int)) = member(7)(entries)\n\nlet check = shadowed\n\ncheck(given (key) -> given (entries) -> false)([7])"
+    |> withStandardTraits
+    |> loweredDump
+    |> occurrences("[SourceFunction from member]")
+    |> test.assertEqual(1)
+
 let runCoreTraitDispatchLoweringTests unit =
     Unit
     |> expectDerivedEqualityDispatchesThroughOneHelper
@@ -331,4 +353,6 @@ let runCoreTraitDispatchLoweringTests unit =
     |> expectComparisonAtAConcreteHeadDispatchesThroughOrd
     |> expectComparisonReadsTheOrderingTag
     |> expectInclusiveComparisonsTestTwoTags
+    |> expectConcreteCallInAFunctionBodyRoutesToACopy
+    |> expectAShadowingParameterIsNotRoutedToACopy
     |> (given (_) -> Ashes.IO.print("all self-hosted core trait dispatch lowering tests passed"))
