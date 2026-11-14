@@ -19,6 +19,7 @@ export (
     value compareTypeGraphKeys,
     value typeGraphFingerprint,
     value typeGraphNode,
+    value typeGraphResolvedChild,
     value typeGraphLookupNode,
     value typeGraphRootFact,
     value completeTypeGraphRootFact,
@@ -314,8 +315,13 @@ type TypeGraphIndex =
     | environment: TypeEnvironment
     | nodes: MapTree(Int, List(TypeGraphEntry))
     | nodeCount: Int
+    // Positional edges belong to the immutable parent node and this index lineage.
+    // They retain resolved nodes, not other indices, so recursive type edges do not
+    // create reference cycles. A child is cached only when a walker visits its edge.
+    | resourceEdges: MapTree(Int, MapTree(Int, TypeGraphNode))
+    | unresolvedEdges: MapTree(Int, MapTree(Int, TypeGraphNode))
 
-let emptyTypeGraphIndex (environment: TypeEnvironment) = TypeGraphIndex(environment = environment, nodes = Ashes.Collection.Map.empty, nodeCount = 0)
+let emptyTypeGraphIndex (environment: TypeEnvironment) = TypeGraphIndex(environment = environment, nodes = Ashes.Collection.Map.empty, nodeCount = 0, resourceEdges = Ashes.Collection.Map.empty, unresolvedEdges = Ashes.Collection.Map.empty)
 
 let typeVariant (semanticType: SemanticType) =
     match semanticType with
@@ -617,6 +623,47 @@ let typeGraphNode (semanticType: SemanticType) (index: TypeGraphIndex) =
                     in
                         let updated = setNodeWithHash(hash)(semanticType)(entry)(index)
                         in (node, (updated with nodeCount = updated.nodeCount + 1)))
+
+// The caller supplies an edge from the matching child list of a parent in this
+// lineage. The position, including duplicate children, is stable for that node.
+// Resolving here rather than while enqueuing preserves short-circuit discovery:
+// an unvisited sibling and every grandchild remain undiscovered.
+let typeGraphResolvedChild kind parentId position semanticType (index: TypeGraphIndex) =
+    (let edges =
+        match kind with
+            | ResourceFact -> index.resourceEdges
+            | UnresolvedFact -> index.unresolvedEdges
+    in
+        let siblings =
+            match Ashes.Collection.Map.getInt(parentId)(edges) with
+                | Some(found) -> found
+                | None -> Ashes.Collection.Map.empty
+        in
+            match Ashes.Collection.Map.getInt(position)(siblings) with
+                | Some(node) -> (node, index)
+                | None ->
+                    let knownNodeCount = index.nodeCount
+                    in
+                        let resolved =
+                            match typeGraphNode(semanticType)(index) with
+                                | (node, next) ->
+                                    if node.sourceMatchesResolved
+                                    then (node, next)
+                                    else typeGraphNode(node.resolvedType)(next)
+                        in
+                            match resolved with
+                                | (node, next) ->
+                                    // Avoid a second map entry for an entirely new node.
+                                    // Sharing or a later visit admits the same stable edge.
+                                    if node.nodeId >= knownNodeCount
+                                    then (node, next)
+                                    else
+                                        let updated =
+                                            Ashes.Collection.Map.setInt(parentId)(Ashes.Collection.Map.setInt(position)(node)(siblings))(edges)
+                                        in
+                                            match kind with
+                                                | ResourceFact -> (node, (next with resourceEdges = updated))
+                                                | UnresolvedFact -> (node, (next with unresolvedEdges = updated)))
 
 let typeGraphRootFact kind semanticType index =
     match findNode(semanticType)(index) with

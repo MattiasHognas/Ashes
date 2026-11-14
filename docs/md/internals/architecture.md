@@ -3400,6 +3400,18 @@ queries. Only completed context-free root facts are published. Regular negative
 searches may publish their fully visited named closure; nonregular fallback
 publishes only its queried root. Blocked-path visits remain query-local.
 
+Traversal work records a parent's node ID, edge policy and child position. The
+index caches the resolved child node at that coordinate only when the work item
+is visited and the canonical node was already interned before that visit. A new
+node gets no extra edge-map entry until sharing or a revisit demonstrates reuse.
+Repeated edges therefore avoid structural hashing and equality;
+initial interning still checks complete types. Resource and unresolved edges
+have separate maps, and each map belongs to its immutable environment lineage.
+Enqueuing never discovers a child, preserving short-circuit order and lazy
+nonregular recursion. These entries cache adjacency, not path-dependent answers.
+They retain immutable nodes that contain type roots but no index references, so
+recursive type edges do not create RC reference cycles.
+
 Every indexed heap-layout view returns its updated index alongside its answer.
 Layout gates retain their original nominal cycle paths and short-circuit order;
 path-dependent answers are not cached as root facts. Legacy public classifiers
