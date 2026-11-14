@@ -2798,6 +2798,15 @@ recursion depth is bounded by these sizes:
 
 ## Trait Lowering
 
+Self-hosted let, let-rec, top-level, and recursive-group inference generalize against
+the surrounding environment after applying the binding's checked substitution.
+`generalizeUnderSubstitution` follows only the environment schemes' free variables;
+quantified variables are excluded first. This keeps newly exposed argument, result,
+constraint, and capability-row variables of a captured monomorphic value monomorphic,
+while independent bindings still generalize. The value type and constraints passed
+to this helper are already resolved. A closed candidate skips the environment scan.
+`CapturedEnvironmentInferenceTests` covers these boundaries and independent polymorphism.
+
 The source surface, coherence rules, and type-system behavior are specified in
 [Language Reference](../reference/language.md) section 21. Trait selection is entirely static; there
 is no runtime registry, name lookup, or open-world dispatch.

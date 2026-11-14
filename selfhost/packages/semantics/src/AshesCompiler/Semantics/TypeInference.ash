@@ -3819,8 +3819,9 @@ and inferWith expression environment substitution supply ambientRow =
                             let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
                             in
                                 let scheme =
-                                    generalize(
+                                    generalizeUnderSubstitution(
                                         inferenceEnvironmentSchemes(environment),
+                                        checkedSubstitution,
                                         resolvedValue,
                                         selectedConstraints
                                     )
@@ -3868,8 +3869,9 @@ and inferWith expression environment substitution supply ambientRow =
                                                             )
                                                         in
                                                             let scheme =
-                                                                generalize(
+                                                                generalizeUnderSubstitution(
                                                                     inferenceEnvironmentSchemes(environment),
+                                                                    checkedSubstitution,
                                                                     resolvedType,
                                                                     selectedConstraints
                                                                 )
@@ -4358,8 +4360,9 @@ let inferTopLevelBinding name value annotation requirements environment substitu
                     let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
                     in
                         let scheme =
-                            generalize(
+                            generalizeUnderSubstitution(
                                 inferenceEnvironmentSchemes(environment),
+                                checkedSubstitution,
                                 resolvedValue,
                                 selectedConstraints
                             )

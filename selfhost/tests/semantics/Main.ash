@@ -5,6 +5,7 @@ import AshesCompiler.Semantics.Types
 import UnificationTests
 import TypeSchemeTests
 import TypeInferenceTests
+import CapturedEnvironmentInferenceTests
 import PatternInferenceTests
 import TypeResolutionTests
 import ProgramInferenceTests
@@ -97,6 +98,7 @@ let run unit =
     |> UnificationTests.runUnificationTests
     |> (given (_) -> TypeSchemeTests.runTypeSchemeTests(Unit))
     |> (given (_) -> TypeInferenceTests.runTypeInferenceTests(Unit))
+    |> (given (_) -> CapturedEnvironmentInferenceTests.runCapturedEnvironmentInferenceTests(Unit))
     |> (given (_) -> PatternInferenceTests.runPatternInferenceTests(Unit))
     |> (given (_) -> TypeResolutionTests.runTypeResolutionTests(Unit))
     |> (given (_) -> ProgramInferenceTests.runProgramInferenceTests(Unit))

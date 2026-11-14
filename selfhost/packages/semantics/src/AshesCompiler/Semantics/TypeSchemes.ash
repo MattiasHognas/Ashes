@@ -12,6 +12,7 @@ export (
     value freeSchemeVariables,
     value freeEnvironmentVariables,
     value generalize,
+    value generalizeUnderSubstitution,
     value instantiate,
 )
 
@@ -159,6 +160,34 @@ let generalize environment semanticType constraints =
             TypeScheme(quantified = quantifyVariables(
                 generalizedVariables
             ), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
+
+let recursive resolveEnvironmentVariables substitution variables resolved =
+    match variables with
+        | [] -> resolved
+        | variable :: rest ->
+            resolved
+            |> mergeVariables(SemVariable(variable)
+            |> applySubstitution(substitution)
+            |> freeTypeVariables)
+            |> resolveEnvironmentVariables(substitution)(rest)
+
+// A captured monomorphic variable can become an arrow while the binding is inferred.
+// Its parameter/result variables still belong to the outer environment. Resolve its free
+// variables before excluding them, rather than quantifying those newly exposed variables.
+// Removing each scheme's quantified IDs first also preserves independent polymorphic bindings.
+// The value type and requirements have already been resolved by the inference boundary.
+let generalizeUnderSubstitution environment substitution semanticType constraints =
+    (let candidateVariables =
+        constraints
+        |> freeConstraintsVariables
+        |> mergeVariables(freeTypeVariables(semanticType))
+    in
+        let generalizedVariables =
+            match candidateVariables with
+                | [] -> []
+                | _ ->
+                    removeEnvironmentVariables(resolveEnvironmentVariables(substitution)(freeEnvironmentVariables(environment))([]))(candidateVariables)
+        in TypeScheme(quantified = quantifyVariables(generalizedVariables), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
 
 // Build the whole quantified-variable renaming from one supply before applying it to the body and
 // constraints, so separate instantiations cannot accidentally share inference variables.
