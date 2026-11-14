@@ -34,6 +34,9 @@ public sealed partial class Lowering
     private readonly Dictionary<TypeScheme, TraitDictionaryFunctionInfo> _traitDictionaryFunctionsByScheme =
         new(ReferenceEqualityComparer.Instance);
 
+    private readonly Dictionary<TraitDictionaryFunctionInfo, IReadOnlyList<TraitConstraint>>
+        _traitDictionaryDefinitionConstraints = new(ReferenceEqualityComparer.Instance);
+
     private sealed record TraitDictionaryParameterMetadata(
         TraitDictionaryShape Shape,
         TraitConstraint? Constraint);
@@ -722,6 +725,36 @@ public sealed partial class Lowering
     {
         if (info is not null)
         {
+            if (_traitDictionaryDefinitionConstraints.TryGetValue(info, out IReadOnlyList<TraitConstraint>? requirements))
+            {
+                TraitDictionaryShape[] dictionaries = new TraitDictionaryShape[info.Dictionaries.Count];
+                for (int index = 0; index < dictionaries.Length; index++)
+                {
+                    TraitConstraint requirement = PruneTraitConstraint(requirements[index]);
+                    int constraintOrdinal = -1;
+                    for (int candidate = 0; candidate < scheme.Constraints.Count; candidate++)
+                    {
+                        if (TraitResolutionConstraintsEqual(requirement, PruneTraitConstraint(scheme.Constraints[candidate])))
+                        {
+                            constraintOrdinal = candidate;
+                            break;
+                        }
+                    }
+                    if (constraintOrdinal < 0)
+                    {
+                        ReportDiagnostic(
+                            new TextSpan(info.SourceOffset, 0),
+                            $"Internal trait evidence ABI for '{info.Name}' lost a declared dictionary requirement.",
+                            InvalidTraitDeclarationCode);
+                        return;
+                    }
+                    // Physical parameter order was fixed from the declaration's syntax. Inference
+                    // can allocate the corresponding variables in a different order, so a slot's
+                    // requirement need not have the same ordinal in the generalized scheme.
+                    dictionaries[index] = info.Dictionaries[index] with { ConstraintOrdinal = constraintOrdinal };
+                }
+                info = info with { Dictionaries = dictionaries };
+            }
             _traitDictionaryFunctionsByScheme[scheme] = info;
         }
     }
@@ -1058,6 +1091,12 @@ public sealed partial class Lowering
         TraitDictionaryFunctionInfo info,
         IReadOnlyList<TraitConstraint> sourceOrderedRequirements)
     {
+        if (info.Dictionaries.All(shape => shape.SourceOrdinal < sourceOrderedRequirements.Count))
+        {
+            _traitDictionaryDefinitionConstraints[info] = info.Dictionaries
+                .Select(shape => sourceOrderedRequirements[shape.SourceOrdinal])
+                .ToArray();
+        }
         for (int index = 0; index < info.Dictionaries.Count; index++)
         {
             TraitDictionaryShape shape = info.Dictionaries[index];
@@ -1077,10 +1116,11 @@ public sealed partial class Lowering
     {
         for (int index = 0; index < info.Dictionaries.Count; index++)
         {
+            int constraintOrdinal = info.Dictionaries[index].ConstraintOrdinal;
             BindTraitDictionaryParameterConstraint(
                 StaticEvidenceParameterName("trait", index),
                 info.Dictionaries[index],
-                index < requirements.Count ? requirements[index] : null);
+                constraintOrdinal < requirements.Count ? requirements[constraintOrdinal] : null);
         }
     }
 
@@ -1932,8 +1972,9 @@ public sealed partial class Lowering
         }
 
         List<int> dictionaries = [];
-        foreach (TraitConstraint constraint in instantiated.Constraints)
+        foreach (TraitDictionaryShape shape in info.Dictionaries)
         {
+            TraitConstraint constraint = instantiated.Constraints[shape.ConstraintOrdinal];
             ActiveTraitDictionaryParameter active = FindActiveTraitDictionaryParameter(constraint)!;
             dictionaries.Add(LowerExpr(new Expr.Var(active.ParameterName)).Temp);
         }

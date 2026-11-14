@@ -2798,6 +2798,14 @@ recursion depth is bounded by these sizes:
 
 ## Trait Lowering
 
+Stage 0 records how each emitted dictionary parameter maps to the generalized
+scheme's constraint ordinal. The declaration fixes the physical parameter order,
+but type inference may allocate variables in a different order (for example,
+tuple-pattern fields versus curried arguments). Calls and active dictionary
+references use that mapping rather than assuming matching ordinals. The
+`constrained_lookup_preserves_dictionary_positions.ash` regression exercises three
+same-trait requirements with string and integer arguments in differing field order.
+
 Self-hosted let, let-rec, top-level, and recursive-group inference generalize against
 the surrounding environment after applying the binding's checked substitution.
 `generalizeUnderSubstitution` follows only the environment schemes' free variables;
