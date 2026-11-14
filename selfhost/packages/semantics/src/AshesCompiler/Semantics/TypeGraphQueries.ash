@@ -13,7 +13,7 @@ export (
 let typeGraphResolvedNode (semanticType: SemanticType) (index: TypeGraphIndex) =
     match typeGraphNode(semanticType)(index) with
         | (node, next) ->
-            if node.sourceType == node.resolvedType
+            if node.sourceMatchesResolved
             then (node, next)
             else typeGraphNode(node.resolvedType)(next)
 

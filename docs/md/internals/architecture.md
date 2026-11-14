@@ -3380,6 +3380,11 @@ within that index lineage. Nodes retain both source and runtime-resolved
 constructor groups, record shape and query-specific child edges. Complete type
 fingerprints select integer-AVL buckets; full semantic-type equality resolves
 collisions. A hash alone never establishes type identity.
+Each node also records whether its source and resolved types are structurally equal,
+computed once in that immutable environment. Alias resolution and named layout views
+reuse that boolean instead of comparing the same trees on every visit. A lookup followed
+by insertion or fact update shares one fingerprint within the operation; collision checks
+still compare complete types, and the cached resolution fact stays within its index lineage.
 
 `TypeGraphQueries` reuses those nodes for resource, unresolved-type and drop
 queries. Only completed context-free root facts are published. Regular negative

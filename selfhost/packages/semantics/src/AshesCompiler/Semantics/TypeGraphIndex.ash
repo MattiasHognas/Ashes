@@ -285,6 +285,7 @@ type TypeGraphNode =
     | nodeId: Int
     | sourceType: SemanticType
     | resolvedType: SemanticType
+    | sourceMatchesResolved: Bool
     | constructorGroups: List((Str, List(SemanticType)))
     | sourceConstructorGroups: List((Str, List(SemanticType)))
     | isRecord: Bool
@@ -506,10 +507,13 @@ let recursive putInBucket (semanticType: SemanticType) (entry: TypeGraphEntry) (
             then entry :: rest
             else previous :: putInBucket(semanticType)(entry)(rest)
 
-let findNode semanticType (index: TypeGraphIndex) =
+let findNodeWithHash hash semanticType (index: TypeGraphIndex) =
     index
-    |> bucket(typeGraphFingerprint(semanticType))
+    |> bucket(hash)
     |> findInBucket(semanticType)
+
+let findNode semanticType index =
+    findNodeWithHash(typeGraphFingerprint(semanticType))(semanticType)(index)
 
 // Read-only consumers may reuse a completed view without discovering a node whose
 // updated index they cannot retain. A miss never builds a node or inspects children.
@@ -518,12 +522,10 @@ let typeGraphLookupNode (semanticType: SemanticType) (index: TypeGraphIndex) =
         | Some(entry) -> Some(entry.node)
         | None -> None
 
-let setNode semanticType entry (index: TypeGraphIndex) =
-    (let hash = typeGraphFingerprint(semanticType)
-    in
-        index with nodes = Ashes.Collection.Map.setInt(hash)(index
-        |> bucket(hash)
-        |> putInBucket(semanticType)(entry))(index.nodes))
+let setNodeWithHash hash semanticType entry (index: TypeGraphIndex) =
+    index with nodes = Ashes.Collection.Map.setInt(hash)(index
+    |> bucket(hash)
+    |> putInBucket(semanticType)(entry))(index.nodes)
 
 let recursive flattenGroups grouped =
     match grouped with
@@ -570,46 +572,51 @@ let buildNode nodeId semanticType environment =
         |> inferenceTypeResolutionContext
         |> semanticRuntimeRepresentation(semanticType)
     in
-        let isRecord = typeGraphNamedTypeIsRecord(resolved)(environment)
+        let sourceMatchesResolved = semanticType == resolved
         in
-            let groups = typeGraphNamedTypeConstructors(resolved)(environment)
+            let isRecord = typeGraphNamedTypeIsRecord(resolved)(environment)
             in
-                let fields = flattenGroups(groups)
+                let groups = typeGraphNamedTypeConstructors(resolved)(environment)
                 in
-                    let resourceChildren = graphResourceChildren(resolved)(fields)
+                    let fields = flattenGroups(groups)
                     in
-                        TypeGraphNode(
-                            nodeId = nodeId,
-                            sourceType = semanticType,
-                            resolvedType = resolved,
-                            constructorGroups = groups,
-                            sourceConstructorGroups = if semanticType == resolved
-                            then groups
-                            else typeGraphNamedTypeConstructors(semanticType)(environment),
-                            isRecord = isRecord,
-                            sourceIsRecord = if semanticType == resolved
-                            then isRecord
-                            else typeGraphNamedTypeIsRecord(semanticType)(environment),
-                            fields = fields,
-                            resourceChildren = resourceChildren,
-                            unresolvedChildren = match resolved with
-                                | SemNamed(_id, _name, arguments) -> append(arguments)(fields)
-                                | _ -> resourceChildren,
-                            argumentComponents = graphArgumentComponents(resolved),
-                            directResource = graphDirectResource(resolved)(environment),
-                            directUnresolved = graphDirectUnresolved(resolved)
-                        ))
+                        let resourceChildren = graphResourceChildren(resolved)(fields)
+                        in
+                            TypeGraphNode(
+                                nodeId = nodeId,
+                                sourceType = semanticType,
+                                resolvedType = resolved,
+                                sourceMatchesResolved = sourceMatchesResolved,
+                                constructorGroups = groups,
+                                sourceConstructorGroups = if sourceMatchesResolved
+                                then groups
+                                else typeGraphNamedTypeConstructors(semanticType)(environment),
+                                isRecord = isRecord,
+                                sourceIsRecord = if sourceMatchesResolved
+                                then isRecord
+                                else typeGraphNamedTypeIsRecord(semanticType)(environment),
+                                fields = fields,
+                                resourceChildren = resourceChildren,
+                                unresolvedChildren = match resolved with
+                                    | SemNamed(_id, _name, arguments) -> append(arguments)(fields)
+                                    | _ -> resourceChildren,
+                                argumentComponents = graphArgumentComponents(resolved),
+                                directResource = graphDirectResource(resolved)(environment),
+                                directUnresolved = graphDirectUnresolved(resolved)
+                            ))
 
 let typeGraphNode (semanticType: SemanticType) (index: TypeGraphIndex) =
-    match findNode(semanticType)(index) with
-        | Some(entry) -> (entry.node, index)
-        | None ->
-            let node = buildNode(index.nodeCount)(semanticType)(index.environment)
-            in
-                let entry = TypeGraphEntry(node = node, resourceFact = None, unresolvedFact = None)
+    (let hash = typeGraphFingerprint(semanticType)
+    in
+        match findNodeWithHash(hash)(semanticType)(index) with
+            | Some(entry) -> (entry.node, index)
+            | None ->
+                let node = buildNode(index.nodeCount)(semanticType)(index.environment)
                 in
-                    let updated = setNode(semanticType)(entry)(index)
-                    in (node, (updated with nodeCount = updated.nodeCount + 1))
+                    let entry = TypeGraphEntry(node = node, resourceFact = None, unresolvedFact = None)
+                    in
+                        let updated = setNodeWithHash(hash)(semanticType)(entry)(index)
+                        in (node, (updated with nodeCount = updated.nodeCount + 1)))
 
 let typeGraphRootFact kind semanticType index =
     match findNode(semanticType)(index) with
@@ -627,17 +634,19 @@ let setEntryFact kind answer (entry: TypeGraphEntry) =
 // A whole-root result can be reused. A path-dependent result must not be published here.
 // In particular, an interrupted/positive search cannot publish negatives for visited nodes.
 let completeTypeGraphRootFact kind semanticType answer index =
-    match findNode(semanticType)(index) with
-        | Some(entry) ->
-            setNode(semanticType)(setEntryFact(kind)(answer)(entry))(index)
-        | None ->
-            let node = buildNode(index.nodeCount)(semanticType)(index.environment)
-            in
-                let entry = TypeGraphEntry(node = node, resourceFact = None, unresolvedFact = None)
+    (let hash = typeGraphFingerprint(semanticType)
+    in
+        match findNodeWithHash(hash)(semanticType)(index) with
+            | Some(entry) ->
+                setNodeWithHash(hash)(semanticType)(setEntryFact(kind)(answer)(entry))(index)
+            | None ->
+                let node = buildNode(index.nodeCount)(semanticType)(index.environment)
                 in
-                    let updated =
-                        setNode(semanticType)(setEntryFact(kind)(answer)(entry))(index)
-                    in updated with nodeCount = updated.nodeCount + 1
+                    let entry = TypeGraphEntry(node = node, resourceFact = None, unresolvedFact = None)
+                    in
+                        let updated =
+                            setNodeWithHash(hash)(semanticType)(setEntryFact(kind)(answer)(entry))(index)
+                        in updated with nodeCount = updated.nodeCount + 1)
 
 // Only pass roots from an exhausted negative closure search, never a path-cut fallback's visits.
 let recursive completeTypeGraphNegativeRoots kind roots index =
