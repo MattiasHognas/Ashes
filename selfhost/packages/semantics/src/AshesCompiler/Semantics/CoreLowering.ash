@@ -36114,6 +36114,31 @@ let resolveLoopCallFlow (state: CoreLoweringState) =
             in withStateTcoLoop(Some((loop with callFlow = table, callFlowPending = false, selfCallParameterFlow = tcoSelfCallParameterFlow(selfName)(parameters)(table)(body), selfCallSpineFlow = tcoSelfCallSpineFlow(selfName)(parameters)(table)(body))))(state)
         | _ -> state
 
+// Whether an expression is a bare reference to a dictionary-passing binding. Its dictionaries are
+// built where it is read, so the type its context expects has to reach the read itself: unifying
+// afterwards, as every other variable read does, is too late to choose the evidence.
+let constrainedReference (expression: Expr) (state: CoreLoweringState) =
+    match stripExprAt(expression) with
+        | ExprVar(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(binding) -> bindingRequirements(binding) != []
+                | None ->
+                    match state
+                    |> stateTopLevelFunctionRefIndex
+                    |> lookupTopLevelFunctionRef(name) with
+                        | Some((_label, TypeScheme { constraints = [] })) -> false
+                        | Some(_constrained) -> true
+                        | None -> false
+        | _ -> false
+
+let requestAtConstrainedReference (expression: Expr) (request: ConsumerRequest) (state: CoreLoweringState) (dispatched: ConsumerRequest) =
+    match request.expectedType with
+        | None -> dispatched
+        | Some(_expected) ->
+            if constrainedReference(expression)(state)
+            then dispatched with expectedType = request.expectedType
+            else dispatched
+
 let recursive lowerCore expression state =
     match state
     |> resolveLoopCallFlow
@@ -36121,7 +36146,10 @@ let recursive lowerCore expression state =
         | request ->
             match if isEmptyConsumerRequest(request)
             then request
-            else dispatchRequest(expression)(request) with
+            else
+                request
+                |> dispatchRequest(expression)
+                |> requestAtConstrainedReference(expression)(request)(state) with
                 | dispatched ->
                     state
                     |> resolveLoopCallFlow
