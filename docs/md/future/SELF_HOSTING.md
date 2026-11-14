@@ -45,6 +45,70 @@ An item leaves this list only with a linked fix and relevant stage-1 regression/
 or with a fresh reproduction proving the recorded defect no longer applies. Full suites and a
 compiler census remain required at their agreed milestones; focused checks are not substitutes.
 
+## Type inference before lowering
+
+Decided on **2026-11-14**. Stage 1 lowers and infers types in the same walk, as stage 0 does.
+Because lowering meets types it does not know yet, it runs a discovery pass and then replays the
+whole program with proven types pinned, runs a speculative inference on every lambda `let` to ask
+whether the binding is trait-constrained, lowers a recursive body again when a call's result type
+resolves late, and defers operators and dictionaries it cannot decide at the site. These are the
+dominant costs of stage 1 compiling itself and the source of most Step F blockers.
+
+The direction is a dedicated inference pass that runs first and produces a typed program, with
+lowering reduced to one pass that reads types. Stage 1 no longer has to emit the same IR as stage 0
+for this work. The checks that matter are that programs compiled by stage 1 behave the same as when
+compiled by stage 0 (output and exit live-cell counts), and that stage 2 and stage 3 are identical.
+
+What is known about the starting point:
+
+- `ProgramInference.ash` and `TypeInference.ash` cover every expression and pattern form, but the
+  compile command does not run them. They return binding schemes, one substitution and the trailing
+  type; no type is kept per expression, and errors carry no location.
+- The standalone inference has not inferred a real stitched program. Its substitution and its
+  binding lookup are linear lists.
+- Syntax nodes have no stable identity. Spans collide across stitched modules and synthesized nodes
+  have none.
+- Lowering decides about 30 things on whether a type is still open at a site, mirroring the order
+  in which stage 0 discovers types. Final types alone do not reproduce those decisions.
+- The two inferences disagree on operators: the standalone one gives `a + b` and `a == b` a trait
+  constraint and generalizes; lowering holds the operand monomorphic, emits the integer form and
+  seals it to `Int` when nothing resolves it.
+- Of the roughly 350 type queries in lowering, about 260 classify ownership and heap layout and
+  need a type for nearly every lowered value; about 55 choose an instruction or build trait
+  evidence.
+
+Order of work. Each step lands separately and is useful if the later ones are delayed.
+
+1. **Skip the constrained-binding plan when the binding cannot be constrained.** A syntactic check
+   answers "not constrained" when the value contains no operator that maps to a trait, no reference
+   to a name whose scheme carries constraints, and no written `requires`. The generated code does
+   not change.
+2. **Make the standalone inference run on real programs.** Fix the standard-library type mismatch
+   it reports, give its errors locations, replace the association-list substitution and the linear
+   binding lookup, and run it from the compile command with its result discarded. The deliverable
+   is that it infers every test program and the compiler itself, and how long that takes.
+3. **Build the behavioural check.** Compile the test programs with stage 1 and with stage 0, run
+   both, and compare output and exit live-cell counts. This replaces lowered-IR comparison with
+   stage 0 as the acceptance check for the steps below.
+4. **Compare the two inferences.** With step 2 in place, report where the standalone result and
+   lowering's own inference disagree per top-level binding. Operators and capability rows are the
+   known differences. Each disagreement is settled against the language reference.
+5. **Give syntax nodes an identity and record types against it.** Assign identities after
+   stitching, including synthesized nodes, and have the inference pass fill a table: a type per
+   expression, the resolved instance per operator, the instantiation and dictionaries per call,
+   the scheme per binding. A body lowered at several types reads the table through its
+   instantiation.
+6. **Lower from the table.** Lowering reads types instead of unifying. Remove the discovery and
+   replay passes, pending and proven trait goals, deferred operators and dictionaries, the
+   per-binding plan, and body re-lowering.
+7. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
+   site as rules over the final type, each with a lifetime regression.
+8. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
+   compiler; stage 1 stops mirroring its internals.
+
+Steps 1 to 4 do not change generated code. Steps 6 and 7 do, in the ownership-sensitive paths, so
+step 3 must exist before they start.
+
 ## Start here
 
 The goal right now is a **fixpoint**: the compiler built by the self-hosted compiler compiles its own
