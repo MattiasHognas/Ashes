@@ -34919,35 +34919,75 @@ let recursive closeConstrainedTemporaries (closes: List(ConstrainedTemporaryClos
                     |> finishClosedLetResult(resultTemp)(semanticType)
                     |> closeConstrainedTemporaries(rest)
 
+// The type a missing-evidence report names: a single-parameter trait's argument itself.
+let traitEvidenceSubject (typeArguments: List(SemanticType)) =
+    match typeArguments with
+        | only :: [] -> only
+        | _ -> SemTuple(typeArguments)
+
+let recursive firstInactiveTraitMethod (traitName: Str) (operand: SemanticType) (methods: List(Str)) (state: CoreLoweringState) =
+    match methods with
+        | [] -> None
+        | name :: rest ->
+            match state
+            |> stateActiveTraitMethods
+            |> activeTraitMethod(traitName)(operand)(name)(state) with
+                | Some(_binding) -> firstInactiveTraitMethod(traitName)(operand)(rest)(state)
+                | None -> Some(name)
+
+// The requirement a dictionary cannot be built for, decided before any supertrait dictionary is
+// lowered so the report names the requirement the source asked for and not a trait it implies.
+let unansweredDictionaryRequirement (constraint: TraitConstraint) (methods: List(Str)) (state: CoreLoweringState) =
+    match state
+    |> stateTraitEnvironment
+    |> resolveTraitEvidence(constraint) with
+        | TraitEvidenceResolution { plan = Some(TraitEvidenceParameter(TraitConstraint { traitName = traitName, typeArguments = operand :: [] })), error = None } ->
+            match firstInactiveTraitMethod(traitName)(operand)(methods)(state) with
+                | Some(_name) ->
+                    operand
+                    |> MissingCoreTraitEvidence(traitName)
+                    |> Some
+                | None -> None
+        | TraitEvidenceResolution { plan = Some(_plan), error = None } -> None
+        | _ ->
+            constraint.typeArguments
+            |> traitEvidenceSubject
+            |> MissingCoreTraitEvidence(constraint.traitName)
+            |> Some
+
 // New dictionary closures/tuples are ordinary lexical owners. The close records
 // mirror nested lets and run after normal call-result normalization. Forwarded
 // parameter evidence is already owned by its surrounding lexical binding.
 let recursive lowerConstrainedDictionary shape lower state closes =
     match shape with
         | TraitDictionaryAbiShape { constraint = constraint, methods = methods, supertraits = supertraits } ->
-            match lowerConstrainedDictionaries(supertraits)(lower)(state)([])(closes) with
-                | (superState, superExpressions, superCloses, None) ->
-                    match superState
-                    |> stateTraitEnvironment
-                    |> resolveTraitEvidence(constraint) with
-                        | TraitEvidenceResolution { plan = Some(plan), error = None } ->
-                            match lowerConstrainedDictionaryMethods(constraint)(plan)(methods)(lower)(superState)([])(superCloses) with
-                                | (methodState, methodExpressions, methodCloses, None) ->
-                                    let fields = append(methodExpressions)(superExpressions)
-                                    in
-                                        match fields with
-                                            | only :: [] -> (methodState, only, methodCloses, None)
-                                            | _ ->
-                                                match openArenaBracket(methodState) with
-                                                    | ArenaBracket { bracketState = opened } as bracket ->
-                                                        match lower(ExprTuple(fields))(opened) with
-                                                            | LoweredCoreValue { semanticType = semanticType } as tuple -> storeConstrainedTemporary("__trait_argument_")(semanticType)(bracket)(tuple)(methodCloses)
-                                | (failed, _values, nextCloses, Some(error)) -> (failed, ExprBool(false), nextCloses, Some(error))
-                        | _ ->
-                            (superState, ExprBool(false), superCloses, SemTuple(constraint.typeArguments)
-                            |> MissingCoreTraitEvidence(constraint.traitName)
-                            |> Some)
-                | (failed, _values, nextCloses, Some(error)) -> (failed, ExprBool(false), nextCloses, Some(error))
+            match unansweredDictionaryRequirement(constraint)(methods)(state) with
+                | Some(error) -> (state, ExprBool(false), closes, Some(error))
+                | None ->
+                    match lowerConstrainedDictionaries(supertraits)(lower)(state)([])(closes) with
+                        | (superState, superExpressions, superCloses, None) ->
+                            match superState
+                            |> stateTraitEnvironment
+                            |> resolveTraitEvidence(constraint) with
+                                | TraitEvidenceResolution { plan = Some(plan), error = None } ->
+                                    match lowerConstrainedDictionaryMethods(constraint)(plan)(methods)(lower)(superState)([])(superCloses) with
+                                        | (methodState, methodExpressions, methodCloses, None) ->
+                                            let fields = append(methodExpressions)(superExpressions)
+                                            in
+                                                match fields with
+                                                    | only :: [] -> (methodState, only, methodCloses, None)
+                                                    | _ ->
+                                                        match openArenaBracket(methodState) with
+                                                            | ArenaBracket { bracketState = opened } as bracket ->
+                                                                match lower(ExprTuple(fields))(opened) with
+                                                                    | LoweredCoreValue { semanticType = semanticType } as tuple -> storeConstrainedTemporary("__trait_argument_")(semanticType)(bracket)(tuple)(methodCloses)
+                                        | (failed, _values, nextCloses, Some(error)) -> (failed, ExprBool(false), nextCloses, Some(error))
+                                | _ ->
+                                    (superState, ExprBool(false), superCloses, constraint.typeArguments
+                                    |> traitEvidenceSubject
+                                    |> MissingCoreTraitEvidence(constraint.traitName)
+                                    |> Some)
+                        | (failed, _values, nextCloses, Some(error)) -> (failed, ExprBool(false), nextCloses, Some(error))
 and lowerConstrainedDictionaries shapes lower state reversed closes =
     match shapes with
         | [] -> (state, reverse(reversed), closes, None)
@@ -35705,11 +35745,13 @@ let recursive checkConstrainedBoundary constraints state =
                     if constrainedPlanAvailable(plan)(state)
                     then checkConstrainedBoundary(rest)(state)
                     else
-                        SemTuple(constraint.typeArguments)
+                        constraint.typeArguments
+                        |> traitEvidenceSubject
                         |> MissingCoreTraitEvidence(constraint.traitName)
                         |> Some
                 | _ ->
-                    SemTuple(constraint.typeArguments)
+                    constraint.typeArguments
+                    |> traitEvidenceSubject
                     |> MissingCoreTraitEvidence(constraint.traitName)
                     |> Some
 
