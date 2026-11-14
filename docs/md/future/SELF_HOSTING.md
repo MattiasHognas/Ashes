@@ -150,9 +150,9 @@ What is known about the starting point:
   compile command runs them only when `ASHES_SHADOW_INFERENCE` is set, and discards the result.
   They return binding schemes, one substitution and the trailing type; no type is kept per
   expression. An error names its package, module, declaration and innermost located expression.
-- The standalone inference infers 917 of the 1,048 test programs that should compile and the
-  compiler itself: 8,648 declarations in 147 modules in about 60 s with a 0.6 GiB peak. Task
-  builtins, `async` and capability rows account for most of the remaining test programs.
+- The standalone inference infers 959 of the 1,048 test programs that should compile and the
+  compiler itself: 8,648 declarations in 147 modules in about 60 s with a 0.6 GiB peak. Capability
+  rows and programs stage 1 cannot stitch account for most of the remaining test programs.
 - Syntax nodes have no stable identity. Spans collide across stitched modules and synthesized nodes
   have none.
 - Lowering decides about 30 things on whether a type is still open at a site, mirroring the order

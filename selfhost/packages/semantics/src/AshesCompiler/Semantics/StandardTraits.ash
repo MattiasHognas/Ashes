@@ -471,6 +471,40 @@ let withIntrinsicTypes environment =
     |> addConstructorBinding("Ok")(intrinsicResultScheme(SemVariable(3)))([])
     |> addConstructorBinding("Error")(intrinsicResultScheme(SemVariable(2)))([])
 
+// The task builtins and `async`. Lowering has no layout for them yet, so they are not among
+// `standardBuiltinLayouts`; their signatures are the language reference's (19, Async/Await).
+let intrinsicTaskOf errorType valueType = SemNamed(3)("Task")([errorType, valueType])
+
+let intrinsicJoinHandleType = SemNamed(9)("JoinHandle")([SemVariable(2), SemVariable(3)])
+
+let taskScheme argument result = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(argument)(result)(None), constraints = [])
+
+let polymorphicTask = intrinsicTaskOf(SemVariable(2))(SemVariable(3))
+
+let asyncTaskScheme =
+    TypeScheme(quantified = [(3, "a")], body = SemFunction(SemVariable(3))(intrinsicTaskOf(SemString)(SemVariable(3)))(None), constraints = [])
+
+let withTaskSignatures environment =
+    environment
+    |> addInferenceTypeDefinition(9)("JoinHandle")(2)
+    |> addTypeBinding("Ashes.Task.run")(taskScheme(polymorphicTask)(intrinsicResultType))
+    |> addTypeBinding("Ashes.Task.task")(asyncTaskScheme)
+    |> addTypeBinding("async")(asyncTaskScheme)
+    |> addTypeBinding("Ashes.Task.fromResult")(taskScheme(intrinsicResultType)(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.sleep")(TypeScheme(quantified = [], body = SemFunction(SemInt)(intrinsicTaskOf(SemString)(SemInt))(None), constraints = []))
+    |> addTypeBinding("Ashes.Task.all")(SemList(SemVariable(3))
+    |> intrinsicTaskOf(SemVariable(2))
+    |> taskScheme(SemList(polymorphicTask)))
+    |> addTypeBinding("Ashes.Task.race")(taskScheme(SemList(polymorphicTask))(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.spawn")([]
+    |> SemNamed(4)("Unit")
+    |> taskScheme(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.scope")(taskScheme(polymorphicTask)(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.fork")(intrinsicJoinHandleType
+    |> intrinsicTaskOf(SemVariable(2))
+    |> taskScheme(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.join")(taskScheme(intrinsicJoinHandleType)(polymorphicTask))
+
 // `standardTraitEnvironment` plus the intrinsic builtins' own signatures. The intrinsic modules
 // (`Ashes.IO`, `Ashes.Byte`, `Ashes.Text` and the rest of `coreBuiltinKind`'s) have no shipped
 // `.ash` source, so a stitched program never declares them: lowering knows them through
@@ -529,3 +563,4 @@ let withIntrinsicBuiltinSignatures environment =
     |> withIntrinsicTypes
     |> addBuiltinSignatures(standardBuiltinLayouts)
     |> withArgumentWidthSignatures
+    |> withTaskSignatures
