@@ -2878,6 +2878,51 @@ the recorded function. Nested instances built inside a method body (a field type
 list element's `Show`) are compiled inside that single body, so the emitted code grows with the
 number of instances a program uses rather than with the number of places it uses them.
 
+### Self-hosted constrained bindings
+
+The self-hosted Core lowerer keeps a constrained binding's source scheme separate from its physical
+closure type. The closure receives the ordered dictionary parameters before its source parameters;
+method projections remain inside that complete lambda prefix so recursive calls retain their
+physical tail-call arity. Free recursive references forward the existing dictionaries, including
+references used as values. Each call instantiates the source scheme independently and uses a private
+callee binding, leaving references to the original polymorphic name in argument expressions intact.
+
+Dictionary slots keep their definition order through generalization and instantiation, even when two
+requirements instantiate to the same type. Ordinary methods precede supertrait dictionaries in the
+physical layout. Newly emitted bindings resolve their provisional types before publishing a logical
+scheme; already-generalized aliases preserve their quantified variables. Query environments apply
+substitution only to free variables of a scheme. Concrete and outer-fixed requirements remain the
+responsibility of the scope that introduced them.
+
+Call inference reads the same registered constructor schemes, nominal and alias types, intrinsic
+builtins, seeded trait methods, and external direct/first-class contracts as Core lowering. Static
+query bindings are cached when their metadata is registered. Closed global references retain their
+logical schemes; a registration-time flag identifies schemes with free IDs that must be resolved
+against the current substitution at a query. Current lexical bindings take precedence. This context
+projection avoids rebuilding all static constructor and builtin bindings at every constrained call;
+it does not eliminate the separate traversal of live bindings or argument re-inference.
+
+Dictionary closures and tuples use ordinary lexical ownership scopes. Their owners close after the
+normal call-result normalization, so a returned closure or aggregate must preserve any evidence it
+captures. Dictionary construction cannot consume reuse tokens belonging to the source arguments.
+The supported ordinary operator evidence path currently covers `Eq`, `Ord`, and `Not`; the
+[self-hosting deferred work table](../future/SELF_HOSTING.md#known-gaps-deferred-during-step-f)
+records the remaining operator dispatch and runtime validation limits.
+
+The self-hosted concrete-copy registry retains original source and logical schemes for constrained
+top-level functions and wrappers that reference them, including wrappers with fully concrete types.
+A bound candidate must match its original program-entry local slot; ambiguous captures keep the
+ordinary dictionary path. Copies require saturated source arity, closed ordinary arguments and
+results, and proven empty capability rows. Only quantified source row variables may receive a pure
+instantiation. Higher-order arguments and unresolved or effectful rows decline this path.
+
+Copy generation starts without caller locals, active dictionaries, reuse tokens, or special fresh-input
+ownership flags. It resolves transitive candidates through the registry and accepts only a closed
+result without surviving non-tail self references. A failed trial discards its generated state and
+uses the ordinary dictionary call. Accepted copies use ordinary ownership lowering and closure-call
+normalization; their cache is keyed by candidate identity and exact concrete argument types, with
+separate variants per candidate. These structural gates do not substitute for native lifetime tests.
+
 ### Specialization and observability
 
 Primitive trait-backed operators retain their dedicated semantic IR instructions after resolution,

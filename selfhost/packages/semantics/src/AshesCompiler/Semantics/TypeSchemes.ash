@@ -14,6 +14,8 @@ export (
     value generalize,
     value generalizeUnderSubstitution,
     value instantiate,
+    value instantiatePreservingConstraintOrder,
+    value applySchemeSubstitutionMap,
 )
 
 type InstantiationResult =
@@ -237,3 +239,29 @@ let instantiate scheme supply =
                                 applyConstraintSubstitutions(substitution)(constraints)
                             )
                         in InstantiationResult(semanticType = instantiatedBody, constraints = instantiatedConstraints, supply = nextSupply)
+
+// Runtime dictionary slots are ordered by the definition's scheme. Instantiation
+// must rename their types without sorting or coalescing the physical parameters.
+let instantiatePreservingConstraintOrder (scheme: TypeScheme) supply =
+    match instantiateQuantifiers(scheme.quantified)(supply)([]) with
+        | (substitution, nextSupply) -> InstantiationResult(semanticType = applySubstitution(substitution)(scheme.body), constraints = applyConstraintSubstitutions(substitution)(scheme.constraints), supply = nextSupply)
+
+let recursive quantifiedVariableIds quantified =
+    match quantified with
+        | [] -> []
+        | (variable, _name) :: rest -> variable :: quantifiedVariableIds(rest)
+
+// Quantifiers bind their IDs even if the surrounding lowering substitution has
+// older entries for those IDs. Preserve constraint order: emitted dictionaries
+// already use these positions as their physical ABI.
+let applySchemeSubstitutionMap substitution (scheme: TypeScheme) =
+    (let bound = quantifiedVariableIds(scheme.quantified)
+    in
+        let lookup =
+            given (variable) ->
+                if containsVariable(variable)(bound)
+                then None
+                else Ashes.Collection.Map.getInt(variable)(substitution)
+        in
+            scheme with body = applySubstitutionUsing(lookup)(scheme.body), constraints = Ashes.Collection.List.map((given (constraint: TraitConstraint) ->
+                constraint with typeArguments = Ashes.Collection.List.map(applySubstitutionUsing(lookup))(constraint.typeArguments)))(scheme.constraints))

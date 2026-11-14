@@ -10,6 +10,7 @@ import PatternInferenceTests
 import TypeResolutionTests
 import ProgramInferenceTests
 import RecordInferenceTests
+import RecordFieldInferenceTests
 import ResultInferenceTests
 import CapabilityInferenceTests
 import TraitInferenceTests
@@ -42,6 +43,9 @@ import IrTextTests
 import CoreLoweringTests
 import CoreLogicalNotInferenceTests
 import CoreOrderedInferenceTests
+import CoreConstrainedBindingsTests
+import CoreConstrainedSpecializationTests
+import CoreConstrainedSpecializationInferenceTests
 import CoreProgramLoweringTests
 import RecursiveProducerResultTests
 import TcoParameterHeadCellTests
@@ -104,6 +108,7 @@ let run unit =
     |> (given (_) -> TypeResolutionTests.runTypeResolutionTests(Unit))
     |> (given (_) -> ProgramInferenceTests.runProgramInferenceTests(Unit))
     |> (given (_) -> RecordInferenceTests.runRecordInferenceTests(Unit))
+    |> (given (_) -> RecordFieldInferenceTests.runRecordFieldInferenceTests(Unit))
     |> (given (_) -> ResultInferenceTests.runResultInferenceTests(Unit))
     |> (given (_) -> CapabilityInferenceTests.runCapabilityInferenceTests(Unit))
     |> (given (_) -> TraitInferenceTests.runTraitInferenceTests(Unit))
@@ -136,6 +141,9 @@ let run unit =
     |> (given (_) -> CoreLoweringTests.runCoreLoweringTests(Unit))
     |> (given (_) -> CoreLogicalNotInferenceTests.runCoreLogicalNotInferenceTests(Unit))
     |> (given (_) -> CoreOrderedInferenceTests.runCoreOrderedInferenceTests(Unit))
+    |> (given (_) -> CoreConstrainedBindingsTests.runCoreConstrainedBindingsTests(Unit))
+    |> (given (_) -> CoreConstrainedSpecializationTests.runCoreConstrainedSpecializationTests(Unit))
+    |> (given (_) -> CoreConstrainedSpecializationInferenceTests.runCoreConstrainedSpecializationInferenceTests(Unit))
     |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
     |> (given (_) -> RecursiveProducerResultTests.runRecursiveProducerResultTests(Unit))
     |> (given (_) -> TcoParameterHeadCellTests.runTcoParameterHeadCellTests(Unit))
