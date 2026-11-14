@@ -53,7 +53,8 @@ export (
     value addCapabilityProvider,
     value resolveCapabilityProvider,
     value canonicalTraitName,
-    value withCanonicalStandardTraits,
+    value withProgramInferenceRules,
+    value withoutProgramInferenceRules,
     value addTraitBinding,
     value resolveTraitBinding,
     value resolveTraitMethod,
@@ -161,10 +162,11 @@ type TypeEnvironment =
     | generalizationSchemes: Maybe(List(TypeScheme))
     // Bindings a lookup by name reaches only after `bindings` has no entry for the name.
     | fallbackBindings: List((Str, TypeScheme))
-    // Whether a stitched standard trait's compiler name (`Ashes_Trait_Eq`) is stored and looked
-    // up under its bare name. Program inference turns it on; an environment built for lowering
-    // leaves it off.
-    | canonicalStandardTraits: Bool
+    // Whether the rules only whole-program inference applies are on: a stitched standard trait's
+    // compiler name (`Ashes_Trait_Eq`) is stored and looked up under its bare name, and `0 - x` is
+    // the negation of `x`. Program inference turns it on; an environment built for lowering
+    // leaves it off, so its speculative inference is unchanged.
+    | programInferenceRules: Bool
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -293,7 +295,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], canonicalStandardTraits = false, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -475,11 +477,15 @@ let canonicalTraitName (name: Str) =
     else name
 
 let traitNameIn (environment: TypeEnvironment) (name: Str) =
-    if environment.canonicalStandardTraits
+    if environment.programInferenceRules
     then canonicalTraitName(name)
     else name
 
-let withCanonicalStandardTraits (environment: TypeEnvironment) = environment with canonicalStandardTraits = true
+let withProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = true
+
+let withoutProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = false
+
+let appliesProgramInferenceRules (environment: TypeEnvironment) = environment.programInferenceRules
 
 let addTraitBinding name parameterCount parameters methods supertraits (environment: TypeEnvironment) =
     match environment with
@@ -4272,7 +4278,7 @@ and inferWith expression environment substitution supply ambientRow =
                 ambientRow
             )
         | ExprSubtract(left, right) ->
-            if isZeroLiteralExpression(left)
+            if appliesProgramInferenceRules(environment) && isZeroLiteralExpression(left)
             then inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow)
             else
                 inferBinaryTrait(

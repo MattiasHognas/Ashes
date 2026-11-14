@@ -2252,13 +2252,16 @@ let locateUnitError unitIndex (state: ProgramInferenceState) =
             )
         | _ -> state
 
-// Splits a tagged error into the bare error and its location for the finished result.
-let withProgramErrorLocation (result: ProgramInferenceResult) =
-    match result with
-        | ProgramInferenceResult { error = Some(ProgramErrorAt(location, error)) } -> result with error = Some(error), errorLocation = Some(location)
-        | ProgramInferenceResult { error = Some(error) } ->
-            result with error = Some(unlocatedProgramError(error))
-        | _ -> result
+// Splits a tagged error into the bare error and its location for the finished result, and hands
+// the environment back with the program-only rules off, as an environment for lowering has them.
+let withProgramErrorLocation (finished: ProgramInferenceResult) =
+    (let result = finished with environment = withoutProgramInferenceRules(finished.environment)
+    in
+        match result with
+            | ProgramInferenceResult { error = Some(ProgramErrorAt(location, error)) } -> result with error = Some(error), errorLocation = Some(location)
+            | ProgramInferenceResult { error = Some(error) } ->
+                result with error = Some(unlocatedProgramError(error))
+            | _ -> result)
 
 let recursive inferTopLevelItems items externalDeclarations state =
     match items with
@@ -2421,7 +2424,7 @@ let inferProgramUnitBody body entryPackageId state =
 // mint a self-mapping substitution that `applySubstitution` recurses on forever. See
 // `reservedInferenceTypeVariableCount`.
 let initialProgramInferenceState error environment =
-    ProgramInferenceState(environment = withCanonicalStandardTraits(environment), substitution = [], supply = typeVariableSupplyFrom(
+    ProgramInferenceState(environment = withProgramInferenceRules(environment), substitution = [], supply = typeVariableSupplyFrom(
         reservedInferenceTypeVariableCount
     ), nextTypeSymbolId = environment
     |> inferenceTypeResolutionContext
