@@ -16,6 +16,7 @@ import AshesCompiler.Semantics.DerivingExpansion
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.ExternalAbi
 import Ashes.Collection.List.reverse
+import Ashes.Collection.Map.MapTree
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
 export (
@@ -2301,47 +2302,54 @@ let withProgramErrorLocation (finished: ProgramInferenceResult) =
                 result with error = Some(unlocatedProgramError(error))
             | _ -> result)
 
-let recursive inferTopLevelItems items externalDeclarations state =
+// A program's inference between two top-level declarations. Every binding in scope is generalized
+// there, so no later declaration can reach a type variable an earlier one bound: each declaration
+// starts from an empty substitution and a closed generalization scope, and what it bound moves
+// into `resolved`, the map the finished result's substitution is read from.
+type ProgramInferenceProgress =
+    | state: ProgramInferenceState
+    | resolved: MapTree(Int, SemanticType)
+
+let settleProgramInferenceState (resolved: MapTree(Int, SemanticType)) (state: ProgramInferenceState) =
+    (let settled = state with substitution = [], environment = withClosedGeneralizationScope(state.environment)
+    in ProgramInferenceProgress(state = settled, resolved = extendSubstitutionMap(state.substitution)(resolved)))
+
+let startProgramInferenceProgress (state: ProgramInferenceState) = settleProgramInferenceState(Ashes.Collection.Map.empty)(state)
+
+let advanceProgramInference step (progress: ProgramInferenceProgress) =
+    progress.state
+    |> step
+    |> settleProgramInferenceState(progress.resolved)
+
+let recursive inferTopLevelItem externalDeclarations item state =
+    locateTopLevelItemError(
+        item,
+        match item with
+            | TopLevelAt(_span, inner) -> inferTopLevelItem(externalDeclarations)(inner)(state)
+            | TopLevelExport(_export) -> state
+            | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
+            | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
+            | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
+            | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
+            | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
+            | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
+            | TopLevelImplementation(declaration) -> registerTraitImplementation(declaration)(state)
+            | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
+            | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
+            | TopLevelExternal(ExternalOpaqueType(_name, _destructor)) -> state
+            | TopLevelExternal(declaration) -> registerExternalFunction(declaration)(externalDeclarations)(state)
+    )
+
+let recursive inferTopLevelItems items externalDeclarations (progress: ProgramInferenceProgress) =
     match items with
-        | [] -> state
+        | [] -> progress
         | head :: tail ->
-            if hasProgramInferenceError(state)
-            then state
+            if hasProgramInferenceError(progress.state)
+            then progress
             else
-                let nextState =
-                    match head with
-                        | TopLevelAt(_span, inner) -> inferTopLevelItems([inner])(externalDeclarations)(state)
-                        | TopLevelExport(_export) -> state
-                        | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
-                        | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
-                        | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
-                        | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
-                        | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
-                        | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
-                        | TopLevelImplementation(declaration) -> registerTraitImplementation(declaration)(state)
-                        | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
-                        | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
-                        | TopLevelExternal(declaration) ->
-                            match declaration with
-                                | ExternalOpaqueType(_name, _destructor) -> state
-                                | ExternalFunction(_, _, _, _, _, _) ->
-                                    registerExternalFunction(
-                                        declaration,
-                                        externalDeclarations,
-                                        state
-                                    )
-                        | _ ->
-                            match state with
-                                | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = _error } ->
-                                    ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
-                                        UnsupportedTopLevelDeclaration("declaration kind")
-                                    ))
-                in
-                    inferTopLevelItems(
-                        tail,
-                        externalDeclarations,
-                        locateTopLevelItemError(head)(nextState)
-                    )
+                progress
+                |> advanceProgramInference(inferTopLevelItem(externalDeclarations)(head))
+                |> inferTopLevelItems(tail)(externalDeclarations)
 
 let recursive appendProgramUnitItems left right =
     match left with
@@ -2392,20 +2400,32 @@ let stateWithInferencePackage packageId state =
                 environment
             ), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error)
 
-let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations state =
+let locateProgressUnitError unitIndex (progress: ProgramInferenceProgress) = ProgramInferenceProgress(state = locateUnitError(unitIndex)(progress.state), resolved = progress.resolved)
+
+let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations (progress: ProgramInferenceProgress) =
     match units with
-        | [] -> state
+        | [] -> progress
         | ProgramInferenceUnit { packageId = packageId, program = ProgramSyntax { items = items } } :: tail ->
-            if hasProgramInferenceError(state)
-            then state
+            if hasProgramInferenceError(progress.state)
+            then progress
             else
-                state
-                |> stateWithInferencePackage(packageId)
+                progress
+                |> advanceProgramInference(stateWithInferencePackage(packageId))
                 |> inferTopLevelItems(items)(externalDeclarations)
-                |> locateUnitError(unitIndex)
+                |> locateProgressUnitError(unitIndex)
                 |> inferExpandedProgramUnitsAt(unitIndex + 1)(tail)(externalDeclarations)
 
-let inferExpandedProgramUnits units externalDeclarations state = inferExpandedProgramUnitsAt(0)(units)(externalDeclarations)(state)
+let inferExpandedProgramUnits units externalDeclarations progress = inferExpandedProgramUnitsAt(0)(units)(externalDeclarations)(progress)
+
+let recursive appendResolvedSubstitution entries substitution =
+    match entries with
+        | [] -> substitution
+        | head :: tail -> head :: appendResolvedSubstitution(tail)(substitution)
+
+// The finished result's substitution: the trailing expression's own bindings ahead of everything
+// the declarations bound, so a lookup still finds the youngest entry for a variable first.
+let withResolvedSubstitution (resolved: MapTree(Int, SemanticType)) (result: ProgramInferenceResult) =
+    result with substitution = appendResolvedSubstitution(result.substitution)(Ashes.Collection.Map.toList(resolved))
 
 let inferProgramUnitBody body entryPackageId state =
     match stateWithInferencePackage(entryPackageId)(state) with
@@ -2456,6 +2476,11 @@ let inferProgramUnitBody body entryPackageId state =
                 errorLocation = None,
                 error = Some(error)
             )
+
+let inferProgramProgressBody body entryPackageId (progress: ProgramInferenceProgress) =
+    progress.state
+    |> inferProgramUnitBody(body)(entryPackageId)
+    |> withResolvedSubstitution(progress.resolved)
 
 // The supply starts above every id a statically embedded scheme already quantifies over — the
 // builtin signatures and the standard traits' parameters — because reissuing one makes `instantiate`
@@ -2509,9 +2534,10 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                             validateTraitDeclarations(declarations)(declarations)([])
                         )
                         |> registerExternalOpaqueTypes(externalDeclarations)
+                        |> startProgramInferenceProgress
                         |> inferExpandedProgramUnits(units)(externalDeclarations)
-                        |> validateTraitDefaults(declarations)
-                        |> inferProgramUnitBody(body)(entryPackageId)
+                        |> advanceProgramInference(validateTraitDefaults(declarations))
+                        |> inferProgramProgressBody(body)(entryPackageId)
                         |> attachExternalAbi(externalDeclarations)
                         |> withProgramErrorLocation
 
@@ -2534,9 +2560,10 @@ let inferExpandedProgramFromPackage packageId baseEnvironment program =
                             validateTraitDeclarations(declarations)(declarations)([])
                         )
                         |> registerExternalOpaqueTypes(externalDeclarations)
+                        |> startProgramInferenceProgress
                         |> inferTopLevelItems(items)(externalDeclarations)
-                        |> validateTraitDefaults(declarations)
-                        |> inferProgramUnitBody(body)(packageId)
+                        |> advanceProgramInference(validateTraitDefaults(declarations))
+                        |> inferProgramProgressBody(body)(packageId)
                         |> attachExternalAbi(externalDeclarations)
                         |> withProgramErrorLocation
 

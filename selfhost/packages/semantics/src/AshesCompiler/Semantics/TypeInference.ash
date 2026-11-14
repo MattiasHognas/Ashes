@@ -55,6 +55,7 @@ export (
     value canonicalTraitName,
     value withProgramInferenceRules,
     value withoutProgramInferenceRules,
+    value withClosedGeneralizationScope,
     value addTraitBinding,
     value resolveTraitBinding,
     value resolveTraitMethod,
@@ -140,6 +141,13 @@ type ExternalFunctionInferenceDefinition =
     | directScheme: TypeScheme
     | firstClassScheme: Maybe(TypeScheme)
 
+// Name-keyed views of an environment's value bindings, constructors and record constructors.
+// Each answers what a scan of the list it mirrors answers: the youngest entry for a name.
+type BindingLookupIndex =
+    | valuesByName: MapTree(Str, TypeScheme)
+    | constructorsByName: MapTree(Str, ConstructorInferenceDefinition)
+    | recordsByTypeName: MapTree(Str, ConstructorInferenceDefinition)
+
 type HeapConstructorLookupIndex =
     | groups: MapTree(Int, MapTree(Str, ConstructorFieldGroup))
     | records: MapTree(Int, MapTree(Str, Bool))
@@ -167,6 +175,10 @@ type TypeEnvironment =
     // the negation of `x`. Program inference turns it on; an environment built for lowering
     // leaves it off, so its speculative inference is unchanged.
     | programInferenceRules: Bool
+    // When present, mirrors `bindings` and `constructors` by name. Only an environment that
+    // extends them through `addTypeBinding` and `addConstructorBinding` alone may carry it;
+    // program inference does, an environment built for lowering does not.
+    | lookupIndex: Maybe(BindingLookupIndex)
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -295,7 +307,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], programInferenceRules = false, lookupIndex = None, typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -307,18 +319,50 @@ let inferencePackageId environment =
     match environment with
         | TypeEnvironment { packageId = packageId } -> packageId
 
+let recursive constructorResultTypeName semanticType =
+    match semanticType with
+        | SemFunction(_argument, result, None) -> constructorResultTypeName(result)
+        | SemNamed(_symbolId, name, _arguments) -> Some(name)
+        | _ -> None
+
+let indexValueBinding name scheme (index: Maybe(BindingLookupIndex)) =
+    match index with
+        | None -> None
+        | Some(lookup) -> Some((lookup with valuesByName = Ashes.Collection.Map.setStr(name)(scheme)(lookup.valuesByName)))
+
+let indexRecordConstructor (definition: ConstructorInferenceDefinition) (lookup: BindingLookupIndex) =
+    match (definition.fieldNames, definition.scheme) with
+        | (_field :: _rest, TypeScheme { body = body }) ->
+            match constructorResultTypeName(body) with
+                | Some(typeName) -> lookup with recordsByTypeName = Ashes.Collection.Map.setStr(typeName)(definition)(lookup.recordsByTypeName)
+                | None -> lookup
+        | _ -> lookup
+
+let indexConstructorBinding (definition: ConstructorInferenceDefinition) (index: Maybe(BindingLookupIndex)) =
+    match index with
+        | None -> None
+        | Some(lookup) ->
+            Some(
+                indexRecordConstructor(
+                    definition,
+                    lookup with constructorsByName = Ashes.Collection.Map.setStr(definition.name)(definition)(lookup.constructorsByName)
+                )
+            )
+
 let addTypeBinding name scheme (environment: TypeEnvironment) =
     match environment with
-        | TypeEnvironment { bindings = bindings, generalizationSchemes = schemes } ->
+        | TypeEnvironment { bindings = bindings, generalizationSchemes = schemes, lookupIndex = index } ->
             let extended =
                 match schemes with
                     | Some(open) -> Some(scheme :: open)
                     | None -> None
-            in environment with bindings = (name, scheme) :: bindings, generalizationSchemes = extended
+            in environment with bindings = (name, scheme) :: bindings, generalizationSchemes = extended, lookupIndex = indexValueBinding(name)(scheme)(index)
 
 let addConstructorBinding name scheme fieldNames (environment: TypeEnvironment) =
     match addTypeBinding(name)(scheme)(environment) with
-        | TypeEnvironment { constructors = constructors } as withBinding -> withBinding with constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, heapConstructorIndex = None
+        | TypeEnvironment { constructors = constructors, lookupIndex = index } as withBinding ->
+            let definition = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames)
+            in withBinding with constructors = definition :: constructors, heapConstructorIndex = None, lookupIndex = indexConstructorBinding(definition)(index)
 
 let addCapabilityBinding name scheme operations (environment: TypeEnvironment) =
     match environment with
@@ -400,6 +444,10 @@ let recursive findTypeBinding name bindings =
 
 let resolveTypeBinding name environment =
     match environment with
+        | TypeEnvironment { lookupIndex = Some(BindingLookupIndex { valuesByName = values }), fallbackBindings = fallback } ->
+            match Ashes.Collection.Map.getStr(name)(values) with
+                | Some(scheme) -> Some(scheme)
+                | None -> findTypeBinding(name)(fallback)
         | TypeEnvironment { bindings = bindings, fallbackBindings = fallback } ->
             match findTypeBinding(name)(bindings) with
                 | Some(scheme) -> Some(scheme)
@@ -420,6 +468,7 @@ let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinitio
 
 let resolveConstructorBinding name environment =
     match environment with
+        | TypeEnvironment { lookupIndex = Some(BindingLookupIndex { constructorsByName = indexed }) } -> Ashes.Collection.Map.getStr(name)(indexed)
         | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
             findConstructorBinding(
                 name,
@@ -481,9 +530,44 @@ let traitNameIn (environment: TypeEnvironment) (name: Str) =
     then canonicalTraitName(name)
     else name
 
-let withProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = true
+let withIndexedValue name scheme (lookup: BindingLookupIndex) = lookup with valuesByName = Ashes.Collection.Map.setStr(name)(scheme)(lookup.valuesByName)
 
-let withoutProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = false
+let withIndexedConstructor (definition: ConstructorInferenceDefinition) (lookup: BindingLookupIndex) =
+    indexRecordConstructor(
+        definition,
+        lookup with constructorsByName = Ashes.Collection.Map.setStr(definition.name)(definition)(lookup.constructorsByName)
+    )
+
+let recursive indexValueBindings bindings (lookup: BindingLookupIndex) =
+    match bindings with
+        | [] -> lookup
+        | (name, scheme) :: older ->
+            lookup
+            |> indexValueBindings(older)
+            |> withIndexedValue(name)(scheme)
+
+let recursive indexConstructorBindings (definitions: List(ConstructorInferenceDefinition)) (lookup: BindingLookupIndex) =
+    match definitions with
+        | [] -> lookup
+        | definition :: older ->
+            lookup
+            |> indexConstructorBindings(older)
+            |> withIndexedConstructor(definition)
+
+// Program inference's own view of an environment: the program-only rules on and the bindings
+// indexed by name, oldest first so the youngest entry for a name is the one kept.
+let withProgramInferenceRules (environment: TypeEnvironment) =
+    environment with programInferenceRules = true, lookupIndex = Some(
+        BindingLookupIndex(valuesByName = Ashes.Collection.Map.empty, constructorsByName = Ashes.Collection.Map.empty, recordsByTypeName = Ashes.Collection.Map.empty)
+        |> indexValueBindings(environment.bindings)
+        |> indexConstructorBindings(environment.constructors)
+    )
+
+let withoutProgramInferenceRules (environment: TypeEnvironment) = environment with programInferenceRules = false, lookupIndex = None, generalizationSchemes = None
+
+// Between two top-level declarations every binding in scope is generalized, so none holds a free
+// type variable: a declaration's generalization only has to look at what it adds itself.
+let withClosedGeneralizationScope (environment: TypeEnvironment) = environment with generalizationSchemes = Some([])
 
 let appliesProgramInferenceRules (environment: TypeEnvironment) = environment.programInferenceRules
 
@@ -2102,6 +2186,11 @@ let recursive findRecordDefinitionByType typeName definitions =
                 | _ -> findRecordDefinitionByType(typeName)(rest)
         | _definition :: rest -> findRecordDefinitionByType(typeName)(rest)
 
+let resolveRecordDefinitionByType typeName (environment: TypeEnvironment) =
+    match environment.lookupIndex with
+        | Some(BindingLookupIndex { recordsByTypeName = records }) -> Ashes.Collection.Map.getStr(typeName)(records)
+        | None -> findRecordDefinitionByType(typeName)(environment.constructors)
+
 // The constructor a record update rebuilds. Under the program-only rules a type whose constructor
 // is spelled differently (an exported type with a private constructor in a stitched project) is
 // found by the type it constructs, as a field access finds it.
@@ -2110,13 +2199,13 @@ let recordUpdateDefinition name (environment: TypeEnvironment) =
         | Some(definition) -> Some(definition)
         | None ->
             if environment.programInferenceRules
-            then findRecordDefinitionByType(name)(environment.constructors)
+            then resolveRecordDefinitionByType(name)(environment)
             else None
 
 let inferRecordField receiverType fieldName (environment: TypeEnvironment) substitution supply constraints =
     match applySubstitution(substitution)(receiverType) with
         | SemNamed(_symbolId, name, _arguments) ->
-            match findRecordDefinitionByType(name)(environment.constructors) with
+            match resolveRecordDefinitionByType(name)(environment) with
                 | Some(definition) -> inferRecordFieldDefinition(receiverType)(fieldName)(definition)(substitution)(supply)(constraints)
                 | None ->
                     fieldName
