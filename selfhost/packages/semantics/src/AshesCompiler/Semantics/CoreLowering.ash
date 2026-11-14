@@ -35510,23 +35510,23 @@ let concreteCopyInferenceBindings (registry: CoreConcreteRegistry) =
         given (_name) ->
             given (candidate: CoreConcreteCandidate) -> (candidate.name, candidate.scheme) :: bindings)([])(registry.candidates)
 
+// A candidate's scheme answers a name no visible binding has. When the environment lists its open
+// schemes, the registry's bindings are read as the environment's fallback and its open schemes
+// follow the listed ones; otherwise the candidates are appended to the bindings themselves, which
+// is what a generalization then scans.
 let concreteCopyInferenceEnvironment state =
     (let environment = constrainedInferenceEnvironment(state)
     in
-        let copies =
-            state
-            |> stateConcreteRegistry
-            |> concreteCopyInferenceBindings
+        let registry = stateConcreteRegistry(state)
         in
-            let open =
-                match environment.generalizationSchemes with
-                    | Some(schemes) ->
-                        copies
-                        |> openSchemesOf
-                        |> append(schemes)
-                        |> Some
-                    | None -> None
-            in environment with bindings = append(environment.bindings)(copies), generalizationSchemes = open)
+            match environment.generalizationSchemes with
+                | Some(schemes) ->
+                    match coreConcreteOpenSchemes(registry) with
+                        | [] -> environment with fallbackBindings = registry.inferenceBindings
+                        | open ->
+                            environment with fallbackBindings = registry.inferenceBindings, generalizationSchemes = Some(append(schemes)(open))
+                | None ->
+                    environment with bindings = append(environment.bindings)(concreteCopyInferenceBindings(registry)))
 
 // Stage 0's `NamesConstrainedCandidate`: the root names the registered top-level function, not a
 // local binding of the same name. A function body reads the top-level function through a capture,

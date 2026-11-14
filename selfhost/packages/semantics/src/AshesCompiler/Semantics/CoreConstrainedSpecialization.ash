@@ -2,6 +2,7 @@
 // dictionary ABI and the linear accumulator specialization machinery.
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.TypeSchemes.schemeIsClosed
 import Ashes.Collection.Map.MapTree
 export (
     type CoreConcreteCandidate(..),
@@ -9,6 +10,7 @@ export (
     type CoreConcreteRegistry(..),
     value emptyCoreConcreteRegistry,
     value registerCoreConcreteCandidate,
+    value coreConcreteOpenSchemes,
     value lookupCoreConcreteCandidate,
     value lookupCoreConcreteCopy,
     value recordCoreConcreteCopy,
@@ -35,18 +37,42 @@ type CoreConcreteCopy =
     | parameterTypes: List(SemanticType)
     | label: Maybe(Str)
 
+// `inferenceBindings` lists every registration youngest first, so the first entry for a name is
+// the candidate `candidates` holds for it. `openSchemes` has an entry for each name ever
+// registered with a free type variable in its scheme: the scheme while the current candidate of
+// that name is open, None once a closed one replaced it.
 type CoreConcreteRegistry =
     | nextIdentity: Int
     | candidates: MapTree(Str, CoreConcreteCandidate)
     | copies: MapTree(Int, List(CoreConcreteCopy))
+    | inferenceBindings: List((Str, TypeScheme))
+    | openSchemes: MapTree(Str, Maybe(TypeScheme))
 
-let emptyCoreConcreteRegistry unit = CoreConcreteRegistry(nextIdentity = 0, candidates = Ashes.Collection.Map.empty, copies = Ashes.Collection.Map.empty)
+let emptyCoreConcreteRegistry unit = CoreConcreteRegistry(nextIdentity = 0, candidates = Ashes.Collection.Map.empty, copies = Ashes.Collection.Map.empty, inferenceBindings = [], openSchemes = Ashes.Collection.Map.empty)
+
+let registeredOpenSchemes (name: Str) (scheme: TypeScheme) (open: MapTree(Str, Maybe(TypeScheme))) =
+    if schemeIsClosed(scheme)
+    then
+        match Ashes.Collection.Map.getStr(name)(open) with
+            | Some(_earlier) -> Ashes.Collection.Map.setStr(name)(None)(open)
+            | None -> open
+    else Ashes.Collection.Map.setStr(name)(Some(scheme))(open)
 
 // The caller admits only top-level sources and keeps the pre-dictionary scheme.
 // A new declaration gets a distinct cache identity even when its spelling repeats.
 let registerCoreConcreteCandidate name source scheme arity bindingSlot isRecursive (registry: CoreConcreteRegistry) =
     (let candidate = CoreConcreteCandidate(identity = registry.nextIdentity, name = name, source = source, scheme = scheme, arity = arity, bindingSlot = bindingSlot, isRecursive = isRecursive)
-    in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(name)(candidate)(registry.candidates))
+    in registry with nextIdentity = registry.nextIdentity + 1, candidates = Ashes.Collection.Map.setStr(name)(candidate)(registry.candidates), inferenceBindings = (name, scheme) :: registry.inferenceBindings, openSchemes = registeredOpenSchemes(name)(scheme)(registry.openSchemes))
+
+// The schemes of the current candidates that hold a free type variable, in the order a fold of
+// `candidates` lists them.
+let coreConcreteOpenSchemes (registry: CoreConcreteRegistry) =
+    Ashes.Collection.Map.foldLeft(given (schemes) ->
+        given (_name) ->
+            given (entry) ->
+                match entry with
+                    | Some(scheme) -> scheme :: schemes
+                    | None -> schemes)([])(registry.openSchemes)
 
 let lookupCoreConcreteCandidate name (registry: CoreConcreteRegistry) = Ashes.Collection.Map.getStr(name)(registry.candidates)
 

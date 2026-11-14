@@ -152,6 +152,8 @@ type TypeEnvironment =
     // When present, the only schemes of `bindings` that can hold a free type variable; every
     // other binding is closed. Generalization then scans these instead of the whole environment.
     | generalizationSchemes: Maybe(List(TypeScheme))
+    // Bindings a lookup by name reaches only after `bindings` has no entry for the name.
+    | fallbackBindings: List((Str, TypeScheme))
 
 type TypeInferenceError =
     | UnknownValue(Str)
@@ -277,7 +279,7 @@ type BindingRequirementResolution =
     | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironmentForPackage packageId =
-    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, typeResolutionContext = emptyTypeResolutionContext(
+    TypeEnvironment(packageId = packageId, bindings = [], constructors = [], constructorFieldGroups = [], heapConstructorIndex = None, capabilities = [], traits = [], traitImplementations = [], providers = [], handledCapabilities = [], externalFunctions = [], generalizationSchemes = None, fallbackBindings = [], typeResolutionContext = emptyTypeResolutionContext(
         Unit
     ))
 
@@ -382,11 +384,10 @@ let recursive findTypeBinding name bindings =
 
 let resolveTypeBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
-            findTypeBinding(
-                name,
-                bindings
-            )
+        | TypeEnvironment { bindings = bindings, fallbackBindings = fallback } ->
+            match findTypeBinding(name)(bindings) with
+                | Some(scheme) -> Some(scheme)
+                | None -> findTypeBinding(name)(fallback)
 
 let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinition) -> Maybe(ConstructorInferenceDefinition) =
     given (name) ->
