@@ -99,6 +99,11 @@ Correctness, stage 0:
   diagnostic.
 - A tuple holding an alias of an unresolved constrained function is accepted and emits a
   dictionary-taking closure.
+- A type name in an annotation is accepted when the module that declares it is imported only
+  transitively, which the language reference does not allow. With `A` exporting `type T`, `B`
+  importing `A`, and `Main` importing only `B`, `let get (t: T) = t.n` in `Main` compiles and
+  runs. The standalone inference rejects it with `UnknownTypeName("T")`; two modules of the
+  compiler's own source relied on it and now import what they annotate with.
 
 Correctness, stage 1:
 
@@ -146,10 +151,8 @@ What is known about the starting point:
   They return binding schemes, one substitution and the trailing type; no type is kept per
   expression. An error names its package, module, declaration and innermost located expression.
 - The standalone inference infers 917 of the 1,048 test programs that should compile and the
-  frontend package (573 declarations in 0.7 s). It does not yet infer the compiler: the compiler's
-  source annotates parameters with types their module never imports, which stage 0 accepts and
-  the standalone inference rejects. Task builtins, `async` and capability rows account for most
-  of the remaining test programs.
+  compiler itself: 8,648 declarations in 147 modules in about 60 s with a 0.6 GiB peak. Task
+  builtins, `async` and capability rows account for most of the remaining test programs.
 - Syntax nodes have no stable identity. Spans collide across stitched modules and synthesized nodes
   have none.
 - Lowering decides about 30 things on whether a type is still open at a site, mirroring the order
