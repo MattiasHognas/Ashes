@@ -936,6 +936,9 @@ type CoreFunctionState =
     // AFTER the site — a top-level binding whose parameter only a later use pins — so a pass
     // reaching the site cannot tell a genuinely ambiguous operand from one not determined yet.
     | pendingTraitGoals: List((Str, SemanticType))
+    // The `==` and `!=` sites lowered as a speculative integer comparison because both operand
+    // types were still variables there, keyed as a trait goal is, with the shared operand type.
+    | pendingEqualityGoals: List((Str, SemanticType))
     // Stage 0's `_pendingCallResultTypes` for the calls between the members of a recursive group: a
     // call to a member whose result type was still open at the call, by call site.
     | pendingSiblingCallResults: List((Str, SemanticType))
@@ -1962,6 +1965,14 @@ let statePendingTraitGoals (state: CoreLoweringState) =
 let withStatePendingTraitGoals value (state: CoreLoweringState) =
     (let group = state.functionState
     in state with functionState = (group with pendingTraitGoals = value))
+
+let statePendingEqualityGoals (state: CoreLoweringState) =
+    (let group = state.functionState
+    in group.pendingEqualityGoals)
+
+let withStatePendingEqualityGoals value (state: CoreLoweringState) =
+    (let group = state.functionState
+    in state with functionState = (group with pendingEqualityGoals = value))
 
 let statePendingSiblingCallResults (state: CoreLoweringState) =
     (let group = state.functionState
@@ -3304,6 +3315,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 activeTraitMethods = [],
                 activeTypeParameters = [],
                 pendingTraitGoals = [],
+                pendingEqualityGoals = [],
                 pendingSiblingCallResults = [],
                 traitGoalsPinned = false
             ),
@@ -7269,6 +7281,8 @@ let restoreOuterFrame outer bodyState =
                 withStateTraitMethodLabels(stateTraitMethodLabels(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingTraitGoals(statePendingTraitGoals(bodyState))(current))
+            |> (given (current: CoreLoweringState) ->
+                withStatePendingEqualityGoals(statePendingEqualityGoals(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
                 withStatePendingSiblingCallResults(statePendingSiblingCallResults(bodyState))(current))
             |> (given (current: CoreLoweringState) ->
@@ -31472,8 +31486,16 @@ let emitDeferredCoreAdd binary =
 // the finalization rewrite, and the shared variable joins the body's unresolved call results, so
 // a body that resolves it later is lowered a second time against the resolved type, as stage 0
 // re-lowers a binding whose trait-mapped comparison needed a late type hint. A variable no body
-// resolves seals to the integer comparison.
-let emitDeferredCoreEquality kind binary =
+// resolves seals to the integer comparison. The site is recorded as an equality goal too: a
+// variable only a later use outside the body resolves (the arguments a lambda is applied to) may
+// settle on a type the integer comparison does not compare, which the program's passes answer
+// by lowering again with that type pinned at the site.
+let recordEqualityGoal (methodName: Str) (operandType: SemanticType) (state: CoreLoweringState) =
+    match traitGoalKey("Eq")(methodName)(state) with
+        | Some(key) -> withStatePendingEqualityGoals((key, operandType) :: statePendingEqualityGoals(state))(state)
+        | None -> state
+
+let emitDeferredCoreEquality (methodName: Str) kind binary =
     match binary with
         | LoweredCoreBinary { state = state, leftTemp = left, leftType = leftType, rightTemp = right, rightType = rightType, error = None } ->
             match bindType(leftType)(rightType)(state) with
@@ -31487,22 +31509,29 @@ let emitDeferredCoreEquality kind binary =
                                         targetState
                                         |> withStatePendingOperatorDefaults((target, Ashes.Internal.deepCopy(leftType)) :: pending)
                                         |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(leftType) :: unresolved)
+                                        |> recordEqualityGoal(methodName)(Ashes.Internal.deepCopy(leftType))
                                     in
                                         recorded
                                         |> emit(kind(target)(left)(right))
                                         |> success(target)(SemBool)
         | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
+let equalityGoalMethod operator =
+    match operator with
+        | CoreEqualOperator -> Some("equal")
+        | CoreNotEqualOperator -> Some("notEqual")
+        | _ -> None
+
 let deferredCoreOperatorEmitter operator =
     match operator with
         | CoreAddOperator -> Some(emitDeferredCoreAdd)
         | CoreEqualOperator ->
             CmpIntEq
-            |> emitDeferredCoreEquality
+            |> emitDeferredCoreEquality("equal")
             |> Some
         | CoreNotEqualOperator ->
             CmpIntNe
-            |> emitDeferredCoreEquality
+            |> emitDeferredCoreEquality("notEqual")
             |> Some
         | _ -> None
 
@@ -31569,6 +31598,23 @@ let emitPreparedCoreOrdered name operator lower binary =
                 | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
 
+// The state of an `==` or `!=` over two variable operands whose site an earlier pass proved a
+// type for: the left operand is bound to that type, and the variable joins the body's unresolved
+// call results as the speculative comparison's does, so the body is lowered again against the
+// resolved type. None when no pass proved the site.
+let pinProvenEqualityGoal operator (operandType: SemanticType) (state: CoreLoweringState) =
+    match equalityGoalMethod(operator) with
+        | Some(methodName) ->
+            match pinProvenTraitGoal("Eq")(methodName)(operandType)(state) with
+                | (_unpinnedState, SemVariable(_id)) -> None
+                | (pinnedState, _pinnedType) ->
+                    pinnedState
+                    |> withStateUnresolvedCallResults(Ashes.Internal.deepCopy(operandType) :: stateUnresolvedCallResults(pinnedState))
+                    |> Some
+        | None -> None
+
+let withCoreBinaryState (state: CoreLoweringState) (binary: LoweredCoreBinary) = binary with state = state
+
 let emitPreparedCoreBinary operator lower binary =
     match (coreOrderedOperatorName(operator), binary) with
         | (Some(name), _binary) -> emitPreparedCoreOrdered(name)(operator)(lower)(binary)
@@ -31581,7 +31627,15 @@ let emitPreparedCoreBinary operator lower binary =
                         |> unifyEqualityOperands(operator)
                         |> resolveCoreBinaryOwnTypes
                         |> emitResolvedCoreBinary(operator)(lower)
-                    else emitDeferred(binary)
+                    else
+                        match pinProvenEqualityGoal(operator)(SemVariable(leftId))(state) with
+                            | Some(pinnedState) ->
+                                binary
+                                |> withCoreBinaryState(pinnedState)
+                                |> unifyEqualityOperands(operator)
+                                |> resolvedCoreBinary
+                                |> emitResolvedCoreBinary(operator)(lower)
+                            | None -> emitDeferred(binary)
                 | _ ->
                     binary
                     |> unifyEqualityOperands(operator)
@@ -37746,26 +37800,95 @@ let validatedReplayItems items trailingBody =
             else
                 retainReachableReplayItems(items)(graph.candidates)(reachableReplayNames(graph.candidates)(enqueueReplayReferences(roots.names)([]))(Ashes.Collection.Map.empty))([]))
 
+// Whether `==` at a closed operand type is anything but the comparisons a sealed speculative
+// site already becomes: the integer comparison itself, or the string, float and big integer
+// forms the finalization rewrite swaps in.
+let equalityComparesStructurally (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> false
+        | SemUInt(_bits) -> false
+        | SemRune -> false
+        | SemBool -> false
+        | SemFloat -> false
+        | SemBigInt -> false
+        | SemString -> false
+        | _ -> true
+
+let equalityGoalProof (goalType: SemanticType) (state: CoreLoweringState) =
+    (let resolved = resolveType(state)(goalType)
+    in
+        match freeTypeVariables(resolved) with
+            | [] ->
+                if equalityComparesStructurally(resolved)
+                then Some(resolved)
+                else None
+            | _variables -> None)
+
+let sameEqualityGoalProof (left: Maybe(SemanticType)) (right: Maybe(SemanticType)) =
+    match (left, right) with
+        | (Some(leftType), Some(rightType)) -> leftType == rightType
+        | (None, None) -> true
+        | _ -> false
+
+// What a pass settled for each speculative equality site: the closed type its operands resolved
+// to when the integer comparison does not compare it, and nothing for a site every lowering of
+// which did not agree on one such type (a body lowered at several types, or two comparisons
+// under one span).
+let recursive equalityGoalProofs (goals: List((Str, SemanticType))) (state: CoreLoweringState) (proofs: MapTree(Str, Maybe(SemanticType))) =
+    match goals with
+        | [] -> proofs
+        | (key, goalType) :: rest ->
+            let proof = equalityGoalProof(goalType)(state)
+            in
+                match Ashes.Collection.Map.getStr(key)(proofs) with
+                    | None ->
+                        proofs
+                        |> Ashes.Collection.Map.setStr(key)(proof)
+                        |> equalityGoalProofs(rest)(state)
+                    | Some(earlier) ->
+                        if sameEqualityGoalProof(earlier)(proof)
+                        then equalityGoalProofs(rest)(state)(proofs)
+                        else
+                            proofs
+                            |> Ashes.Collection.Map.setStr(key)(None)
+                            |> equalityGoalProofs(rest)(state)
+
+let recursive provenEqualityGoals (goals: List((Str, SemanticType))) (proofs: MapTree(Str, Maybe(SemanticType))) (proven: List((Str, SemanticType))) =
+    match goals with
+        | [] -> proven
+        | (key, _goalType) :: rest ->
+            match Ashes.Collection.Map.getStr(key)(proofs) with
+                | Some(Some(proof)) -> provenEqualityGoals(rest)(proofs)((key, proof) :: proven)
+                | _ -> provenEqualityGoals(rest)(proofs)(proven)
+
+// The speculative equality sites of a finished pass that sealed to a wrong comparison, with the
+// type to pin at each.
+let structuralEqualityGoals (state: CoreLoweringState) =
+    (let goals = statePendingEqualityGoals(state)
+    in
+        provenEqualityGoals(goals)(equalityGoalProofs(goals)(state)(Ashes.Collection.Map.empty))([]))
+
 // Stage 0's discovery pass, run only for a program that needs one: a pass that met a trait goal
 // its substitution could not yet answer lowers the program a second time with what that pass went
 // on to prove, so each such site chooses the evidence the rest of the program settled on. The
 // first pass's own state is a value, so the second starts from the same seed rather than from
 // anything the first left behind. Its result is never the program's: a deferred site holds a
 // constant standing in for a dispatch, so every pass that deferred one is followed by a pass that
-// either dispatches it or reports it.
+// either dispatches it or reports it. A speculative `==` whose operands the pass went on to
+// resolve to a type the integer comparison does not compare is such a site too.
 let lowerProgramPasses items trailingBody environment (seed: CoreLoweringState) =
     match seed |> lowerProgramWithCapabilities(items)(trailingBody)(environment) with
         | LoweredCoreValue { state = firstState, error = firstError } as first ->
-            match statePendingTraitGoals(firstState) with
-                | [] -> first
-                | pending ->
+            match (statePendingTraitGoals(firstState), structuralEqualityGoals(firstState)) with
+                | ([], []) -> first
+                | (pending, equalityGoals) ->
                     let replayItems =
                         match firstError with
                             | None -> validatedReplayItems(items)(trailingBody)
                             | Some(_error) -> items
                     in
                         seed
-                        |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)([]))(Ashes.Collection.Map.empty))
+                        |> withStateProvenTraitGoals(traitGoalMap(resolvedTraitGoals(pending)(firstState)(equalityGoals))(Ashes.Collection.Map.empty))
                         |> withStateTraitGoalsPinned(true)
                         |> lowerProgramWithCapabilities(replayItems)(trailingBody)(environment)
 
