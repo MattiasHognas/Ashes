@@ -35066,9 +35066,13 @@ let concreteCopyInferenceEnvironment state =
                     | None -> None
             in environment with bindings = append(environment.bindings)(copies), generalizationSchemes = open)
 
+// Stage 0's `NamesConstrainedCandidate`: the root names the registered top-level function, not a
+// local binding of the same name. A function body reads the top-level function through a capture,
+// which carries the candidate's own generalized scheme, quantified variable identities included.
 let concreteCandidateBindingMatches (candidate: CoreConcreteCandidate) (state: CoreLoweringState) =
     match lookupBinding(candidate.name)(state.bindings) with
         | Some(CoreBinding { location = CoreLocal(slot) }) -> inProgramEntryFrame(state) && slot == candidate.bindingSlot
+        | Some(CoreBinding { location = CoreEnvironment(_index), scheme = scheme }) -> scheme.quantified != [] && scheme == candidate.scheme
         | Some(_binding) -> false
         | None -> stateConcreteDepth(state) > 0
 
