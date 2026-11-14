@@ -17,13 +17,10 @@ following known work remains open; keep this list updated when an item is promot
 
 | Area | Known limitation and evidence | Deferred work / return condition |
 | --- | --- | --- |
-| Constrained let-polymorphism (TRT-13, SEM-22), active F blocker | Bootstrap32 failed naturally after 9:58.05. Diagnostic replay captured the original `Int`/`Str` mismatch in `IrOptimizer.lookupAssociation`, called by `countBranchRefsToLabels`; the final missing `Ord` evidence diagnostic was secondary. The compiler itself needs mixed constrained instantiations. | Required dictionary inference, recursive/ordinary binding elaboration, and ownership-safe specialization are in scope for F. Focused Core results do not establish final stage-1 CLI or stage-2 acceptance. Do not split or annotate compiler helpers to hide the missing rule. |
 | Ordinary generic `Not` evidence | Ordinary custom-type and mixed Boolean/custom-type `Not` bindings lower at Core level through per-call dictionary evidence. The expression-only lowering entry points carry no replay and no standard trait module, so a constrained binding called there at a built-in type is rejected (`UnknownLoweringBinding` for the module's method), as is an alias call of a constrained binding in a program lowered without the module. [Cases and current limits](../../../selfhost/tests/logical-not-inference/README.md). | Core lowering results do not establish native stage-1 runtime or lifetime acceptance of generic `Not` calls; that validation remains pending. |
-| Constrained specialization and generic-loop ownership, active F blocker | Actual bootstrap32 stage 1 compiled `SnapshotLoop` but retained 6/5001/50001 cells at 1/1000/10000 rounds, reproducing +5 per round. Stage 0 is flat at 1/1/1; disabling only `GRC_NO_CONSTRAINEDSPECIALIZATION` reproduces the growth. Watchpoints attribute the five retained references to string labels. See `Lowering.ConstrainedSpecialization.cs` and the [strict mixed-constrained runner](../../../selfhost/tests/mixed-constrained-bootstrap/README.md). | Mirror the required concrete ownership path and prove actual stage-1 native plateaus, including aliases and escaping evidence. Core typing or copy-selection tests alone are not lifetime acceptance; final runtime validation remains pending. |
 | Custom capability context in constrained-call queries | Core capability declarations and operation schemes are not projected into the constrained-call inference environment. An argument that invokes a user capability may therefore fail re-inference even when ordinary Core lowering supports it. [Small retained probe](../../../selfhost/tests/constrained-bindings/deferred/CapabilityArgument.ash); no bootstrap dependency has been demonstrated. | Project the declared operation/provider context and validate effect/evidence handling when required. This remains deferred and is not included in the constructor/alias/external/record-field query fixes. |
 | Generic arithmetic and bitwise dictionaries | Ordinary generic operator dispatch for `Add`, `Subtract`, `Multiply`, `Divide`, `Modulo`, and bitwise traits is not implemented by the current constrained-binding path. That path admits only `Eq`, `Ord`, and `Not`; other constraints retain the existing primitive/deferred operator lowering and its type-mismatch or unsupported/missing-evidence diagnostics. Concrete primitive arithmetic support does not establish generic dictionary dispatch. | Add operator-to-dictionary lowering, physical evidence forwarding, and ownership checks for these traits when required. Preserve existing diagnostics; do not claim this broader parity from the Eq/Ord/Not bootstrap fix. |
 | Derived trait execution (TRT-14 / TRT-15) | Declaration expansion and evidence planning do not establish complete physical dictionary/method lowering. The existing milestone records rejection of equality on a list of a derived record in `tests/reuse_specialization_declines_unreachable_helper.ash`; this case has not been revalidated in the current bootstrap round. | Remaining runtime evidence and method lowering beyond what the compiler build requires. Reproduce the recorded case before claiming it still fails or is fixed. |
-| Pending trait-goal string ownership | Frozen bootstrap28 leaks one key string per round through unchanged `resolvedTraitGoals` when the pending list comes from lowering state. The reproducer without the new negation helper reports 2/1001/10001 live cells at 1/1000/10000 rounds; the literal-list control is flat. [Tracked sources, watchpoint evidence, and strict plateau runner](../../../selfhost/tests/pending-goal-lifetime/README.md). | Attribute the exact missing ownership operation and fix it under the mirror rule. This existing defect is newly exercised by negation; neither semantic success nor a stage-0-only flat result counts as stage-1 lifetime acceptance. |
 | Stage-1 poison instrumentation | Stage 1 does not implement the stage-0 `ASHES_RC_POISON=1` backend switch. Current stage-1-produced program checks are plain; poison checks use stage 0. [Validation limits](../../../selfhost/tests/logical-not-inference/README.md). | Implement and verify stage-1 poisoning separately. Do not report a poisoned stage-1 pass merely because the environment variable was set. |
 | Remaining step-E leaks and ownership gaps | The Round11 handoff retains the `32_3`, `32_28` / `32_29`, `40_9`, `32_ptr`, and `fn.tpl` investigations, other small reproducers, selector-alias reach, and the shared walker gap where `EnumerateChildren` does not descend `Call.Func`. These are historical open items, not a fresh census of the current compiler. | Resume E after F with a clean committed-tree census and fresh reproductions. Promote any item that blocks F or any newly introduced leak immediately; fix crashes before leaks, prefer Perceus RC, and require the stage-1 mirror where applicable. |
 
@@ -32,14 +29,97 @@ checkout's `.claude/step-f-archive/round2-20261112/artifacts/selfhost-dev/handof
 It is intentionally not restored under tracked `artifacts/`. The historical list and measurements
 remain available there; the current tracked pending-goal reproducer is linked above.
 
-**Still in scope for F:** complete the mixed constrained `IrOptimizer.lookupAssociation` path,
-its concrete ownership specialization, and measured repeated graph traversal or lookup costs.
-Bootstrap32 reached compiler lowering but produced no stage-2 executable. Its diagnostic replay
-identified the original mixed-key mismatch; the final missing `Ord` evidence error did not identify
-the first failure. Earlier bootstrap29 failed in `List.sort` after 9:04.34; later focused CLI checks
-passed that path and logical negation, but they do not establish a full bootstrap. Keep final-binary
-regressions, strict native lifetime checks, and the next complete stage-2 attempt as separate gates.
-See [PR #1155's earlier build outcome](https://github.com/MattiasHognas/Ashes/pull/1155).
+### Open work after bootstrap36
+
+State on **2026-11-14**: stage 1 built with `--debug -O2` finishes the discovery pass of Core
+lowering on its own sources in about 1:45 and fails early in the replay pass with missing `Eq`
+evidence. Reproducers named below live in the worktree that found them, under its ignored `work/`
+directory; copy one into `tests/` when its fix lands.
+
+Blocking the next stage 2 attempt:
+
+- **Replay-pass evidence failure.** `MissingCoreTraitEvidence("Eq", variable)` raised from
+  `lowerConstrainedDictionaryMethods` through `lowerConstrainedCallWithName`, about 7,750 top-level
+  item steps into the replay pass, in or near `ModuleReferenceRewriting.rewriteTypeName`. A
+  single-file copy of that function compiles, so the failure needs the stitched project. Known
+  candidates: a deferred constrained call does not lower its arguments in the discovery pass, so a
+  goal nested in them is first seen on replay; and trait goal keys are a span plus trait and
+  method, which two modules can share.
+
+Lowering performance, not yet done:
+
+- The replay pass lowers the whole program a second time.
+- A recursive body with a call result that resolves late is lowered again; a local recursive
+  function inside a top-level function can be lowered up to four times.
+- Per tail self call, the owned-slot judgement is still quadratic in function size, and the
+  per-predecessor part types and blockers are not memoized.
+- Lifetime placement indexes its block list with `listAt` from the liveness, dominator and
+  reachability code; `placeOwner` walks the instruction list several times per owner.
+- Every plan of a top-level binding builds and frees a list entry per binding in scope.
+- Type-graph classification is at least 18% of the discovery pass, structural droppers 8%, the
+  ownership and tail-call analysis modules 6%.
+- The substitution is an association list; `resolvedBindingSchemes` under
+  `phantomResultVariables` resolves open bindings twice per function result.
+- `matchingFunctionLines` in the IR text printer is superlinear; only `--emit-ir` uses it.
+
+Lifetime, stage 0:
+
+- The dictionary-passing path of a constrained call leaks one owned key per loop iteration
+  (`step-f-stage0-dictionary-path-leak/work/repro/b3.ash`). Releasing the predecessor would free a
+  key the generic callee's arena result still holds, so the fix needs a dictionary call's result
+  to own its parts. Needs an ownership-contract decision.
+- A value-less association variant leaks two cells per case
+  (`step-f-stage0-dictionary-path-leak/work/repro/c1.ash`).
+- The module stitcher compiled by stage 0 ends with about six live cells per definition.
+- Heap free-list corruption when a list taken from an element of a borrowed association-list
+  parameter is returned inside `Some` and also shared at insertion
+  (`step-f-backedge-scan/work/fix2/driver` on `tests/as_pattern_element_returned_from_consumed_list.ash`).
+
+Lifetime, stage 1:
+
+- Three cells per case on the association programs `m14`, `m15`, `m17` and `b3`
+  (`step-f-stage0-dictionary-path-leak/work/repro/`).
+- `tests/loop_result_record_around_whole_parameter_releases_duplicate.ash` and
+  `tests/loop_result_record_consed_parameter_part_releases_duplicate.ash` end with 71 live cells
+  against stage 0's 1.
+- The withdrawn-part-duplicate rule is applied at the loop-result site only; stage 0 applies it at
+  the back-edge and scrutinee sites too.
+- A transfer retain is still marked newly produced; only the two rules that released it twice
+  were changed.
+
+Correctness, stage 0:
+
+- A dictionary application with a function-typed result is copied to the heap shallowly and
+  keeps pointing at dictionaries in the applying frame's arena. A partial or escaping application
+  of a constrained function crashes (`step-f-stage0-alias-evidence2/work/fx/v1.ash`), and an alias
+  of one leaks two cells per call. Options recorded by the investigation: concrete-instance
+  dictionaries as program-lifetime constants for the crash, and the alias wrapper returning its
+  stage borrowed in the caller's window for the leak. Needs an ownership-contract decision.
+- A reference with no matching active dictionary falls through to the raw function without a
+  diagnostic.
+- A tuple holding an alias of an unresolved constrained function is accepted and emits a
+  dictionary-taking closure.
+
+Correctness, stage 1:
+
+- A constrained binding whose value is a partial application of another constrained function is
+  rejected with missing evidence.
+- The entry-frame concrete copy of a constrained loop is declined for an unknown reason.
+- Concrete copies resolve other top-level functions by name, so a later rebinding of a helper
+  name could be picked up.
+- Two comparisons under one span share a trait goal key; for `Ord` and `Not` the last record wins.
+
+Parity and tests:
+
+- Stage 0's lowering changed in #1154 (a uniqueness fast path on a matched field, a dropped
+  call-argument retain, and changes around reuse) without the stage-1 port. Six lowered-IR parity
+  fixtures and `TakenOverRecordLoweringTests` stay red until it is ported or the fixtures are
+  retired under the type-inference plan below.
+- Fifteen C# unit tests fail on `main`, and the census test
+  `NullaryPatternTestsDoNotKeepLookupResultsAlive` fails without any change.
+- The full selfhost suites, the end-to-end suite and `scripts/verify.sh` have not been run on the
+  Step F branch.
+
 
 An item leaves this list only with a linked fix and relevant stage-1 regression/lifetime evidence,
 or with a fresh reproduction proving the recorded defect no longer applies. Full suites and a
