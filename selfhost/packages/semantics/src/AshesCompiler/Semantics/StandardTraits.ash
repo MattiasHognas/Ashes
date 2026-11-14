@@ -504,6 +504,79 @@ let withTaskSignatures environment =
     |> intrinsicTaskOf(SemVariable(2))
     |> taskScheme(polymorphicTask))
     |> addTypeBinding("Ashes.Task.join")(taskScheme(intrinsicJoinHandleType)(polymorphicTask))
+    |> addTypeBinding("Stop.stop")(TypeScheme(quantified = [], body = None
+    |> SemRow([SemCapability("Stop")([])])
+    |> Some
+    |> SemFunction(SemNamed(4)("Unit")([]))(SemNamed(4)("Unit")([])), constraints = []))
+
+// The runtime capability a builtin acquires, per the language reference's built-in runtime
+// capabilities. The layout schemes carry no rows, so inference adds the row here.
+let builtinRuntimeCapability (moduleName: Str) (memberName: Str) =
+    match moduleName with
+        | "Ashes.IO" ->
+            match memberName with
+                | "args" -> None
+                | "exit" -> Some("ProcessExit")
+                | _ -> Some("ConsoleIO")
+        | "Ashes.IO.Console" ->
+            match memberName with
+                | "monotonicMillis" -> Some("TimeRead")
+                | _ -> Some("ConsoleIO")
+        | "Ashes.IO.File" ->
+            match memberName with
+                | "readText" -> Some("FileRead")
+                | "readAllBytes" -> Some("FileRead")
+                | "mmap" -> Some("FileRead")
+                | "exists" -> Some("FileRead")
+                | "open" -> Some("FileRead")
+                | "writeText" -> Some("FileWrite")
+                | "writeBytes" -> Some("FileWrite")
+                | "replace" -> Some("FileWrite")
+                | "makeExecutable" -> Some("FileWrite")
+                | _ -> None
+        | "Ashes.IO.Directory" ->
+            match memberName with
+                | "entries" -> Some("FileRead")
+                | "createAll" -> Some("FileWrite")
+                | "removeTree" -> Some("FileWrite")
+                | _ -> None
+        | "Ashes.IO.Environment" -> Some("EnvironmentRead")
+        | "Ashes.IO.Process" ->
+            match memberName with
+                | "spawn" -> Some("ProcessSpawn")
+                | _ -> None
+        | "Ashes.Ffi" ->
+            match memberName with
+                | "copyBytes" -> Some("UnsafeFfi")
+                | _ -> None
+        | "Ashes.Net.Tcp.Server" ->
+            match memberName with
+                | "listen" -> Some("NetListen")
+                | "forkWorkers" -> Some("NetListen")
+                | _ -> None
+        | "Ashes.Net.Tcp" ->
+            match memberName with
+                | "connect" -> Some("NetConnect")
+                | _ -> None
+        | "Ashes.Net.Http" -> Some("NetConnect")
+        | "Ashes.Net.Tls" ->
+            match memberName with
+                | "connect" -> Some("NetConnect")
+                | _ -> None
+        | _ -> None
+
+let recursive withRowOnInnermostArrow row semanticType =
+    match semanticType with
+        | SemFunction(argument, SemFunction(_, _, _) as result, outerRow) ->
+            SemFunction(argument)(withRowOnInnermostArrow(row)(result))(outerRow)
+        | SemFunction(argument, result, _row) -> SemFunction(argument)(result)(Some(row))
+        | other -> other
+
+let schemeWithRuntimeCapability moduleName memberName scheme =
+    match (builtinRuntimeCapability(moduleName)(memberName), scheme) with
+        | (Some(capabilityName), TypeScheme { quantified = quantified, body = body, constraints = constraints }) ->
+            TypeScheme(quantified = quantified, body = withRowOnInnermostArrow(SemRow([SemCapability(capabilityName)([])])(None))(body), constraints = constraints)
+        | (None, _) -> scheme
 
 // `standardTraitEnvironment` plus the intrinsic builtins' own signatures. The intrinsic modules
 // (`Ashes.IO`, `Ashes.Byte`, `Ashes.Text` and the rest of `coreBuiltinKind`'s) have no shipped
@@ -516,7 +589,9 @@ let recursive addBuiltinSignatures layouts environment =
         | [] -> environment
         | CoreBuiltinLayout { moduleName = moduleName, memberName = memberName, scheme = scheme } :: rest ->
             environment
-            |> addTypeBinding(moduleName + "." + memberName)(schemeWithIntrinsicTypeIds(scheme))
+            |> addTypeBinding(moduleName + "." + memberName)(scheme
+            |> schemeWithIntrinsicTypeIds
+            |> schemeWithRuntimeCapability(moduleName)(memberName))
             |> addBuiltinSignatures(rest)
 
 // Three intrinsics accept more than one argument type at a saturated call, which neither compiler

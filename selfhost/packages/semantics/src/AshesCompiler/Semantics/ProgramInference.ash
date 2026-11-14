@@ -556,41 +556,6 @@ let recursive validateTraitDeclarations declarations allDeclarations seen =
                                                             name :: seen
                                                         )
 
-let isBuiltinRuntimeCapability name =
-    if name == "ConsoleIO"
-    then true
-    else
-        if name == "FileRead"
-        then true
-        else
-            if name == "FileWrite"
-            then true
-            else
-                if name == "ProcessSpawn"
-                then true
-                else
-                    if name == "ProcessExit"
-                    then true
-                    else
-                        if name == "TimeRead"
-                        then true
-                        else
-                            if name == "EnvironmentRead"
-                            then true
-                            else
-                                if name == "Entropy"
-                                then true
-                                else
-                                    if name == "UnsafeFfi"
-                                    then true
-                                    else
-                                        if name == "NetListen"
-                                        then true
-                                        else
-                                            if name == "NetConnect"
-                                            then true
-                                            else name == "Stop"
-
 let recursive addCapabilityToInnermostArrow capabilityType semanticType =
     match semanticType with
         | SemFunction(argument, result, row) ->
@@ -2515,7 +2480,7 @@ let inferProgramUnitBody body entryPackageId state =
                         error = None
                     )
                 | Some(expression) ->
-                    match inferExpressionFromLocated(expression)(environment)(substitution)(supply) with
+                    match inferTopLevelExpressionLocated(expression)(environment)(substitution)(supply) with
                         | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } ->
                             ProgramInferenceResult(
                                 semanticType = semanticType,

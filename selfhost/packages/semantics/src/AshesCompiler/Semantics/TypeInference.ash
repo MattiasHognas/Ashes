@@ -71,6 +71,8 @@ export (
     value seedRecursiveSignature,
     value inferExpressionFrom,
     value inferExpressionFromLocated,
+    value inferTopLevelExpressionLocated,
+    value isBuiltinRuntimeCapability,
     value inferTopLevelBindingLocated,
     value inferenceErrorSpan,
     value unlocatedInferenceError,
@@ -203,6 +205,8 @@ type TypeInferenceError =
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
     | InvalidHandler(Str)
     | AmbiguousCapabilitySatisfaction(Str)
+    | UnsatisfiedCapability(Str)
+    | UnknownCapabilityInRow(Str)
     | InconsistentOrPatternBindings
     | UnknownWrittenTraitRequirement(Str)
     | WrittenTraitRequirementArityMismatch(Str, Int, Int)
@@ -2291,6 +2295,62 @@ let inferRecordField receiverType fieldName (environment: TypeEnvironment) subst
                 | _ -> inferenceFailure(SemNever)(substitution)(supply)(RecordUpdateRequiresRecord(unresolved))
         | other -> inferenceFailure(SemNever)(substitution)(supply)(RecordUpdateRequiresRecord(other))
 
+// The capabilities the runtime itself provides. They declare no operations a handler could take,
+// so one left in a program's top-level row is not an unsatisfied requirement.
+let isBuiltinRuntimeCapability (name: Str) =
+    match name with
+        | "ConsoleIO" -> true
+        | "FileRead" -> true
+        | "FileWrite" -> true
+        | "ProcessSpawn" -> true
+        | "ProcessExit" -> true
+        | "TimeRead" -> true
+        | "EnvironmentRead" -> true
+        | "Entropy" -> true
+        | "UnsafeFfi" -> true
+        | "NetListen" -> true
+        | "NetConnect" -> true
+        | "Stop" -> true
+        | _ -> false
+
+let recursive firstUnknownCapabilityIn semanticTypes (environment: TypeEnvironment) =
+    match semanticTypes with
+        | [] -> None
+        | head :: tail ->
+            match firstUnknownCapability(head)(environment) with
+                | Some(name) -> Some(name)
+                | None -> firstUnknownCapabilityIn(tail)(environment)
+and firstUnknownCapability semanticType (environment: TypeEnvironment) =
+    match semanticType with
+        | SemList(element) -> firstUnknownCapability(element)(environment)
+        | SemTuple(elements) -> firstUnknownCapabilityIn(elements)(environment)
+        | SemFunction(argument, result, None) -> firstUnknownCapabilityIn([argument, result])(environment)
+        | SemFunction(argument, result, Some(row)) -> firstUnknownCapabilityIn([argument, result, row])(environment)
+        | SemCapability(name, arguments) ->
+            if isBuiltinRuntimeCapability(name)
+            then firstUnknownCapabilityIn(arguments)(environment)
+            else
+                match resolveCapabilityBinding(name)(environment) with
+                    | None -> Some(name)
+                    | Some(_) -> firstUnknownCapabilityIn(arguments)(environment)
+        | SemRow(capabilities, None) -> firstUnknownCapabilityIn(capabilities)(environment)
+        | SemRow(capabilities, Some(tail)) -> firstUnknownCapabilityIn(tail :: capabilities)(environment)
+        | SemNamed(_symbolId, _name, arguments) -> firstUnknownCapabilityIn(arguments)(environment)
+        | SemPointer(pointee) -> firstUnknownCapability(pointee)(environment)
+        | _ -> None
+
+// A written type may name only declared capabilities and the runtime's own in its `needs` rows.
+let resolveWrittenType typeExpression context (environment: TypeEnvironment) =
+    match resolveTypeExpression(typeExpression)(context) with
+        | TypeResolutionResult { semanticType = semanticType, error = None } ->
+            if environment.programInferenceRules
+            then
+                match firstUnknownCapability(semanticType)(environment) with
+                    | Some(name) -> (semanticType, Some(UnknownCapabilityInRow(name)))
+                    | None -> (semanticType, None)
+            else (semanticType, None)
+        | TypeResolutionResult { semanticType = semanticType, error = Some(error) } -> (semanticType, Some(InferenceTypeResolutionError(error)))
+
 let recursive anyAbstractSemanticType values =
     match values with
         | [] -> false
@@ -2369,6 +2429,19 @@ and resolveProvidedCapabilityRow semanticType environment =
                                     ), error = None)
         | _ -> ProviderRowResolution(semanticType = semanticType, error = None)
 
+// A row closed or extended through its tail reads the same as one written out: under the program
+// rules it is brought to that form before it is asked whether it is empty, closed or open.
+let recursive writtenOutRow (environment: TypeEnvironment) row =
+    if environment.programInferenceRules
+    then
+        match row with
+            | SemRow(capabilities, Some(SemRow(inner, innerTail))) ->
+                innerTail
+                |> SemRow(append(capabilities)(inner))
+                |> writtenOutRow(environment)
+            | _ -> row
+    else row
+
 // The ambient row is resolved only where it is unified. A call whose row is empty never reads
 // it, and resolving an open row walks the whole substitution.
 let subsumeCapabilityRow capabilityRow environment ambientRow substitution supply resultType =
@@ -2383,7 +2456,7 @@ let subsumeCapabilityRow capabilityRow environment ambientRow substitution suppl
                     error
                 )
             | ProviderRowResolution { semanticType = providerResolvedRow, error = None } ->
-                match providerResolvedRow with
+                match writtenOutRow(environment)(providerResolvedRow) with
                     | SemRow([], None) ->
                         inferenceSuccess(
                             applySubstitution(substitution)(resultType),
@@ -2444,20 +2517,20 @@ let subsumeUnsignedCapabilityOperation function environment ambientRow result =
 let checkInferenceAnnotation annotation expectedType environment substitution supply =
     match prepareTypeResolutionContext(annotation)(inferenceTypeResolutionContext(environment))(supply) with
         | TypeResolutionPreparationResult { context = preparedContext, supply = preparedSupply } ->
-            match resolveTypeExpression(annotation)(preparedContext) with
-                | TypeResolutionResult { semanticType = annotationType, error = None } ->
+            match resolveWrittenType(annotation)(preparedContext)(environment) with
+                | (annotationType, None) ->
                     mergeUnificationIn(environment)(
                         substitution,
                         unifyIn(environment)(applySubstitution(substitution)(expectedType))(annotationType),
                         preparedSupply,
                         expectedType
                     )
-                | TypeResolutionResult { semanticType = _annotationType, error = Some(error) } ->
+                | (_annotationType, Some(error)) ->
                     inferenceFailure(
                         expectedType,
                         substitution,
                         preparedSupply,
-                        InferenceTypeResolutionError(error)
+                        error
                     )
 
 // A recursive binding's written signature types the uses of the binding inside its own value. Left
@@ -2625,20 +2698,20 @@ let checkInferenceBindingSignature annotation requirements expectedType inferred
                 match annotation with
                     | None -> inferenceSuccess(expectedType)(substitution)(preparedSupply)
                     | Some(typeExpression) ->
-                        match resolveTypeExpression(typeExpression)(context) with
-                            | TypeResolutionResult { semanticType = annotationType, error = None } ->
+                        match resolveWrittenType(typeExpression)(context)(environment) with
+                            | (annotationType, None) ->
                                 mergeUnificationIn(environment)(
                                     substitution,
                                     unifyIn(environment)(applySubstitution(substitution)(expectedType))(annotationType),
                                     preparedSupply,
                                     expectedType
                                 )
-                            | TypeResolutionResult { semanticType = _annotationType, error = Some(error) } ->
+                            | (_annotationType, Some(error)) ->
                                 inferenceFailure(
                                     expectedType,
                                     substitution,
                                     preparedSupply,
-                                    InferenceTypeResolutionError(error)
+                                    error
                                 )
             in
                 match annotationResult with
@@ -4741,13 +4814,57 @@ let inferExpressionFromLocated expression environment substitution supply =
     match freshTypeVariable(supply) with
         | (ambientRow, nextSupply) -> inferWith(expression)(environment)(substitution)(nextSupply)(ambientRow)
 
+// What is left of a top-level expression's row once handlers and providers have taken theirs has
+// nothing to satisfy it, unless the runtime does.
+let recursive firstUnsatisfiedCapability row (environment: TypeEnvironment) =
+    match row with
+        | SemRow([], Some(tail)) -> firstUnsatisfiedCapability(tail)(environment)
+        | SemRow((SemCapability(name, _arguments) as needed) :: rest, tail) ->
+            if isBuiltinRuntimeCapability(name)
+            then
+                firstUnsatisfiedCapability(SemRow(rest)(tail))(environment)
+            else
+                match resolveCapabilityProvider(needed)(environment) with
+                    | Some(_) ->
+                        firstUnsatisfiedCapability(SemRow(rest)(tail))(environment)
+                    | None -> Some(name)
+        | SemRow(_other :: rest, tail) ->
+            firstUnsatisfiedCapability(SemRow(rest)(tail))(environment)
+        | _ -> None
+
+let checkResidualRow ambientRow (environment: TypeEnvironment) (result: TypeInferenceResult) =
+    if environment.programInferenceRules
+    then
+        match result with
+            | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = supply, constraints = _constraints, error = None } ->
+                match firstUnsatisfiedCapability(applySubstitution(substitution)(ambientRow))(environment) with
+                    | Some(name) ->
+                        inferenceFailure(
+                            semanticType,
+                            substitution,
+                            supply,
+                            UnsatisfiedCapability(name)
+                        )
+                    | None -> result
+            | _ -> result
+    else result
+
+// A top-level value or the program's trailing expression: nothing encloses it, so its row has to
+// be satisfied here.
+let inferTopLevelExpressionLocated expression environment substitution supply =
+    match freshTypeVariable(supply) with
+        | (ambientRow, nextSupply) ->
+            ambientRow
+            |> inferWith(expression)(environment)(substitution)(nextSupply)
+            |> checkResidualRow(ambientRow)(environment)
+
 let inferExpressionFrom expression environment substitution supply =
     unlocatedInferenceResult(
         inferExpressionFromLocated(expression)(environment)(substitution)(supply)
     )
 
 let inferTopLevelBindingLocated name value annotation requirements environment substitution supply =
-    match inferExpressionFromLocated(value)(environment)(substitution)(supply) with
+    match inferTopLevelExpressionLocated(value)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
             match checkInferenceBindingSignature(
                 annotation,
