@@ -766,27 +766,53 @@ and finishCapabilityPostsFold resultLocal initialResultTemp resultType state =
                         |> success(finalResultTemp)(resultType)
                     | None -> success(finalResultTemp)(resultType)(read)
 
+// Whether some operation arm does more than resume with a value. Such an arm leaves a post, and
+// while posts are live the handle's result keeps its arena rather than being copied out of it.
+let recursive anyArmLeavesPost (opArms: List((Str, Str, List(Pattern), Expr))) =
+    match opArms with
+        | [] -> false
+        | (_capability, _operation, _patterns, armBody) :: rest ->
+            match tailResumeArgument(armBody) with
+                | None -> true
+                | Some(_argument) -> anyArmLeavesPost(rest)
+
+// The binding the handled body's value takes over the return arm, with the expression lowered
+// under it. Under a handle whose arms leave posts, a return arm that names the value binds it
+// directly, so an arm handing the value on as its result is a `let` returning its own binding and
+// keeps the value's reference: matched against a binding of its own, the result would borrow a
+// value the binding releases, with no copy behind it while posts are live. Every other return arm
+// (another pattern, a nullary constructor's name, a handle without posts) is matched against a
+// binding of its own.
+let recursive returnArmBinding (leavesPost: Bool) (returnPat: Pattern) (returnExpr: Expr) (state: CoreLoweringState) =
+    match returnPat with
+        | PatternAt(_span, inner) -> returnArmBinding(leavesPost)(inner)(returnExpr)(state)
+        | PatternVar(name) ->
+            match (leavesPost, constructorLayout(name)(state)) with
+                | (true, None) -> (name, returnExpr)
+                | _ -> ("__body_res", ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))
+        | _ -> ("__body_res", ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))
+
 // The return arm binds the handled body's value as a `let` binding scoped over the arm, bracketed
 // and closed as a nested `let` is: a value the binding adopted as its owner is released when the
 // arm's result does not hand it on, as stage 0's owned continuation call releases its argument.
-let lowerHandleReturnArm returnPat returnExpr lower outerBindings bodyTemp bodyType state =
-    (let armBody = ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None)
-    in
-        match freshLocal(state) with
-            | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
-                match freshLocal(cursorAllocated) with
-                    | FreshLocal { state = endAllocated, local = endSlot } ->
-                        let bodyValue =
-                            endAllocated
-                            |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
-                            |> success(bodyTemp)(bodyType)
-                            |> armOwnerReleasePlan(ExprVar("__body_res"))
-                        in
-                            match finishLetValueInSlot("__body_res")(ExprVar("__body_res"))(armBody)(armBody)(escapingLetBodyRequest(armBody)(consumerRequestOf(state))(state))(lower)(outerBindings)(bodyValue) with
-                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
-                                | (LoweredCoreValue { state = armState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(bodyValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(armState) with
-                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed))
+let lowerHandleReturnArm (leavesPost: Bool) returnPat returnExpr lower outerBindings bodyTemp bodyType state =
+    match returnArmBinding(leavesPost)(returnPat)(returnExpr)(state) with
+        | (bindingName, armBody) ->
+            match freshLocal(state) with
+                | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
+                    match freshLocal(cursorAllocated) with
+                        | FreshLocal { state = endAllocated, local = endSlot } ->
+                            let bodyValue =
+                                endAllocated
+                                |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
+                                |> success(bodyTemp)(bodyType)
+                                |> armOwnerReleasePlan(ExprVar("__body_res"))
+                            in
+                                match finishLetValueInSlot(bindingName)(ExprVar("__body_res"))(armBody)(armBody)(escapingLetBodyRequest(armBody)(consumerRequestOf(state))(state))(lower)(outerBindings)(bodyValue) with
+                                    | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
+                                    | (LoweredCoreValue { state = armState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
+                                        match closeOwnedLetBracket(loweredValueOwnedTypeName(bodyValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(armState) with
+                                            | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 let lowerHandleWithExpected body arms (request: ConsumerRequest) lower state =
     match splitHandlerArms(arms) with
@@ -847,7 +873,8 @@ let lowerHandleWithExpected body arms (request: ConsumerRequest) lower state =
                                                                                                     let currentResultOutcome =
                                                                                                         match returnArm with
                                                                                                             | None -> success(bodyTemp)(bodyType)(uninstallState)
-                                                                                                            | Some((returnPat, returnExpr)) -> lowerHandleReturnArm(returnPat)(returnExpr)(lower)(outerBindings)(bodyTemp)(bodyType)(uninstallState)
+                                                                                                            | Some((returnPat, returnExpr)) ->
+                                                                                                                lowerHandleReturnArm(anyArmLeavesPost(opArms))(returnPat)(returnExpr)(lower)(outerBindings)(bodyTemp)(bodyType)(uninstallState)
                                                                                                     in
                                                                                                         match currentResultOutcome with
                                                                                                             | LoweredCoreValue { state = failedResultState, error = Some(error) } -> failure(failedResultState)(error)
