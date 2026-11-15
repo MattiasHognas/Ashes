@@ -67,6 +67,7 @@ export (
     value simplifyTraitConstraints,
     value firstAmbiguousTraitRequirementUnder,
     value resolveWrittenTypeBinding,
+    value requirementsLeftToWrite,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
@@ -2945,6 +2946,9 @@ let failedBindingRequirement (environment: TypeEnvironment) (constraints: List(T
     then firstFailedRequirement(environment)(constraints)
     else None
 
+// The requirements a binding still has to carry: one that the implementations in scope already
+// supply names an instance, so a scheme that kept it would pass it on to every binding that uses
+// this one. Only the program inference rules drop them; lowering's own inference keeps them all.
 let requirementsLeftToWrite (environment: TypeEnvironment) (constraints: List(TraitConstraint)) =
     if environment.programInferenceRules
     then requirementsNotHeld(environment)(constraints)
@@ -3014,7 +3018,10 @@ let validateSettledBindingRequirements requirements inferred written selected se
             )
         | None ->
             match requirements with
-                | [] -> bindingSignatureSuccess(semanticType)(substitution)(supply)(selected)
+                | [] ->
+                    selected
+                    |> requirementsLeftToWrite(environment)
+                    |> bindingSignatureSuccess(semanticType)(substitution)(supply)
                 | _ ->
                     validateWrittenBindingRequirements(requirementsLeftToWrite(environment)(inferred))(written)(semanticType)(substitution)(supply)
 
