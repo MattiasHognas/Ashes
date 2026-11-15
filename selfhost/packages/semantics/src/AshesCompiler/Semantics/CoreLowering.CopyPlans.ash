@@ -123,9 +123,13 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) ->
                 current
                 |> withStateSpecializingReuseLabel(stateSpecializingReuseLabel(bodyState))
-                |> withStateFullyReusingCallees(stateFullyReusingCallees(bodyState)))
+                |> withStateFullyReusingCallees(stateFullyReusingCallees(bodyState))
+                |> withStateReuseSpecializations(stateReuseSpecializations(bodyState)))
             // The label that bound a specialization's linear parameter is decided inside the body
-            // being generated and read once it is finished, so it leaves the frame with it.
+            // being generated and read once it is finished, so it leaves the frame with it. The
+            // specializations generated in the body are program-wide functions, so their cache
+            // leaves the frame too: a later frame reuses one instead of generating it again under
+            // the same label.
             |> (given (current: CoreLoweringState) ->
                 withStateUnresolvedCallResults(outer
                 |> stateUnresolvedCallResults
