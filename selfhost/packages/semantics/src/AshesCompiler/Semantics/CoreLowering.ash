@@ -16,6 +16,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.MutualRecursionDispatch
 import AshesCompiler.Semantics.ReuseFunctionSpecialization
 import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.CoreLowering.LoweringState
@@ -77,7 +78,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
 // `reuseEnabled` false (`--debug-disable-reuse`) no match arm publishes a reuse token and no
 // binding is admitted to the reference-counted heap on the strength of a reuse-safe rebuild, so
 // every cell is allocated fresh and released by its owner as before reuse.
-let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+let lowerProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -98,6 +99,17 @@ let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (sou
                 |> withProgramParameterOwnership(program)
                 |> lowerProgramPasses(items)(trailingBody)(None)
                 |> buildProgram
+
+// A program with a mutually recursive group that merges into one dispatch loop is lowered in its
+// merged form. The merge does not know the members' types, so a merged program that fails to
+// lower gives way to the program as written, whose own result, error included, stands.
+let lowerCoreProgramWithSourceAndReuse (reuseEnabled: Bool) (filePath: Str) (source: Str) (program: ProgramSyntax) =
+    match mergeMutualRecursionGroups(program) with
+        | None -> lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(program)
+        | Some(merged) ->
+            match lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(merged) with
+                | CoreLoweringResult { error = None } as lowered -> lowered
+                | _failed -> lowerProgramWithSourceAndReuse(reuseEnabled)(filePath)(source)(program)
 
 // As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
 // non-stitched single-file context, unlike lowerCoreExpressionLocated's stitched-project one.
