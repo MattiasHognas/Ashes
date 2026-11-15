@@ -93,13 +93,18 @@ type IrOptimizerOptions =
 // Constant facts carried by the folding pass. Temps are single-assignment, so a temp fact never
 // changes once recorded; a local slot is ordinary mutable storage, so a store of an unknown or
 // non-scalar value kills its fact and a slot holds at most one of Int/Float/Bool at a time.
+// Every change to a table is journaled in `touched` as (stamp, table, key), newest first, with
+// stamps unique across one scan: two fact sets that share a journal entry share everything recorded
+// before it, so their meet only has to look at the keys touched after it.
 type FoldFacts =
-    | ints: MapTree(Int, Int)
-    | floats: MapTree(Int, Float)
-    | bools: MapTree(Int, Bool)
+    | ints: MapTree(Int, Maybe(Int))
+    | floats: MapTree(Int, Maybe(Float))
+    | bools: MapTree(Int, Maybe(Bool))
     | localInts: MapTree(Int, Maybe(Int))
     | localFloats: MapTree(Int, Maybe(Float))
     | localBools: MapTree(Int, Maybe(Bool))
+    | touched: List((Int, Int, Int))
+    | stamp: Int
 
 // Local common-subexpression state for one straight-line block. Cache values are always real,
 // already-emitted temps; cache keys are canonical identities, which may be the negative sentinel
@@ -721,34 +726,82 @@ let emptyFoldFacts =
         bools = Ashes.Collection.Map.empty,
         localInts = Ashes.Collection.Map.empty,
         localFloats = Ashes.Collection.Map.empty,
-        localBools = Ashes.Collection.Map.empty
+        localBools = Ashes.Collection.Map.empty,
+        touched = [],
+        stamp = 0
     )
 
-let factsWithInt dest value (facts: FoldFacts) = facts with ints = intSet(dest)(value)(facts.ints)
+// The journal's table numbers.
+let intsTable = 0
 
-let factsWithFloat dest value (facts: FoldFacts) = facts with floats = intSet(dest)(value)(facts.floats)
+let floatsTable = 1
 
-let factsWithBool dest value (facts: FoldFacts) = facts with bools = intSet(dest)(value)(facts.bools)
+let boolsTable = 2
+
+let localIntsTable = 3
+
+let localFloatsTable = 4
+
+let localBoolsTable = 5
+
+let factsWithInt dest value (facts: FoldFacts) = facts with ints = optSet(dest)(value)(facts.ints), touched = (facts.stamp, intsTable, dest) :: facts.touched, stamp = facts.stamp + 1
+
+let factsWithFloat dest value (facts: FoldFacts) = facts with floats = optSet(dest)(value)(facts.floats), touched = (facts.stamp, floatsTable, dest) :: facts.touched, stamp = facts.stamp + 1
+
+let factsWithBool dest value (facts: FoldFacts) = facts with bools = optSet(dest)(value)(facts.bools), touched = (facts.stamp, boolsTable, dest) :: facts.touched, stamp = facts.stamp + 1
+
+let factsWithLocalInt slot value (facts: FoldFacts) = facts with localInts = optSet(slot)(value)(facts.localInts), touched = (facts.stamp, localIntsTable, slot) :: facts.touched, stamp = facts.stamp + 1
+
+let factsWithLocalFloat slot value (facts: FoldFacts) = facts with localFloats = optSet(slot)(value)(facts.localFloats), touched = (facts.stamp, localFloatsTable, slot) :: facts.touched, stamp = facts.stamp + 1
+
+let factsWithLocalBool slot value (facts: FoldFacts) = facts with localBools = optSet(slot)(value)(facts.localBools), touched = (facts.stamp, localBoolsTable, slot) :: facts.touched, stamp = facts.stamp + 1
+
+// Forgetting a key that holds nothing changes nothing and is not journaled.
+let factsWithoutInt key (facts: FoldFacts) =
+    match optGet(key)(facts.ints) with
+        | Some(_) -> facts with ints = intSet(key)(None)(facts.ints), touched = (facts.stamp, intsTable, key) :: facts.touched, stamp = facts.stamp + 1
+        | None -> facts
+
+let factsWithoutFloat key (facts: FoldFacts) =
+    match optGet(key)(facts.floats) with
+        | Some(_) -> facts with floats = intSet(key)(None)(facts.floats), touched = (facts.stamp, floatsTable, key) :: facts.touched, stamp = facts.stamp + 1
+        | None -> facts
+
+let factsWithoutBool key (facts: FoldFacts) =
+    match optGet(key)(facts.bools) with
+        | Some(_) -> facts with bools = intSet(key)(None)(facts.bools), touched = (facts.stamp, boolsTable, key) :: facts.touched, stamp = facts.stamp + 1
+        | None -> facts
+
+let factsWithoutLocalInt slot (facts: FoldFacts) =
+    match optGet(slot)(facts.localInts) with
+        | Some(_) -> facts with localInts = intSet(slot)(None)(facts.localInts), touched = (facts.stamp, localIntsTable, slot) :: facts.touched, stamp = facts.stamp + 1
+        | None -> facts
+
+let factsWithoutLocalFloat slot (facts: FoldFacts) =
+    match optGet(slot)(facts.localFloats) with
+        | Some(_) -> facts with localFloats = intSet(slot)(None)(facts.localFloats), touched = (facts.stamp, localFloatsTable, slot) :: facts.touched, stamp = facts.stamp + 1
+        | None -> facts
+
+let factsWithoutLocalBool slot (facts: FoldFacts) =
+    match optGet(slot)(facts.localBools) with
+        | Some(_) -> facts with localBools = intSet(slot)(None)(facts.localBools), touched = (facts.stamp, localBoolsTable, slot) :: facts.touched, stamp = facts.stamp + 1
+        | None -> facts
 
 let factsWithStore slot source (facts: FoldFacts) =
     (let cleared =
-        FoldFacts(
-            ints = facts.ints,
-            floats = facts.floats,
-            bools = facts.bools,
-            localInts = optForget(slot)(facts.localInts),
-            localFloats = optForget(slot)(facts.localFloats),
-            localBools = optForget(slot)(facts.localBools)
-        )
+        facts
+        |> factsWithoutLocalInt(slot)
+        |> factsWithoutLocalFloat(slot)
+        |> factsWithoutLocalBool(slot)
     in
-        match intGet(source)(facts.ints) with
-            | Some(value) -> cleared with localInts = optSet(slot)(value)(cleared.localInts)
+        match optGet(source)(facts.ints) with
+            | Some(value) -> factsWithLocalInt(slot)(value)(cleared)
             | None ->
-                match intGet(source)(facts.floats) with
-                    | Some(value) -> cleared with localFloats = optSet(slot)(value)(cleared.localFloats)
+                match optGet(source)(facts.floats) with
+                    | Some(value) -> factsWithLocalFloat(slot)(value)(cleared)
                     | None ->
-                        match intGet(source)(facts.bools) with
-                            | Some(value) -> cleared with localBools = optSet(slot)(value)(cleared.localBools)
+                        match optGet(source)(facts.bools) with
+                            | Some(value) -> factsWithLocalBool(slot)(value)(cleared)
                             | None -> cleared)
 
 let intEquals (left: Int) (right: Int) = left == right
@@ -757,92 +810,120 @@ let floatEquals (left: Float) (right: Float) = left == right
 
 let boolEquals (left: Bool) (right: Bool) = left == right
 
-let recursive associationAgreesEverywhere equalValues (key: Int) value snapshots =
-    match snapshots with
-        | [] -> true
-        | snapshot :: tail ->
-            match intGet(key)(snapshot) with
-                | Some(other) ->
-                    if equalValues(other)(value)
-                    then associationAgreesEverywhere(equalValues)(key)(value)(tail)
-                    else false
-                | None -> false
+let recursive prependTouchedKeys (journal: List((Int, Int, Int))) (acc: List((Int, Int))) =
+    match journal with
+        | [] -> acc
+        | (_, table, key) :: tail -> prependTouchedKeys(tail)((table, key) :: acc)
 
-// The meet over predecessor edges: an entry survives only when every other edge carries the same
-// key with the same value. Value equality arrives as a function so the helper carries a single
-// abstract requirement like every other association helper here. With no other edge the first
-// edge's table is the meet.
-let meetAssociation equalValues first others =
-    match others with
-        | [] -> first
-        | _ ->
-            let keepAgreed kept (key: Int) value =
-                if associationAgreesEverywhere(equalValues)(key)(value)(others)
-                then intSet(key)(value)(kept)
-                else kept
-            in Ashes.Collection.Map.foldLeft(keepAgreed)(Ashes.Collection.Map.empty)(first)
+// Every (table, key) either fact set touched after the newest journal entry the two share. Both
+// journals are newest first, so the larger stamp is always the one to step past.
+let recursive divergentTouches (left: List((Int, Int, Int))) (right: List((Int, Int, Int))) (acc: List((Int, Int))) =
+    match left with
+        | [] -> prependTouchedKeys(right)(acc)
+        | (leftStamp, leftTable, leftKey) :: leftTail ->
+            match right with
+                | [] -> prependTouchedKeys(left)(acc)
+                | (rightStamp, rightTable, rightKey) :: rightTail ->
+                    if leftStamp == rightStamp
+                    then acc
+                    else
+                        if leftStamp > rightStamp
+                        then divergentTouches(leftTail)(right)((leftTable, leftKey) :: acc)
+                        else divergentTouches(left)(rightTail)((rightTable, rightKey) :: acc)
 
-let recursive slotFactAgreesEverywhere equalValues (key: Int) value snapshots =
-    match snapshots with
-        | [] -> true
-        | snapshot :: tail ->
-            match optGet(key)(snapshot) with
-                | Some(other) ->
-                    if equalValues(other)(value)
-                    then slotFactAgreesEverywhere(equalValues)(key)(value)(tail)
-                    else false
-                | None -> false
+let agreesWith equalValues value other =
+    match other with
+        | Some(otherValue) -> equalValues(otherValue)(value)
+        | None -> false
 
-// The same meet over the slot tables, where a forgotten slot counts as absent on either side.
-let meetSlotFacts equalValues first others =
-    match others with
-        | [] -> first
-        | _ ->
-            let keepAgreed kept (key: Int) known =
-                match known with
+// An entry of `kept` survives only when the other edge carries the same key with the same value.
+let reconcileTouchedKey (table: Int) (key: Int) (other: FoldFacts) (kept: FoldFacts) =
+    if table == intsTable
+    then
+        match optGet(key)(kept.ints) with
+            | None -> kept
+            | Some(value) ->
+                if other.ints
+                |> optGet(key)
+                |> agreesWith(intEquals)(value)
+                then kept
+                else factsWithoutInt(key)(kept)
+    else
+        if table == floatsTable
+        then
+            match optGet(key)(kept.floats) with
+                | None -> kept
+                | Some(value) ->
+                    if other.floats
+                    |> optGet(key)
+                    |> agreesWith(floatEquals)(value)
+                    then kept
+                    else factsWithoutFloat(key)(kept)
+        else
+            if table == boolsTable
+            then
+                match optGet(key)(kept.bools) with
                     | None -> kept
                     | Some(value) ->
-                        if slotFactAgreesEverywhere(equalValues)(key)(value)(others)
-                        then optSet(key)(value)(kept)
-                        else kept
-            in Ashes.Collection.Map.foldLeft(keepAgreed)(Ashes.Collection.Map.empty)(first)
+                        if other.bools
+                        |> optGet(key)
+                        |> agreesWith(boolEquals)(value)
+                        then kept
+                        else factsWithoutBool(key)(kept)
+            else
+                if table == localIntsTable
+                then
+                    match optGet(key)(kept.localInts) with
+                        | None -> kept
+                        | Some(value) ->
+                            if other.localInts
+                            |> optGet(key)
+                            |> agreesWith(intEquals)(value)
+                            then kept
+                            else factsWithoutLocalInt(key)(kept)
+                else
+                    if table == localFloatsTable
+                    then
+                        match optGet(key)(kept.localFloats) with
+                            | None -> kept
+                            | Some(value) ->
+                                if other.localFloats
+                                |> optGet(key)
+                                |> agreesWith(floatEquals)(value)
+                                then kept
+                                else factsWithoutLocalFloat(key)(kept)
+                    else
+                        match optGet(key)(kept.localBools) with
+                            | None -> kept
+                            | Some(value) ->
+                                if other.localBools
+                                |> optGet(key)
+                                |> agreesWith(boolEquals)(value)
+                                then kept
+                                else factsWithoutLocalBool(key)(kept)
 
-let snapshotInts (snapshot: FoldFacts) = snapshot.ints
+let recursive reconcileTouchedKeys (keys: List((Int, Int))) (other: FoldFacts) (kept: FoldFacts) =
+    match keys with
+        | [] -> kept
+        | (table, key) :: rest ->
+            kept
+            |> reconcileTouchedKey(table)(key)(other)
+            |> reconcileTouchedKeys(rest)(other)
 
-let snapshotFloats (snapshot: FoldFacts) = snapshot.floats
+// The meet over predecessor edges: an entry survives only when every other edge carries the same
+// key with the same value. A key neither edge touched since their shared history holds the same
+// thing on both, so only the keys touched since then are compared.
+let recursive meetWithOthers (kept: FoldFacts) (others: List(FoldFacts)) =
+    match others with
+        | [] -> kept
+        | other :: rest ->
+            meetWithOthers(reconcileTouchedKeys(divergentTouches(kept.touched)(other.touched)([]))(other)(kept))(rest)
 
-let snapshotBools (snapshot: FoldFacts) = snapshot.bools
-
-let snapshotLocalInts (snapshot: FoldFacts) = snapshot.localInts
-
-let snapshotLocalFloats (snapshot: FoldFacts) = snapshot.localFloats
-
-let snapshotLocalBools (snapshot: FoldFacts) = snapshot.localBools
-
-let meetFacts (snapshots: List(FoldFacts)) =
+// `stamp` is the scan's next unused stamp, which the result carries on from.
+let meetFacts (stamp: Int) (snapshots: List(FoldFacts)) =
     match snapshots with
-        | [] -> emptyFoldFacts
-        | first :: rest ->
-            FoldFacts(
-                ints = rest
-                |> map(snapshotInts)
-                |> meetAssociation(intEquals)(first.ints),
-                floats = rest
-                |> map(snapshotFloats)
-                |> meetAssociation(floatEquals)(first.floats),
-                bools = rest
-                |> map(snapshotBools)
-                |> meetAssociation(boolEquals)(first.bools),
-                localInts = rest
-                |> map(snapshotLocalInts)
-                |> meetSlotFacts(intEquals)(first.localInts),
-                localFloats = rest
-                |> map(snapshotLocalFloats)
-                |> meetSlotFacts(floatEquals)(first.localFloats),
-                localBools = rest
-                |> map(snapshotLocalBools)
-                |> meetSlotFacts(boolEquals)(first.localBools)
-            )
+        | [] -> emptyFoldFacts with stamp = stamp
+        | first :: rest -> meetWithOthers((first with stamp = stamp))(rest)
 
 // One snapshot per predecessor edge observed so far, keyed by target label.
 let recordEdgeSnapshot (target: Str) facts saved =
@@ -878,7 +959,8 @@ let recursive switchTakenLabel tag cases defaultLabel =
 // if any) has been observed by this forward scan, the entering facts are the meet over those edges;
 // a single-predecessor label and a fall-through-only label are the one-snapshot special case. A
 // predecessor not yet observed (a backward branch, whose source appears later) is unknowable here,
-// so a loop header conservatively clears every fact.
+// so a loop header conservatively clears every fact. Either way the facts carry on from the scan's
+// current stamp.
 let factsAtLabel (name: Str) (branchRefs: MapTree(Str, Int)) (facts: FoldFacts) (saved: MapTree(Str, List(FoldFacts))) (prevIsTerminator: Bool) =
     (let branchCount =
         match strGet(name)(branchRefs) with
@@ -903,21 +985,21 @@ let factsAtLabel (name: Str) (branchRefs: MapTree(Str, Int)) (facts: FoldFacts) 
                         then
                             if observed == total
                             then
-                                meetFacts(
+                                meetFacts(facts.stamp)(
                                     if fallthrough == 1
                                     then facts :: snapshots
                                     else snapshots
                                 )
-                            else emptyFoldFacts
-                        else emptyFoldFacts)
+                            else emptyFoldFacts with stamp = facts.stamp
+                        else emptyFoldFacts with stamp = facts.stamp)
 
 let foldIntPair (facts: FoldFacts) left right =
-    match (intGet(left)(facts.ints), intGet(right)(facts.ints)) with
+    match (optGet(left)(facts.ints), optGet(right)(facts.ints)) with
         | (Some(leftValue), Some(rightValue)) -> Some((leftValue, rightValue))
         | _ -> None
 
 let foldFloatPair (facts: FoldFacts) left right =
-    match (intGet(left)(facts.floats), intGet(right)(facts.floats)) with
+    match (optGet(left)(facts.floats), optGet(right)(facts.floats)) with
         | (Some(leftValue), Some(rightValue)) -> Some((leftValue, rightValue))
         | _ -> None
 
@@ -1067,14 +1149,14 @@ let foldConstants instructions =
                         | Jump(target) ->
                             foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(irInst :: acc)
                         | JumpIfFalse(condition, target) ->
-                            match intGet(condition)(facts.bools) with
+                            match optGet(condition)(facts.bools) with
                                 | Some(true) -> foldLoop(tail)(facts)(saved)(false)(acc)
                                 | Some(false) ->
                                     foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(IrInstruction(instruction = Jump(target), location = loc) :: acc)
                                 | None ->
                                     foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(false)(irInst :: acc)
                         | SwitchTag(tagTemp, cases, defaultLabel) ->
-                            match intGet(tagTemp)(facts.ints) with
+                            match optGet(tagTemp)(facts.ints) with
                                 | Some(tag) ->
                                     foldLoop(tail)(facts)(recordEdgeSnapshot(switchTakenLabel(tag)(cases)(defaultLabel))(facts)(saved))(true)(IrInstruction(instruction = defaultLabel
                                     |> switchTakenLabel(tag)(cases)
