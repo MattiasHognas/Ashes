@@ -30,10 +30,13 @@ type NodeOperator =
     | operandType: SemanticType
 
 // A reference to a generic binding: the type each quantified variable of the binding's scheme has
-// at this reference, and the scheme's trait requirements at those types.
+// at this reference, and the scheme's trait requirements at those types. `dictionaries` holds the
+// requirements that mention a quantified variable of the scheme, in the scheme's own order: a
+// requirement the scheme states at a concrete type names an instance and passes nothing.
 type NodeInstantiation =
     | arguments: List((Int, SemanticType))
     | requirements: List(TraitConstraint)
+    | dictionaries: List(TraitConstraint)
 
 type NodeTypeTable =
     | types: MapTree(Int, SemanticType)
@@ -88,12 +91,12 @@ let settleNote (substitution: MapTree(Int, SemanticType)) (table: NodeTypeTable)
                     table with operators = Ashes.Collection.Map.setInt(node)(
                         NodeOperator(traitName = traitName, operandType = applySubstitutionMap(substitution)(operandType))
                     )(table.operators)
-        | NodeInstantiationNote(node, arguments, requirements) ->
+        | NodeInstantiationNote(node, arguments, requirements, dictionaries) ->
             match Ashes.Collection.Map.getInt(node)(table.instantiations) with
                 | Some(_younger) -> table
                 | None ->
                     table with instantiations = Ashes.Collection.Map.setInt(node)(
-                        NodeInstantiation(arguments = resolveArguments(substitution)(arguments), requirements = resolveRequirements(substitution)(requirements))
+                        NodeInstantiation(arguments = resolveArguments(substitution)(arguments), requirements = resolveRequirements(substitution)(requirements), dictionaries = resolveRequirements(substitution)(dictionaries))
                     )(table.instantiations)
         | NodeBindingNote(node, name, scheme) ->
             table with bindings = Ashes.Collection.Map.setInt(node)(

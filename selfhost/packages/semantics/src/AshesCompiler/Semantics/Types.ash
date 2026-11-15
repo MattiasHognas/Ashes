@@ -74,8 +74,9 @@ type NodeTypeNote =
     // An operator node, the trait its operator maps to, and the type of its operands.
     | NodeOperatorNote(Int, Str, SemanticType)
     // A reference to a generic binding: the type each quantified variable of its scheme took here,
-    // and the trait requirements of the scheme at those types.
-    | NodeInstantiationNote(Int, List((Int, SemanticType)), List(TraitConstraint))
+    // the trait requirements of the scheme at those types, and those of them that mention a
+    // quantified variable, in the scheme's order: the dictionaries the reference passes.
+    | NodeInstantiationNote(Int, List((Int, SemanticType)), List(TraitConstraint), List(TraitConstraint))
     // A name a node brings into scope and its scheme. The node is the `let` for a binding and the
     // arm body for a pattern variable.
     | NodeBindingNote(Int, Str, TypeScheme)

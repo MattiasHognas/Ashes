@@ -993,6 +993,37 @@ let recursive instantiationArguments (quantified: List((Int, Str))) (firstId: In
         | [] -> []
         | (variable, _name) :: rest -> (variable, SemVariable(firstId)) :: instantiationArguments(rest)(firstId + 1)
 
+let recursive mentionsQuantified (quantified: List((Int, Str))) (variable: Int) =
+    match quantified with
+        | [] -> false
+        | (candidate, _name) :: rest -> candidate == variable || mentionsQuantified(rest)(variable)
+
+let recursive anyMentionsQuantified (quantified: List((Int, Str))) (variables: List(Int)) =
+    match variables with
+        | [] -> false
+        | head :: rest -> mentionsQuantified(quantified)(head) || anyMentionsQuantified(quantified)(rest)
+
+let recursive typesMentionQuantified (quantified: List((Int, Str))) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> false
+        | head :: rest ->
+            anyMentionsQuantified(quantified)(freeTypeVariables(head)) || typesMentionQuantified(quantified)(rest)
+
+let recursive instantiatedTypes (arguments: List((Int, SemanticType))) (semanticTypes: List(SemanticType)) =
+    match semanticTypes with
+        | [] -> []
+        | head :: rest -> applySubstitution(arguments)(head) :: instantiatedTypes(arguments)(rest)
+
+// The requirements of a scheme that depend on what it quantifies, at one instantiation and in the
+// scheme's own order.
+let recursive dictionaryRequirements (quantified: List((Int, Str))) (arguments: List((Int, SemanticType))) (constraints: List(TraitConstraint)) =
+    match constraints with
+        | [] -> []
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } :: rest ->
+            if typesMentionQuantified(quantified)(typeArguments)
+            then TraitConstraint(traitName = traitName, typeArguments = instantiatedTypes(arguments)(typeArguments)) :: dictionaryRequirements(quantified)(arguments)(rest)
+            else dictionaryRequirements(quantified)(arguments)(rest)
+
 // Notes, at the node `before` was inferring, the instantiation `instantiate(scheme)(before)` made.
 let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
     if recordsAt(environment)(before.currentNode)
@@ -1000,7 +1031,11 @@ let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (befor
         match scheme.quantified with
             | [] -> after
             | quantified ->
-                withNodeNote(NodeInstantiationNote(before.currentNode)(instantiationArguments(quantified)(before.nextId))(requirements))(after)
+                let arguments = instantiationArguments(quantified)(before.nextId)
+                in
+                    withNodeNote(scheme.constraints
+                    |> dictionaryRequirements(quantified)(arguments)
+                    |> NodeInstantiationNote(before.currentNode)(arguments)(requirements))(after)
     else after
 
 // Unary `-x` reaches inference as `0 - x`: the parser has no negation node. A subtraction whose
@@ -4905,7 +4940,10 @@ and inferWith expression environment substitution supply ambientRow =
             )
         | ExprSubtract(left, right) ->
             if appliesProgramInferenceRules(environment) && isZeroLiteralExpression(left)
-            then noteNegatedZero(environment)(identifiedNode(left))(inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow))
+            then
+                ambientRow
+                |> inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)
+                |> noteNegatedZero(environment)(identifiedNode(left))
             else
                 inferBinaryTrait(
                     "Subtract",
