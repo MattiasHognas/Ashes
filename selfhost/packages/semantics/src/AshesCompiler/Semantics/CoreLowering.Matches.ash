@@ -545,9 +545,13 @@ let finishConstructorPattern patterns valueTemp valueType failLabel lowerPattern
                         lowerPattern,
                         typedState
                     )
-        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag, tagless = tagless }, parameterTypes = parameterTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { name = constructorName, tag = tag, tagless = tagless }, parameterTypes = parameterTypes, resultType = resultType } ->
             if coreListLength(patterns) != coreListLength(parameterTypes)
-            then LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("constructor arity")))
+            then
+                LoweredCorePattern(state = state, error = patterns
+                |> coreListLength
+                |> CoreConstructorPatternArityMismatch(constructorName)(coreListLength(parameterTypes))
+                |> Some)
             else
                 match bindType(valueType)(resultType)(state) with
                     | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
@@ -577,7 +581,7 @@ let recursive findPatternField (name: Str) (fieldNames: List(Str)) (fieldTypes: 
             else findPatternField(name)(fieldRest)(typeRest)(index + 1)
         | _ -> None
 
-let recursive lowerRecordPatternFields fields fieldNames fieldTypes valueTemp tagless failLabel lowerPattern result =
+let recursive lowerRecordPatternFields typeName fields fieldNames fieldTypes valueTemp tagless failLabel lowerPattern result =
     match (fields, result) with
         | ([], _) -> result
         | (_fields, LoweredCorePattern { error = Some(_error) }) -> result
@@ -585,23 +589,23 @@ let recursive lowerRecordPatternFields fields fieldNames fieldTypes valueTemp ta
             match findPatternField(fieldName)(fieldNames)(fieldTypes)(0) with
                 | None ->
                     LoweredCorePattern(state = state, error = fieldName
-                    |> UnknownCoreRecordField("record pattern")
+                    |> UnknownCoreRecordPatternField(typeName)
                     |> Some)
                 | Some(CorePatternField { index = index, semanticType = semanticType }) ->
                     result
                     |> lowerAdtPatternField(valueTemp)(index)(tagless)(pattern)(semanticType)(failLabel)(lowerPattern)
-                    |> lowerRecordPatternFields(rest)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
+                    |> lowerRecordPatternFields(typeName)(rest)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
 
 let finishRecordPattern fields valueTemp valueType failLabel lowerPattern shape =
     match shape with
-        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag, fieldNames = fieldNames, tagless = tagless }, parameterTypes = fieldTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { name = typeName, tag = tag, fieldNames = fieldNames, tagless = tagless }, parameterTypes = fieldTypes, resultType = resultType } ->
             match bindType(valueType)(resultType)(state) with
                 | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
                 | (typedState, None) ->
                     typedState
                     |> requireNonZeroPattern(valueTemp)(failLabel)
                     |> finishConstructorTag(valueTemp)(tag)(tagless)(failLabel)
-                    |> lowerRecordPatternFields(fields)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
+                    |> lowerRecordPatternFields(typeName)(fields)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
 
 let lowerRecordPattern name fields valueTemp valueType failLabel lowerPattern state =
     match constructorLayout(name)(state) with
@@ -2453,9 +2457,13 @@ let recursive nthMatchCase cases (index: Int) =
 let finishKnownTagConstructorPattern patterns valueTemp valueType failLabel lowerPattern shape =
     match shape with
         | CoreConstructorShape { layout = CoreConstructorLayout { isZeroCost = true } } -> finishConstructorPattern(patterns)(valueTemp)(valueType)(failLabel)(lowerPattern)(shape)
-        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tagless = tagless }, parameterTypes = parameterTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { name = constructorName, tagless = tagless }, parameterTypes = parameterTypes, resultType = resultType } ->
             if coreListLength(patterns) != coreListLength(parameterTypes)
-            then LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("constructor arity")))
+            then
+                LoweredCorePattern(state = state, error = patterns
+                |> coreListLength
+                |> CoreConstructorPatternArityMismatch(constructorName)(coreListLength(parameterTypes))
+                |> Some)
             else
                 match bindType(valueType)(resultType)(state) with
                     | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))

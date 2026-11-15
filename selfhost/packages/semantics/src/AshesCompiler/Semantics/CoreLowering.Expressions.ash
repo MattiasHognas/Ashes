@@ -1432,6 +1432,67 @@ let lowerTraitUnaryMethodCall (traitName: Str) (methodName: Str) (resultType: Se
             |> emitCoreTraitUnaryDispatch(traitName)(methodName)(resultType)(lower)(operandTemp)(resolveType(operandState)(operandType))
         | failed -> failed
 
+// The name a call spine is rooted at and the number of arguments applied to it.
+let recursive callSpineRootOf (expression: Expr) (count: Int) =
+    match expression with
+        | ExprAt(_span, inner) -> callSpineRootOf(inner)(count)
+        | ExprCall(function, _argument, _sugar, _layout) -> callSpineRootOf(function)(count + 1)
+        | ExprVar(name) -> Some((name, count))
+        | _ -> None
+
+let recursive arrowCountOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemFunction(_argument, result, _row) -> 1 + arrowCountOf(result)(state)
+        | _ -> 0
+
+// The number of arguments a named callee takes: a constructor's fields, or the arrows of a
+// binding's type.
+let calleeArityOf (name: Str) (state: CoreLoweringState) =
+    match constructorLayout(name)(state) with
+        | Some(layout) ->
+            layout
+            |> constructorArity
+            |> Some
+        | None ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { scheme = TypeScheme { body = body } }) ->
+                    state
+                    |> arrowCountOf(body)
+                    |> Some
+                | None -> None
+
+// A call that applies a named callee to more arguments than it takes fails where the surplus
+// argument meets a value that is no function. The failure is reported against the whole call, as
+// stage 0 reports it: the callee, the arguments it takes, and the arguments the call passes; an
+// enclosing application of the same spine raises the passed count to its own.
+let describeCallArity (expression: Expr) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { state = failedState, error = Some(CoreCallRequiresFunction(actual)) } ->
+            match callSpineRootOf(expression)(0) with
+                | Some((name, provided)) ->
+                    match calleeArityOf(name)(failedState) with
+                        | Some(expected) ->
+                            if expected < provided
+                            then
+                                actual
+                                |> resolveType(failedState)
+                                |> CoreCallArityMismatch(name)(expected)(provided)
+                                |> failure(failedState)
+                            else lowered
+                        | None -> lowered
+                | None -> lowered
+        | LoweredCoreValue { state = failedState, error = Some(CoreCallArityMismatch(callee, expected, provided, actual)) } ->
+            match callSpineRootOf(expression)(0) with
+                | Some((name, applied)) ->
+                    if name == callee && applied > provided
+                    then
+                        actual
+                        |> CoreCallArityMismatch(callee)(expected)(applied)
+                        |> failure(failedState)
+                    else lowered
+                | None -> lowered
+        | _ -> lowered
+
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
@@ -2017,7 +2078,10 @@ let lowerCoreDispatch expression lowerCore state =
                 | None ->
                     match traitUnaryMethodCall(function) with
                         | Some((traitName, methodName, resultType)) -> lowerTraitUnaryMethodCall(traitName)(methodName)(resultType)(argument)(lowerCore)(state)
-                        | None -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
+                        | None ->
+                            state
+                            |> lowerCallExpression(expression)(function)(argument)(lowerCore)
+                            |> describeCallArity(expression)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) ->

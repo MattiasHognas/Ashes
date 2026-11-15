@@ -57,6 +57,7 @@ type CoreMismatchSite =
 type CoreLoweringError =
     | UnknownLoweringBinding(Str)
     | CoreCallRequiresFunction(SemanticType)
+    | CoreCallArityMismatch(Str, Int, Int, SemanticType)
     | CoreCallTypeMismatch(UnificationError, CoreMismatchSite)
     | CoreOperatorTypeMismatch(Str, SemanticType, SemanticType)
     | CoreConstructorArityMismatch(Str, Int, Int)
@@ -69,6 +70,8 @@ type CoreLoweringError =
     | UnknownCoreRecordField(Str, Str)
     | CoreRecordUpdateRequiresRecord(SemanticType)
     | UnsupportedCoreLoweringPattern(Str)
+    | CoreConstructorPatternArityMismatch(Str, Int, Int)
+    | UnknownCoreRecordPatternField(Str, Str)
     | CoreRecursiveBindingRequiresFunction(Str)
     | UnsupportedCoreLoweringExpression(Str)
     | DuplicateTopLevelBinding(Str)
