@@ -45,6 +45,7 @@ export (
     value matchArmResultOf,
     value unknownArmResult,
     value transferBranchOwnerResult,
+    value transferIfBranchResult,
     value joinArmStoreIndex,
     value shiftPatternOwnerSites,
     value normalizeMixedJoinArmsAs,
@@ -2089,6 +2090,32 @@ let transferBranchOwnerResult (branch: Expr) (temp: Int) (state: CoreLoweringSta
                         match duplicatePatternOwnerTemp(ExprVar(name))(temp)(state) with
                             | (duplicated, duplicate) -> (withStatePatternOwnerResultTemps(duplicate :: statePatternOwnerResultTemps(duplicated))(duplicated), duplicate)
                 | _ -> (state, temp)
+
+// Stage 0's `TransferVariableRuntimeManagedMatchResult` for an `if` branch: a branch that returns
+// a `let` binding still owning its reference-counted value takes a reference of its own, since
+// the binding's release follows the whole `if`. A pattern owner is handled above, and a binding
+// of a copy type owns nothing.
+let transferBranchLetOwnerResult (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match tailForwardedVariable(branch) with
+        | None -> (state, temp)
+        | Some(name) ->
+            match (patternOwnerBinding(name)(state), liveRuntimeOwnerSlot(name)(state)) with
+                | (None, Some(_slot)) ->
+                    if resultSurvivesReset(resolveType(state)(semanticType))(state)
+                    then (state, temp)
+                    else
+                        match emitTransferRetain(temp)(semanticType)(state) with
+                            | LoweredCoreValue { state = retained, temp = duplicate } -> (retained, duplicate)
+                | _ -> (state, temp)
+
+// An `if` branch's result as the join stores it: a pattern owner's duplicate, a reference of its
+// own to a `let` owner, or the value as it was lowered.
+let transferIfBranchResult (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match transferBranchOwnerResult(branch)(temp)(state) with
+        | (duplicated, duplicate) ->
+            if duplicate != temp
+            then (duplicated, duplicate)
+            else transferBranchLetOwnerResult(branch)(temp)(semanticType)(duplicated)
 
 // Stage 0's `MarkRuntimeManagedMatchResult` and `MarkUniformRuntimeManagedResult`: a join's
 // reloaded value is a reference-counted value when every branch stored one, and newly produced
