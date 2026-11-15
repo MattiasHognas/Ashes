@@ -335,15 +335,22 @@ and armBodyCapturePlaceholderCases cases =
 
 // The one-shot post-resume leaf: `v` is returned to the perform site immediately, and
 // `given postName -> postBody` is lowered as a fresh closure and stashed in the pending-post
-// register for collectCapabilityPost (at the perform call site) to pick up.
+// register for collectCapabilityPost (at the perform call site) to pick up. The post runs after
+// the arm that made it has returned, so every binding its body reads is named among the
+// escaping captures while its closure is built.
 let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex state =
     match lower(resumeArgument)(state) with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
-            match lowerLambda(postName)(postBody)(None)(false)(lower)(valueState) with
+            match valueState
+            |> withStateEscapingCaptureNames(valueState
+            |> stateEscapingCaptureNames
+            |> collectFree(postBody)([postName]))
+            |> lowerLambda(postName)(postBody)(None)(false)(lower) with
                 | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
                 | LoweredCoreValue { state = postState, temp = postTemp, error = None } ->
                     postState
+                    |> withStateEscapingCaptureNames(stateEscapingCaptureNames(valueState))
                     |> emit(StoreCapabilityHandler(postRegisterIndex)(postTemp))
                     |> success(valueTemp)(valueType)
 

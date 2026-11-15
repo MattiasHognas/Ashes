@@ -509,7 +509,7 @@ let openPreparedRecursiveGroup bindings memberLower outerBindings prepared =
                 in
                     match preparedState
                     |> clearConsumerRequest
-                    |> allocateEnvironment(captures)(captures)(false) with
+                    |> allocateEnvironment(storeCaptureAsRead)(captures)(captures)(false) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
                             let selfBindings = preparedSelfBindings(captureCount(captures) * 8)(members)

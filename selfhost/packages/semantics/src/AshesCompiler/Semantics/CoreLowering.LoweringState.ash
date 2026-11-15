@@ -270,6 +270,8 @@ export (
     value withStateTakenOverConsumers,
     value stateTakenOverRecordNames,
     value withStateTakenOverRecordNames,
+    value stateEscapingCaptureNames,
+    value withStateEscapingCaptureNames,
     value stateTakenOverSlotSources,
     value withStateTakenOverSlotSources,
     value stateSpineFreedSpans,
@@ -1019,6 +1021,11 @@ type CoreOwnerState =
     // the functions found to hand a record over.
     | takenOverConsumers: List((Maybe(IrFunctionOrigin), Int, Bool))
     | takenOverRecordNames: List(Str)
+    // The `let` bindings in scope whose body hands a closure capturing them out of the binding's
+    // scope, as its result or inside the aggregate it results in. Such a closure keeps an arena copy
+    // of the binding's value in its environment, since the binding releases its own reference when
+    // its scope ends.
+    | escapingCaptureNames: List(Str)
     // The call each owned call-result slot holds the result of (stage 0's `_ownedSlotSources`), and the
     // calls whose result slot a loop or a return freed the spine of (`_spineFreedSources`).
     | takenOverSlotSources: List((Maybe(IrFunctionOrigin), Int, TextSpan))
@@ -2285,6 +2292,14 @@ let stateTakenOverRecordNames (state: CoreLoweringState) =
 let withStateTakenOverRecordNames value (state: CoreLoweringState) =
     (let group = state.ownerState
     in state with ownerState = (group with takenOverRecordNames = value))
+
+let stateEscapingCaptureNames (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in group.escapingCaptureNames)
+
+let withStateEscapingCaptureNames value (state: CoreLoweringState) =
+    (let group = state.ownerState
+    in state with ownerState = (group with escapingCaptureNames = value))
 
 let stateTakenOverSlotSources (state: CoreLoweringState) =
     (let group = state.ownerState

@@ -190,6 +190,7 @@ export (
     value capturedBindings,
     value captureCount,
     value allocateEnvironment,
+    value storeCaptureAsRead,
     value pruneDeadCaptures,
     value capturedScope,
     value finishLiftedFunction,
@@ -2951,7 +2952,7 @@ let reserveCaptureTemps binding state =
         | LoweredCoreValue { state = captureState, error = Some(error) } -> failure(captureState)(error)
         | LoweredCoreValue { state = captureState, error = None } -> success(-1)(SemInt)((captureState with reversedInstructions = state.reversedInstructions, runtimeTemps = state.runtimeTemps))
 
-let recursive fillEnvironment environmentTemp captures survivors index state =
+let recursive fillEnvironment copyCapture environmentTemp captures survivors index state =
     match captures with
         | [] -> success(environmentTemp)(SemInt)(state)
         | (CoreBinding { name = name } as binding) :: rest ->
@@ -2959,14 +2960,19 @@ let recursive fillEnvironment environmentTemp captures survivors index state =
                 | None ->
                     match reserveCaptureTemps(binding)(state) with
                         | LoweredCoreValue { state = reservedState, error = Some(error) } -> failure(reservedState)(error)
-                        | LoweredCoreValue { state = reservedState, error = None } -> fillEnvironment(environmentTemp)(rest)(survivors)(index)(reservedState)
+                        | LoweredCoreValue { state = reservedState, error = None } -> fillEnvironment(copyCapture)(environmentTemp)(rest)(survivors)(index)(reservedState)
                 | Some(_survivor) ->
                     match lowerBoundVariable(binding)(state) with
                         | LoweredCoreValue { state = captureState, error = Some(error) } -> failure(captureState)(error)
-                        | LoweredCoreValue { state = captureState, temp = captureTemp, error = None } ->
-                            captureState
-                            |> emit(StoreMemOffset(environmentTemp)(index * 8)(captureTemp))
-                            |> fillEnvironment(environmentTemp)(rest)(survivors)(index + 1)
+                        | LoweredCoreValue { state = captureState, temp = captureTemp, semanticType = captureType, error = None } ->
+                            match copyCapture(binding)(captureTemp)(captureType)(captureState) with
+                                | (copiedState, storedTemp) ->
+                                    copiedState
+                                    |> emit(StoreMemOffset(environmentTemp)(index * 8)(storedTemp))
+                                    |> fillEnvironment(copyCapture)(environmentTemp)(rest)(survivors)(index + 1)
+
+// The capture an environment stores as it was read.
+let storeCaptureAsRead (_binding: CoreBinding) (captureTemp: Int) (_captureType: SemanticType) (state: CoreLoweringState) = (state, captureTemp)
 
 let recursive captureCount captures =
     match captures with
@@ -2974,8 +2980,9 @@ let recursive captureCount captures =
         | _ :: rest -> 1 + captureCount(rest)
 
 // The environment holds the surviving captures; every capture of the free-variable analysis
-// still lowers its fill, the pruned ones only to reserve their temps.
-let allocateEnvironment captures survivors stackAllocate state =
+// still lowers its fill, the pruned ones only to reserve their temps. `copyCapture` answers the
+// temp a surviving capture is stored from: the capture itself, or a copy the environment keeps.
+let allocateEnvironment copyCapture captures survivors stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = environmentTemp } ->
             match captures with
@@ -2992,7 +2999,7 @@ let allocateEnvironment captures survivors stackAllocate state =
                                 emit(AllocStack(environmentTemp)(byteCount))(tempState)
                             else
                                 emit(Alloc(environmentTemp)(byteCount)(false))(tempState)
-                        in fillEnvironment(environmentTemp)(captures)(survivors)(0)(allocatedState)
+                        in fillEnvironment(copyCapture)(environmentTemp)(captures)(survivors)(0)(allocatedState)
 
 // Dead-capture pruning. The free-variable analysis decides a lambda's captures before its body is
 // lowered, so a capture the lowered body never reads through LoadEnv still gets an environment

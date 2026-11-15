@@ -1581,6 +1581,55 @@ let letOwnedTypeName (value: Expr) (loweredValue: LoweredCoreValue) (state: Core
     then None
     else loweredValueOwnedTypeName(loweredValue)
 
+// Whether the result of `expression` is, or holds, a closure capturing `name`: a lambda standing
+// where the result does, through a `let` chain, a branch or an arm, or an element of the tuple,
+// list, record or constructor cell built there. `aliases` are the chain's bindings already bound
+// to such a value. The capture test does not follow shadowing, so a lambda rebinding the name
+// counts as capturing it.
+let recursive resultHoldsClosureCapturing (name: Str) (aliases: List(Str)) (expression: Expr) (state: CoreLoweringState) =
+    match expression with
+        | ExprAt(_span, inner) -> resultHoldsClosureCapturing(name)(aliases)(inner)(state)
+        | ExprLambda(parameter, lambdaBody, _annotation) -> parameter != name && exprMentionsName(name)(lambdaBody)
+        | ExprVar(alias) -> containsName(alias)(aliases)
+        | ExprLet(bound, value, nested, _parameters, _annotation, _requirements) ->
+            if bound == name
+            then false
+            else
+                if resultHoldsClosureCapturing(name)(aliases)(value)(state)
+                then resultHoldsClosureCapturing(name)(bound :: aliases)(nested)(state)
+                else resultHoldsClosureCapturing(name)(aliases)(nested)(state)
+        | ExprLetResult(bound, _value, nested) -> bound != name && resultHoldsClosureCapturing(name)(aliases)(nested)(state)
+        | ExprLetRecursive(bound, _value, nested, _parameters, _annotation, _requirements) -> bound != name && resultHoldsClosureCapturing(name)(aliases)(nested)(state)
+        | ExprIf(_condition, thenBranch, elseBranch) -> resultHoldsClosureCapturing(name)(aliases)(thenBranch)(state) || resultHoldsClosureCapturing(name)(aliases)(elseBranch)(state)
+        | ExprMatch(_scrutinee, cases, _position) -> anyArmHoldsClosureCapturing(name)(aliases)(cases)(state)
+        | ExprTuple(elements) -> anyHoldsClosureCapturing(name)(aliases)(elements)(state)
+        | ExprList(elements, _isMultiline) -> anyHoldsClosureCapturing(name)(aliases)(elements)(state)
+        | ExprCons(head, tail) -> resultHoldsClosureCapturing(name)(aliases)(head)(state) || resultHoldsClosureCapturing(name)(aliases)(tail)(state)
+        | other ->
+            match constructorApplicationOf(other)([])(state) with
+                | Some((_layout, arguments)) -> anyHoldsClosureCapturing(name)(aliases)(arguments)(state)
+                | None -> false
+and anyHoldsClosureCapturing (name: Str) (aliases: List(Str)) (expressions: List(Expr)) (state: CoreLoweringState) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> resultHoldsClosureCapturing(name)(aliases)(expression)(state) || anyHoldsClosureCapturing(name)(aliases)(rest)(state)
+and anyArmHoldsClosureCapturing (name: Str) (aliases: List(Str)) (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match cases with
+        | [] -> false
+        | (_pattern, armBody, _guard) :: rest -> resultHoldsClosureCapturing(name)(aliases)(armBody)(state) || anyArmHoldsClosureCapturing(name)(aliases)(rest)(state)
+
+// The body of a `let` whose result holds a closure capturing the binding is lowered with the
+// binding named among the escaping captures; the names in scope before it come back afterwards.
+let lowerBodyNamingEscapingCapture (name: Str) (body: Expr) lowerBody (expression: Expr) (state: CoreLoweringState) =
+    if resultHoldsClosureCapturing(name)([])(body)(state)
+    then
+        match state
+        |> withStateEscapingCaptureNames(name :: stateEscapingCaptureNames(state))
+        |> lowerBody(expression) with
+            | LoweredCoreValue { state = loweredState } as lowered ->
+                lowered with state = withStateEscapingCaptureNames(stateEscapingCaptureNames(state))(loweredState)
+    else lowerBody(expression)(state)
+
 // The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
 // every analysis of the body still reads `body`.
 let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindings state =
@@ -1602,7 +1651,7 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                             match loweredValue
                             |> withLoweredConsumerRequest(consumerRequestOf(state))
                             |> armOwnerReleasePlan(value)
-                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBody)(outerBindings) with
+                            |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBodyNamingEscapingCapture(name)(body)(lowerBody))(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match bodyState

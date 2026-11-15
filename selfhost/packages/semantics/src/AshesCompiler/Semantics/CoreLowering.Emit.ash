@@ -622,6 +622,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
                 loopResultPartDuplicates = [],
                 takenOverConsumers = [],
                 takenOverRecordNames = [],
+                escapingCaptureNames = [],
                 takenOverSlotSources = [],
                 spineFreedSpans = [],
                 ownFieldRetainedParameters = [],

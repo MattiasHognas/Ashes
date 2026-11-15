@@ -906,6 +906,23 @@ let releaseNormalizedParameterBehindResult (label: Str) (parameter: Str) (body: 
                         else releaseNormalizedParameterBehindArenaResult(label)(parameter)(body)(named)(bodyType)(kept)
                 | _ -> kept
 
+// A closure handed out of the scope of a reference-counted `let` binding it captures keeps an
+// arena copy of the binding's value in its environment: the binding releases its own reference
+// when its scope ends, which is before the closure runs. A stack closure never leaves that scope,
+// and a capture of any other binding is stored as it was read.
+let copyEscapingCapture (stackAllocate: Bool) (binding: CoreBinding) (captureTemp: Int) (captureType: SemanticType) (state: CoreLoweringState) =
+    match binding with
+        | CoreBinding { name = name } ->
+            if stackAllocate || containsName(name)(stateEscapingCaptureNames(state)) == false
+            then (state, captureTemp)
+            else
+                match liveRuntimeOwnerSlot(name)(state) with
+                    | None -> (state, captureTemp)
+                    | Some(_slot) ->
+                        if resultSurvivesReset(captureType)(state) || containsUnresolvedLayout(captureType)(state) || isGeneralRcAdmissible(captureType)([])(state) == false
+                        then (state, captureTemp)
+                        else emitLocatedDeepCopy(captureTemp)(captureType)(state)
+
 // A curried producer's loop body lives in an inner lambda rather than in the recursive binding, so
 // the spine is closed at this return too. Wrapping the lowered body keeps the close ahead of every
 // ownership step without disturbing the shape of the function below it.
@@ -944,7 +961,7 @@ let finishLambdaBody (parameter: Str) (body: Expr) label origin captures stackAl
                                         |> recordBodyRuntimeManaged(label)(bodyRuntimeManaged)
                                         |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                                         |> markCapturedResourcesMoved(survivors)
-                                        |> allocateEnvironment(captures)(survivors)(stackAllocate)
+                                        |> allocateEnvironment(copyEscapingCapture(stackAllocate))(captures)(survivors)(stackAllocate)
                                         |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
