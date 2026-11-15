@@ -1659,16 +1659,21 @@ let recursive addKnownReturnedClosureLabels (summaries: List((Str, List(IrInstru
                                 addKnownReturnedClosureLabels(rest)(strSet(label)(resolved)(knownLabels))(pending)(true)
                             | None -> addKnownReturnedClosureLabels(rest)(knownLabels)(summary :: pending)(changed)
 
+// Every round visits the summaries in program order, so when two functions carry the same label
+// the first one that resolves decides it.
 let recursive runKnownReturnedClosureLabels (summaries: List((Str, List(IrInstructionKind)))) knownLabels =
     match addKnownReturnedClosureLabels(summaries)(knownLabels)([])(false) with
-        | (nextLabels, pending, true) -> runKnownReturnedClosureLabels(pending)(nextLabels)
+        | (nextLabels, pending, true) ->
+            runKnownReturnedClosureLabels(reverse(pending))(nextLabels)
         | (nextLabels, _, false) -> nextLabels
 
 // Whole-program least fixpoint: each pass admits the functions whose returns resolve against the
 // labels known so far, so a chain of curried helpers converges over several passes while a
 // genuine cycle never does. Only the functions still unresolved are revisited.
 let computeKnownReturnedClosureLabels (functions: List(IrFunction)) =
-    runKnownReturnedClosureLabels(summarizeReturns(functions)([]))(Ashes.Collection.Map.empty)
+    runKnownReturnedClosureLabels([]
+    |> summarizeReturns(functions)
+    |> reverse)(Ashes.Collection.Map.empty)
 
 // Every single-defined temp of the function mapped to its defining instruction.
 let functionSingleDefinitions (fn: IrFunction) =
@@ -1743,7 +1748,18 @@ let recursive keepNonAllocating (candidates: MapTree(Str, IrFunction)) (function
             then keepNonAllocating(candidates)(tail)(fn :: acc)
             else keepNonAllocating(candidates)(tail)(acc)
 
-// The non-allocating functions, by label: the largest set whose members only call members.
+// The first function carrying each label, in program order.
+let recursive firstOfEachLabel (functions: List(IrFunction)) (seen: MapTree(Str, Bool)) (acc: List(IrFunction)) =
+    match functions with
+        | [] -> reverse(acc)
+        | (IrFunction { label = label } as fn) :: tail ->
+            if strHas(label)(seen)
+            then firstOfEachLabel(tail)(seen)(acc)
+            else
+                firstOfEachLabel(tail)(strSet(label)(true)(seen))(fn :: acc)
+
+// The non-allocating functions, by label: the largest set whose members only call members. A
+// label shared by several functions is decided by the first of them alone.
 let computeNonAllocatingFunctions (functions: List(IrFunction)) =
     (let recursive fixpoint (candidates: List(IrFunction)) =
         let byLabel = functionsByLabel(candidates)(Ashes.Collection.Map.empty)
@@ -1753,7 +1769,10 @@ let computeNonAllocatingFunctions (functions: List(IrFunction)) =
                 if length(kept) == length(candidates)
                 then byLabel
                 else fixpoint(kept)
-    in fixpoint(functions))
+    in
+        []
+        |> firstOfEachLabel(functions)(Ashes.Collection.Map.empty)
+        |> fixpoint)
 
 // Every reclaim's (pre slot, position) by the end slot it reads, latest position first.
 let recursive indexBracketReclaims insts (position: Int) (acc: MapTree(Int, List((Int, Int)))) =
