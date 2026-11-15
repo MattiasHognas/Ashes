@@ -468,13 +468,23 @@ let stitchExpandedEntry (entryName: Str) (entryPath: Str) (outerSource: Str) (in
                                                         | Error(error) -> Error(ShippedSyntaxStitchError(error))
                                                         | Ok(project) -> Ok(project))
 
+// An inline module the entry may not declare, worded as stage 0 words it, code first.
+let inlineModuleErrorText (path: Str) (error: InlineModuleError) =
+    match error with
+        | InlineModuleImport(name) -> "[ASH021] Inline module '" + name + "' may not contain an 'import' (" + path + ")."
+        | InlineModuleExternal(name) -> "[ASH021] Inline module '" + name + "' may not contain an 'external' declaration (" + path + ")."
+        | InlineModuleTrailingExpression(name) -> "[ASH021] Inline module '" + name + "' may not contain a trailing expression (" + path + ")."
+        | ReservedInlineModule("Ashes") -> "[ASH023] Inline module may not be named 'Ashes' (reserved for the standard library) (" + path + ")."
+        | ReservedInlineModule(name) -> "[ASH023] Inline module '" + name + "' shadows a reserved 'Ashes.*' path (" + path + ")."
+        | DuplicateInlineModule(_scope, name) -> "[ASH024] Duplicate inline module '" + name + "' in this scope (" + path + ")."
+
 // The entry's inline `module` blocks are lifted first, exactly as project planning lifts them, so
 // a single file may declare and import its own modules.
 let stitchWithShippedModules (entryName: Str) (entryPath: Str) (entrySource: Str) (shipped: List(ShippedModuleText)) =
     match expandInlineModules("")(entrySource) with
         | Error(error) ->
             error
-            |> Ashes.Trait.Show.show
+            |> inlineModuleErrorText(entryPath)
             |> ShippedParseError(entryPath)
             |> Error
         | Ok(InlineModuleExpansion { source = outerSource, modules = inlineModules }) -> stitchExpandedEntry(entryName)(entryPath)(outerSource)(inlineModules)(shipped)
