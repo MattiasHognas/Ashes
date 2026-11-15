@@ -33,6 +33,7 @@ let recursive isLiteralOperand (expression: Expr) =
 let recursive mayOriginateOperatorConstraint (nameCarries: Str -> Bool) (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> mayOriginateOperatorConstraint(nameCarries)(inner)
+        | ExprNode(_id, inner) -> mayOriginateOperatorConstraint(nameCarries)(inner)
         | ExprInt(_) -> false
         | ExprBigInt(_) -> false
         | ExprUInt(_value, _bits, _text) -> false

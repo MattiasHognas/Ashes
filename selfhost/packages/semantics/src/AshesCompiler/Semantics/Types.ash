@@ -12,11 +12,17 @@ export (
     type SemanticType(..),
     type TraitConstraint(..),
     type TypeScheme(..),
+    type NodeTypeNote(..),
     type TypeVariableSupply(..),
     value initialTypeVariableSupply,
     value typeVariableSupplyFrom,
     value reservedInferenceTypeVariableCount,
     value freshTypeVariable,
+    value currentNodeOf,
+    value nodeNotesOf,
+    value withCurrentNode,
+    value withNodeNote,
+    value withoutNodeNotes,
     value occursInType,
     value applySubstitution,
     value applySubstitutionMap,
@@ -60,12 +66,34 @@ type TypeScheme =
     | constraints: List(TraitConstraint)
     deriving {Eq, Show}
 
+// What the inference learned at one identified syntax node, as written while it runs: the types
+// still hold inference variables, which the enclosing declaration resolves when it finishes.
+type NodeTypeNote =
+    // The node and its type.
+    | NodeTypeNote(Int, SemanticType)
+    // An operator node, the trait its operator maps to, and the type of its operands.
+    | NodeOperatorNote(Int, Str, SemanticType)
+    // A reference to a generic binding: the type each quantified variable of its scheme took here,
+    // and the trait requirements of the scheme at those types.
+    | NodeInstantiationNote(Int, List((Int, SemanticType)), List(TraitConstraint))
+    // A name a node brings into scope and its scheme. The node is the `let` for a binding and the
+    // arm body for a pattern variable.
+    | NodeBindingNote(Int, Str, TypeScheme)
+    deriving {Eq, Show}
+
+// The supply of fresh type variables, which every inference step takes and hands on. It also
+// carries what is recorded against identified nodes, because nothing else is threaded through
+// every step in order: `currentNode` is the identified node being inferred, or -1, and `notes`
+// holds the youngest note first. An inference that is abandoned abandons its notes with its
+// supply.
 type TypeVariableSupply =
     | nextId: Int
+    | currentNode: Int
+    | notes: List(NodeTypeNote)
     deriving {Eq, Show}
 
 let initialTypeVariableSupply : Unit -> TypeVariableSupply =
-    given (_unit) -> TypeVariableSupply(nextId = 0)
+    given (_unit) -> TypeVariableSupply(nextId = 0, currentNode = -1, notes = [])
 
 // A supply that starts above a block of ids some statically embedded `TypeScheme` already
 // quantifies over. Such a scheme is written before any supply runs, so its quantified ids are fixed
@@ -73,7 +101,7 @@ let initialTypeVariableSupply : Unit -> TypeVariableSupply =
 // `(id, SemVariable(id))` and `applySubstitution` recurses on that self-mapping forever. Starting
 // past the reservation is the guarantee; leaving a gap and hoping no program grows into it is not.
 let typeVariableSupplyFrom : Int -> TypeVariableSupply =
-    given (nextId) -> TypeVariableSupply(nextId = nextId)
+    given (nextId) -> TypeVariableSupply(nextId = nextId, currentNode = -1, notes = [])
 
 // The id an inference supply starts above. Two blocks are minted before any supply runs and must
 // never be reissued: `CoreBuiltinLowering`'s builtin signatures quantify over
@@ -83,9 +111,17 @@ let typeVariableSupplyFrom : Int -> TypeVariableSupply =
 let reservedInferenceTypeVariableCount = 2000
 
 let freshTypeVariable : TypeVariableSupply -> (SemanticType, TypeVariableSupply) =
-    given (supply) ->
-        match supply with
-            | TypeVariableSupply { nextId = nextId } -> (SemVariable(nextId), TypeVariableSupply(nextId = nextId + 1))
+    given (supply) -> (SemVariable(supply.nextId), (supply with nextId = supply.nextId + 1))
+
+let withCurrentNode (node: Int) (supply: TypeVariableSupply) = supply with currentNode = node
+
+let nodeNotesOf (supply: TypeVariableSupply) = supply.notes
+
+let currentNodeOf (supply: TypeVariableSupply) = supply.currentNode
+
+let withNodeNote (note: NodeTypeNote) (supply: TypeVariableSupply) = supply with notes = note :: supply.notes
+
+let withoutNodeNotes (supply: TypeVariableSupply) = supply with notes = []
 
 let recursive anyType : (SemanticType -> Bool) -> List(SemanticType) -> Bool =
     given (predicate) ->

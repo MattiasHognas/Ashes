@@ -1947,6 +1947,7 @@ let functionReach (registry: ReachRegistry) (table: ReachTable) (function: Reach
 let recursive dependencyKeys (registry: ReachRegistry) (scope: ReachScope) (expr: Expr) (keys: MapTree(Str, Bool)) =
     match expr with
         | ExprAt(_span, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
+        | ExprNode(_id, inner) -> dependencyKeys(registry)(scope)(inner)(keys)
         | ExprInt(_value) -> keys
         | ExprBigInt(_value) -> keys
         | ExprUInt(_value, _width, _text) -> keys

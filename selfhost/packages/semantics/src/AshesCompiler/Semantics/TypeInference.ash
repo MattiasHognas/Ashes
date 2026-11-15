@@ -935,11 +935,80 @@ let inferenceFailure semanticType substitution supply error =
         error
     ))
 
+// The identity directly around `expression`, looking through its location, or -1.
+let recursive identifiedNode expression =
+    match expression with
+        | ExprAt(_span, inner) -> identifiedNode(inner)
+        | ExprNode(node, _inner) -> node
+        | _ -> -1
+
+// Recording against identified nodes happens only under the program inference rules and only
+// where a node is known, so an inference run for lowering writes nothing.
+let recordsAt (environment: TypeEnvironment) (node: Int) = environment.programInferenceRules && node >= 0
+
+let recordNodeType (node: Int) (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { semanticType = semanticType, supply = supply, error = None } ->
+            result with supply = withNodeNote(NodeTypeNote(node)(semanticType))(supply)
+        | _ -> result
+
+let noteOperator (environment: TypeEnvironment) (node: Int) (traitName: Str) operandType (result: TypeInferenceResult) =
+    if recordsAt(environment)(node)
+    then
+        match result with
+            | TypeInferenceResult { supply = supply, error = None } ->
+                result with supply = withNodeNote(NodeOperatorNote(node)(traitName)(operandType))(supply)
+            | _ -> result
+    else result
+
+// The literal zero of `0 - x` is not inferred as a value; it stands at the type its operand has.
+let noteNegatedZero (environment: TypeEnvironment) (node: Int) (result: TypeInferenceResult) =
+    if recordsAt(environment)(node)
+    then recordNodeType(node)(result)
+    else result
+
+let noteBinding (environment: TypeEnvironment) (node: Int) (name: Str) (scheme: TypeScheme) supply =
+    if recordsAt(environment)(node)
+    then
+        withNodeNote(NodeBindingNote(node)(name)(scheme))(supply)
+    else supply
+
+let recursive noteBindingsIn (environment: TypeEnvironment) (node: Int) (names: List(Str)) (scope: TypeEnvironment) supply =
+    if recordsAt(environment)(node)
+    then
+        match names with
+            | [] -> supply
+            | name :: rest ->
+                match resolveWrittenTypeBinding(name)(scope) with
+                    | Some(scheme) ->
+                        supply
+                        |> withNodeNote(NodeBindingNote(node)(name)(scheme))
+                        |> noteBindingsIn(environment)(node)(rest)(scope)
+                    | None -> noteBindingsIn(environment)(node)(rest)(scope)(supply)
+    else supply
+
+// `instantiate` mints one variable per quantified variable, in order, from `firstId`.
+let recursive instantiationArguments (quantified: List((Int, Str))) (firstId: Int) =
+    match quantified with
+        | [] -> []
+        | (variable, _name) :: rest -> (variable, SemVariable(firstId)) :: instantiationArguments(rest)(firstId + 1)
+
+// Notes, at the node `before` was inferring, the instantiation `instantiate(scheme)(before)` made.
+let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
+    if recordsAt(environment)(before.currentNode)
+    then
+        match scheme.quantified with
+            | [] -> after
+            | quantified ->
+                withNodeNote(NodeInstantiationNote(before.currentNode)(instantiationArguments(quantified)(before.nextId))(requirements))(after)
+    else after
+
 // Unary `-x` reaches inference as `0 - x`: the parser has no negation node. A subtraction whose
 // left operand is the literal zero is therefore the operand's own negation, at the operand's type.
 let recursive isZeroLiteralExpression expression =
     match expression with
         | ExprAt(_span, inner) -> isZeroLiteralExpression(inner)
+        | ExprNode(_id, inner) -> isZeroLiteralExpression(inner)
         | ExprInt(0) -> true
         | _ -> false
 
@@ -2510,6 +2579,7 @@ let subsumeCapabilityRow capabilityRow environment ambientRow substitution suppl
 let recursive capabilityOperationCallRoot expression sawArgument =
     match expression with
         | ExprAt(_span, inner) -> capabilityOperationCallRoot(inner)(sawArgument)
+        | ExprNode(_id, inner) -> capabilityOperationCallRoot(inner)(sawArgument)
         | ExprCall(function, _argument, _whitespace, _layout) -> capabilityOperationCallRoot(function)(true)
         | ExprQualifiedVar(capabilityName, operationName) ->
             if sawArgument
@@ -3402,7 +3472,7 @@ and inferLetResult name value body environment substitution supply ambientRow =
                                 body,
                                 addTypeBinding(name)(binding)(environment),
                                 valueSubstitution,
-                                valueSupply,
+                                noteBinding(environment)(currentNodeOf(supply))(name)(binding)(valueSupply),
                                 ambientRow
                             ) with
                                 | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
@@ -3947,7 +4017,7 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
             )
         | (pattern, body, guard) :: tail ->
             match inferPattern(pattern)(environment)(substitution)(supply)([]) with
-                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _patternNames, error = None } ->
+                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
                     match mergePatternUnification(
                         patternSubstitution,
                         unifyIn(environment)(
@@ -3969,7 +4039,7 @@ and inferMatchCases cases scrutineeType resultType environment substitution supp
                                 environment,
                                 matchedEnvironment,
                                 matchedSubstitution,
-                                matchedSupply,
+                                noteBindingsIn(environment)(identifiedNode(body))(patternNames)(matchedEnvironment)(matchedSupply),
                                 ambientRow,
                                 accumulatedConstraints
                             )
@@ -4074,13 +4144,13 @@ and inferBinaryTrait traitName returnsBool left right environment substitution s
                                             unifiedType
                                         )])
                                     in
-                                        addConstraints(
+                                        noteOperator(environment)(currentNodeOf(supply))(traitName)(unifiedType)(addConstraints(
                                             appendConstraints(
                                                 leftConstraints,
                                                 appendConstraints(rightConstraints)([constraint])
                                             ),
                                             inferenceSuccess(resultType)(unifiedSubstitution)(unifiedSupply)
-                                        )
+                                        ))
                             | failure -> failure
                 | failure -> failure
         | failure -> failure
@@ -4091,10 +4161,10 @@ and inferUnaryTrait traitName operand environment substitution supply ambientRow
             in
                 let constraint = TraitConstraint(traitName = traitName, typeArguments = [resolvedOperand])
                 in
-                    addConstraints(
+                    noteOperator(environment)(currentNodeOf(supply))(traitName)(resolvedOperand)(addConstraints(
                         appendConstraints(operandConstraints)([constraint]),
                         inferenceSuccess(resolvedOperand)(operandSubstitution)(operandSupply)
-                    )
+                    ))
         | failure -> failure
 and inferHandlerReturn returnArm bodyType handlerResult environment substitution supply ambientRow accumulatedConstraints =
     match returnArm with
@@ -4255,6 +4325,13 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                 span,
                 inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
             )
+        | ExprNode(node, inner) ->
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferCalledFunction(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprVar(name) ->
             match resolveExternalFunctionBinding(name)(environment) with
                 | None -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
@@ -4266,7 +4343,7 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                 inferenceSuccess(
                                     applySubstitution(substitution)(instantiatedType),
                                     substitution,
-                                    nextSupply
+                                    noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                 )
                             )
         | ExprQualifiedVar(capabilityName, operationName) ->
@@ -4289,7 +4366,7 @@ and inferCalledFunction expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            nextSupply
+                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
@@ -4316,6 +4393,13 @@ and inferWith expression environment substitution supply ambientRow =
                 span,
                 inferWith(inner)(environment)(substitution)(supply)(ambientRow)
             )
+        | ExprNode(node, inner) ->
+            if environment.programInferenceRules
+            then
+                ambientRow
+                |> inferWith(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+                |> recordNodeType(node)
+            else inferWith(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprInt(_) -> inferenceSuccess(SemInt)(substitution)(supply)
         | ExprBigInt(_) -> inferenceSuccess(SemBigInt)(substitution)(supply)
         | ExprUInt(_value, bits, _text) -> inferenceSuccess(SemUInt(bits))(substitution)(supply)
@@ -4343,7 +4427,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            nextSupply
+                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | ExprQualifiedVar(moduleName, name) ->
@@ -4373,7 +4457,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         inferenceSuccess(
                                             applySubstitution(substitution)(instantiatedType),
                                             substitution,
-                                            nextSupply
+                                            noteInstantiation(environment)(scheme)(supply)(instantiatedConstraints)(nextSupply)
                                         )
                                     )
         | ExprPerform(operation) ->
@@ -4417,7 +4501,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                     body,
                                                     bodyEnvironment,
                                                     annotationSubstitution,
-                                                    bodyAmbientSupply,
+                                                    noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply),
                                                     bodyAmbientRow
                                                 ) with
                                                     | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
@@ -4528,7 +4612,8 @@ and inferWith expression environment substitution supply ambientRow =
                                     )
                                 in
                                     let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
-                                    in inferWith(body)(bodyEnvironment)(checkedSubstitution)(checkedSupply)(ambientRow)
+                                    in
+                                        inferWith(body)(bodyEnvironment)(checkedSubstitution)(noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply))(ambientRow)
                         | failure -> failure
                 | failure -> failure
         | ExprLetRecursive(name, value, body, _parameters, annotation, requirements) ->
@@ -4581,7 +4666,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                                     body,
                                                                     addTypeBinding(name)(scheme)(environment),
                                                                     checkedSubstitution,
-                                                                    checkedSupply,
+                                                                    noteBinding(environment)(currentNodeOf(supply))(name)(scheme)(checkedSupply),
                                                                     ambientRow
                                                                 )
                                                     | failure -> failure
@@ -4820,7 +4905,7 @@ and inferWith expression environment substitution supply ambientRow =
             )
         | ExprSubtract(left, right) ->
             if appliesProgramInferenceRules(environment) && isZeroLiteralExpression(left)
-            then inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow)
+            then noteNegatedZero(environment)(identifiedNode(left))(inferUnaryTrait("Negate")(right)(environment)(substitution)(supply)(ambientRow))
             else
                 inferBinaryTrait(
                     "Subtract",

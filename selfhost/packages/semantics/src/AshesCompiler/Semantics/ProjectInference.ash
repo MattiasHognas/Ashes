@@ -13,6 +13,9 @@ import AshesCompiler.Semantics.ProjectSyntaxStitching
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Types
 export (
+    type IdentifiedStitchedProject(..),
+    value identifyStitchedProject,
+    value inferIdentifiedStitchedProjectFrom,
     value inferStitchedProjectFrom,
     value inferStitchedProject,
 )
@@ -94,36 +97,6 @@ let recursive assembleInferenceUnits regions remainingItems expectedStart revers
                                         body
                                     )
 
-let projectInferenceError baseEnvironment error =
-    ProgramInferenceResult(
-        semanticType = SemNever,
-        substitution = [],
-        environment = baseEnvironment,
-        externalAbi = None,
-        errorLocation = None,
-        error = Some(error)
-    )
-
-let inferProjectUnits baseEnvironment assembled =
-    match assembled with
-        | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = _entryPackageId, error = Some(error) } ->
-            projectInferenceError(
-                baseEnvironment,
-                error
-            )
-        | ProjectInferenceUnits { units = units, body = body, entryPackageId = Some(entryPackageId), error = None } ->
-            inferProgramUnitsFrom(
-                baseEnvironment,
-                units,
-                body,
-                entryPackageId
-            )
-        | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = None, error = None } ->
-            projectInferenceError(
-                baseEnvironment,
-                InvalidStitchedProgram("missing entry package")
-            )
-
 let recursive entryRegion regions =
     match regions with
         | [] -> None
@@ -158,13 +131,33 @@ let withErrorModule regions (result: ProgramInferenceResult) =
                 | None -> result
         | _ -> result
 
-let inferStitchedProjectFrom baseEnvironment project =
+// A stitched project split into its modules, with `deriving` expanded and every expression node
+// identified. It is what inference records against, and what a reader of the recorded types walks.
+type IdentifiedStitchedProject =
+    | program: IdentifiedProgramUnits
+    | entryPackageId: Str
+
+let unidentifiedProject body error = IdentifiedStitchedProject(program = IdentifiedProgramUnits(units = [], body = body, nodeCount = 0, error = Some(error)), entryPackageId = "")
+
+let identifyStitchedProject project =
     match project with
         | StitchedSyntaxProject { program = ProgramSyntax { items = items, body = body }, moduleRegions = regions } ->
-            body
-            |> assembleInferenceUnits(regions)(items)(0)([])(None)
-            |> inferProjectUnits(baseEnvironment)
+            match assembleInferenceUnits(regions)(items)(0)([])(None)(body) with
+                | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = _entryPackageId, error = Some(error) } -> unidentifiedProject(body)(error)
+                | ProjectInferenceUnits { units = units, body = unitBody, entryPackageId = Some(entryPackageId), error = None } -> IdentifiedStitchedProject(program = identifyProgramUnits(units)(unitBody), entryPackageId = entryPackageId)
+                | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = None, error = None } -> unidentifiedProject(body)(InvalidStitchedProgram("missing entry package"))
+
+let inferIdentifiedStitchedProjectFrom baseEnvironment project (identified: IdentifiedStitchedProject) =
+    match project with
+        | StitchedSyntaxProject { moduleRegions = regions } ->
+            identified.program
+            |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(identified.entryPackageId)
             |> withErrorModule(regions)
+
+let inferStitchedProjectFrom baseEnvironment project =
+    project
+    |> identifyStitchedProject
+    |> inferIdentifiedStitchedProjectFrom(baseEnvironment)(project)
 
 let inferStitchedProject project =
     inferStitchedProjectFrom(emptyTypeEnvironmentForPackage("standalone"))(project)

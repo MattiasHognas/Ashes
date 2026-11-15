@@ -13,6 +13,8 @@ import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
+import AshesCompiler.Semantics.NodeIdentity
+import AshesCompiler.Semantics.NodeTypeTable
 import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.ExternalAbi
 import Ashes.Collection.List.reverse
@@ -24,6 +26,9 @@ export (
     type ProgramInferenceResult(..),
     type InferenceErrorLocation(..),
     type ProgramInferenceUnit(..),
+    type IdentifiedProgramUnits(..),
+    value identifyProgramUnits,
+    value inferIdentifiedProgramUnitsFrom,
     value inferProgramUnitsFrom,
     value inferProgramFromPackage,
     value inferProgramInPackage,
@@ -96,6 +101,9 @@ type ProgramInferenceResult =
     | substitution: List((Int, SemanticType))
     | environment: TypeEnvironment
     | externalAbi: Maybe(ExternalProgramAbi)
+    // What was recorded against the identified nodes of the program. Empty when the program
+    // inferred carried no identities.
+    | nodeTypes: NodeTypeTable
     | errorLocation: Maybe(InferenceErrorLocation)
     | error: Maybe(ProgramInferenceError)
 
@@ -109,6 +117,15 @@ type ProgramInferenceState =
 type ProgramInferenceUnit =
     | packageId: Str
     | program: ProgramSyntax
+
+// The units of a program after `deriving` is expanded and every expression node has its identity,
+// with the trailing expression numbered after them. `nodeCount` is the number of identities
+// given, which are 0 up to it.
+type IdentifiedProgramUnits =
+    | units: List(ProgramInferenceUnit)
+    | body: Maybe(Expr)
+    | nodeCount: Int
+    | error: Maybe(ProgramInferenceError)
 
 type ProgramUnitExpansion =
     | units: List(ProgramInferenceUnit)
@@ -1576,6 +1593,7 @@ and handlerArmsDependOnTraitMethod traitName methodName arms =
 and expressionDependsOnTraitMethod traitName methodName expression =
     match expression with
         | ExprAt(_span, inner) -> expressionDependsOnTraitMethod(traitName)(methodName)(inner)
+        | ExprNode(_id, inner) -> expressionDependsOnTraitMethod(traitName)(methodName)(inner)
         | ExprQualifiedVar(candidateTraitName, candidateMethodName) ->
             if traitName == candidateTraitName
             then methodName == candidateMethodName
@@ -2412,17 +2430,19 @@ let withProgramErrorLocation (finished: ProgramInferenceResult) =
 type ProgramInferenceProgress =
     | state: ProgramInferenceState
     | resolved: MapTree(Int, SemanticType)
+    | nodeTypes: NodeTypeTable
 
-let settleProgramInferenceState (resolved: MapTree(Int, SemanticType)) (state: ProgramInferenceState) =
-    (let settled = state with substitution = [], environment = withClosedGeneralizationScope(state.environment)
-    in ProgramInferenceProgress(state = settled, resolved = extendSubstitutionMap(state.substitution)(resolved)))
+let settleProgramInferenceState (resolved: MapTree(Int, SemanticType)) (nodeTypes: NodeTypeTable) (state: ProgramInferenceState) =
+    (let settled = state with substitution = [], environment = withClosedGeneralizationScope(state.environment), supply = withoutNodeNotes(state.supply)
+    in
+        ProgramInferenceProgress(state = settled, resolved = extendSubstitutionMap(state.substitution)(resolved), nodeTypes = settleNodeNotes(state.substitution)(nodeNotesOf(state.supply))(nodeTypes)))
 
-let startProgramInferenceProgress (state: ProgramInferenceState) = settleProgramInferenceState(Ashes.Collection.Map.empty)(state)
+let startProgramInferenceProgress (state: ProgramInferenceState) = settleProgramInferenceState(Ashes.Collection.Map.empty)(emptyNodeTypeTable)(state)
 
 let advanceProgramInference step (progress: ProgramInferenceProgress) =
     progress.state
     |> step
-    |> settleProgramInferenceState(progress.resolved)
+    |> settleProgramInferenceState(progress.resolved)(progress.nodeTypes)
 
 let recursive inferTopLevelItem externalDeclarations item state =
     locateTopLevelItemError(
@@ -2503,7 +2523,7 @@ let stateWithInferencePackage packageId state =
                 environment
             ), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error)
 
-let locateProgressUnitError unitIndex (progress: ProgramInferenceProgress) = ProgramInferenceProgress(state = locateUnitError(unitIndex)(progress.state), resolved = progress.resolved)
+let locateProgressUnitError unitIndex (progress: ProgramInferenceProgress) = ProgramInferenceProgress(state = locateUnitError(unitIndex)(progress.state), resolved = progress.resolved, nodeTypes = progress.nodeTypes)
 
 let recursive inferExpandedProgramUnitsAt unitIndex units externalDeclarations (progress: ProgramInferenceProgress) =
     match units with
@@ -2530,7 +2550,7 @@ let recursive appendResolvedSubstitution entries substitution =
 let withResolvedSubstitution (resolved: MapTree(Int, SemanticType)) (result: ProgramInferenceResult) =
     result with substitution = appendResolvedSubstitution(result.substitution)(Ashes.Collection.Map.toList(resolved))
 
-let inferProgramUnitBody body entryPackageId state =
+let inferProgramUnitBody body entryPackageId (nodeTypes: NodeTypeTable) state =
     match stateWithInferencePackage(entryPackageId)(state) with
         | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
             match body with
@@ -2540,6 +2560,7 @@ let inferProgramUnitBody body entryPackageId state =
                         substitution = substitution,
                         environment = environment,
                         externalAbi = None,
+                        nodeTypes = nodeTypes,
                         errorLocation = None,
                         error = None
                     )
@@ -2547,12 +2568,13 @@ let inferProgramUnitBody body entryPackageId state =
                     match supply
                     |> inferTopLevelExpressionLocated(expression)(environment)(substitution)
                     |> checkTrailingRequirements(expression)(environment) with
-                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } ->
+                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = bodySupply, constraints = _constraints, error = None } ->
                             ProgramInferenceResult(
                                 semanticType = semanticType,
                                 substitution = bodySubstitution,
                                 environment = environment,
                                 externalAbi = None,
+                                nodeTypes = settleNodeNotes(bodySubstitution)(nodeNotesOf(bodySupply))(nodeTypes),
                                 errorLocation = None,
                                 error = None
                             )
@@ -2562,6 +2584,7 @@ let inferProgramUnitBody body entryPackageId state =
                                 substitution = bodySubstitution,
                                 environment = environment,
                                 externalAbi = None,
+                                nodeTypes = nodeTypes,
                                 errorLocation = None,
                                 error = Some(
                                     locatedProgramError(
@@ -2578,13 +2601,14 @@ let inferProgramUnitBody body entryPackageId state =
                 substitution = substitution,
                 environment = environment,
                 externalAbi = None,
+                nodeTypes = nodeTypes,
                 errorLocation = None,
                 error = Some(error)
             )
 
 let inferProgramProgressBody body entryPackageId (progress: ProgramInferenceProgress) =
     progress.state
-    |> inferProgramUnitBody(body)(entryPackageId)
+    |> inferProgramUnitBody(body)(entryPackageId)(progress.nodeTypes)
     |> withResolvedSubstitution(progress.resolved)
 
 // The supply starts above every id a statically embedded scheme already quantifies over — the
@@ -2624,6 +2648,7 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                 substitution = [],
                 environment = baseEnvironment,
                 externalAbi = None,
+                nodeTypes = emptyNodeTypeTable,
                 errorLocation = None,
                 error = Some(error)
             )
@@ -2646,10 +2671,33 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                         |> attachExternalAbi(externalDeclarations)
                         |> withProgramErrorLocation
 
+let recursive identifyExpandedUnits (next: Int) (units: List(ProgramInferenceUnit)) (reversed: List(ProgramInferenceUnit)) =
+    match units with
+        | [] -> (reverse(reversed), next)
+        | ProgramInferenceUnit { packageId = packageId, program = program } :: tail ->
+            match identifyProgram(next)(program) with
+                | (identified, after) -> identifyExpandedUnits(after)(tail)(ProgramInferenceUnit(packageId = packageId, program = identified) :: reversed)
+
+// Expands `deriving` in `units` and gives every expression node of the result, and of `body`, its
+// identity. Both steps depend only on the units, so the same units are numbered the same way.
+let identifyProgramUnits units (body: Maybe(Expr)) =
+    match expandProgramInferenceUnits(units) with
+        | ProgramUnitExpansion { units = _units, error = Some(error) } -> IdentifiedProgramUnits(units = [], body = body, nodeCount = 0, error = Some(error))
+        | ProgramUnitExpansion { units = expanded, error = None } ->
+            match identifyExpandedUnits(0)(expanded)([]) with
+                | (identified, afterUnits) ->
+                    match body with
+                        | None -> IdentifiedProgramUnits(units = identified, body = None, nodeCount = afterUnits, error = None)
+                        | Some(expression) ->
+                            match identifyExpression(afterUnits)(expression) with
+                                | (identifiedBody, after) -> IdentifiedProgramUnits(units = identified, body = Some(identifiedBody), nodeCount = after, error = None)
+
+let inferIdentifiedProgramUnitsFrom baseEnvironment entryPackageId (identified: IdentifiedProgramUnits) = inferExpandedProgramUnitsFrom(baseEnvironment)(identified.body)(entryPackageId)(ProgramUnitExpansion(units = identified.units, error = identified.error))
+
 let inferProgramUnitsFrom baseEnvironment units body entryPackageId =
-    units
-    |> expandProgramInferenceUnits
-    |> inferExpandedProgramUnitsFrom(baseEnvironment)(body)(entryPackageId)
+    body
+    |> identifyProgramUnits(units)
+    |> inferIdentifiedProgramUnitsFrom(baseEnvironment)(entryPackageId)
 
 let inferExpandedProgramFromPackage packageId baseEnvironment program =
     match program with
@@ -2683,10 +2731,13 @@ let inferProgramFromPackage packageId baseEnvironment program =
                     baseEnvironment
                 ),
                 externalAbi = None,
+                nodeTypes = emptyNodeTypeTable,
                 errorLocation = None,
                 error = Some(ProgramDerivingExpansionError(error))
             )
-        | Ok(expanded) -> inferExpandedProgramFromPackage(packageId)(baseEnvironment)(expanded)
+        | Ok(expanded) ->
+            match identifyProgram(0)(expanded) with
+                | (identified, _nodeCount) -> inferExpandedProgramFromPackage(packageId)(baseEnvironment)(identified)
 
 let inferProgramInPackage packageId program =
     inferProgramFromPackage(packageId)(emptyTypeEnvironmentForPackage(packageId))(program)

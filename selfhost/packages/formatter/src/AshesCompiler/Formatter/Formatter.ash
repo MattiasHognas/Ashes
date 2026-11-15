@@ -691,6 +691,7 @@ and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
                                         "handle " + formatterExpr(body)(0)(indent)(preferPipelines) + " with\n" + formatterArms(arms)(indent + 4)(preferPipelines)
                                     )
                                 | ExprAt(_span, inner) -> formatterExpr(inner)(parent)(indent)(preferPipelines)
+                                | ExprNode(_id, inner) -> formatterExpr(inner)(parent)(indent)(preferPipelines)
 and formatterExpressionInline : Expr -> Str =
     given (expression) -> formatterExpr(expression)(0)(0)(false)
 and formatterOperandInline : Expr -> Bool -> Str =

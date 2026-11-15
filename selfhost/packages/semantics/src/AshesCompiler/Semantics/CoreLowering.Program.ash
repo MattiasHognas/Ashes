@@ -412,6 +412,7 @@ let recursive closePendingTopLevelItems (pending: List(PendingTopLevelClose)) (l
 let recursive exprMayReferenceName (expr: Expr) (name: Str) =
     match expr with
         | ExprAt(_span, inner) -> exprMayReferenceName(inner)(name)
+        | ExprNode(_id, inner) -> exprMayReferenceName(inner)(name)
         | ExprInt(_value) -> false
         | ExprBigInt(_value) -> false
         | ExprUInt(_value, _bitWidth, _suffix) -> false

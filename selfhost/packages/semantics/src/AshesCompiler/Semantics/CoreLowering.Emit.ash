@@ -498,7 +498,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
             // passing empty `constructorLayouts`/`builtinLayouts` gets this, harmlessly: it just means
             // this compilation's fresh-variable numbering never mints those specific low ids, not that
             // anything is missing.
-            typeSupply = TypeVariableSupply(nextId = reservedBuiltinTypeVariableCount),
+            typeSupply = typeVariableSupplyFrom(reservedBuiltinTypeVariableCount),
             substitution = Ashes.Collection.Map.empty,
             currentSpan = None,
             consumerRequest = emptyConsumerRequest,

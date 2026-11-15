@@ -97,6 +97,8 @@ let callArgumentsPipe : CallArgumentListLayout = 3
 
 type Expr =
     | ExprAt(TextSpan, Expr)
+    // The identity a numbering pass gives a node of a stitched program. The parser never produces it.
+    | ExprNode(Int, Expr)
     | ExprInt(Int)
     | ExprBigInt(Str)
     | ExprUInt(Int, Int, Str)
