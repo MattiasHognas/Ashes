@@ -201,9 +201,34 @@ Order of work. Each step lands separately and is useful if the later ones are de
    expression, the resolved instance per operator, the instantiation and dictionaries per call,
    the scheme per binding. A body lowered at several types reads the table through its
    instantiation.
+
+   This is in place. `NodeIdentity.ash` wraps every expression node of the stitched,
+   deriving-expanded units in `ExprNode(id, node)`, numbered in pre-order; only the standalone
+   inference receives the numbered tree. `ProgramInferenceResult.nodeTypes` is a `NodeTypeTable`
+   of four maps keyed by node id: `types`, `operators` (trait and operand type),
+   `instantiations` (arguments, requirements, dictionaries) and `bindings` (schemes at `let`,
+   lambda and arm-body nodes). A generic body keeps its binding's quantified variables; a body
+   lowered at a concrete type applies the instantiation's arguments to the stored type. Over the
+   whole compiler every one of 398,599 nodes has exactly one recorded type.
 7. **Lower from the table.** Lowering reads types instead of unifying. Remove the discovery and
    replay passes, pending and proven trait goals, deferred operators and dictionaries, the
    per-binding plan, and body re-lowering.
+
+   What the table does not yet give lowering:
+   - Lowering must receive the numbered tree, skip its own `deriving` expansion, see through
+     `ExprNode` wherever it sees through `ExprAt`, and keep the wrapper when a rewrite copies a
+     node.
+   - Nodes that lowering synthesizes (evidence rewrites, specialized copies) have no identity;
+     they need a rule such as the source node's identity plus an instantiation.
+   - Handler operation arm parameters and `resume` are not recorded.
+   - Top-level schemes are only in the environment, by stitched name.
+   - Record construction and update have no instantiation record.
+   - Operators record a trait and an operand type, not whether the instance is primitive, a user
+     instance or a dictionary.
+   - Schemes keep requirements at concrete types (`requires Multiply(Int)`), and variables
+     nothing constrains stay variables; both need a decision (drop settled requirements, default
+     unconstrained variables).
+   - `tests/trait_deriving.ash` is rejected before numbering.
 8. **Replace the order-dependent rules.** Rewrite the decisions keyed on a type being open at a
    site as rules over the final type, each with a lifetime regression.
 9. **Retire the lowered-IR parity fixtures against stage 0.** Stage 0 remains the bootstrap
