@@ -26,8 +26,14 @@ export (
     value buildCfgBlocks,
     value blockBoundaryKinds,
     value findCfgBlock,
-    value computeImmediateDominators,
-    value dominates,
+    type BlockEdges(..),
+    type DominanceIndex(..),
+    value blockEdgesOf,
+    value edgesAt,
+    value inBlockSet,
+    value immediateDominatorsOf,
+    value dominanceIndexOf,
+    value dominatesWithin,
 )
 
 type IrCfgBlock =
@@ -280,138 +286,175 @@ let recursive findCfgBlockFrom (blocks: List(IrCfgBlock)) (instructionIndex: Int
 
 let findCfgBlock (blocks: List(IrCfgBlock)) (instructionIndex: Int) = findCfgBlockFrom(blocks)(instructionIndex)(0)
 
-let blockSuccessorsOfIndex (blocks: List(IrCfgBlock)) (index: Int) =
-    match listAt(blocks)(index) with
-        | Some(IrCfgBlock { blockSuccessors = successors }) -> successors
+// A graph's edges by block index, for the walks that follow them from block to block.
+type BlockEdges =
+    | successorsOfBlock: MapTree(Int, List(Int))
+    | predecessorsOfBlock: MapTree(Int, List(Int))
+
+let recursive blockEdgesInto (blocks: List(IrCfgBlock)) (index: Int) (successors: MapTree(Int, List(Int))) (predecessors: MapTree(Int, List(Int))) =
+    match blocks with
+        | [] -> BlockEdges(successorsOfBlock = successors, predecessorsOfBlock = predecessors)
+        | IrCfgBlock { blockSuccessors = targets, blockPredecessors = sources } :: rest ->
+            predecessors
+            |> Ashes.Collection.Map.setInt(index)(sources)
+            |> blockEdgesInto(rest)(index + 1)(Ashes.Collection.Map.setInt(index)(targets)(successors))
+
+let blockEdgesOf (blocks: List(IrCfgBlock)) = blockEdgesInto(blocks)(0)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty)
+
+let edgesAt (index: Int) (edges: MapTree(Int, List(Int))) =
+    match Ashes.Collection.Map.getInt(index)(edges) with
+        | Some(blocks) -> blocks
         | None -> []
 
-let blockPredecessorsOfIndex (blocks: List(IrCfgBlock)) (index: Int) =
-    match listAt(blocks)(index) with
-        | Some(IrCfgBlock { blockPredecessors = predecessors }) -> predecessors
-        | None -> []
+let inBlockSet (block: Int) (set: MapTree(Int, Bool)) =
+    match Ashes.Collection.Map.getInt(block)(set) with
+        | Some(_listed) -> true
+        | None -> false
+
+let blockNumberAt (block: Int) (numbers: MapTree(Int, Int)) =
+    match Ashes.Collection.Map.getInt(block)(numbers) with
+        | Some(number) -> number
+        | None -> -1
 
 // The reverse postorder of the blocks reachable from the entry: a depth-first walk over an
 // explicit stack, kept as two parallel lists (the open blocks and, for each, the successors still
 // to visit), that conses a block onto the order once every successor is finished, so the entry
 // ends up first and every block follows the block the walk reached it through.
-let recursive reversePostorder (blocks: List(IrCfgBlock)) (open: List(Int)) (pending: List(List(Int))) (visited: List(Int)) (order: List(Int)) =
+let recursive reversePostorderOver (successors: MapTree(Int, List(Int))) (open: List(Int)) (pending: List(List(Int))) (visited: MapTree(Int, Bool)) (order: List(Int)) =
     match (open, pending) with
-        | (block :: openRest, [] :: pendingRest) -> reversePostorder(blocks)(openRest)(pendingRest)(visited)(block :: order)
+        | (block :: openRest, [] :: pendingRest) -> reversePostorderOver(successors)(openRest)(pendingRest)(visited)(block :: order)
         | (block :: openRest, (successor :: more) :: pendingRest) ->
-            if sortedSetContains(successor)(visited)
-            then reversePostorder(blocks)(block :: openRest)(more :: pendingRest)(visited)(order)
+            if inBlockSet(successor)(visited)
+            then reversePostorderOver(successors)(block :: openRest)(more :: pendingRest)(visited)(order)
             else
-                reversePostorder(blocks)(successor :: block :: openRest)(blockSuccessorsOfIndex(blocks)(successor) :: more :: pendingRest)(sortedSetInsert(successor)(visited))(order)
+                reversePostorderOver(successors)(successor :: block :: openRest)(edgesAt(successor)(successors) :: more :: pendingRest)(Ashes.Collection.Map.setInt(successor)(true)(visited))(order)
         | _ -> order
 
-let recursive orderPositions (order: List(Int)) (position: Int) (acc: List((Int, Int))) =
+let recursive orderPositionsInto (order: List(Int)) (position: Int) (positions: MapTree(Int, Int)) =
     match order with
-        | [] -> acc
-        | block :: rest -> orderPositions(rest)(position + 1)((block, position) :: acc)
-
-let recursive orderPosition (positions: List((Int, Int))) (block: Int) =
-    match positions with
-        | [] -> -1
-        | (candidate, position) :: rest ->
-            if candidate == block
-            then position
-            else orderPosition(rest)(block)
-
-let idomAt (idoms: List(Int)) (block: Int) =
-    match listAt(idoms)(block) with
-        | Some(idom) -> idom
-        | None -> -1
-
-let recursive replaceIntAt (items: List(Int)) (index: Int) (replacement: Int) =
-    match items with
-        | [] -> []
-        | head :: rest ->
-            if index == 0
-            then replacement :: rest
-            else head :: replaceIntAt(rest)(index - 1)(replacement)
-
-let recursive noIdoms (count: Int) (acc: List(Int)) =
-    if count <= 0
-    then acc
-    else noIdoms(count - 1)(-1 :: acc)
+        | [] -> positions
+        | block :: rest ->
+            positions
+            |> Ashes.Collection.Map.setInt(block)(position)
+            |> orderPositionsInto(rest)(position + 1)
 
 // The nearest common ancestor of two blocks in the immediate-dominator tree so far, found by
 // walking whichever finger sits later in the reverse postorder up to its immediate dominator
 // until the fingers meet.
-let recursive intersectIdoms (positions: List((Int, Int))) (idoms: List(Int)) (left: Int) (right: Int) =
+let recursive intersectDominators (positions: MapTree(Int, Int)) (idoms: MapTree(Int, Int)) (left: Int) (right: Int) =
     if left == right
     then left
     else
-        if orderPosition(positions)(left) > orderPosition(positions)(right)
+        if blockNumberAt(left)(positions) > blockNumberAt(right)(positions)
         then
-            intersectIdoms(positions)(idoms)(idomAt(idoms)(left))(right)
+            intersectDominators(positions)(idoms)(blockNumberAt(left)(idoms))(right)
         else
-            right
-            |> idomAt(idoms)
-            |> intersectIdoms(positions)(idoms)(left)
+            idoms
+            |> blockNumberAt(right)
+            |> intersectDominators(positions)(idoms)(left)
 
 // The immediate dominator a block's predecessors agree on this round: every predecessor that
 // already has one (a reachable block processed earlier in the order, or its own earlier value)
 // takes part, and an unreachable or not yet processed predecessor is skipped.
-let recursive idomCandidate (positions: List((Int, Int))) (idoms: List(Int)) (predecessors: List(Int)) (current: Int) =
+let recursive dominatorCandidate (positions: MapTree(Int, Int)) (idoms: MapTree(Int, Int)) (predecessors: List(Int)) (current: Int) =
     match predecessors with
         | [] -> current
         | predecessor :: rest ->
-            if idomAt(idoms)(predecessor) < 0
-            then idomCandidate(positions)(idoms)(rest)(current)
+            if blockNumberAt(predecessor)(idoms) < 0
+            then dominatorCandidate(positions)(idoms)(rest)(current)
             else
                 if current < 0
-                then idomCandidate(positions)(idoms)(rest)(predecessor)
+                then dominatorCandidate(positions)(idoms)(rest)(predecessor)
                 else
                     current
-                    |> intersectIdoms(positions)(idoms)(predecessor)
-                    |> idomCandidate(positions)(idoms)(rest)
+                    |> intersectDominators(positions)(idoms)(predecessor)
+                    |> dominatorCandidate(positions)(idoms)(rest)
 
-let recursive idomRound (blocks: List(IrCfgBlock)) (order: List(Int)) (positions: List((Int, Int))) (idoms: List(Int)) =
+// One round over the reverse postorder; the count of blocks whose immediate dominator it changed
+// comes back with the table.
+let recursive dominatorRound (predecessors: MapTree(Int, List(Int))) (blockCount: Int) (order: List(Int)) (positions: MapTree(Int, Int)) (idoms: MapTree(Int, Int)) (changed: Int) =
     match order with
-        | [] -> idoms
+        | [] -> (idoms, changed)
         | block :: rest ->
             if block == 0
-            then idomRound(blocks)(rest)(positions)(idoms)
+            then dominatorRound(predecessors)(blockCount)(rest)(positions)(idoms)(changed)
             else
                 let candidate =
-                    idomCandidate(positions)(idoms)(blockPredecessorsOfIndex(blocks)(block))(-1)
+                    dominatorCandidate(positions)(idoms)(edgesAt(block)(predecessors))(-1)
                 in
-                    if candidate < 0 || candidate == idomAt(idoms)(block)
-                    then idomRound(blocks)(rest)(positions)(idoms)
+                    if candidate < 0 || candidate == blockNumberAt(block)(idoms) || block < 0 || block >= blockCount
+                    then dominatorRound(predecessors)(blockCount)(rest)(positions)(idoms)(changed)
                     else
-                        candidate
-                        |> replaceIntAt(idoms)(block)
-                        |> idomRound(blocks)(rest)(positions)
+                        dominatorRound(predecessors)(blockCount)(rest)(positions)(Ashes.Collection.Map.setInt(block)(candidate)(idoms))(changed + 1)
 
-let recursive idomFixpoint (blocks: List(IrCfgBlock)) (order: List(Int)) (positions: List((Int, Int))) (idoms: List(Int)) =
-    (let next = idomRound(blocks)(order)(positions)(idoms)
-    in
-        if next == idoms
-        then next
-        else idomFixpoint(blocks)(order)(positions)(next))
+let recursive dominatorFixpoint (predecessors: MapTree(Int, List(Int))) (blockCount: Int) (order: List(Int)) (positions: MapTree(Int, Int)) (idoms: MapTree(Int, Int)) =
+    match dominatorRound(predecessors)(blockCount)(order)(positions)(idoms)(0) with
+        | (next, changed) ->
+            if changed == 0
+            then next
+            else dominatorFixpoint(predecessors)(blockCount)(order)(positions)(next)
+
+let recursive dominatorList (idoms: MapTree(Int, Int)) (index: Int) (acc: List(Int)) =
+    if index < 0
+    then acc
+    else dominatorList(idoms)(index - 1)(blockNumberAt(index)(idoms) :: acc)
 
 // The immediate dominator of every block, indexed by block: the entry is its own, an unreachable
 // block has none (-1), and every other block's is refined over the reverse postorder until no
-// block changes. Dominance itself is then the walk up this tree (`dominates`), so the whole table
-// is one Int per block rather than a set per block.
-let computeImmediateDominators (blocks: List(IrCfgBlock)) =
-    (let order = reversePostorder(blocks)([0])([blockSuccessorsOfIndex(blocks)(0)])([0])([])
+// block changes. The table is worked out in maps and handed back as one Int per block.
+let immediateDominatorsOf (blocks: List(IrCfgBlock)) (edges: BlockEdges) =
+    (let blockCount = length(blocks)
     in
-        let positions = orderPositions(order)(0)([])
+        let order =
+            reversePostorderOver(edges.successorsOfBlock)([0])([edgesAt(0)(edges.successorsOfBlock)])(Ashes.Collection.Map.setInt(0)(true)(Ashes.Collection.Map.empty))([])
         in
-            0
-            |> replaceIntAt(noIdoms(length(blocks))([]))(0)
-            |> idomFixpoint(blocks)(order)(positions))
+            if blockCount <= 0
+            then []
+            else
+                dominatorList(Ashes.Collection.Map.empty
+                |> Ashes.Collection.Map.setInt(0)(0)
+                |> dominatorFixpoint(edges.predecessorsOfBlock)(blockCount)(order)(orderPositionsInto(order)(0)(Ashes.Collection.Map.empty)))(blockCount - 1)([]))
+
+// The dominator tree numbered by a depth-first walk: a block dominates another exactly when the
+// other's visit falls inside its own.
+type DominanceIndex =
+    | dominanceEnter: MapTree(Int, Int)
+    | dominanceLeave: MapTree(Int, Int)
+
+let recursive dominatorChildrenInto (idoms: List(Int)) (block: Int) (children: MapTree(Int, List(Int))) (roots: List(Int)) =
+    match idoms with
+        | [] -> (children, roots)
+        | parent :: rest ->
+            if parent < 0 || parent == block
+            then dominatorChildrenInto(rest)(block + 1)(children)(block :: roots)
+            else
+                dominatorChildrenInto(rest)(block + 1)(Ashes.Collection.Map.setInt(parent)(block :: edgesAt(parent)(children))(children))(roots)
+
+let recursive numberDominatorTree (children: MapTree(Int, List(Int))) (roots: List(Int)) (open: List(Int)) (pending: List(List(Int))) (clock: Int) (enter: MapTree(Int, Int)) (leave: MapTree(Int, Int)) =
+    match (open, pending) with
+        | (block :: openRest, [] :: pendingRest) ->
+            leave
+            |> Ashes.Collection.Map.setInt(block)(clock)
+            |> numberDominatorTree(children)(roots)(openRest)(pendingRest)(clock + 1)(enter)
+        | (block :: openRest, (child :: more) :: pendingRest) ->
+            numberDominatorTree(children)(roots)(child :: block :: openRest)(edgesAt(child)(children) :: more :: pendingRest)(clock + 1)(Ashes.Collection.Map.setInt(child)(clock)(enter))(leave)
+        | _ ->
+            match roots with
+                | [] -> DominanceIndex(dominanceEnter = enter, dominanceLeave = leave)
+                | root :: rest ->
+                    numberDominatorTree(children)(rest)([root])([edgesAt(root)(children)])(clock + 1)(Ashes.Collection.Map.setInt(root)(clock)(enter))(leave)
+
+let dominanceIndexOf (idoms: List(Int)) =
+    match dominatorChildrenInto(idoms)(0)(Ashes.Collection.Map.empty)([]) with
+        | (children, roots) -> numberDominatorTree(children)(roots)([])([])(0)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty)
 
 // Whether `dominator` dominates `block`: the block itself, or a block on its immediate-dominator
-// chain up to the entry. An unreachable block is dominated only by itself, as its empty chain says.
-let recursive dominates (idoms: List(Int)) (dominator: Int) (block: Int) =
+// chain up to the entry. An unreachable block is dominated only by itself.
+let dominatesWithin (index: DominanceIndex) (dominator: Int) (block: Int) =
     if block == dominator
     then true
     else
-        let parent = idomAt(idoms)(block)
+        let dominatorEnter = blockNumberAt(dominator)(index.dominanceEnter)
         in
-            if parent < 0 || parent == block
-            then false
-            else dominates(idoms)(dominator)(parent)
+            let blockEnter = blockNumberAt(block)(index.dominanceEnter)
+            in dominatorEnter >= 0 && blockEnter >= 0 && dominatorEnter < blockEnter && blockNumberAt(block)(index.dominanceLeave) < blockNumberAt(dominator)(index.dominanceLeave)
