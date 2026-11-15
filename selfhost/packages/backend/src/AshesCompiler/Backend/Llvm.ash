@@ -157,6 +157,7 @@ export (
     value setInitializer,
     value setGlobalConstant,
     value setLinkage,
+    value addFunctionEnumAttribute,
     value linkageExternal,
     value linkageInternal,
     value int64Type,
@@ -181,6 +182,7 @@ external type LLVMTargetRef
 external type LLVMTargetMachineRef
 external type LLVMMemoryBufferRef
 external type LLVMTargetDataRef
+external type LLVMAttributeRef
 external LLVMContextCreate() -> LLVMContextRef = "LLVMContextCreate@libLLVM.so"
 external LLVMContextDispose(LLVMContextRef) -> void = "LLVMContextDispose@libLLVM.so"
 external LLVMModuleCreateWithNameInContext(Str, LLVMContextRef) -> LLVMModuleRef = "LLVMModuleCreateWithNameInContext@libLLVM.so"
@@ -282,6 +284,9 @@ external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMV
 external LLVMSetVolatile(LLVMValueRef, Bool) -> void = "LLVMSetVolatile@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
 external LLVMSetTailCallKind(LLVMValueRef, u32) -> void = "LLVMSetTailCallKind@libLLVM.so"
+external LLVMGetEnumAttributeKindForName(Str, u64) -> u32 = "LLVMGetEnumAttributeKindForName@libLLVM.so"
+external LLVMCreateEnumAttribute(LLVMContextRef, u32, u64) -> LLVMAttributeRef = "LLVMCreateEnumAttribute@libLLVM.so"
+external LLVMAddAttributeAtIndex(LLVMValueRef, u32, LLVMAttributeRef) -> void = "LLVMAddAttributeAtIndex@libLLVM.so"
 external LLVMAddGlobal(LLVMModuleRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMAddGlobal@libLLVM.so"
 external LLVMSetInitializer(LLVMValueRef, LLVMValueRef) -> void = "LLVMSetInitializer@libLLVM.so"
 external LLVMSetGlobalConstant(LLVMValueRef, Bool) -> void = "LLVMSetGlobalConstant@libLLVM.so"
@@ -650,6 +655,22 @@ let tailCallKindTail = 1u32
 let tailCallKindMustTail = 2u32
 
 let setTailCallKind call kind = LLVMSetTailCallKind(call)(kind)
+
+// `LLVMAttributeFunctionIndex`: the position that names the function itself rather than its
+// return value or one of its parameters.
+let attributeFunctionIndex = 4294967295u32
+
+// Adds the enum attribute called `name` (`optnone`, `noinline`) to `function_` itself.
+let addFunctionEnumAttribute context function_ (name: Str) =
+    (let kind =
+        name
+        |> Ashes.Text.byteLength
+        |> Ashes.Number.UInt.fromInt64
+        |> LLVMGetEnumAttributeKindForName(name)
+    in
+        0u64
+        |> LLVMCreateEnumAttribute(context)(kind)
+        |> LLVMAddAttributeAtIndex(function_)(attributeFunctionIndex))
 
 let addGlobal module_ type_ name = LLVMAddGlobal(module_)(type_)(name)
 
