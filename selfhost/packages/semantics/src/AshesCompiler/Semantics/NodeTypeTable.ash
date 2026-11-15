@@ -20,6 +20,7 @@ export (
     value nodeOperatorAt,
     value nodeInstantiationAt,
     value nodeBindingsAt,
+    value nodeDeclarationAt,
 )
 
 // The trait an operator node maps to and the type of its operands. A concrete operand type names
@@ -45,11 +46,13 @@ type NodeTypeTable =
     // The names a node brings into scope: at a `let` its binding, at an arm body the arm's pattern
     // variables.
     | bindings: MapTree(Int, List((Str, TypeScheme)))
+    // A top-level binding's name and scheme, keyed by the root node of its value.
+    | declarations: MapTree(Int, (Str, TypeScheme))
     // How many nodes have a type, and how many times a node that had one was given another.
     | typeCount: Int
     | repeatedCount: Int
 
-let emptyNodeTypeTable : NodeTypeTable = NodeTypeTable(types = Ashes.Collection.Map.empty, operators = Ashes.Collection.Map.empty, instantiations = Ashes.Collection.Map.empty, bindings = Ashes.Collection.Map.empty, typeCount = 0, repeatedCount = 0)
+let emptyNodeTypeTable : NodeTypeTable = NodeTypeTable(types = Ashes.Collection.Map.empty, operators = Ashes.Collection.Map.empty, instantiations = Ashes.Collection.Map.empty, bindings = Ashes.Collection.Map.empty, declarations = Ashes.Collection.Map.empty, typeCount = 0, repeatedCount = 0)
 
 let nodeTypeAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.types)
 
@@ -61,6 +64,8 @@ let nodeBindingsAt (node: Int) (table: NodeTypeTable) =
     match Ashes.Collection.Map.getInt(node)(table.bindings) with
         | Some(bindings) -> bindings
         | None -> []
+
+let nodeDeclarationAt (node: Int) (table: NodeTypeTable) = Ashes.Collection.Map.getInt(node)(table.declarations)
 
 let recursive resolveArguments (substitution: MapTree(Int, SemanticType)) (arguments: List((Int, SemanticType))) =
     match arguments with
@@ -98,6 +103,10 @@ let settleNote (substitution: MapTree(Int, SemanticType)) (table: NodeTypeTable)
                     table with instantiations = Ashes.Collection.Map.setInt(node)(
                         NodeInstantiation(arguments = resolveArguments(substitution)(arguments), requirements = resolveRequirements(substitution)(requirements), dictionaries = resolveRequirements(substitution)(dictionaries))
                     )(table.instantiations)
+        | NodeDeclarationNote(node, name, scheme) ->
+            table with declarations = Ashes.Collection.Map.setInt(node)(
+                (name, applySchemeSubstitutionMap(substitution)(scheme))
+            )(table.declarations)
         | NodeBindingNote(node, name, scheme) ->
             table with bindings = Ashes.Collection.Map.setInt(node)(
                 (name, applySchemeSubstitutionMap(substitution)(scheme)) :: nodeBindingsAt(node)(table)

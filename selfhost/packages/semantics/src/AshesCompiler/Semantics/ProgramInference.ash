@@ -2444,6 +2444,22 @@ let advanceProgramInference step (progress: ProgramInferenceProgress) =
     |> step
     |> settleProgramInferenceState(progress.resolved)(progress.nodeTypes)
 
+// Notes each binding's finished scheme against the root node of its value, so a reader of the
+// node table finds a top-level binding the way it finds a local one.
+let recursive noteDeclarations (bindings: List(LetBindingSyntax)) (state: ProgramInferenceState) =
+    match (bindings, state) with
+        | ([], _) -> state
+        | (_, ProgramInferenceState { error = Some(_error) }) -> state
+        | (binding :: rest, _) ->
+            match (nodeIdentityOf(binding.value) >= 0, resolveWrittenTypeBinding(binding.name)(state.environment)) with
+                | (true, Some(scheme)) ->
+                    let noted =
+                        withNodeNote(NodeDeclarationNote(nodeIdentityOf(binding.value))(binding.name)(scheme))(state.supply)
+                    in
+                        let next = state with supply = noted
+                        in noteDeclarations(rest)(next)
+                | _ -> noteDeclarations(rest)(state)
+
 let recursive inferTopLevelItem externalDeclarations item state =
     locateTopLevelItemError(
         item,
@@ -2457,8 +2473,14 @@ let recursive inferTopLevelItem externalDeclarations item state =
             | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
             | TopLevelTrait(declaration) -> registerTraitDeclaration(declaration)(state)
             | TopLevelImplementation(declaration) -> registerTraitImplementation(declaration)(state)
-            | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
-            | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
+            | TopLevelLet(binding, isRecursive) ->
+                state
+                |> inferTopLevelLet(binding)(isRecursive)
+                |> noteDeclarations([binding])
+            | TopLevelRecursiveGroup(bindings) ->
+                state
+                |> inferRecursiveGroup(bindings)
+                |> noteDeclarations(bindings)
             | TopLevelExternal(ExternalOpaqueType(_name, _destructor)) -> state
             | TopLevelExternal(declaration) -> registerExternalFunction(declaration)(externalDeclarations)(state)
     )

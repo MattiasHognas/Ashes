@@ -66,6 +66,7 @@ export (
     value applyInferenceConstraints,
     value simplifyTraitConstraints,
     value firstAmbiguousTraitRequirementUnder,
+    value resolveWrittenTypeBinding,
     value checkInferenceBindingSignature,
     value checkInferenceAnnotation,
     value seedRecursiveSignature,
@@ -1023,6 +1024,51 @@ let recursive dictionaryRequirements (quantified: List((Int, Str))) (arguments: 
             if typesMentionQuantified(quantified)(typeArguments)
             then TraitConstraint(traitName = traitName, typeArguments = instantiatedTypes(arguments)(typeArguments)) :: dictionaryRequirements(quantified)(arguments)(rest)
             else dictionaryRequirements(quantified)(arguments)(rest)
+
+// Notes at `node` the instantiation `instantiate(scheme)(before)` made.
+let noteInstantiationAt (environment: TypeEnvironment) (node: Int) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
+    if recordsAt(environment)(node)
+    then
+        match scheme.quantified with
+            | [] -> after
+            | quantified ->
+                let arguments = instantiationArguments(quantified)(before.nextId)
+                in
+                    withNodeNote(scheme.constraints
+                    |> dictionaryRequirements(quantified)(arguments)
+                    |> NodeInstantiationNote(node)(arguments)(requirements))(after)
+    else after
+
+// The names a pattern binds, read off its shape. An or-pattern's alternatives bind the same
+// names, so the first one speaks for all.
+let recursive patternVariableNames pattern (names: List(Str)) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternVariableNames(inner)(names)
+        | PatternVar(name) -> name :: names
+        | PatternCons(head, tail) ->
+            names
+            |> patternVariableNames(head)
+            |> patternVariableNames(tail)
+        | PatternTuple(elements) -> patternVariableNamesIn(elements)(names)
+        | PatternConstructor(_name, arguments) -> patternVariableNamesIn(arguments)(names)
+        | PatternRecord(_name, fields) -> patternFieldVariableNames(fields)(names)
+        | PatternAs(inner, name) -> name :: patternVariableNames(inner)(names)
+        | PatternOr(first :: _rest) -> patternVariableNames(first)(names)
+        | _ -> names
+and patternVariableNamesIn patterns (names: List(Str)) =
+    match patterns with
+        | [] -> names
+        | head :: tail ->
+            names
+            |> patternVariableNames(head)
+            |> patternVariableNamesIn(tail)
+and patternFieldVariableNames (fields: List((Str, Pattern))) (names: List(Str)) =
+    match fields with
+        | [] -> names
+        | (_field, pattern) :: tail ->
+            names
+            |> patternVariableNames(pattern)
+            |> patternFieldVariableNames(tail)
 
 // Notes, at the node `before` was inferring, the instantiation `instantiate(scheme)(before)` made.
 let noteInstantiation (environment: TypeEnvironment) (scheme: TypeScheme) (before: TypeVariableSupply) (requirements: List(TraitConstraint)) (after: TypeVariableSupply) =
@@ -3685,7 +3731,9 @@ and inferHandlerOperationArms arms handledCapabilities handlerResult environment
                                                         body,
                                                         addTypeBinding("resume")(resumeScheme)(armEnvironment),
                                                         parameterSubstitution,
-                                                        parameterSupply,
+                                                        parameterSupply
+                                                        |> noteBinding(environment)(identifiedNode(body))("resume")(resumeScheme)
+                                                        |> noteBindingsIn(environment)(identifiedNode(body))(patternVariableNamesIn(parameters)([]))(armEnvironment),
                                                         ambientRow
                                                     ) with
                                                         | TypeInferenceResult { semanticType = armType, substitution = armSubstitution, supply = armSupply, constraints = armConstraints, error = None } ->
@@ -4217,7 +4265,7 @@ and inferHandlerReturn returnArm bodyType handlerResult environment substitution
             )
         | Some((pattern, returnBody)) ->
             match inferPattern(pattern)(environment)(substitution)(supply)([]) with
-                | PatternInferenceResult { semanticType = patternType, environment = returnEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _names, error = None } ->
+                | PatternInferenceResult { semanticType = patternType, environment = returnEnvironment, substitution = patternSubstitution, supply = patternSupply, names = returnNames, error = None } ->
                     match mergePatternUnification(
                         patternSubstitution,
                         unifyIn(environment)(
@@ -4234,7 +4282,7 @@ and inferHandlerReturn returnArm bodyType handlerResult environment substitution
                                 returnBody,
                                 unifiedEnvironment,
                                 unifiedSubstitution,
-                                unifiedSupply,
+                                noteBindingsIn(environment)(identifiedNode(returnBody))(returnNames)(unifiedEnvironment)(unifiedSupply),
                                 ambientRow
                             ) with
                                 | TypeInferenceResult { semanticType = returnType, substitution = returnSubstitution, supply = returnSupply, constraints = returnConstraints, error = None } ->
@@ -4887,7 +4935,7 @@ and inferWith expression environment substitution supply ambientRow =
                                             true,
                                             environment,
                                             substitution,
-                                            constructorSupply,
+                                            noteInstantiation(environment)(scheme)(supply)(constructorConstraints)(constructorSupply),
                                             ambientRow,
                                             [],
                                             []
@@ -4917,7 +4965,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                             applySubstitution(targetSubstitution)(targetType),
                                                             resultType
                                                         ),
-                                                        constructorSupply,
+                                                        noteInstantiationAt(environment)(currentNodeOf(supply))(scheme)(targetSupply)(constructorConstraints)(constructorSupply),
                                                         resultType
                                                     ) with
                                                         | TypeInferenceResult { semanticType = unifiedResult, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->

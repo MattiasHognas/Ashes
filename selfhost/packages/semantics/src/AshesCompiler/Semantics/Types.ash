@@ -80,6 +80,8 @@ type NodeTypeNote =
     // A name a node brings into scope and its scheme. The node is the `let` for a binding and the
     // arm body for a pattern variable.
     | NodeBindingNote(Int, Str, TypeScheme)
+    // A top-level binding and its scheme, against the root node of the binding's value.
+    | NodeDeclarationNote(Int, Str, TypeScheme)
     deriving {Eq, Show}
 
 // The supply of fresh type variables, which every inference step takes and hands on. It also
