@@ -3,6 +3,7 @@ import Ashes.Collection.List.append
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.Types

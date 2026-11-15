@@ -1,6 +1,7 @@
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrOptimizer
 let recursive countInstructions (functions: List(IrFunction)) (total: Int) =

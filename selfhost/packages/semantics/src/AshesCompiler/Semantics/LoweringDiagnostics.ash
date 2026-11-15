@@ -9,6 +9,7 @@ import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification

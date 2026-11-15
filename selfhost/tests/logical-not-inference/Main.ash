@@ -2,6 +2,7 @@ import CoreLogicalNotInferenceTests
 import CoreOrderedInferenceTests
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 let report result =
     match result with
         | CoreLoweringResult { error = Some(error) } -> Ashes.IO.print("ERROR " + Ashes.Trait.Show.show(error))

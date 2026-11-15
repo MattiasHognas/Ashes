@@ -50,6 +50,7 @@ import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.DecisionSnapshot
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.LoweringDiagnostics

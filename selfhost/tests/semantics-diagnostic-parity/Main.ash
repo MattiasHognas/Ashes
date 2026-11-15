@@ -2,6 +2,7 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.DiagnosticSerialization
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreLowering.Model
 import AshesCompiler.Semantics.LoweringDiagnostics
 let fixturePath root name extension = root + "/" + name + extension
 
