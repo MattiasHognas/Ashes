@@ -213,6 +213,47 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                     | Ok(module) ->
                                         loadReachable(name)(appendList(reachedModuleNames(module))(rest))(module :: loaded)(shipped)
 
+let recursive exportsValue (name: Str) (exports: List(ModuleImportExport)) =
+    match exports with
+        | [] -> false
+        | ImportValueExport(candidate) :: rest -> candidate == name || exportsValue(name)(rest)
+        | _other :: rest -> exportsValue(name)(rest)
+
+// The selector imports among `entries` that name a member the compiler provides rather than one
+// a module's source defines, as (module, member).
+let recursive intrinsicSelectorImports (entries: List(ImportHeaderEntry)) =
+    match entries with
+        | [] -> []
+        | ImportHeaderEntry { modulePath = modulePath, selector = Some(member) } :: rest ->
+            match coreBuiltinKind(modulePath)(member) with
+                | Some(_kind) -> (Ashes.Internal.deepCopy(modulePath), Ashes.Internal.deepCopy(member)) :: intrinsicSelectorImports(rest)
+                | None -> intrinsicSelectorImports(rest)
+        | _entry :: rest -> intrinsicSelectorImports(rest)
+
+let recursive allIntrinsicSelectorImports (loaded: List(LoadedShippedModule)) =
+    match loaded with
+        | [] -> []
+        | module :: rest ->
+            rest
+            |> allIntrinsicSelectorImports
+            |> appendList(intrinsicSelectorImports(module.imports))
+
+let recursive exportIntrinsicMembers (requested: List((Str, Str))) (name: Str) (interface: ModuleImportInterface) =
+    match requested with
+        | [] -> interface
+        | (moduleName, member) :: rest ->
+            if moduleName == name && exportsValue(member)(interface.exports) == false
+            then
+                exportIntrinsicMembers(rest)(name)(ModuleImportInterface(name = Ashes.Internal.deepCopy(interface.name), exports = ImportValueExport(Ashes.Internal.deepCopy(member)) :: Ashes.Internal.deepCopy(interface.exports)))
+            else exportIntrinsicMembers(rest)(name)(interface)
+
+// A module's interface lists what its source defines. A member the compiler provides has no
+// definition, so a selector import of one resolves only once the interface exports it too.
+let recursive withIntrinsicMemberExports (requested: List((Str, Str))) (loaded: List(LoadedShippedModule)) =
+    match loaded with
+        | [] -> []
+        | LoadedShippedModule { name = name, sourcePath = sourcePath, imports = imports, qualifiedModules = qualifiedModules, program = program, interface = interface } :: rest -> LoadedShippedModule(name = name, sourcePath = sourcePath, imports = imports, qualifiedModules = qualifiedModules, program = program, interface = exportIntrinsicMembers(requested)(name)(interface)) :: withIntrinsicMemberExports(requested)(rest)
+
 let recursive inlineSourceText (name: Str) (inlineModules: List(InlineModuleInfo)) =
     match inlineModules with
         | [] -> None
@@ -404,18 +445,21 @@ let stitchExpandedEntry (entryName: Str) (entryPath: Str) (outerSource: Str) (in
                         |> reachedFromAll
                         |> appendList(reachedModuleNames(entry)))(entry :: inlines)(shipped) with
                             | Error(error) -> Error(error)
-                            | Ok(loaded) ->
-                                match loaded
-                                |> planUnits(entryName)(inlineModules)
-                                |> buildModulePlan(entryName) with
-                                    | Error(error) -> Error(ShippedPlanError(error))
-                                    | Ok(planned) ->
-                                        match stitchUnits(entryName)(loaded)(planned) with
-                                            | Error(error) -> Error(error)
-                                            | Ok(units) ->
-                                                match stitchProjectSyntax(units) with
-                                                    | Error(error) -> Error(ShippedSyntaxStitchError(error))
-                                                    | Ok(project) -> Ok(project))
+                            | Ok(reached) ->
+                                let loaded =
+                                    withIntrinsicMemberExports(allIntrinsicSelectorImports(reached))(reached)
+                                in
+                                    match loaded
+                                    |> planUnits(entryName)(inlineModules)
+                                    |> buildModulePlan(entryName) with
+                                        | Error(error) -> Error(ShippedPlanError(error))
+                                        | Ok(planned) ->
+                                            match stitchUnits(entryName)(loaded)(planned) with
+                                                | Error(error) -> Error(error)
+                                                | Ok(units) ->
+                                                    match stitchProjectSyntax(units) with
+                                                        | Error(error) -> Error(ShippedSyntaxStitchError(error))
+                                                        | Ok(project) -> Ok(project))
 
 // The entry's inline `module` blocks are lifted first, exactly as project planning lifts them, so
 // a single file may declare and import its own modules.
