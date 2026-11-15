@@ -117,10 +117,10 @@ type LocalCseState =
     | freshPointers: MapTree(Int, Bool)
 
 // Scalarization bookkeeping threaded through every caller: the variant label generated per
-// callee (None once a callee proved ineligible), the variants to append to the program, and the
-// counter that keeps generated labels unique.
+// callee and capture count (None once a callee proved ineligible), the variants to append to the
+// program, and the counter that keeps generated labels unique.
 type ScalarizeState =
-    | variantByCallee: List((Str, Int, Maybe(Str)))
+    | variantByCallee: MapTree(Str, MapTree(Int, Maybe(Str)))
     | newFunctions: List(IrFunction)
     | counter: Int
 
@@ -135,14 +135,13 @@ type ClosureDefinitionFacts =
     | singleStoreSourceBySlot: MapTree(Int, Int)
     | closureTempsWithDropper: MapTree(Int, Bool)
 
-// One environment word filled at one closure creation site: the created closure's label, the
-// word index, the creating function's label and definition facts, and the temp stored there.
-type CaptureSite =
-    | targetLabel: Str
-    | index: Int
-    | creatorLabel: Str
-    | creator: ClosureDefinitionFacts
-    | sourceTemp: IrTemp
+// What one closure creation site stores into one environment word, resolved as far as the creating
+// function alone allows: a closure of a known label, the creating function's own captured word
+// (its label and word index), or nothing provable.
+type CaptureSource =
+    | SourceLabel(Str)
+    | SourceEnvWord(Str, Int)
+    | SourceUnknown
 
 // The outcome of resolving the closure label a captured word holds: proven, still waiting on a
 // slot of the creating function that the fixpoint has not resolved yet, or unresolvable.
@@ -178,29 +177,23 @@ let defaultOptimizerOptions =
         enableIdentityReduction = true
     )
 
-let recursive lookupAssociation key entries =
+// The two short tables of the currying-stage scan stay lists: a stage body is a handful of
+// instructions. The Int key compares directly instead of through an `Eq` dictionary.
+let recursive lookupTempAssociation (key: Int) entries =
     match entries with
         | [] -> None
         | (k, v) :: tail ->
             if k == key
             then Some(v)
-            else lookupAssociation(key)(tail)
+            else lookupTempAssociation(key)(tail)
 
-let recursive setAssociation key value entries =
+let recursive setTempAssociation (key: Int) value entries =
     match entries with
         | [] -> [(key, value)]
         | (k, v) :: tail ->
             if k == key
             then (key, value) :: tail
-            else (k, v) :: setAssociation(key)(value)(tail)
-
-let recursive listContains item xs =
-    match xs with
-        | [] -> false
-        | head :: tail ->
-            if head == item
-            then true
-            else listContains(item)(tail)
+            else (k, v) :: setTempAssociation(key)(value)(tail)
 
 let recursive intListContains (item: Int) (xs: List(Int)) =
     match xs with
@@ -1526,7 +1519,7 @@ let isNonAllocatingInst nonAllocatingFns inst =
         | JumpIfFalse(_, _) -> true
         | SwitchTag(_, _, _) -> true
         | Return(_) -> true
-        | CallKnown(_, label, _, _, _, _) -> listContains(label)(nonAllocatingFns)
+        | CallKnown(_, label, _, _, _, _) -> strHas(label)(nonAllocatingFns)
         | _ -> false
 
 let recursive allInstructionsNonAllocating nonAllocatingFns instructions =
@@ -1537,49 +1530,147 @@ let recursive allInstructionsNonAllocating nonAllocatingFns instructions =
             then allInstructionsNonAllocating(nonAllocatingFns)(tail)
             else false
 
-let recursive lookupFunction label (functions: List(IrFunction)) =
-    match functions with
-        | [] -> None
-        | (IrFunction { label = l } as fn) :: tail ->
-            if l == label
-            then Some(fn)
-            else lookupFunction(label)(tail)
-
 let functionLabel (fn: IrFunction) = fn.label
 
 let functionInstructions (fn: IrFunction) = fn.instructions
 
-// The heap closure label a temp provably holds: directly from a MakeClosure (never a
+// Every function by label; the first function carrying a label is the one a lookup finds.
+let recursive functionsByLabel (functions: List(IrFunction)) (acc: MapTree(Str, IrFunction)) =
+    match functions with
+        | [] -> acc
+        | (IrFunction { label = label } as fn) :: tail ->
+            if strHas(label)(acc)
+            then functionsByLabel(tail)(acc)
+            else
+                acc
+                |> Ashes.Collection.Map.setStr(label)(fn)
+                |> functionsByLabel(tail)
+
+let recursive bumpWanted (keys: List(Int)) wanted counts =
+    match keys with
+        | [] -> counts
+        | key :: rest ->
+            if intHas(key)(wanted)
+            then
+                counts
+                |> bumpInt(key)
+                |> bumpWanted(rest)(wanted)
+            else bumpWanted(rest)(wanted)(counts)
+
+// How often each wanted temp is defined.
+let recursive defCountsOfWanted instructions wanted counts =
+    match instructions with
+        | [] -> counts
+        | IrInstruction { instruction = inst } :: tail ->
+            counts
+            |> bumpWanted(getDefinedTemps(inst))(wanted)
+            |> defCountsOfWanted(tail)(wanted)
+
+// The defining instruction of each wanted temp that has exactly one definition: a pass that only
+// ever asks about a few temps does not pay for a table of all of them. `defCounts` holds the
+// wanted temps alone, so any temp it counts once is a wanted one.
+let singleDefinitionsOfWanted instructions wanted =
+    Ashes.Collection.Map.empty
+    |> defCountsOfWanted(instructions)(wanted)
+    |> singleDefsOf(instructions)
+
+// How often each wanted temp is used.
+let recursive useCountsOfWanted instructions wanted counts =
+    match instructions with
+        | [] -> counts
+        | IrInstruction { instruction = inst } :: tail ->
+            counts
+            |> bumpWanted(getUsedTemps(inst))(wanted)
+            |> useCountsOfWanted(tail)(wanted)
+
+let recursive collectReturnedTemps instructions (acc: List(IrTemp)) =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = Return(source) } :: tail -> collectReturnedTemps(tail)(source :: acc)
+        | _ :: tail -> collectReturnedTemps(tail)(acc)
+
+// The heap closure label a temp provably holds comes directly from a MakeClosure (never a
 // MakeClosureStack, whose environment lives in its defining function's own frame and is gone once
 // that function returns), or transitively through a CallKnown to a function already proven to
-// return one label.
-let knownClosureLabelOf sourceTemp singleDefs knownLabels =
-    match intGet(sourceTemp)(singleDefs) with
-        | Some(MakeClosure(_, fnLabel, _, _, _, _, _, _)) -> Some(fnLabel)
-        | Some(CallKnown(_, fnLabel, _, _, _, _)) -> lookupAssociation(fnLabel)(knownLabels)
+// return one label. This is the defining instruction of every Return's source, or None as soon as
+// one of them is neither.
+let recursive returnedDefinitionsOf (returned: List(IrTemp)) singleDefs (acc: List(IrInstructionKind)) =
+    match returned with
+        | [] -> Some(acc)
+        | source :: rest ->
+            match intGet(source)(singleDefs) with
+                | Some(definition) ->
+                    match definition with
+                        | MakeClosure(_, _, _, _, _, _, _, _) -> returnedDefinitionsOf(rest)(singleDefs)(definition :: acc)
+                        | CallKnown(_, _, _, _, _, _) -> returnedDefinitionsOf(rest)(singleDefs)(definition :: acc)
+                        | _ -> None
+                | None -> None
+
+// One (label, returned definitions) summary per function whose every Return could still yield a
+// known closure, computed once so the fixpoint rounds never look at a function body again.
+let recursive summarizeReturns (functions: List(IrFunction)) (acc: List((Str, List(IrInstructionKind)))) =
+    match functions with
+        | [] -> acc
+        | fn :: rest ->
+            match collectReturnedTemps(fn.instructions)([]) with
+                | [] -> summarizeReturns(rest)(acc)
+                | returned ->
+                    let singleDefs =
+                        Ashes.Collection.Map.empty
+                        |> addAllToSet(returned)
+                        |> singleDefinitionsOfWanted(fn.instructions)
+                    in
+                        match returnedDefinitionsOf(returned)(singleDefs)([]) with
+                            | Some(definitions) -> summarizeReturns(rest)((fn.label, definitions) :: acc)
+                            | None -> summarizeReturns(rest)(acc)
+
+let returnedLabelOf definition knownLabels =
+    match definition with
+        | MakeClosure(_, label, _, _, _, _, _, _) -> Some(label)
+        | CallKnown(_, callee, _, _, _, _) -> strGet(callee)(knownLabels)
         | _ -> None
 
-let recursive returnedClosureLabel instructions singleDefs knownLabels current sawReturn =
-    match instructions with
-        | [] ->
-            if sawReturn
-            then current
-            else None
-        | IrInstruction { instruction = Return(source) } :: tail ->
-            match knownClosureLabelOf(source)(singleDefs)(knownLabels) with
+// The one heap closure label every Return of the function provably yields, if any.
+let recursive resolveReturnedLabel (values: List(IrInstructionKind)) knownLabels (current: Maybe(Str)) =
+    match values with
+        | [] -> current
+        | value :: rest ->
+            match returnedLabelOf(value)(knownLabels) with
                 | None -> None
                 | Some(label) ->
                     match current with
-                        | None -> returnedClosureLabel(tail)(singleDefs)(knownLabels)(Some(label))(true)
+                        | None -> resolveReturnedLabel(rest)(knownLabels)(Some(label))
                         | Some(previous) ->
                             if previous == label
-                            then returnedClosureLabel(tail)(singleDefs)(knownLabels)(current)(true)
+                            then resolveReturnedLabel(rest)(knownLabels)(current)
                             else None
-        | _ :: tail -> returnedClosureLabel(tail)(singleDefs)(knownLabels)(current)(sawReturn)
 
-// The one heap closure label every Return of the function provably yields, if any.
-// Every single-defined temp of the function mapped to its defining instruction, computed once
-// per function so the fixpoint rounds below and the per-function rewrites share it.
+let recursive addKnownReturnedClosureLabels (summaries: List((Str, List(IrInstructionKind)))) knownLabels (pending: List((Str, List(IrInstructionKind)))) (changed: Bool) =
+    match summaries with
+        | [] -> (knownLabels, pending, changed)
+        | summary :: rest ->
+            match summary with
+                | (label, values) ->
+                    if strHas(label)(knownLabels)
+                    then addKnownReturnedClosureLabels(rest)(knownLabels)(pending)(changed)
+                    else
+                        match resolveReturnedLabel(values)(knownLabels)(None) with
+                            | Some(resolved) ->
+                                addKnownReturnedClosureLabels(rest)(strSet(label)(resolved)(knownLabels))(pending)(true)
+                            | None -> addKnownReturnedClosureLabels(rest)(knownLabels)(summary :: pending)(changed)
+
+let recursive runKnownReturnedClosureLabels (summaries: List((Str, List(IrInstructionKind)))) knownLabels =
+    match addKnownReturnedClosureLabels(summaries)(knownLabels)([])(false) with
+        | (nextLabels, pending, true) -> runKnownReturnedClosureLabels(pending)(nextLabels)
+        | (nextLabels, _, false) -> nextLabels
+
+// Whole-program least fixpoint: each pass admits the functions whose returns resolve against the
+// labels known so far, so a chain of curried helpers converges over several passes while a
+// genuine cycle never does. Only the functions still unresolved are revisited.
+let computeKnownReturnedClosureLabels (functions: List(IrFunction)) =
+    runKnownReturnedClosureLabels(summarizeReturns(functions)([]))(Ashes.Collection.Map.empty)
+
+// Every single-defined temp of the function mapped to its defining instruction.
 let functionSingleDefinitions (fn: IrFunction) =
     fn.instructions
     |> defCountsOf
@@ -1591,34 +1682,14 @@ let recursive containsCallClosure instructions =
         | IrInstruction { instruction = CallClosure(_, _, _, _) } :: _ -> true
         | _ :: tail -> containsCallClosure(tail)
 
-let recursive withSingleDefinitions functions acc =
-    match functions with
-        | [] -> reverse(acc)
-        | fn :: rest -> withSingleDefinitions(rest)((fn, functionSingleDefinitions(fn)) :: acc)
-
-let recursive addKnownReturnedClosureLabels functionFacts knownLabels changed =
-    match functionFacts with
-        | [] -> (knownLabels, changed)
-        | (fn, singleDefs) :: rest ->
-            match lookupAssociation(functionLabel(fn))(knownLabels) with
-                | Some(_) -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
-                | None ->
-                    match returnedClosureLabel(fn.instructions)(singleDefs)(knownLabels)(None)(false) with
-                        | Some(label) ->
-                            addKnownReturnedClosureLabels(rest)(setAssociation(functionLabel(fn))(label)(knownLabels))(true)
-                        | None -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
-
-let recursive runKnownReturnedClosureLabels functionFacts knownLabels =
-    match addKnownReturnedClosureLabels(functionFacts)(knownLabels)(false) with
-        | (nextLabels, true) -> runKnownReturnedClosureLabels(functionFacts)(nextLabels)
-        | (nextLabels, false) -> nextLabels
-
-// Whole-program least fixpoint: each pass admits the functions whose returns resolve against the
-// labels known so far, so a chain of curried helpers converges over several passes while a
-// genuine cycle never does. Each function's single-definition facts are computed once, ahead of
-// every round.
-let computeKnownReturnedClosureLabels (functions: List(IrFunction)) knownLabels =
-    runKnownReturnedClosureLabels(withSingleDefinitions(functions)([]))(knownLabels)
+let recursive collectClosureCallTemps instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = CallClosure(_, closureTemp, _, _) } :: tail ->
+            acc
+            |> intSet(closureTemp)(true)
+            |> collectClosureCallTemps(tail)
+        | _ :: tail -> collectClosureCallTemps(tail)(acc)
 
 // A CallClosure whose closure temp is the result of a CallKnown to a function with a known
 // returned label becomes a plain read of the closure object's environment word (offset 8, the
@@ -1630,7 +1701,7 @@ let recursive devirtualizeReturnedClosureCallsOnce insts singleDefs knownLabels 
         | (IrInstruction { instruction = CallClosure(dest, closureTemp, argTemp, flagTemp), location = loc } as irInst) :: tail ->
             match intGet(closureTemp)(singleDefs) with
                 | Some(CallKnown(_, calleeLabel, _, _, _, _)) ->
-                    match lookupAssociation(calleeLabel)(knownLabels) with
+                    match strGet(calleeLabel)(knownLabels) with
                         | Some(label) ->
                             devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp + 1)(
                                 IrInstruction(instruction = CallKnown(dest)(label)(nextTemp)(argTemp)(flagTemp)(false), location = loc) :: IrInstruction(instruction = LoadMemOffset(nextTemp)(closureTemp)(8), location = loc) :: acc
@@ -1641,72 +1712,100 @@ let recursive devirtualizeReturnedClosureCallsOnce insts singleDefs knownLabels 
                 | _ -> devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp)(irInst :: acc)(changed)
         | head :: tail -> devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp)(head :: acc)(changed)
 
+// Whether a rewrite is possible at all: at least one known label and a CallClosure to resolve.
+let mayResolveReturnedClosureCalls knownLabels instructions =
+    if Ashes.Collection.Map.isEmpty(knownLabels)
+    then false
+    else containsCallClosure(instructions)
+
+// Only the closure temps' definitions are tabled.
+let closureCallDefinitions instructions =
+    Ashes.Collection.Map.empty
+    |> collectClosureCallTemps(instructions)
+    |> singleDefinitionsOfWanted(instructions)
+
 // Iterates to the function's own local fixed point so a curry deeper than two arguments resolves
 // fully in one optimization: each rewrite turns a CallClosure into a CallKnown that the next
 // CallClosure in the chain can resolve through.
 let recursive devirtualizeReturnedClosureCallsInFunction knownLabels (fn: IrFunction) =
-    if containsCallClosure(fn.instructions)
+    if mayResolveReturnedClosureCalls(knownLabels)(fn.instructions)
     then
-        match devirtualizeReturnedClosureCallsOnce(fn.instructions)(functionSingleDefinitions(fn))(knownLabels)(fn.tempCount)([])(false) with
+        match devirtualizeReturnedClosureCallsOnce(fn.instructions)(closureCallDefinitions(fn.instructions))(knownLabels)(fn.tempCount)([])(false) with
             | (_, _, false) -> fn
             | (rewritten, nextTemp, true) -> devirtualizeReturnedClosureCallsInFunction(knownLabels)((fn with instructions = rewritten, tempCount = nextTemp))
     else fn
 
+let recursive keepNonAllocating (candidates: MapTree(Str, IrFunction)) (functions: List(IrFunction)) (acc: List(IrFunction)) =
+    match functions with
+        | [] -> reverse(acc)
+        | fn :: tail ->
+            if allInstructionsNonAllocating(candidates)(fn.instructions)
+            then keepNonAllocating(candidates)(tail)(fn :: acc)
+            else keepNonAllocating(candidates)(tail)(acc)
+
+// The non-allocating functions, by label: the largest set whose members only call members.
 let computeNonAllocatingFunctions (functions: List(IrFunction)) =
-    (let initialCandidates =
-        map(given (f) ->
-            match f with
-                | IrFunction { label = l } -> l)(functions)
-    in
-        let recursive fixpoint candidates =
-            let filtered =
-                filter(
-                    given (label) ->
-                        match lookupFunction(label)(functions) with
-                            | None -> false
-                            | Some(fn) -> allInstructionsNonAllocating(candidates)(fn.instructions)
-                )(
-                    candidates
-                )
+    (let recursive fixpoint (candidates: List(IrFunction)) =
+        let byLabel = functionsByLabel(candidates)(Ashes.Collection.Map.empty)
+        in
+            let kept = keepNonAllocating(byLabel)(candidates)([])
             in
-                if length(filtered) == length(candidates)
-                then candidates
-                else fixpoint(filtered)
-        in fixpoint(initialCandidates))
+                if length(kept) == length(candidates)
+                then byLabel
+                else fixpoint(kept)
+    in fixpoint(functions))
+
+// Every reclaim's (pre slot, position) by the end slot it reads, latest position first.
+let recursive indexBracketReclaims insts (position: Int) (acc: MapTree(Int, List((Int, Int)))) =
+    match insts with
+        | [] -> acc
+        | IrInstruction { instruction = ReclaimArenaChunks(recEnd, recPre, _) } :: tail ->
+            let known =
+                match intGet(recEnd)(acc) with
+                    | Some(entries) -> entries
+                    | None -> []
+            in
+                acc
+                |> intSet(recEnd)((recPre, position) :: known)
+                |> indexBracketReclaims(tail)(position + 1)
+        | _ :: tail -> indexBracketReclaims(tail)(position + 1)(acc)
+
+let recursive earliestReclaimFrom (from: Int) (preSlot: Int) (entries: List((Int, Int))) (best: List(Int)) =
+    match entries with
+        | [] -> best
+        | (pre, position) :: tail ->
+            if position < from
+            then best
+            else
+                if pre == preSlot
+                then earliestReclaimFrom(from)(preSlot)(tail)([position])
+                else earliestReclaimFrom(from)(preSlot)(tail)(best)
 
 // The index of the bracket's reclaim, which reads the slots the bracket's save and restore
 // wrote: right after the restore, or past the conditional copy-out block a call window places
 // between the two. Absent when the bracket closes without one.
-let recursive findBracketReclaim insts idx endSlot preSlot =
-    match insts with
-        | [] -> []
-        | IrInstruction { instruction = ReclaimArenaChunks(recEnd, recPre, _) } :: tail ->
-            if recEnd == endSlot && recPre == preSlot
-            then [idx]
-            else findBracketReclaim(tail)(idx + 1)(endSlot)(preSlot)
-        | _ :: tail -> findBracketReclaim(tail)(idx + 1)(endSlot)(preSlot)
+let findBracketReclaim reclaims (from: Int) (endSlot: Int) (preSlot: Int) =
+    match intGet(endSlot)(reclaims) with
+        | Some(entries) -> earliestReclaimFrom(from)(preSlot)(entries)([])
+        | None -> []
+
+let recursive withoutArenaBrackets instructions acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | IrInstruction { instruction = SaveArenaState(_, _, _) } :: tail -> withoutArenaBrackets(tail)(acc)
+        | IrInstruction { instruction = RestoreArenaState(_, _, _, _) } :: tail -> withoutArenaBrackets(tail)(acc)
+        | IrInstruction { instruction = ReclaimArenaChunks(_, _, _) } :: tail -> withoutArenaBrackets(tail)(acc)
+        | head :: tail -> withoutArenaBrackets(tail)(head :: acc)
 
 let stripRedundantArenaBrackets nonAllocatingFns (fn: IrFunction) =
     (let isWholeNonAllocating =
-        if listContains(fn.label)(nonAllocatingFns)
+        if strHas(fn.label)(nonAllocatingFns)
         then true
         else allInstructionsNonAllocating(nonAllocatingFns)(fn.instructions)
     in
         if isWholeNonAllocating
         then
-            let stripped =
-                filter(
-                    given (irInst) ->
-                        match irInst with
-                            | IrInstruction { instruction = inst } ->
-                                match inst with
-                                    | SaveArenaState(_, _, _) -> false
-                                    | RestoreArenaState(_, _, _, _) -> false
-                                    | ReclaimArenaChunks(_, _, _) -> false
-                                    | _ -> true
-                )(
-                    fn.instructions
-                )
+            let stripped = withoutArenaBrackets(fn.instructions)([])
             in
                 IrFunction(
                     label = fn.label,
@@ -1721,63 +1820,69 @@ let stripRedundantArenaBrackets nonAllocatingFns (fn: IrFunction) =
                     lifetimesPlaced = fn.lifetimesPlaced
                 )
         else
-            let recursive scanStraightLine insts idx acc toRemove =
-                match insts with
-                    | [] -> toRemove
-                    | IrInstruction { instruction = SaveArenaState(curSlot, endSlot, _) } :: tail ->
-                        let recursive findMatchingRestore rInsts j =
-                            match rInsts with
-                                | [] -> None
-                                | IrInstruction { instruction = RestoreArenaState(rCur, rEnd, preSlot, _) } :: rTail ->
-                                    if rCur == curSlot
-                                    then
-                                        if rEnd == endSlot
-                                        then Some(j :: findBracketReclaim(rTail)(j + 1)(endSlot)(preSlot))
-                                        else None
-                                    else None
-                                | IrInstruction { instruction = inst } :: rTail ->
-                                    match inst with
-                                        | Label(_) -> None
-                                        | Jump(_) -> None
-                                        | JumpIfFalse(_, _) -> None
-                                        | SwitchTag(_, _, _) -> None
-                                        | _ ->
-                                            if isNonAllocatingInst(nonAllocatingFns)(inst)
-                                            then findMatchingRestore(rTail)(j + 1)
-                                            else None
-                        in
-                            match findMatchingRestore(tail)(idx + 1) with
-                                | Some(foundIndices) -> scanStraightLine(tail)(idx + 1)(acc)(idx :: append(foundIndices)(toRemove))
-                                | None -> scanStraightLine(tail)(idx + 1)(acc)(toRemove)
-                    | _ :: tail -> scanStraightLine(tail)(idx + 1)(acc)(toRemove)
+            let reclaims = indexBracketReclaims(fn.instructions)(0)(Ashes.Collection.Map.empty)
             in
-                let removals = scanStraightLine(fn.instructions)(0)([])([])
-                in
-                    if length(removals) == 0
-                    then fn
-                    else
-                        let recursive filterRemovals insts idx acc =
-                            match insts with
-                                | [] -> reverse(acc)
-                                | head :: tail ->
-                                    if listContains(idx)(removals)
-                                    then filterRemovals(tail)(idx + 1)(acc)
-                                    else filterRemovals(tail)(idx + 1)(head :: acc)
-                        in
-                            let filtered = filterRemovals(fn.instructions)(0)([])
+                let recursive scanStraightLine insts (idx: Int) toRemove =
+                    match insts with
+                        | [] -> toRemove
+                        | IrInstruction { instruction = SaveArenaState(curSlot, endSlot, _) } :: tail ->
+                            let recursive findMatchingRestore rInsts (j: Int) =
+                                match rInsts with
+                                    | [] -> None
+                                    | IrInstruction { instruction = RestoreArenaState(rCur, rEnd, preSlot, _) } :: rTail ->
+                                        if rCur == curSlot
+                                        then
+                                            if rEnd == endSlot
+                                            then Some(j :: findBracketReclaim(reclaims)(j + 1)(endSlot)(preSlot))
+                                            else None
+                                        else None
+                                    | IrInstruction { instruction = inst } :: rTail ->
+                                        match inst with
+                                            | Label(_) -> None
+                                            | Jump(_) -> None
+                                            | JumpIfFalse(_, _) -> None
+                                            | SwitchTag(_, _, _) -> None
+                                            | _ ->
+                                                if isNonAllocatingInst(nonAllocatingFns)(inst)
+                                                then findMatchingRestore(rTail)(j + 1)
+                                                else None
                             in
-                                IrFunction(
-                                    label = fn.label,
-                                    instructions = filtered,
-                                    localCount = fn.localCount,
-                                    tempCount = fn.tempCount,
-                                    hasEnvAndArgParams = fn.hasEnvAndArgParams,
-                                    coroutine = fn.coroutine,
-                                    localNames = fn.localNames,
-                                    localTypes = fn.localTypes,
-                                    origin = fn.origin,
-                                    lifetimesPlaced = fn.lifetimesPlaced
-                                ))
+                                match findMatchingRestore(tail)(idx + 1) with
+                                    | Some(foundIndices) ->
+                                        toRemove
+                                        |> intSet(idx)(true)
+                                        |> addAllToSet(foundIndices)
+                                        |> scanStraightLine(tail)(idx + 1)
+                                    | None -> scanStraightLine(tail)(idx + 1)(toRemove)
+                        | _ :: tail -> scanStraightLine(tail)(idx + 1)(toRemove)
+                in
+                    let removals = scanStraightLine(fn.instructions)(0)(Ashes.Collection.Map.empty)
+                    in
+                        if Ashes.Collection.Map.isEmpty(removals)
+                        then fn
+                        else
+                            let recursive filterRemovals insts (idx: Int) acc =
+                                match insts with
+                                    | [] -> reverse(acc)
+                                    | head :: tail ->
+                                        if intHas(idx)(removals)
+                                        then filterRemovals(tail)(idx + 1)(acc)
+                                        else filterRemovals(tail)(idx + 1)(head :: acc)
+                            in
+                                let filtered = filterRemovals(fn.instructions)(0)([])
+                                in
+                                    IrFunction(
+                                        label = fn.label,
+                                        instructions = filtered,
+                                        localCount = fn.localCount,
+                                        tempCount = fn.tempCount,
+                                        hasEnvAndArgParams = fn.hasEnvAndArgParams,
+                                        coroutine = fn.coroutine,
+                                        localNames = fn.localNames,
+                                        localTypes = fn.localTypes,
+                                        origin = fn.origin,
+                                        lifetimesPlaced = fn.lifetimesPlaced
+                                    ))
 
 // Local common-subexpression elimination, scoped to a single straight-line block (reset at every
 // label, never across control flow). Operands are canonicalized through a
@@ -2003,17 +2108,28 @@ let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions
 // them as raw parameters; the original callee is never rewritten, since another use of the same
 // label may still need the pointer-based form. Three or more captures keep their environment: the
 // shared signature has no further free word.
-let recursive findStoredWord (basePtr: IrTemp) (offset: Int) instructions =
+// The first temp stored through each (base pointer, offset) pair of a function body.
+let recursive collectFirstStoredWords instructions (acc: MapTree(Int, MapTree(Int, IrTemp))) =
     match instructions with
-        | [] -> None
+        | [] -> acc
         | IrInstruction { instruction = StoreMemOffset(storeBase, storeOffset, source) } :: tail ->
-            if storeBase == basePtr
-            then
-                if storeOffset == offset
-                then Some(source)
-                else findStoredWord(basePtr)(offset)(tail)
-            else findStoredWord(basePtr)(offset)(tail)
-        | _ :: tail -> findStoredWord(basePtr)(offset)(tail)
+            let byOffset =
+                match intGet(storeBase)(acc) with
+                    | Some(known) -> known
+                    | None -> Ashes.Collection.Map.empty
+            in
+                if intHas(storeOffset)(byOffset)
+                then collectFirstStoredWords(tail)(acc)
+                else
+                    acc
+                    |> intSet(storeBase)(intSet(storeOffset)(source)(byOffset))
+                    |> collectFirstStoredWords(tail)
+        | _ :: tail -> collectFirstStoredWords(tail)(acc)
+
+let findStoredWord (basePtr: IrTemp) (offset: Int) (stores: MapTree(Int, MapTree(Int, IrTemp))) =
+    match intGet(basePtr)(stores) with
+        | Some(byOffset) -> intGet(offset)(byOffset)
+        | None -> None
 
 let recursive readsEnvPointerRaw instructions =
     match instructions with
@@ -2078,30 +2194,31 @@ let tryBuildScalarEnvVariant (callee: IrFunction) (captureCount: Int) (counter: 
                     else buildScalarEnvVariant(callee)(captureCount)(counter)
     else None
 
-// The memo is keyed by the callee's label and its capture count side by side, never by a string
+// The memo is keyed by the callee's label and then by its capture count, never by a string
 // built from the two. A concatenated key is a freshly allocated string whose only owner is the memo
 // it is stored into, and stage 1 miscompiled exactly that: the key was released at this function's
 // scope exit while the returned state still held it, the next call's own key reused the freed cell,
-// and the lookup then matched a different callee's entry and handed back its variant. Comparing the
-// two fields directly allocates nothing, so there is no reference for the lifetime to get wrong,
-// and both comparisons are primitive.
-let recursive lookupScalarEnvVariant (label: Str) (captureCount: Int) (entries: List((Str, Int, Maybe(Str)))) =
-    match entries with
-        | [] -> None
-        | (entryLabel, entryCount, variant) :: tail ->
-            if entryLabel == label && entryCount == captureCount
-            then Some(variant)
-            else lookupScalarEnvVariant(label)(captureCount)(tail)
+// and the lookup then matched a different callee's entry and handed back its variant. Keying on
+// the two fields in turn allocates no key, so there is no reference for the lifetime to get wrong.
+let lookupScalarEnvVariant (label: Str) (captureCount: Int) (entries: MapTree(Str, MapTree(Int, Maybe(Str)))) =
+    match strGet(label)(entries) with
+        | Some(byCount) -> intGet(captureCount)(byCount)
+        | None -> None
 
-// A callee is decided once and never revised, so a newer entry can only shadow an identical one.
-// Prepending is therefore what replacing meant, and it does not rebuild the spine ahead of the key.
-let rememberScalarEnvVariant (label: Str) (captureCount: Int) (variant: Maybe(Str)) (state: ScalarizeState) = state with variantByCallee = (label, captureCount, variant) :: state.variantByCallee
+// A callee is decided once and never revised.
+let rememberScalarEnvVariant (label: Str) (captureCount: Int) (variant: Maybe(Str)) (state: ScalarizeState) =
+    (let byCount =
+        match strGet(label)(state.variantByCallee) with
+            | Some(known) -> known
+            | None -> Ashes.Collection.Map.empty
+    in
+        state with variantByCallee = strSet(label)(intSet(captureCount)(variant)(byCount))(state.variantByCallee))
 
-let getOrCreateScalarEnvVariant (label: Str) (captureCount: Int) (functions: List(IrFunction)) (state: ScalarizeState) =
+let getOrCreateScalarEnvVariant (label: Str) (captureCount: Int) (functions: MapTree(Str, IrFunction)) (state: ScalarizeState) =
     match lookupScalarEnvVariant(label)(captureCount)(state.variantByCallee) with
         | Some(memoized) -> (memoized, state)
         | None ->
-            match lookupFunction(label)(functions) with
+            match strGet(label)(functions) with
                 | None -> (None, rememberScalarEnvVariant(label)(captureCount)(None)(state))
                 | Some(callee) ->
                     match tryBuildScalarEnvVariant(callee)(captureCount)(state.counter) with
@@ -2123,8 +2240,8 @@ let scalarEnvSiteShapeMatches (envSize: Int) (flagTemp: IrTemp) (useCount: Maybe
             else false
         else false
 
-// Each accepted site: (env temp, variant label, first captured word, second captured word or -1).
-let recursive collectScalarEnvCallSites allInsts insts singleDefs useCounts functions (state: ScalarizeState) acc =
+// Each accepted site, by env temp: (variant label, first captured word, second captured word or -1).
+let recursive collectScalarEnvCallSites stores insts singleDefs useCounts functions (state: ScalarizeState) acc =
     match insts with
         | [] -> (acc, state)
         | IrInstruction { instruction = CallKnown(_, label, envTemp, _, flagTemp, true) } :: tail ->
@@ -2134,66 +2251,99 @@ let recursive collectScalarEnvCallSites allInsts insts singleDefs useCounts func
                     |> intGet(envTemp)
                     |> scalarEnvSiteShapeMatches(envSize)(flagTemp)
                     then
-                        match findStoredWord(envTemp)(0)(allInsts) with
-                            | None -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                        match findStoredWord(envTemp)(0)(stores) with
+                            | None -> collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
                             | Some(first) ->
                                 let second =
                                     if envSize == 16
-                                    then findStoredWord(envTemp)(8)(allInsts)
+                                    then findStoredWord(envTemp)(8)(stores)
                                     else Some(-1)
                                 in
                                     match second with
-                                        | None -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                                        | None -> collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
                                         | Some(secondWord) ->
                                             match getOrCreateScalarEnvVariant(label)(envSize / 8)(functions)(state) with
-                                                | (Some(variantLabel), nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)((envTemp, variantLabel, first, secondWord) :: acc)
-                                                | (None, nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)(acc)
-                    else collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
-                | _ -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
-        | _ :: tail -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                                                | (Some(variantLabel), nextState) ->
+                                                    acc
+                                                    |> intSet(envTemp)((variantLabel, first, secondWord))
+                                                    |> collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(nextState)
+                                                | (None, nextState) -> collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(nextState)(acc)
+                    else collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                | _ -> collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+        | _ :: tail -> collectScalarEnvCallSites(stores)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
 
-let recursive lookupScalarEnvSite (envTemp: IrTemp) (sites: List((IrTemp, Str, IrTemp, IrTemp))) =
-    match sites with
-        | [] -> None
-        | (siteEnv, variantLabel, first, second) :: tail ->
-            if siteEnv == envTemp
-            then Some((variantLabel, first, second))
-            else lookupScalarEnvSite(envTemp)(tail)
+// The retargeted call of an accepted site: the variant takes the first captured word as its env
+// word and the second, when there is one, as its flag word.
+let scalarEnvCall (dest: IrTemp) (argTemp: IrTemp) (flagTemp: IrTemp) (site: (Str, IrTemp, IrTemp)) =
+    match site with
+        | (variantLabel, first, second) ->
+            if second < 0
+            then CallKnown(dest)(variantLabel)(first)(argTemp)(flagTemp)(false)
+            else CallKnown(dest)(variantLabel)(first)(argTemp)(second)(false)
 
 // The env temp of an accepted site is used exactly by its stores and its call, so dropping the
 // allocation and the stores by env temp and retargeting the call is exact.
-let recursive rewriteScalarEnvCallSites insts sites acc =
+let recursive rewriteScalarEnvCallSites insts (sites: MapTree(Int, (Str, IrTemp, IrTemp))) acc =
     match insts with
         | [] -> reverse(acc)
         | (IrInstruction { instruction = AllocStack(target, _) } as irInst) :: tail ->
-            match lookupScalarEnvSite(target)(sites) with
+            match intGet(target)(sites) with
                 | Some(_) -> rewriteScalarEnvCallSites(tail)(sites)(acc)
                 | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
         | (IrInstruction { instruction = StoreMemOffset(basePtr, _, _) } as irInst) :: tail ->
-            match lookupScalarEnvSite(basePtr)(sites) with
+            match intGet(basePtr)(sites) with
                 | Some(_) -> rewriteScalarEnvCallSites(tail)(sites)(acc)
                 | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
         | (IrInstruction { instruction = CallKnown(dest, _, envTemp, argTemp, flagTemp, true), location = loc } as irInst) :: tail ->
-            match lookupScalarEnvSite(envTemp)(sites) with
-                | Some((variantLabel, first, second)) ->
-                    let flag =
-                        if second < 0
-                        then flagTemp
-                        else second
-                    in rewriteScalarEnvCallSites(tail)(sites)(IrInstruction(instruction = CallKnown(dest)(variantLabel)(first)(argTemp)(flag)(false), location = loc) :: acc)
+            match intGet(envTemp)(sites) with
+                | Some(site) -> rewriteScalarEnvCallSites(tail)(sites)(IrInstruction(instruction = scalarEnvCall(dest)(argTemp)(flagTemp)(site), location = loc) :: acc)
                 | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
         | head :: tail -> rewriteScalarEnvCallSites(tail)(sites)(head :: acc)
 
-let scalarizeCallSitesInFunction functions (state: ScalarizeState) (fn: IrFunction) =
-    (let defCounts = defCountsOf(fn.instructions)
+let recursive collectStackCallEnvironments instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = CallKnown(_, _, envTemp, _, _, true) } :: tail ->
+            acc
+            |> intSet(envTemp)(true)
+            |> collectStackCallEnvironments(tail)
+        | _ :: tail -> collectStackCallEnvironments(tail)(acc)
+
+// Only the env temps of stack-environment calls are ever asked about, so the three tables below
+// cover just those temps and are empty for a body with no such call.
+let stackCallDefinitions instructions =
+    (let wanted = collectStackCallEnvironments(instructions)(Ashes.Collection.Map.empty)
     in
-        let singleDefs = singleDefsOf(fn.instructions)(defCounts)
+        if Ashes.Collection.Map.isEmpty(wanted)
+        then Ashes.Collection.Map.empty
+        else singleDefinitionsOfWanted(instructions)(wanted))
+
+let stackCallUseCounts instructions =
+    (let wanted = collectStackCallEnvironments(instructions)(Ashes.Collection.Map.empty)
+    in
+        if Ashes.Collection.Map.isEmpty(wanted)
+        then Ashes.Collection.Map.empty
+        else useCountsOfWanted(instructions)(wanted)(Ashes.Collection.Map.empty))
+
+let stackCallStoredWords instructions =
+    (let wanted = collectStackCallEnvironments(instructions)(Ashes.Collection.Map.empty)
+    in
+        if Ashes.Collection.Map.isEmpty(wanted)
+        then Ashes.Collection.Map.empty
+        else collectFirstStoredWords(instructions)(Ashes.Collection.Map.empty))
+
+let scalarizeCallSitesInFunction functions (state: ScalarizeState) (fn: IrFunction) =
+    (let singleDefs = stackCallDefinitions(fn.instructions)
+    in
+        let useCounts = stackCallUseCounts(fn.instructions)
         in
-            let useCounts = useCountsOf(fn.instructions)
+            let stores = stackCallStoredWords(fn.instructions)
             in
-                match collectScalarEnvCallSites(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(functions)(state)([]) with
-                    | ([], nextState) -> (fn, nextState)
-                    | (sites, nextState) -> ((fn with instructions = rewriteScalarEnvCallSites(fn.instructions)(sites)([])), nextState))
+                match collectScalarEnvCallSites(stores)(fn.instructions)(singleDefs)(useCounts)(functions)(state)(Ashes.Collection.Map.empty) with
+                    | (sites, nextState) ->
+                        if Ashes.Collection.Map.isEmpty(sites)
+                        then (fn, nextState)
+                        else ((fn with instructions = rewriteScalarEnvCallSites(fn.instructions)(sites)([])), nextState))
 
 let recursive scalarizeCallSitesInFunctions functions (state: ScalarizeState) remaining acc =
     match remaining with
@@ -2203,17 +2353,19 @@ let recursive scalarizeCallSitesInFunctions functions (state: ScalarizeState) re
                 | (rewritten, nextState) -> scalarizeCallSitesInFunctions(functions)(nextState)(tail)(rewritten :: acc)
 
 // Generated variants are appended after every caller has been rewritten; the callee lookup uses
-// the original list, since a variant is never itself a scalarization target.
+// the original functions, since a variant is never itself a scalarization target.
 let scalarizeSingleCaptureStackClosures (entry: IrFunction) (functions: List(IrFunction)) =
-    (let initialState = ScalarizeState(variantByCallee = [], newFunctions = [], counter = 0)
+    (let initialState = ScalarizeState(variantByCallee = Ashes.Collection.Map.empty, newFunctions = [], counter = 0)
     in
-        match scalarizeCallSitesInFunction(functions)(initialState)(entry) with
-            | (newEntry, entryState) ->
-                match scalarizeCallSitesInFunctions(functions)(entryState)(functions)([]) with
-                    | (newFunctions, finalState) ->
-                        (newEntry, finalState.newFunctions
-                        |> reverse
-                        |> append(newFunctions)))
+        let byLabel = functionsByLabel(functions)(Ashes.Collection.Map.empty)
+        in
+            match scalarizeCallSitesInFunction(byLabel)(initialState)(entry) with
+                | (newEntry, entryState) ->
+                    match scalarizeCallSitesInFunctions(byLabel)(entryState)(functions)([]) with
+                        | (newFunctions, finalState) ->
+                            (newEntry, finalState.newFunctions
+                            |> reverse
+                            |> append(newFunctions)))
 
 // Captured-closure devirtualization. A stitched module refers to its sibling functions through
 // alias bindings that lambdas capture, so a call such as `parserCurrent(state)` inside another
@@ -2226,60 +2378,48 @@ let scalarizeSingleCaptureStackClosures (entry: IrFunction) (functions: List(IrF
 // Resolution follows single-definition temps, single-store local slots, Borrow copies,
 // known-returned call results, and the creating function's own captured words (to a
 // whole-program fixpoint). A word with a disagreeing or unresolvable site is never rewritten.
-let recursive lookupSlotEntry (label: Str) (index: Int) entries =
-    match entries with
-        | [] -> None
-        | ((candidateLabel, candidateIndex), value) :: tail ->
-            if candidateLabel == label
-            then
-                if candidateIndex == index
-                then Some(value)
-                else lookupSlotEntry(label)(index)(tail)
-            else lookupSlotEntry(label)(index)(tail)
+// Tables keyed by a function label and then a word index.
+let slotGet (label: Str) (index: Int) table =
+    match strGet(label)(table) with
+        | Some(byIndex) -> intGet(index)(byIndex)
+        | None -> None
 
-let recursive setSlotEntry (label: Str) (index: Int) value entries =
-    match entries with
-        | [] -> [((label, index), value)]
-        | ((candidateLabel, candidateIndex), existing) :: tail ->
-            if candidateLabel == label
-            then
-                if candidateIndex == index
-                then ((label, index), value) :: tail
-                else ((candidateLabel, candidateIndex), existing) :: setSlotEntry(label)(index)(value)(tail)
-            else ((candidateLabel, candidateIndex), existing) :: setSlotEntry(label)(index)(value)(tail)
+let slotSet (label: Str) (index: Int) value table =
+    (let byIndex =
+        match strGet(label)(table) with
+            | Some(known) -> known
+            | None -> Ashes.Collection.Map.empty
+    in
+        strSet(label)(intSet(index)(value)(byIndex))(table))
 
-let recursive containsSlot (label: Str) (index: Int) (slots: List((Str, Int))) =
-    match slots with
-        | [] -> false
-        | (candidateLabel, candidateIndex) :: tail ->
-            if candidateLabel == label
-            then
-                if candidateIndex == index
-                then true
-                else containsSlot(label)(index)(tail)
-            else containsSlot(label)(index)(tail)
+let slotHas (label: Str) (index: Int) table =
+    match slotGet(label)(index)(table) with
+        | Some(_) -> true
+        | None -> false
 
 // Every temp stored through each (base pointer, offset) pair of a function body.
-let recursive lookupEnvironmentStores (basePtr: IrTemp) (offset: Int) (entries: List(((IrTemp, Int), List(IrTemp)))) =
-    match entries with
-        | [] -> None
-        | ((candidateBase, candidateOffset), sources) :: tail ->
-            if candidateBase == basePtr
-            then
-                if candidateOffset == offset
-                then Some(sources)
-                else lookupEnvironmentStores(basePtr)(offset)(tail)
-            else lookupEnvironmentStores(basePtr)(offset)(tail)
+let lookupEnvironmentStores (basePtr: IrTemp) (offset: Int) (entries: MapTree(Int, MapTree(Int, List(IrTemp)))) =
+    match intGet(basePtr)(entries) with
+        | Some(byOffset) -> intGet(offset)(byOffset)
+        | None -> None
 
-let recursive collectEnvironmentStores instructions (acc: List(((IrTemp, Int), List(IrTemp)))) =
+let recursive collectEnvironmentStores instructions (acc: MapTree(Int, MapTree(Int, List(IrTemp)))) =
     match instructions with
         | [] -> acc
         | IrInstruction { instruction = StoreMemOffset(basePtr, offset, source) } :: tail ->
-            let sources =
-                match lookupEnvironmentStores(basePtr)(offset)(acc) with
-                    | Some(existing) -> source :: existing
-                    | None -> [source]
-            in collectEnvironmentStores(tail)(((basePtr, offset), sources) :: acc)
+            let byOffset =
+                match intGet(basePtr)(acc) with
+                    | Some(known) -> known
+                    | None -> Ashes.Collection.Map.empty
+            in
+                let sources =
+                    match intGet(offset)(byOffset) with
+                        | Some(existing) -> source :: existing
+                        | None -> [source]
+                in
+                    acc
+                    |> intSet(basePtr)(intSet(offset)(sources)(byOffset))
+                    |> collectEnvironmentStores(tail)
         | _ :: tail -> collectEnvironmentStores(tail)(acc)
 
 // A closure whose only use was an immediate call has already been devirtualized into a
@@ -2302,93 +2442,134 @@ let describeCreationSite (facts: ClosureDefinitionFacts) inst =
                     | Some(AllocStack(_, size)) -> Some((label, envTemp, size, true))
                     | _ -> Some((label, envTemp, declaredSize, false)))
 
-// Every closure creation with a non-empty environment contributes one site per environment
-// word; a word stored more than once, not at all, or through an environment pointer that is not
-// a single fresh allocation marks the whole (label, word) pair unresolvable.
-let recursive addCaptureSitesForWords (label: Str) (envTemp: IrTemp) (fresh: Bool) (index: Int) (wordCount: Int) stores (creatorLabel: Str) (facts: ClosureDefinitionFacts) sites unresolvable =
+// What a stored temp holds, followed through single-definition temps, single-store local slots,
+// Borrow copies and known-returned call results. Everything here is local to the creating
+// function, so it is settled once; only a captured word of the creator itself is left for the
+// whole-program fixpoint.
+let recursive resolveCaptureSource (creatorLabel: Str) (facts: ClosureDefinitionFacts) (temp: IrTemp) knownReturned (depth: Int) =
+    if depth > 16
+    then SourceUnknown
+    else
+        match intGet(temp)(facts.singleDefs) with
+            | Some(MakeClosure(_, label, _, _, _, _, _, _)) -> SourceLabel(label)
+            | Some(MakeClosureStack(_, label, _, _, _, _, _)) -> SourceLabel(label)
+            | Some(Borrow(_, source)) -> resolveCaptureSource(creatorLabel)(facts)(source)(knownReturned)(depth + 1)
+            | Some(LoadLocal(_, slot)) ->
+                if intGet(slot)(facts.storeCountBySlot) == Some(1)
+                then
+                    match intGet(slot)(facts.singleStoreSourceBySlot) with
+                        | Some(source) -> resolveCaptureSource(creatorLabel)(facts)(source)(knownReturned)(depth + 1)
+                        | None -> SourceUnknown
+                else SourceUnknown
+            | Some(LoadEnv(_, index)) -> SourceEnvWord(creatorLabel)(index)
+            | Some(CallKnown(_, callee, _, _, _, _)) ->
+                match strGet(callee)(knownReturned) with
+                    | Some(label) -> SourceLabel(label)
+                    | None -> SourceUnknown
+            | _ -> SourceUnknown
+
+let addCaptureSource (label: Str) (index: Int) (source: CaptureSource) groups =
+    (let members =
+        match slotGet(label)(index)(groups) with
+            | Some(existing) -> source :: existing
+            | None -> [source]
+    in slotSet(label)(index)(members)(groups))
+
+// Every closure creation with a non-empty environment contributes one source per environment
+// word, grouped by the (label, word) pair it fills; a word stored more than once, not at all,
+// through an environment pointer that is not a single fresh allocation, or from a temp nothing
+// is provable about marks the whole pair unresolvable.
+let recursive addCaptureSitesForWords (label: Str) (envTemp: IrTemp) (fresh: Bool) (index: Int) (wordCount: Int) stores (creatorLabel: Str) (facts: ClosureDefinitionFacts) knownReturned groups unresolvable =
     if index >= wordCount
-    then (sites, unresolvable)
+    then (groups, unresolvable)
     else
         let single =
             if fresh
             then
                 match lookupEnvironmentStores(envTemp)(index * 8)(stores) with
-                    | Some(source :: []) -> Some(source)
-                    | _ -> None
-            else None
+                    | Some(source :: []) -> resolveCaptureSource(creatorLabel)(facts)(source)(knownReturned)(0)
+                    | _ -> SourceUnknown
+            else SourceUnknown
         in
             match single with
-                | Some(source) ->
-                    addCaptureSitesForWords(label)(envTemp)(fresh)(index + 1)(wordCount)(stores)(creatorLabel)(facts)(
-                        CaptureSite(targetLabel = label, index = index, creatorLabel = creatorLabel, creator = facts, sourceTemp = source) :: sites
-                    )(
-                        unresolvable
-                    )
-                | None -> addCaptureSitesForWords(label)(envTemp)(fresh)(index + 1)(wordCount)(stores)(creatorLabel)(facts)(sites)((label, index) :: unresolvable)
+                | SourceUnknown ->
+                    unresolvable
+                    |> slotSet(label)(index)(true)
+                    |> addCaptureSitesForWords(label)(envTemp)(fresh)(index + 1)(wordCount)(stores)(creatorLabel)(facts)(knownReturned)(groups)
+                | source ->
+                    addCaptureSitesForWords(label)(envTemp)(fresh)(index + 1)(wordCount)(stores)(creatorLabel)(facts)(knownReturned)(addCaptureSource(label)(index)(source)(groups))(unresolvable)
 
-let recursive collectCaptureSitesInBody instructions stores (creatorLabel: Str) (facts: ClosureDefinitionFacts) sites unresolvable =
+let recursive collectCaptureSitesInBody instructions stores (creatorLabel: Str) (facts: ClosureDefinitionFacts) knownReturned groups unresolvable =
     match instructions with
-        | [] -> (sites, unresolvable)
+        | [] -> (groups, unresolvable)
         | IrInstruction { instruction = inst } :: tail ->
             match describeCreationSite(facts)(inst) with
                 | Some((label, envTemp, envSize, fresh)) ->
                     if envSize > 0
                     then
-                        match addCaptureSitesForWords(label)(envTemp)(fresh)(0)(envSize / 8)(stores)(creatorLabel)(facts)(sites)(unresolvable) with
-                            | (nextSites, nextUnresolvable) -> collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(nextSites)(nextUnresolvable)
-                    else collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(sites)(unresolvable)
-                | None -> collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(sites)(unresolvable)
+                        match addCaptureSitesForWords(label)(envTemp)(fresh)(0)(envSize / 8)(stores)(creatorLabel)(facts)(knownReturned)(groups)(unresolvable) with
+                            | (nextGroups, nextUnresolvable) -> collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(knownReturned)(nextGroups)(nextUnresolvable)
+                    else collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(knownReturned)(groups)(unresolvable)
+                | None -> collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(knownReturned)(groups)(unresolvable)
 
-let recursive collectCaptureSites (functions: List(IrFunction)) sites unresolvable =
+// A creation site has a non-empty environment only through a closure construction or an
+// environment allocation, so a body with neither contributes nothing and is not tabled.
+let recursive mayCreateEnvironment instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = MakeClosure(_, _, _, _, _, _, _, _) } :: _ -> true
+        | IrInstruction { instruction = MakeClosureStack(_, _, _, _, _, _, _) } :: _ -> true
+        | IrInstruction { instruction = Alloc(_, _, _) } :: _ -> true
+        | IrInstruction { instruction = AllocStack(_, _) } :: _ -> true
+        | _ :: tail -> mayCreateEnvironment(tail)
+
+// The definition facts capture resolution reads; use counts and droppers are not among them.
+let collectCaptureDefinitionFacts (parameterSlots: List(Int)) instructions =
+    (let defCounts = defCountsOf(instructions)
+    in
+        match countStoresBySlot(instructions)(implicitParameterStores(parameterSlots)(Ashes.Collection.Map.empty))(Ashes.Collection.Map.empty) with
+            | (storeCounts, storeSources) ->
+                ClosureDefinitionFacts(
+                    defCounts = defCounts,
+                    useCounts = Ashes.Collection.Map.empty,
+                    singleDefs = singleDefsOf(instructions)(defCounts),
+                    storeCountBySlot = storeCounts,
+                    singleStoreSourceBySlot = storeSources,
+                    closureTempsWithDropper = Ashes.Collection.Map.empty
+                ))
+
+let recursive collectCaptureSites (functions: List(IrFunction)) knownReturned groups unresolvable =
     match functions with
-        | [] -> (sites, unresolvable)
+        | [] -> (groups, unresolvable)
         | fn :: tail ->
-            match collectCaptureSitesInBody(fn.instructions)(collectEnvironmentStores(fn.instructions)([]))(fn.label)(collectClosureDefinitionFacts(parameterSlotsOf(fn))(fn.instructions))(sites)(unresolvable) with
-                | (nextSites, nextUnresolvable) -> collectCaptureSites(tail)(nextSites)(nextUnresolvable)
+            if mayCreateEnvironment(fn.instructions)
+            then
+                match collectCaptureSitesInBody(fn.instructions)(collectEnvironmentStores(fn.instructions)(Ashes.Collection.Map.empty))(fn.label)(collectCaptureDefinitionFacts(parameterSlotsOf(fn))(fn.instructions))(knownReturned)(groups)(unresolvable) with
+                    | (nextGroups, nextUnresolvable) -> collectCaptureSites(tail)(knownReturned)(nextGroups)(nextUnresolvable)
+            else collectCaptureSites(tail)(knownReturned)(groups)(unresolvable)
 
-// The sites grouped by the (label, word) pair they fill.
-let recursive groupCaptureSites (sites: List(CaptureSite)) (groups: List(((Str, Int), List(CaptureSite)))) =
-    match sites with
-        | [] -> groups
-        | site :: tail ->
-            let members =
-                match lookupSlotEntry(site.targetLabel)(site.index)(groups) with
-                    | Some(existing) -> site :: existing
-                    | None -> [site]
-            in
-                groups
-                |> setSlotEntry(site.targetLabel)(site.index)(members)
-                |> groupCaptureSites(tail)
+// The groups still to settle, as (label, word, sources): every group not already unresolvable.
+let pendingCaptureGroups groups unresolvable =
+    (let addLabel acc (label: Str) byIndex =
+        let addIndex inner (index: Int) sources =
+            if slotHas(label)(index)(unresolvable)
+            then inner
+            else (label, index, sources) :: inner
+        in Ashes.Collection.Map.foldLeft(addIndex)(acc)(byIndex)
+    in Ashes.Collection.Map.foldLeft(addLabel)([])(groups))
 
-let recursive resolveCaptureLabel (creatorLabel: Str) (facts: ClosureDefinitionFacts) (temp: IrTemp) known knownReturned (depth: Int) =
-    if depth > 16
-    then CaptureUnknown
-    else
-        match intGet(temp)(facts.singleDefs) with
-            | Some(MakeClosure(_, label, _, _, _, _, _, _)) -> CaptureKnown(label)
-            | Some(MakeClosureStack(_, label, _, _, _, _, _)) -> CaptureKnown(label)
-            | Some(Borrow(_, source)) -> resolveCaptureLabel(creatorLabel)(facts)(source)(known)(knownReturned)(depth + 1)
-            | Some(LoadLocal(_, slot)) ->
-                if intGet(slot)(facts.storeCountBySlot) == Some(1)
-                then
-                    match intGet(slot)(facts.singleStoreSourceBySlot) with
-                        | Some(source) -> resolveCaptureLabel(creatorLabel)(facts)(source)(known)(knownReturned)(depth + 1)
-                        | None -> CaptureUnknown
-                else CaptureUnknown
-            | Some(LoadEnv(_, index)) ->
-                match lookupSlotEntry(creatorLabel)(index)(known) with
-                    | Some(label) -> CaptureKnown(label)
-                    | None -> CapturePending
-            | Some(CallKnown(_, callee, _, _, _, _)) ->
-                match lookupAssociation(callee)(knownReturned) with
-                    | Some(label) -> CaptureKnown(label)
-                    | None -> CaptureUnknown
-            | _ -> CaptureUnknown
+let agreeOnCaptureLabel (label: Str) (agreed: Maybe(Str)) =
+    match agreed with
+        | None -> Some(Some(label))
+        | Some(previous) ->
+            if previous == label
+            then Some(agreed)
+            else None
 
-// A group is known once every site resolves to the same label; one unresolvable or disagreeing
-// site settles it as unknown, and an unresolved captured word of a creator leaves it pending.
-let recursive resolveCaptureGroup (sites: List(CaptureSite)) known knownReturned (agreed: Maybe(Str)) (pending: Bool) =
-    match sites with
+// A group is known once every source resolves to the same label; one disagreeing source settles
+// it as unknown, and an unresolved captured word of a creator leaves it pending.
+let recursive resolveCaptureGroup (sources: List(CaptureSource)) known (agreed: Maybe(Str)) (pending: Bool) =
+    match sources with
         | [] ->
             if pending
             then CapturePending
@@ -2396,40 +2577,40 @@ let recursive resolveCaptureGroup (sites: List(CaptureSite)) known knownReturned
                 match agreed with
                     | Some(label) -> CaptureKnown(label)
                     | None -> CapturePending
-        | site :: tail ->
-            match resolveCaptureLabel(site.creatorLabel)(site.creator)(site.sourceTemp)(known)(knownReturned)(0) with
-                | CaptureUnknown -> CaptureUnknown
-                | CapturePending -> resolveCaptureGroup(tail)(known)(knownReturned)(agreed)(true)
-                | CaptureKnown(label) ->
-                    match agreed with
-                        | None -> resolveCaptureGroup(tail)(known)(knownReturned)(Some(label))(pending)
-                        | Some(previous) ->
-                            if previous == label
-                            then resolveCaptureGroup(tail)(known)(knownReturned)(agreed)(pending)
-                            else CaptureUnknown
+        | source :: tail ->
+            match source with
+                | SourceUnknown -> CaptureUnknown
+                | SourceLabel(label) ->
+                    match agreeOnCaptureLabel(label)(agreed) with
+                        | Some(nextAgreed) -> resolveCaptureGroup(tail)(known)(nextAgreed)(pending)
+                        | None -> CaptureUnknown
+                | SourceEnvWord(creatorLabel, index) ->
+                    match slotGet(creatorLabel)(index)(known) with
+                        | Some(label) ->
+                            match agreeOnCaptureLabel(label)(agreed) with
+                                | Some(nextAgreed) -> resolveCaptureGroup(tail)(known)(nextAgreed)(pending)
+                                | None -> CaptureUnknown
+                        | None -> resolveCaptureGroup(tail)(known)(agreed)(true)
 
-let recursive resolveCaptureGroups (groups: List(((Str, Int), List(CaptureSite)))) known (conflicting: List((Str, Int))) knownReturned (changed: Bool) =
+let recursive resolveCaptureGroups (groups: List((Str, Int, List(CaptureSource)))) known (pending: List((Str, Int, List(CaptureSource)))) (changed: Bool) =
     match groups with
-        | [] -> (known, conflicting, changed)
-        | ((label, index), sites) :: tail ->
-            if containsSlot(label)(index)(conflicting)
-            then resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
-            else
-                match lookupSlotEntry(label)(index)(known) with
-                    | Some(_) -> resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
-                    | None ->
-                        match resolveCaptureGroup(sites)(known)(knownReturned)(None)(false) with
-                            | CaptureUnknown -> resolveCaptureGroups(tail)(known)((label, index) :: conflicting)(knownReturned)(true)
-                            | CaptureKnown(resolved) ->
-                                resolveCaptureGroups(tail)(setSlotEntry(label)(index)(resolved)(known))(conflicting)(knownReturned)(true)
-                            | CapturePending -> resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
+        | [] -> (known, pending, changed)
+        | group :: tail ->
+            match group with
+                | (label, index, sources) ->
+                    match resolveCaptureGroup(sources)(known)(None)(false) with
+                        | CaptureUnknown -> resolveCaptureGroups(tail)(known)(pending)(true)
+                        | CaptureKnown(resolved) ->
+                            resolveCaptureGroups(tail)(slotSet(label)(index)(resolved)(known))(pending)(true)
+                        | CapturePending -> resolveCaptureGroups(tail)(known)(group :: pending)(changed)
 
-// Whole-program fixpoint over the capture graph: each pass settles the groups whose sites resolve
-// against the words known so far, so a chain of captured aliases converges while a word that
-// depends on an unresolvable one stays pending and is never rewritten.
-let recursive computeKnownCapturedClosureLabels groups known conflicting knownReturned =
-    match resolveCaptureGroups(groups)(known)(conflicting)(knownReturned)(false) with
-        | (nextKnown, nextConflicting, true) -> computeKnownCapturedClosureLabels(groups)(nextKnown)(nextConflicting)(knownReturned)
+// Whole-program fixpoint over the capture graph: each pass settles the groups whose sources
+// resolve against the words known so far, so a chain of captured aliases converges while a word
+// that depends on an unresolvable one stays pending and is never rewritten. Only the groups still
+// pending are revisited.
+let recursive computeKnownCapturedClosureLabels (groups: List((Str, Int, List(CaptureSource)))) known =
+    match resolveCaptureGroups(groups)(known)([])(false) with
+        | (nextKnown, pending, true) -> computeKnownCapturedClosureLabels(pending)(nextKnown)
         | (nextKnown, _, false) -> nextKnown
 
 let recursive resolveCapturedWordIndex singleDefs (temp: IrTemp) (depth: Int) =
@@ -2442,23 +2623,39 @@ let recursive resolveCapturedWordIndex singleDefs (temp: IrTemp) (depth: Int) =
             | _ -> None
 
 // A CallClosure through a known captured word becomes a read of the closure object's environment
-// word (offset 8) and a direct CallKnown of the proven label at the same position.
-let recursive devirtualizeCapturedClosureCallsPass (fnLabel: Str) singleDefs knownCaptured insts (nextTemp: Int) acc =
+// word (offset 8) and a direct CallKnown of the proven label at the same position. `knownWords`
+// holds the enclosing function's own proven words by index.
+let recursive devirtualizeCapturedClosureCallsPass (knownWords: MapTree(Int, Str)) singleDefs insts (nextTemp: Int) acc =
     match insts with
         | [] -> (reverse(acc), nextTemp)
         | (IrInstruction { instruction = CallClosure(dest, closureTemp, argTemp, flagTemp), location = loc } as irInst) :: tail ->
             let resolved =
                 match resolveCapturedWordIndex(singleDefs)(closureTemp)(0) with
-                    | Some(index) -> lookupSlotEntry(fnLabel)(index)(knownCaptured)
+                    | Some(index) -> intGet(index)(knownWords)
                     | None -> None
             in
                 match resolved with
                     | Some(label) ->
-                        devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp + 1)(
+                        devirtualizeCapturedClosureCallsPass(knownWords)(singleDefs)(tail)(nextTemp + 1)(
                             IrInstruction(instruction = CallKnown(dest)(label)(nextTemp)(argTemp)(flagTemp)(false), location = loc) :: IrInstruction(instruction = LoadMemOffset(nextTemp)(closureTemp)(8), location = loc) :: acc
                         )
-                    | None -> devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp)(irInst :: acc)
-        | head :: tail -> devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp)(head :: acc)
+                    | None -> devirtualizeCapturedClosureCallsPass(knownWords)(singleDefs)(tail)(nextTemp)(irInst :: acc)
+        | head :: tail -> devirtualizeCapturedClosureCallsPass(knownWords)(singleDefs)(tail)(nextTemp)(head :: acc)
+
+// The enclosing function's own proven words by index; empty when it has none.
+let knownCapturedWordsOf (label: Str) knownCaptured =
+    match strGet(label)(knownCaptured) with
+        | Some(words) -> words
+        | None -> Ashes.Collection.Map.empty
+
+// A function none of whose captured words is proven has nothing to resolve and is not tabled.
+let capturedCallDefinitions knownWords instructions =
+    if Ashes.Collection.Map.isEmpty(knownWords)
+    then Ashes.Collection.Map.empty
+    else
+        instructions
+        |> defCountsOf
+        |> singleDefsOf(instructions)
 
 let devirtualizeCapturedClosureCallsInFunction knownCaptured (fn: IrFunction) =
     if fn.hasEnvAndArgParams && containsCallClosure(fn.instructions)
@@ -2466,9 +2663,9 @@ let devirtualizeCapturedClosureCallsInFunction knownCaptured (fn: IrFunction) =
         match fn.coroutine with
             | Some(_) -> fn
             | None ->
-                let singleDefs = functionSingleDefinitions(fn)
+                let knownWords = knownCapturedWordsOf(fn.label)(knownCaptured)
                 in
-                    match devirtualizeCapturedClosureCallsPass(fn.label)(singleDefs)(knownCaptured)(fn.instructions)(fn.tempCount)([]) with
+                    match devirtualizeCapturedClosureCallsPass(knownWords)(capturedCallDefinitions(knownWords)(fn.instructions))(fn.instructions)(fn.tempCount)([]) with
                         | (rewritten, nextTemp) ->
                             if nextTemp == fn.tempCount
                             then fn
@@ -2478,13 +2675,16 @@ let devirtualizeCapturedClosureCallsInFunction knownCaptured (fn: IrFunction) =
 let devirtualizeCapturedClosureCalls (entry: IrFunction) (functions: List(IrFunction)) =
     (let all = entry :: functions
     in
-        let knownReturned = computeKnownReturnedClosureLabels(all)([])
+        let knownReturned = computeKnownReturnedClosureLabels(all)
         in
-            match collectCaptureSites(all)([])([]) with
-                | (sites, unresolvable) ->
-                    match computeKnownCapturedClosureLabels(groupCaptureSites(sites)([]))([])(unresolvable)(knownReturned) with
-                        | [] -> (entry, functions)
-                        | knownCaptured ->
+            match collectCaptureSites(all)(knownReturned)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
+                | (groups, unresolvable) ->
+                    let knownCaptured =
+                        computeKnownCapturedClosureLabels(pendingCaptureGroups(groups)(unresolvable))(Ashes.Collection.Map.empty)
+                    in
+                        if Ashes.Collection.Map.isEmpty(knownCaptured)
+                        then (entry, functions)
+                        else
                             (devirtualizeCapturedClosureCallsInFunction(knownCaptured)(entry), map(devirtualizeCapturedClosureCallsInFunction(knownCaptured))(functions)))
 
 // Currying-stage inlining. A curried function of several parameters lowers to a chain of stages,
@@ -2525,17 +2725,17 @@ let acceptCurryingStageInstruction (scan: CurryingStageScan) inst (last: Bool) =
             if scan.scanEnvTemp < 0
             then Some((scan with scanEnvTemp = target, scanEnvSize = size))
             else None
-        | LoadEnv(target, index) -> Some((scan with sourceIndexByTemp = setAssociation(target)(index)(scan.sourceIndexByTemp)))
+        | LoadEnv(target, index) -> Some((scan with sourceIndexByTemp = setTempAssociation(target)(index)(scan.sourceIndexByTemp)))
         | LoadLocal(target, slot) ->
             if slot == 1
-            then Some((scan with sourceIndexByTemp = setAssociation(target)(-1)(scan.sourceIndexByTemp)))
+            then Some((scan with sourceIndexByTemp = setTempAssociation(target)(-1)(scan.sourceIndexByTemp)))
             else None
         | StoreMemOffset(basePtr, offset, source) ->
             if scan.scanEnvTemp >= 0
             then
                 if basePtr == scan.scanEnvTemp
                 then
-                    match lookupAssociation(source)(scan.sourceIndexByTemp) with
+                    match lookupTempAssociation(source)(scan.sourceIndexByTemp) with
                         | Some(captureIndex) -> Some((scan with scanStores = (offset, captureIndex) :: scan.scanStores))
                         | None -> None
                 else None
@@ -2570,7 +2770,7 @@ let recursive stageStoresAreWellFormed (envSize: Int) (stores: List((Int, Int)))
                     if offset % 8 != 0
                     then false
                     else
-                        if listContains(offset)(seenOffsets)
+                        if intListContains(offset)(seenOffsets)
                         then false
                         else stageStoresAreWellFormed(envSize)(tail)(offset :: seenOffsets)
 
@@ -2619,16 +2819,16 @@ let tryMatchCurryingStage (fn: IrFunction) =
                     )
     else None
 
-// The stage shape of every function that has one, computed once from the bodies as they are
-// before this pass rewrites any caller.
-let recursive collectCurryingStages (functions: List(IrFunction)) (acc: List((Str, CurryingStage))) =
+// The stage shape of every function that has one, by label, computed once from the bodies as
+// they are before this pass rewrites any caller.
+let recursive collectCurryingStages (functions: List(IrFunction)) (acc: MapTree(Str, CurryingStage)) =
     match functions with
         | [] -> acc
         | fn :: tail ->
             match tryMatchCurryingStage(fn) with
                 | Some(stage) ->
                     acc
-                    |> setAssociation(fn.label)(stage)
+                    |> strSet(fn.label)(stage)
                     |> collectCurryingStages(tail)
                 | None -> collectCurryingStages(tail)(acc)
 
@@ -2640,64 +2840,67 @@ let calleeAcceptsCallerFrameEnvironment (callee: IrFunction) =
             | None -> !readsEnvPointerRaw(callee.instructions)
     else false
 
-let recursive indexInstructions instructions (position: Int) acc =
+// Whether the function each stage returns can take a caller-frame environment, by that
+// function's label, decided once per label rather than once per call site.
+let nextStageAcceptance (stages: MapTree(Str, CurryingStage)) (functions: MapTree(Str, IrFunction)) =
+    (let decide acc (stageLabel: Str) (stage: CurryingStage) =
+        if strHas(stage.nextLabel)(acc)
+        then acc
+        else
+            match strGet(stage.nextLabel)(functions) with
+                | Some(next) ->
+                    strSet(stage.nextLabel)(calleeAcceptsCallerFrameEnvironment(next))(acc)
+                | None -> strSet(stage.nextLabel)(false)(acc)
+    in Ashes.Collection.Map.foldLeft(decide)(Ashes.Collection.Map.empty)(stages))
+
+// The LoadMemOffset that reads each closure temp's environment word, as (position, word temp) by
+// closure temp, and the CallKnown that passes each environment temp, as its position and as the
+// instruction itself, each by environment temp.
+let recursive indexStageChainSites instructions (position: Int) (envLoads: MapTree(Int, (Int, Int))) (callPositions: MapTree(Int, Int)) (callInstructions: MapTree(Int, IrInstruction)) =
     match instructions with
-        | [] -> reverse(acc)
-        | head :: tail -> indexInstructions(tail)(position + 1)((position, head) :: acc)
-
-// The position of the LoadMemOffset that reads each closure temp's environment word, and the
-// position of the CallKnown that passes each environment temp.
-let recursive indexStageChainSites (indexed: List((Int, IrInstruction))) envLoads calls =
-    match indexed with
-        | [] -> (envLoads, calls)
-        | (position, irInst) :: tail ->
+        | [] -> (envLoads, callPositions, callInstructions)
+        | irInst :: tail ->
             match irInst with
-                | IrInstruction { instruction = LoadMemOffset(_, basePtr, 8) } ->
-                    indexStageChainSites(tail)(setAssociation(basePtr)(position)(envLoads))(calls)
+                | IrInstruction { instruction = LoadMemOffset(envWord, basePtr, 8) } ->
+                    indexStageChainSites(tail)(position + 1)(intSet(basePtr)((position, envWord))(envLoads))(callPositions)(callInstructions)
                 | IrInstruction { instruction = CallKnown(_, _, envTemp, _, _, _) } ->
-                    calls
-                    |> setAssociation(envTemp)(position)
-                    |> indexStageChainSites(tail)(envLoads)
-                | _ -> indexStageChainSites(tail)(envLoads)(calls)
+                    callInstructions
+                    |> intSet(envTemp)(irInst)
+                    |> indexStageChainSites(tail)(position + 1)(envLoads)(intSet(envTemp)(position)(callPositions))
+                | _ -> indexStageChainSites(tail)(position + 1)(envLoads)(callPositions)(callInstructions)
 
-let instructionKindAt (position: Int) (indexed: List((Int, IrInstruction))) =
-    match lookupAssociation(position)(indexed) with
-        | Some(IrInstruction { instruction = inst }) -> Some(inst)
-        | None -> None
+let knownCallTargets (label: Str) (call: IrInstruction) =
+    match call with
+        | IrInstruction { instruction = CallKnown(_, callee, _, _, _, _) } -> callee == label
+        | _ -> false
 
 // The chain: `r = CallKnown(stage, env, a)`, `e = LoadMemOffset(r, 8)`, `CallKnown(next, e, b)`,
 // with r and e each used exactly once, next being the label the stage returns, and next able to
-// take a caller-frame environment: (load position, next call position, stage).
-let tryMatchInlinableStageChain (stageLabel: Str) (resultTemp: IrTemp) indexed useCounts envLoads calls (stages: List((Str, CurryingStage))) (functions: List(IrFunction)) =
-    match lookupAssociation(stageLabel)(stages) with
+// take a caller-frame environment: (load position, next call position, next call, stage).
+let tryMatchInlinableStageChain (stageLabel: Str) (resultTemp: IrTemp) useCounts (envLoads: MapTree(Int, (Int, Int))) (callPositions: MapTree(Int, Int)) (callInstructions: MapTree(Int, IrInstruction)) (stages: MapTree(Str, CurryingStage)) (accepting: MapTree(Str, Bool)) =
+    match strGet(stageLabel)(stages) with
         | None -> None
         | Some(stage) ->
             if intGet(resultTemp)(useCounts) == Some(1)
             then
-                match lookupAssociation(resultTemp)(envLoads) with
+                match intGet(resultTemp)(envLoads) with
+                    | Some((loadPosition, envWord)) ->
+                        if intGet(envWord)(useCounts) == Some(1)
+                        then
+                            match intGet(envWord)(callInstructions) with
+                                | Some(nextCall) ->
+                                    if knownCallTargets(stage.nextLabel)(nextCall)
+                                    then
+                                        if strGet(stage.nextLabel)(accepting) == Some(true)
+                                        then
+                                            match intGet(envWord)(callPositions) with
+                                                | Some(callPosition) -> Some((loadPosition, callPosition, nextCall, stage))
+                                                | None -> None
+                                        else None
+                                    else None
+                                | None -> None
+                        else None
                     | None -> None
-                    | Some(loadPosition) ->
-                        match instructionKindAt(loadPosition)(indexed) with
-                            | Some(LoadMemOffset(envWord, _, _)) ->
-                                if intGet(envWord)(useCounts) == Some(1)
-                                then
-                                    match lookupAssociation(envWord)(calls) with
-                                        | None -> None
-                                        | Some(callPosition) ->
-                                            match instructionKindAt(callPosition)(indexed) with
-                                                | Some(CallKnown(_, nextLabel, _, _, _, _)) ->
-                                                    if nextLabel == stage.nextLabel
-                                                    then
-                                                        match lookupFunction(nextLabel)(functions) with
-                                                            | Some(next) ->
-                                                                if calleeAcceptsCallerFrameEnvironment(next)
-                                                                then Some((loadPosition, callPosition, stage))
-                                                                else None
-                                                            | None -> None
-                                                    else None
-                                                | _ -> None
-                                else None
-                            | _ -> None
             else None
 
 // Emits the stack environment the stage would have built: its captures come from the stage's
@@ -2734,80 +2937,106 @@ let retargetKnownCallEnvironment (stackEnv: IrTemp) (stackAllocated: Bool) irIns
         | IrInstruction { instruction = CallKnown(dest, label, _, argTemp, flagTemp, _), location = loc } -> IrInstruction(instruction = CallKnown(dest)(label)(stackEnv)(argTemp)(flagTemp)(stackAllocated), location = loc)
         | other -> other
 
+// A chain whose final call re-enters the enclosing function itself.
+let stageChainReentersOwnFunction (ownLabel: Str) (nextCall: IrInstruction) =
+    match nextCall with
+        | IrInstruction { instruction = CallKnown(_, nextLabel, _, _, _, _) } -> nextLabel == ownLabel
+        | _ -> false
+
 // Each accepted site: the stage call's position mapped to its replacement, the position of the
 // environment-word load to drop, and the next call's position mapped to its retargeted form. A
 // call already retargeted in this pass is left for the next iteration.
-let stageChainReentersOwnFunction (ownLabel: Str) (callPosition: Int) indexed =
-    match lookupAssociation(callPosition)(indexed) with
-        | Some(IrInstruction { instruction = CallKnown(_, nextLabel, _, _, _, _) }) -> nextLabel == ownLabel
-        | _ -> false
-
-let recursive collectStageExpansions (ownLabel: Str) indexed remaining useCounts envLoads calls stages functions (nextTemp: Int) expansions (removed: List(Int)) rewrites =
+let recursive collectStageExpansions (ownLabel: Str) remaining (position: Int) useCounts envLoads callPositions callInstructions stages accepting (nextTemp: Int) expansions removed rewrites =
     match remaining with
         | [] -> (expansions, removed, rewrites, nextTemp)
-        | (position, irInst) :: tail ->
+        | irInst :: tail ->
             match irInst with
                 | IrInstruction { instruction = CallKnown(resultTemp, stageLabel, envTemp, argTemp, _, _), location = loc } ->
-                    match lookupAssociation(position)(rewrites) with
-                        | Some(_) -> collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
-                        | None ->
-                            match tryMatchInlinableStageChain(stageLabel)(resultTemp)(indexed)(useCounts)(envLoads)(calls)(stages)(functions) with
-                                | None -> collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
-                                | Some((loadPosition, callPosition, stage)) ->
-                                    let selfEdge = stageChainReentersOwnFunction(ownLabel)(callPosition)(indexed)
-                                    in
-                                        match buildStageEnvironment(envTemp)(argTemp)(loc)(stage)(selfEdge)(nextTemp) with
-                                            | (replacement, stackEnv, finalTemp) ->
-                                                let retargeted =
-                                                    match lookupAssociation(callPosition)(indexed) with
-                                                        | Some(nextCall) -> retargetKnownCallEnvironment(stackEnv)(selfEdge == false)(nextCall)
-                                                        | None -> irInst
-                                                in
-                                                    collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(finalTemp)(setAssociation(position)(replacement)(expansions))(loadPosition :: removed)(
-                                                        setAssociation(callPosition)(retargeted)(rewrites)
-                                                    )
-                | _ -> collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+                    if intHas(position)(rewrites)
+                    then collectStageExpansions(ownLabel)(tail)(position + 1)(useCounts)(envLoads)(callPositions)(callInstructions)(stages)(accepting)(nextTemp)(expansions)(removed)(rewrites)
+                    else
+                        match tryMatchInlinableStageChain(stageLabel)(resultTemp)(useCounts)(envLoads)(callPositions)(callInstructions)(stages)(accepting) with
+                            | None -> collectStageExpansions(ownLabel)(tail)(position + 1)(useCounts)(envLoads)(callPositions)(callInstructions)(stages)(accepting)(nextTemp)(expansions)(removed)(rewrites)
+                            | Some((loadPosition, callPosition, nextCall, stage)) ->
+                                let selfEdge = stageChainReentersOwnFunction(ownLabel)(nextCall)
+                                in
+                                    match buildStageEnvironment(envTemp)(argTemp)(loc)(stage)(selfEdge)(nextTemp) with
+                                        | (replacement, stackEnv, finalTemp) ->
+                                            let retargeted = retargetKnownCallEnvironment(stackEnv)(selfEdge == false)(nextCall)
+                                            in
+                                                collectStageExpansions(ownLabel)(tail)(position + 1)(useCounts)(envLoads)(callPositions)(callInstructions)(stages)(accepting)(finalTemp)(intSet(position)(replacement)(expansions))(intSet(loadPosition)(true)(removed))(
+                                                    intSet(callPosition)(retargeted)(rewrites)
+                                                )
+                | _ -> collectStageExpansions(ownLabel)(tail)(position + 1)(useCounts)(envLoads)(callPositions)(callInstructions)(stages)(accepting)(nextTemp)(expansions)(removed)(rewrites)
 
-let recursive rebuildWithStageExpansions (indexed: List((Int, IrInstruction))) expansions (removed: List(Int)) rewrites acc =
-    match indexed with
+let recursive rebuildWithStageExpansions instructions (position: Int) expansions removed rewrites acc =
+    match instructions with
         | [] -> reverse(acc)
-        | (position, irInst) :: tail ->
-            if listContains(position)(removed)
-            then rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(acc)
+        | irInst :: tail ->
+            if intHas(position)(removed)
+            then rebuildWithStageExpansions(tail)(position + 1)(expansions)(removed)(rewrites)(acc)
             else
-                match lookupAssociation(position)(expansions) with
+                match intGet(position)(expansions) with
                     | Some(replacement) ->
                         acc
                         |> append(reverse(replacement))
-                        |> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)
+                        |> rebuildWithStageExpansions(tail)(position + 1)(expansions)(removed)(rewrites)
                     | None ->
-                        match lookupAssociation(position)(rewrites) with
-                            | Some(rewritten) -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(rewritten :: acc)
-                            | None -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(irInst :: acc)
+                        match intGet(position)(rewrites) with
+                            | Some(rewritten) -> rebuildWithStageExpansions(tail)(position + 1)(expansions)(removed)(rewrites)(rewritten :: acc)
+                            | None -> rebuildWithStageExpansions(tail)(position + 1)(expansions)(removed)(rewrites)(irInst :: acc)
 
-let inlineCurryingStagesOnce stages functions (fn: IrFunction) =
-    (let indexed = indexInstructions(fn.instructions)(0)([])
+let recursive callsCurryingStage (stages: MapTree(Str, CurryingStage)) instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallKnown(_, label, _, _, _, _) } :: tail ->
+            if strHas(label)(stages)
+            then true
+            else callsCurryingStage(stages)(tail)
+        | _ :: tail -> callsCurryingStage(stages)(tail)
+
+// The use counts and chain sites a body needs, empty for a body that calls no stage.
+let stageCallUseCounts stages instructions =
+    if callsCurryingStage(stages)(instructions)
+    then useCountsOf(instructions)
+    else Ashes.Collection.Map.empty
+
+let stageChainSites stages instructions =
+    if callsCurryingStage(stages)(instructions)
+    then indexStageChainSites(instructions)(0)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty)
+    else (Ashes.Collection.Map.empty, Ashes.Collection.Map.empty, Ashes.Collection.Map.empty)
+
+// Every expansion takes at least one new temp, so an unchanged temp count means no chain matched.
+let inlineCurryingStagesOnce stages accepting (fn: IrFunction) =
+    (let useCounts = stageCallUseCounts(stages)(fn.instructions)
     in
-        let useCounts = useCountsOf(fn.instructions)
-        in
-            match indexStageChainSites(indexed)([])([]) with
-                | (envLoads, calls) ->
-                    match collectStageExpansions(fn.label)(indexed)(indexed)(useCounts)(envLoads)(calls)(stages)(functions)(fn.tempCount)([])([])([]) with
-                        | ([], _, _, _) -> (fn, false)
-                        | (expansions, removed, rewrites, nextTemp) -> ((fn with instructions = rebuildWithStageExpansions(indexed)(expansions)(removed)(rewrites)([]), tempCount = nextTemp), true))
+        match stageChainSites(stages)(fn.instructions) with
+            | (envLoads, callPositions, callInstructions) ->
+                match collectStageExpansions(fn.label)(fn.instructions)(0)(useCounts)(envLoads)(callPositions)(callInstructions)(stages)(accepting)(fn.tempCount)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
+                    | (expansions, removed, rewrites, nextTemp) ->
+                        if nextTemp == fn.tempCount
+                        then (fn, false)
+                        else ((fn with instructions = rebuildWithStageExpansions(fn.instructions)(0)(expansions)(removed)(rewrites)([]), tempCount = nextTemp), true))
 
-let recursive inlineCurryingStagesInFunction stages functions (fn: IrFunction) =
-    match inlineCurryingStagesOnce(stages)(functions)(fn) with
+let recursive inlineCurryingStagesInFunction stages accepting (fn: IrFunction) =
+    match inlineCurryingStagesOnce(stages)(accepting)(fn) with
         | (_, false) -> fn
-        | (rewritten, true) -> inlineCurryingStagesInFunction(stages)(functions)(rewritten)
+        | (rewritten, true) -> inlineCurryingStagesInFunction(stages)(accepting)(rewritten)
 
 let inlineCurryingStages (entry: IrFunction) (functions: List(IrFunction)) =
     (let all = entry :: functions
     in
-        match collectCurryingStages(all)([]) with
-            | [] -> (entry, functions)
-            | stages ->
-                (inlineCurryingStagesInFunction(stages)(all)(entry), map(inlineCurryingStagesInFunction(stages)(all))(functions)))
+        let stages = collectCurryingStages(all)(Ashes.Collection.Map.empty)
+        in
+            if Ashes.Collection.Map.isEmpty(stages)
+            then (entry, functions)
+            else
+                let accepting =
+                    Ashes.Collection.Map.empty
+                    |> functionsByLabel(all)
+                    |> nextStageAcceptance(stages)
+                in
+                    (inlineCurryingStagesInFunction(stages)(accepting)(entry), map(inlineCurryingStagesInFunction(stages)(accepting))(functions)))
 
 // Control-flow simplification. Three locally safe rewrites that need no reachability analysis:
 // a branch aimed at a label that is immediately followed by nothing but an unconditional Jump is
@@ -2986,7 +3215,10 @@ let recursive consumedAsConcatLeft instructions useCounts acc =
         | [] -> acc
         | IrInstruction { instruction = ConcatStr(_, left, _, _) } :: tail ->
             if intGet(left)(useCounts) == Some(1)
-            then consumedAsConcatLeft(tail)(useCounts)(left :: acc)
+            then
+                acc
+                |> intSet(left)(true)
+                |> consumedAsConcatLeft(tail)(useCounts)
             else consumedAsConcatLeft(tail)(useCounts)(acc)
         | _ :: tail -> consumedAsConcatLeft(tail)(useCounts)(acc)
 
@@ -3030,26 +3262,26 @@ let recursive chainRangeIsSafe instructions (innermostPart: IrTemp) (innermostLi
                     if scanning
                     then true
                     else
-                        if listContains(innermostPart)(defined)
+                        if intListContains(innermostPart)(defined)
                         then true
-                        else listContains(innermostLink)(defined)
+                        else intListContains(innermostLink)(defined)
                 in
                     if nowScanning
                     then
                         if isArenaOrControlFlowInstruction(inst)
                         then false
                         else
-                            if listContains(rootTarget)(defined)
+                            if intListContains(rootTarget)(defined)
                             then true
                             else chainRangeIsSafe(tail)(innermostPart)(innermostLink)(rootTarget)(true)
                     else chainRangeIsSafe(tail)(innermostPart)(innermostLink)(rootTarget)(false)
 
-// Each fold: (root target, parts, runtime-managed flag); a chain needs at least one inner link.
+// Each fold, by root target, as the ConcatStrN that replaces the root; a chain needs at least one inner link.
 let recursive collectConcatFolds allInsts instructions singleDefs useCounts consumedLefts folds absorbedAll =
     match instructions with
         | [] -> (folds, absorbedAll)
         | IrInstruction { instruction = ConcatStr(target, left, right, managed) } :: tail ->
-            if listContains(target)(consumedLefts)
+            if intHas(target)(consumedLefts)
             then collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
             else
                 match collectConcatChain(singleDefs)(useCounts)(left)(managed)([right])([]) with
@@ -3059,44 +3291,61 @@ let recursive collectConcatFolds allInsts instructions singleDefs useCounts cons
                                 if chainRangeIsSafe(allInsts)(innermostPart)(innermostLink)(target)(false)
                                 then
                                     absorbedAll
-                                    |> append(absorbed)
-                                    |> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)((target, parts, managed) :: folds)
+                                    |> addAllToSet(absorbed)
+                                    |> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(intSet(target)(ConcatStrN(target)(parts)(managed))(folds))
                                 else collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
                             | _ -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
         | _ :: tail -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
 
-let recursive lookupConcatFold (target: IrTemp) (folds: List((IrTemp, List(IrTemp), Bool))) =
-    match folds with
-        | [] -> None
-        | (foldTarget, parts, managed) :: tail ->
-            if foldTarget == target
-            then Some((parts, managed))
-            else lookupConcatFold(target)(tail)
-
-let recursive rewriteConcatFolds instructions folds absorbed acc =
+let recursive rewriteConcatFolds instructions (folds: MapTree(Int, IrInstructionKind)) absorbed acc =
     match instructions with
         | [] -> reverse(acc)
         | (IrInstruction { instruction = ConcatStr(target, _, _, _), location = loc } as irInst) :: tail ->
-            if listContains(target)(absorbed)
+            if intHas(target)(absorbed)
             then rewriteConcatFolds(tail)(folds)(absorbed)(acc)
             else
-                match lookupConcatFold(target)(folds) with
-                    | Some((parts, managed)) -> rewriteConcatFolds(tail)(folds)(absorbed)(IrInstruction(instruction = ConcatStrN(target)(parts)(managed), location = loc) :: acc)
+                match intGet(target)(folds) with
+                    | Some(folded) -> rewriteConcatFolds(tail)(folds)(absorbed)(IrInstruction(instruction = folded, location = loc) :: acc)
                     | None -> rewriteConcatFolds(tail)(folds)(absorbed)(irInst :: acc)
         | head :: tail -> rewriteConcatFolds(tail)(folds)(absorbed)(head :: acc)
 
-let foldConcatStrChains (fn: IrFunction) =
-    (let defCounts = defCountsOf(fn.instructions)
+let recursive collectConcatLefts instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = ConcatStr(_, left, _, _) } :: tail ->
+            acc
+            |> intSet(left)(true)
+            |> collectConcatLefts(tail)
+        | _ :: tail -> collectConcatLefts(tail)(acc)
+
+// A chain is only ever followed through the left operands of ConcatStr links, so the two tables
+// below cover just those temps and are empty for a body with no ConcatStr.
+let concatLeftDefinitions instructions =
+    (let wanted = collectConcatLefts(instructions)(Ashes.Collection.Map.empty)
     in
-        let singleDefs = singleDefsOf(fn.instructions)(defCounts)
+        if Ashes.Collection.Map.isEmpty(wanted)
+        then Ashes.Collection.Map.empty
+        else singleDefinitionsOfWanted(instructions)(wanted))
+
+let concatLeftUseCounts instructions =
+    (let wanted = collectConcatLefts(instructions)(Ashes.Collection.Map.empty)
+    in
+        if Ashes.Collection.Map.isEmpty(wanted)
+        then Ashes.Collection.Map.empty
+        else useCountsOfWanted(instructions)(wanted)(Ashes.Collection.Map.empty))
+
+let foldConcatStrChains (fn: IrFunction) =
+    (let singleDefs = concatLeftDefinitions(fn.instructions)
+    in
+        let useCounts = concatLeftUseCounts(fn.instructions)
         in
-            let useCounts = useCountsOf(fn.instructions)
+            let consumedLefts = consumedAsConcatLeft(fn.instructions)(useCounts)(Ashes.Collection.Map.empty)
             in
-                let consumedLefts = consumedAsConcatLeft(fn.instructions)(useCounts)([])
-                in
-                    match collectConcatFolds(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(consumedLefts)([])([]) with
-                        | ([], _) -> fn
-                        | (folds, absorbed) -> fn with instructions = rewriteConcatFolds(fn.instructions)(folds)(absorbed)([]))
+                match collectConcatFolds(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(consumedLefts)(Ashes.Collection.Map.empty)(Ashes.Collection.Map.empty) with
+                    | (folds, absorbed) ->
+                        if Ashes.Collection.Map.isEmpty(folds)
+                        then fn
+                        else fn with instructions = rewriteConcatFolds(fn.instructions)(folds)(absorbed)([]))
 
 let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgram) =
     (let programAfterCtEval =
@@ -3113,7 +3362,7 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
                 in
                     match devirtualizeCapturedClosureCalls(optEntry)(optFuncs) with
                         | (capturedEntry, capturedFuncs) ->
-                            let firstKnownLabels = computeKnownReturnedClosureLabels(capturedFuncs)([])
+                            let firstKnownLabels = computeKnownReturnedClosureLabels(capturedFuncs)
                             in
                                 match capturedFuncs
                                 |> map(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels))
@@ -3121,7 +3370,7 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
                                     | (inlinedEntry, inlinedFuncs) ->
                                         match scalarizeSingleCaptureStackClosures(inlinedEntry)(inlinedFuncs) with
                                             | (scalEntry, scalFuncs) ->
-                                                let knownLabels = computeKnownReturnedClosureLabels(scalFuncs)([])
+                                                let knownLabels = computeKnownReturnedClosureLabels(scalFuncs)
                                                 in
                                                     let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(scalEntry)
                                                     in
