@@ -484,6 +484,11 @@ let polymorphicTask = intrinsicTaskOf(SemVariable(2))(SemVariable(3))
 let asyncTaskScheme =
     TypeScheme(quantified = [(3, "a")], body = SemFunction(SemVariable(3))(intrinsicTaskOf(SemString)(SemVariable(3)))(None), constraints = [])
 
+// The two members of `Ashes.Task.Parallel` the compiler provides take thunks: `both` runs two and
+// pairs their results, `withWorkers` runs one under a worker count.
+let parallelThunkType result =
+    SemFunction(SemNamed(4)("Unit")([]))(result)(None)
+
 let withTaskSignatures environment =
     environment
     |> addInferenceTypeDefinition(9)("JoinHandle")(2)
@@ -504,6 +509,8 @@ let withTaskSignatures environment =
     |> intrinsicTaskOf(SemVariable(2))
     |> taskScheme(polymorphicTask))
     |> addTypeBinding("Ashes.Task.join")(taskScheme(intrinsicJoinHandleType)(polymorphicTask))
+    |> addTypeBinding("Ashes.Task.Parallel.both")(TypeScheme(quantified = [(2, "a"), (3, "b")], body = SemFunction(parallelThunkType(SemVariable(2)))(SemFunction(parallelThunkType(SemVariable(3)))(SemTuple([SemVariable(2), SemVariable(3)]))(None))(None), constraints = []))
+    |> addTypeBinding("Ashes.Task.Parallel.withWorkers")(TypeScheme(quantified = [(3, "a")], body = SemFunction(SemInt)(SemFunction(parallelThunkType(SemVariable(3)))(SemVariable(3))(None))(None), constraints = []))
     |> addTypeBinding("Stop.stop")(TypeScheme(quantified = [], body = None
     |> SemRow([SemCapability("Stop")([])])
     |> Some

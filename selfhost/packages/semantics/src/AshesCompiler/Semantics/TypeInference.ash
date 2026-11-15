@@ -4421,6 +4421,76 @@ and inferQualifiedValue moduleName name environment substitution supply ambientR
                         match inferWith(ExprVar(moduleName))(environment)(substitution)(supply)(ambientRow) with
                             | TypeInferenceResult { semanticType = receiverType, substitution = receiverSubstitution, supply = receiverSupply, constraints = receiverConstraints, error = None } -> inferRecordField(receiverType)(name)(environment)(receiverSubstitution)(receiverSupply)(receiverConstraints)
                             | failed -> failed)
+// A value inferred against the type its binding's signature writes: a lambda takes its parameter
+// type from the signature instead of a fresh variable, so what its body does with the parameter
+// can depend on that type. Anything that is not a lambda is inferred as it is.
+and inferAgainst expected expression environment substitution supply ambientRow =
+    match expression with
+        | ExprAt(span, inner) ->
+            locateInferenceError(
+                span,
+                inferAgainst(expected)(inner)(environment)(substitution)(supply)(ambientRow)
+            )
+        | ExprNode(node, inner) ->
+            ambientRow
+            |> inferAgainst(expected)(inner)(environment)(substitution)(withCurrentNode(node)(supply))
+            |> recordNodeType(node)
+        | ExprLambda(name, body, None) ->
+            match applySubstitution(substitution)(expected) with
+                | SemFunction(expectedParameter, expectedResult, _expectedRow) ->
+                    let parameterScheme = TypeScheme(quantified = [], body = expectedParameter, constraints = [])
+                    in
+                        match freshTypeVariable(supply) with
+                            | (bodyAmbientRow, bodyAmbientSupply) ->
+                                match inferAgainst(expectedResult)(body)(addTypeBinding(name)(parameterScheme)(environment))(substitution)(noteBinding(environment)(currentNodeOf(supply))(name)(parameterScheme)(bodyAmbientSupply))(bodyAmbientRow) with
+                                    | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+                                        addConstraints(
+                                            bodyConstraints,
+                                            inferenceSuccess(
+                                                SemFunction(
+                                                    applySubstitution(bodySubstitution)(expectedParameter),
+                                                    applySubstitution(bodySubstitution)(bodyType),
+                                                    bodyAmbientRow
+                                                    |> applySubstitution(bodySubstitution)
+                                                    |> Some
+                                                ),
+                                                bodySubstitution,
+                                                bodySupply
+                                            )
+                                        )
+                                    | failure -> failure
+                | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+        | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+// The second inference of a binding's value, against its written signature. `direct` is the
+// failure the value gave on its own, which stays the answer unless this inference succeeds.
+and inferAgainstSignature typeExpression value environment substitution supply ambientRow direct =
+    match freshTypeVariable(supply) with
+        | (expected, expectedSupply) ->
+            match checkInferenceAnnotation(
+                typeExpression,
+                expected,
+                environment,
+                substitution,
+                expectedSupply
+            ) with
+                | TypeInferenceResult { semanticType = _seededType, substitution = seededSubstitution, supply = seededSupply, constraints = _seededConstraints, error = None } ->
+                    let seeded = inferAgainst(expected)(value)(environment)(seededSubstitution)(seededSupply)(ambientRow)
+                    in
+                        match seeded with
+                            | TypeInferenceResult { error = None } -> seeded
+                            | _ -> direct
+                | _ -> direct
+// A binding's value. Under the program inference rules, a value that does not infer on its own
+// and whose binding writes a signature is inferred once more against that signature.
+and inferAnnotatedValue annotation value environment substitution supply ambientRow =
+    (let direct = inferWith(value)(environment)(substitution)(supply)(ambientRow)
+    in
+        match (direct, annotation) with
+            | (TypeInferenceResult { error = Some(_error) }, Some(typeExpression)) ->
+                if appliesProgramInferenceRules(environment)
+                then inferAgainstSignature(typeExpression)(value)(environment)(substitution)(supply)(ambientRow)(direct)
+                else direct
+            | _ -> direct)
 and inferWith expression environment substitution supply ambientRow =
     match expression with
         | ExprAt(span, inner) ->
@@ -4624,7 +4694,7 @@ and inferWith expression environment substitution supply ambientRow =
         // The ambient capability row belongs to the surrounding environment; only the successful
         // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
-            match inferWith(value)(environment)(substitution)(supply)(ambientRow) with
+            match inferAnnotatedValue(annotation)(value)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                     match checkInferenceBindingSignature(
                         annotation,
@@ -5215,13 +5285,21 @@ let inferTopLevelExpressionLocated expression environment substitution supply =
             |> inferWith(expression)(environment)(substitution)(nextSupply)
             |> checkResidualRow(ambientRow)(environment)
 
+// As `inferTopLevelExpressionLocated`, for the value of a binding that may write a signature.
+let inferTopLevelValueLocated annotation value environment substitution supply =
+    match freshTypeVariable(supply) with
+        | (ambientRow, nextSupply) ->
+            ambientRow
+            |> inferAnnotatedValue(annotation)(value)(environment)(substitution)(nextSupply)
+            |> checkResidualRow(ambientRow)(environment)
+
 let inferExpressionFrom expression environment substitution supply =
     unlocatedInferenceResult(
         inferExpressionFromLocated(expression)(environment)(substitution)(supply)
     )
 
 let inferTopLevelBindingLocated name value annotation requirements environment substitution supply =
-    match inferTopLevelExpressionLocated(value)(environment)(substitution)(supply) with
+    match inferTopLevelValueLocated(annotation)(value)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
             match checkInferenceBindingSignature(
                 annotation,

@@ -91,6 +91,44 @@ let recursive importedModuleNames (entries: List(ImportHeaderEntry)) =
 let reachedModuleNames (module: LoadedShippedModule) =
     appendList(importedModuleNames(module.imports))(module.qualifiedModules)
 
+let recursive withoutModuleName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | head :: rest ->
+            if head == name
+            then withoutModuleName(name)(rest)
+            else head :: withoutModuleName(name)(rest)
+
+// A module the compiler provides whose members have no source: the intrinsic builtin modules,
+// and `Ashes.Task`, whose members only type inference knows.
+let isSourcelessModule (name: Str) = isIntrinsicBuiltinModule(name) || name == "Ashes.Task"
+
+// The module an import of `name` loads when `name` itself is no module: `Ashes.Collection.Map`
+// for `Ashes.Collection.Map.MapTree`, where the last segment selects a type the module exports.
+let recursive selectorParentOf (segments: List(Str)) (reversedParent: List(Str)) =
+    match segments with
+        | [] -> None
+        | _leaf :: [] ->
+            match reversedParent with
+                | [] -> None
+                | _ ->
+                    reversedParent
+                    |> reverseList
+                    |> Ashes.Text.join(".")
+                    |> Some
+        | head :: rest -> selectorParentOf(rest)(head :: reversedParent)
+
+let selectorParentModule (shipped: List(ShippedModuleText)) (name: Str) =
+    match selectorParentOf(Ashes.Text.split(name)("."))([]) with
+        | None -> None
+        | Some(parent) ->
+            match findShipped(parent)(shipped) with
+                | Some(_module) -> Some(parent)
+                | None ->
+                    if isSourcelessModule(parent)
+                    then Some(parent)
+                    else None
+
 // Splits the header off, parses the remainder, and builds the module's interface — the same
 // three steps `ProjectCompilationPlanning` performs per project module.
 let loadModuleText (shipped: List(ShippedModuleText)) name path source =
@@ -112,7 +150,9 @@ let loadModuleText (shipped: List(ShippedModuleText)) name path source =
                                 name = name,
                                 sourcePath = path,
                                 imports = imports,
-                                qualifiedModules = qualifiedShippedModulesNeedingSource(shippedModuleNames(shipped))(body),
+                                qualifiedModules = body
+                                |> qualifiedShippedModulesNeedingSource(shippedModuleNames(shipped))
+                                |> withoutModuleName(name),
                                 program = program,
                                 interface = interface
                             ))
@@ -140,7 +180,7 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                     else
                         match findShipped(name)(shipped) with
                             | None ->
-                                if isIntrinsicBuiltinModule(name)
+                                if isSourcelessModule(name)
                                 then
                                     let program = ProgramSyntax(items = [], body = None)
                                     in
@@ -161,9 +201,12 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                                                     ) :: loaded
                                                 )(shipped)
                                 else
-                                    name
-                                    |> ShippedModuleMissing(importer)
-                                    |> Error
+                                    match selectorParentModule(shipped)(name) with
+                                        | Some(parent) -> loadReachable(importer)(parent :: rest)(loaded)(shipped)
+                                        | None ->
+                                            name
+                                            |> ShippedModuleMissing(importer)
+                                            |> Error
                             | Some(ShippedModuleText { sourcePath = path, source = source }) ->
                                 match loadModuleText(shipped)(name)(path)(source) with
                                     | Error(error) -> Error(error)
