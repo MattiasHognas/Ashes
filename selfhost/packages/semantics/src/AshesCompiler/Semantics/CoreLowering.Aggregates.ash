@@ -1780,28 +1780,67 @@ let producerConsRequest (tail: Expr) (state: CoreLoweringState) (request: Consum
     then request with runtimeList = true
     else request
 
+// Stage 0's `EmitClosureResultOrCopy`: a closure's reference-counted result is handed over owned,
+// so it moves into the producer's cell as it is, and only an arena result is copied onto the
+// reference-counted heap.
+let emitClosureResultOrCopy (resultTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotted, local = resultSlot } ->
+            match freshLabel("producer_head_copy")(slotted) with
+                | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                    match freshLabel("producer_head_done")(copyLabelled) with
+                        | FreshLabel { state = doneLabelled, label = doneLabel } ->
+                            match freshTemp(doneLabelled) with
+                                | FreshTemp { state = tested, temp = referenceCountedTemp } ->
+                                    match tested
+                                    |> emit(IsReferenceCounted(referenceCountedTemp)(resultTemp))
+                                    |> emit(JumpIfFalse(referenceCountedTemp)(copyLabel))
+                                    |> emit(StoreLocal(resultSlot)(resultTemp))
+                                    |> emit(Jump(doneLabel))
+                                    |> emit(Label(copyLabel))
+                                    |> emitGuardedDeepCopy(resultTemp)(plan) with
+                                        | (copied, copyTemp) ->
+                                            match copied
+                                            |> emit(StoreLocal(resultSlot)(copyTemp))
+                                            |> emit(Label(doneLabel))
+                                            |> freshTemp with
+                                                | FreshTemp { state = resulted, temp = ownedTemp } ->
+                                                    (emit(LoadLocal(ownedTemp)(resultSlot))(resulted), ownedTemp)
+
+// The owned reference-counted head of a producer's cell: a closure call's result is taken over or
+// copied, any other head takes a reference or a copy of its own.
+let emitProducerHeadCopy (headTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match definitionOfTemp(headTemp)(state.reversedInstructions) with
+        | Some(CallClosure(_target, _closure, _argument, _flag)) -> emitClosureResultOrCopy(headTemp)(plan)(state)
+        | _ -> emitGuardedDeepCopy(headTemp)(plan)(state)
+
+let isProducerCellHeadType (semanticType: SemanticType) =
+    match semanticType with
+        | SemTuple(_elements) -> true
+        | SemString -> true
+        | _ -> false
+
 // Stage 0's `OwnBorrowedHeadForProducerCell`: the tail of a recursive producer's cell is
-// reference-counted on both sides of the call site's copy-out branch, so a tuple head the cell
-// cannot count (a borrowed read out of an arena-placed parameter) takes an owned
-// reference-counted copy, and the cell is reference-counted too instead of an arena cell nothing
-// releases that tail from.
+// reference-counted on both sides of the call site's copy-out branch, so a tuple or string head
+// the cell cannot count (a borrowed read out of an arena-placed parameter, a string literal, a
+// binding whose value may live in the arena) takes an owned reference-counted copy, and the cell
+// is reference-counted too instead of an arena cell nothing releases that tail from.
 let ownBorrowedHeadForProducerCell (producerCell: Bool) (request: ConsumerRequest) (headExpression: Expr) (lowered: LoweredCoreValue) =
     match lowered with
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            match resolveType(state)(semanticType) with
-                | SemTuple(_elements) as tuple ->
-                    if producerCell && generalRcEnabled(state) && requestsRuntimeList(request) && !isRuntimeManageableListElement(headExpression)(temp)(tuple)(state)
-                    then
-                        match generalCopyPlanOf(tuple)(state) with
-                            | Some(plan) ->
-                                match emitGuardedDeepCopy(temp)(plan)(state) with
-                                    | (copied, ownedTemp) ->
-                                        copied
-                                        |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
-                                        |> success(ownedTemp)(semanticType)
-                            | None -> lowered
-                    else lowered
-                | _ -> lowered
+            let resolved = resolveType(state)(semanticType)
+            in
+                if producerCell && generalRcEnabled(state) && requestsRuntimeList(request) && isProducerCellHeadType(resolved) && !isRuntimeManageableListElement(headExpression)(temp)(resolved)(state)
+                then
+                    match generalCopyPlanOf(resolved)(state) with
+                        | Some(plan) ->
+                            match emitProducerHeadCopy(temp)(plan)(state) with
+                                | (copied, ownedTemp) ->
+                                    copied
+                                    |> markRuntimeTemp(ownedTemp)(RuntimeNewlyProduced)
+                                    |> success(ownedTemp)(semanticType)
+                        | None -> lowered
+                else lowered
         | _ -> lowered
 
 let recursive consChainEndsInVariable (expression: Expr) =
