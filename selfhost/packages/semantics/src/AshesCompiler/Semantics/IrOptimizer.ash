@@ -67,6 +67,8 @@ import Ashes.Collection.List.map
 import Ashes.Collection.List.reverse
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
+import Ashes.Collection.Map
+import Ashes.Collection.Map.MapTree
 import AshesCompiler.Semantics.IrCompileTimeEval
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrInstructionTemps
@@ -1748,7 +1750,7 @@ let trackLocalCseAlias inst (state: LocalCseState) =
 // the stored value (the construct-then-destructure shape). The cached value is the write's raw
 // source temp, never its canonical identity: canonicalization can resolve to the env/arg slot
 // sentinel, which is only ever a key and must not be emitted.
-let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
+let eliminateLocalCseInstruction (evaluable: MapTree(Str, IrFunction)) inst loc (state: LocalCseState) =
     match inst with
         | GetAdtField(target, ptr, field, _tagless) ->
             let key = resolveCseValue(state.valueOf)(ptr)
@@ -1757,7 +1759,7 @@ let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
                     | Some(cached) -> ((state with valueOf = setAssociation(target)(cached)(state.valueOf)), IrInstruction(instruction = Borrow(target)(cached), location = loc))
                     | None -> ((state with fieldCache = ((key, field), target) :: state.fieldCache), IrInstruction(instruction = inst, location = loc))
         | CallKnown(dest, label, envTemp, argTemp, flagTemp, stackAllocated) ->
-            if listContains(label)(evaluable)
+            if isEvaluableLabel(label)(evaluable)
             then
                 let env = resolveCseValue(state.valueOf)(envTemp)
                 in
@@ -2774,7 +2776,7 @@ let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
                                             ))
 
 // The per-function pipeline without a purity oracle: no known call is ever merged.
-let optimizeIrFunction (fn: IrFunction) = optimizeIrFunctionWithEvaluable([])(fn)
+let optimizeIrFunction (fn: IrFunction) = optimizeIrFunctionWithEvaluable(Ashes.Collection.Map.empty)(fn)
 
 // String-concatenation chain folding. A left-nested chain of ConcatStr links (`((a ++ b) ++ c) ++ d`)
 // pays one allocation and one growing copy per link: n - 1 allocations and O(n^2) bytes copied
