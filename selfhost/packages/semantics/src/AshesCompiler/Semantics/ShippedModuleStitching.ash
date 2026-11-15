@@ -358,12 +358,19 @@ let recursive inlineNames (inlineModules: List(InlineModuleInfo)) =
 
 // One of the entry's inline modules, loaded as project planning loads it: no import header, an
 // interface that exports its nested modules, and those nested modules ordered ahead of it.
+// An inline module that holds nothing but nested modules has no text of its own once they are
+// lifted out; it parses as the empty program.
+let parseInlineModule (source: Str) =
+    if Ashes.Text.trim(source) == ""
+    then ProgramParseResult(program = ProgramSyntax(items = [], body = None), diagnostics = [])
+    else parseProgram(source)
+
 let loadInlineModule (shipped: List(ShippedModuleText)) (entryPath: Str) (names: List(Str)) (inline: InlineModuleInfo) =
     match inline with
         | InlineModuleInfo { name = name, source = source } ->
             let path = entryPath + "#" + name
             in
-                match parseProgram(source) with
+                match parseInlineModule(source) with
                     | ProgramParseResult { program = program, diagnostics = [] } ->
                         match buildModuleInterface(name)(inlineChildNames(name)(names))(program) with
                             | Error(error) ->
