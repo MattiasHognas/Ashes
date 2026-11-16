@@ -114,6 +114,7 @@ import AshesCompiler.Backend.IrCodegen.Rc
 import AshesCompiler.Backend.IrCodegen.RcRegion
 import AshesCompiler.Backend.IrCodegen.LeakCheck
 import AshesCompiler.Backend.IrCodegen.Filesystem
+import AshesCompiler.Backend.IrCodegen.Regex
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
 import AshesCompiler.Backend.IrCodegen.Console
@@ -134,6 +135,7 @@ export (
     value codegenProgram,
     value codegenProgramWith,
     value programUsesLibm,
+    value programUsesRegex,
     value externalLibraries,
 )
 
@@ -222,6 +224,24 @@ let programUsesLibm (program: IrProgram) =
         | [] -> false
         | _calls -> true
 
+let recursive instructionsUseRegex (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = RegexCompile(_, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexCompileError(_, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexFind(_, _, _, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexCaptures(_, _, _, _) } :: _rest -> true
+        | IrInstruction { instruction = RegexSubstitute(_, _, _, _) } :: _rest -> true
+        | _instruction :: rest -> instructionsUseRegex(rest)
+
+let recursive functionsUseRegex (functions: List(IrFunction)) =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseRegex(instructions) || functionsUseRegex(rest)
+
+// Whether the program uses `Ashes.Text.Regex`, so the module needs the PCRE2 payload.
+let programUsesRegex (program: IrProgram) = functionsUseRegex(program.entryFunction :: program.functions)
+
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
 // `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,
 // plus the `DirectoryExternals` bundle from `IrCodegen.Filesystem` — declared once per module, matching
@@ -242,6 +262,8 @@ type ExternalFunctions =
     | floatIntrinsics: List((Str, LLVMValueRef))
     // The openlibm functions the program calls, each declared once: name, function, type.
     | libmFunctions: List((Str, LLVMValueRef, LLVMTypeRef))
+    // The PCRE2 entry points, declared when the program uses `Ashes.Text.Regex`.
+    | pcre2Functions: List((Str, LLVMValueRef, LLVMTypeRef))
     | rcRegion: RcRegionRuntime
 
 // Every allocation goes through the reference-counted region's allocator, which keeps libc's
@@ -275,7 +297,8 @@ let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
                                 directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types),
                                 floatUnaryType = floatUnaryType,
                                 floatIntrinsics = declareFloatIntrinsics(module_)(floatUnaryType)(floatUnaryIntrinsicNames),
-                                libmFunctions = []
+                                libmFunctions = [],
+                                pcre2Functions = []
                             ))
 
 // Bundles everything that stays fixed for a whole function so it threads through as one value
@@ -670,6 +693,36 @@ let codegenInstructionKind cx builder kind state =
                                                 buildCall(builder)(externals.floatUnaryType)(lookupFloatIntrinsic(intrinsic)(externals.floatIntrinsics))([buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_intrinsic_operand")])(1u32)("float_intrinsic")
                                             in
                                                 (bindTemp(target)(buildBitCast(builder)(result)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | RegexCompile(target, pattern) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(pattern)
+                                                |> emitRegexCompile(builder)(i64)(types.i32)(ptrType)(externals.pcre2Functions)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexCompileError(target, pattern) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(pattern)
+                                                |> emitRegexCompileError(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(memcpyFn)(memcpyType)(externals.pcre2Functions)
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexFind(target, code, subject, start) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(start)
+                                                |> emitRegexFind(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(externals.pcre2Functions)(lookupTemp(cx)(code)(tempEnv))(lookupTemp(cx)(subject)(tempEnv))
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexCaptures(target, code, subject, start) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(start)
+                                                |> emitRegexCaptures(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(externals.pcre2Functions)(lookupTemp(cx)(code)(tempEnv))(lookupTemp(cx)(subject)(tempEnv))
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
+                                        | RegexSubstitute(target, code, subject, replacement) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupTemp(cx)(replacement)
+                                                |> emitRegexSubstitute(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(arena)(memcpyFn)(memcpyType)(externals.pcre2Functions)(lookupTemp(cx)(code)(tempEnv))(lookupTemp(cx)(subject)(tempEnv))
+                                            in (bindTemp(target)(resultValue)(tempEnv), terminated)
                                         | CallLibm(target, symbol, arguments) ->
                                             match lookupLibmFunction(symbol)(externals.libmFunctions) with
                                                 | (libmFunction, libmType) ->
@@ -2193,7 +2246,9 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                             let declaredExternals = declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
                                             in
                                                 let externals =
-                                                    declaredExternals with libmFunctions = declareLibmFunctions(module_)(context)(libmCallsInFunctions(entryFunction :: functions)([]))
+                                                    declaredExternals with libmFunctions = declareLibmFunctions(module_)(context)(libmCallsInFunctions(entryFunction :: functions)([])), pcre2Functions = (if functionsUseRegex(entryFunction :: functions)
+                                                    then declarePcre2Functions(module_)(types.i64)(types.i32)(types.ptrType)
+                                                    else [])
                                                 in
                                                     let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                                     in

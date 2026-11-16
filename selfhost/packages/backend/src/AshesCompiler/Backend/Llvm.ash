@@ -107,6 +107,7 @@ export (
     value buildSelect,
     value buildTrunc,
     value buildZExt,
+    value buildSExt,
     value buildPtrToInt,
     value buildIntToPtr,
     value buildICmp,
@@ -270,6 +271,7 @@ external LLVMBuildURem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMV
 external LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSelect@libLLVM.so"
 external LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildTrunc@libLLVM.so"
 external LLVMBuildZExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildZExt@libLLVM.so"
+external LLVMBuildSExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildSExt@libLLVM.so"
 external LLVMBuildPtrToInt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildPtrToInt@libLLVM.so"
 external LLVMBuildIntToPtr(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildIntToPtr@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
@@ -480,6 +482,8 @@ let buildSelect builder cond thenValue elseValue name = LLVMBuildSelect(builder)
 let buildTrunc builder value destType name = LLVMBuildTrunc(builder)(value)(destType)(name)
 
 let buildZExt builder value destType name = LLVMBuildZExt(builder)(value)(destType)(name)
+
+let buildSExt builder value destType name = LLVMBuildSExt(builder)(value)(destType)(name)
 
 let buildPtrToInt builder value destType name = LLVMBuildPtrToInt(builder)(value)(destType)(name)
 

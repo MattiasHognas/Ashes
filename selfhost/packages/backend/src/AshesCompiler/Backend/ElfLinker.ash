@@ -236,6 +236,7 @@ let linuxDynamicImportLibraries =
         ("memcpy", "libc.so.6"),
         ("realloc", "libc.so.6"),
         ("memmove", "libc.so.6"),
+        ("memchr", "libc.so.6"),
         ("strlen", "libc.so.6"),
         ("qsort", "libc.so.6"),
         ("strcmp", "libc.so.6"),
