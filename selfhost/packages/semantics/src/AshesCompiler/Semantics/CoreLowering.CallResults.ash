@@ -2109,13 +2109,18 @@ let transferBranchLetOwnerResult (branch: Expr) (temp: Int) (semanticType: Seman
                 | _ -> (state, temp)
 
 // An `if` branch's result as the join stores it: a pattern owner's duplicate, a reference of its
-// own to a `let` owner, or the value as it was lowered.
-let transferIfBranchResult (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+// own to a `let` owner when the `if` is the function's result (`resultEscapes`), or the value as it
+// was lowered. An `if` whose value stays inside the function (a record field, an operand) stores
+// the plain read: the aggregate or operation that consumes it takes its own reference.
+let transferIfBranchResult (resultEscapes: Bool) (branch: Expr) (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
     match transferBranchOwnerResult(branch)(temp)(state) with
         | (duplicated, duplicate) ->
             if duplicate != temp
             then (duplicated, duplicate)
-            else transferBranchLetOwnerResult(branch)(temp)(semanticType)(duplicated)
+            else
+                if resultEscapes
+                then transferBranchLetOwnerResult(branch)(temp)(semanticType)(duplicated)
+                else (duplicated, temp)
 
 // Stage 0's `MarkRuntimeManagedMatchResult` and `MarkUniformRuntimeManagedResult`: a join's
 // reloaded value is a reference-counted value when every branch stored one, and newly produced

@@ -113,7 +113,7 @@ let lowerIfThenBranch thenBranch (request: ConsumerRequest) (normalizeStaticStri
                 | LoweredCoreValue { state = resultState, temp = loweredTemp, semanticType = semanticType, error = None } ->
                     match normalizeParameterPassthroughBranch(thenBranch)(loweredTemp)(resultState) with
                         | (normalizedState, temp) ->
-                            match transferIfBranchResult(thenBranch)(temp)(semanticType)(normalizedState) with
+                            match transferIfBranchResult(request.tailCall)(thenBranch)(temp)(semanticType)(normalizedState) with
                                 | (transferred, branchTemp) ->
                                     CoreIfThen(
                                         state = transferred
@@ -139,7 +139,7 @@ let finishIfElseBranch (successorJoin: Bool) elseBranch (request: ConsumerReques
                         | (typedState, None) ->
                             match normalizeParameterPassthroughBranch(elseBranch)(loweredTemp)(typedState) with
                                 | (normalizedState, temp) ->
-                                    match transferIfBranchResult(elseBranch)(temp)(elseType)(normalizedState) with
+                                    match transferIfBranchResult(request.tailCall)(elseBranch)(temp)(elseType)(normalizedState) with
                                         | (transferred, branchTemp) ->
                                             match freshTemp(transferred) with
                                                 | FreshTemp { state = targetState, temp = target } ->

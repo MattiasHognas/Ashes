@@ -2052,13 +2052,19 @@ let inheritRuntimeTemp (sourceTemp: Int) (targetTemp: Int) (state: CoreLoweringS
         | Some(runtimeState) -> markRuntimeTemp(targetTemp)(runtimeState)(state)
         | None -> state
 
-// Reloads a spilled body result after its scope's release and reset.
+// Reloads a spilled body result after its scope's release and reset. A join that held a reference
+// of its own on every arm still does once reloaded, so a loop exit returning it releases every
+// parameter rather than transferring the one it equals.
 let reloadLetResult (resultTemp: Int) (resultSlot: Int) (state: CoreLoweringState) =
     match freshTemp(state) with
         | FreshTemp { state = reloadState, temp = reloadTemp } ->
             reloadState
             |> emit(LoadLocal(reloadTemp)(resultSlot))
             |> inheritRuntimeTemp(resultTemp)(reloadTemp)
+            |> (given (inherited) ->
+                if isRetainedArmJoin(resultTemp)(inherited)
+                then recordRetainedArmJoin(reloadTemp)(inherited)
+                else inherited)
             |> (given (reloaded) -> (reloaded, reloadTemp))
 
 // Closes a `let`'s arena bracket and returns the closed state with the result temp. A scope that
