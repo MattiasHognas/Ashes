@@ -541,7 +541,7 @@ let getWrittenLocalSlots inst =
         | ConcatStrTip(_, _, _, rStart, rEnd, _) -> [rStart, rEnd]
         | SaveStackPointer(slot) -> [slot]
         | SaveArenaState(cSlot, endSlot, _) -> [cSlot, endSlot]
-        | RestoreArenaState(pSlot, _, _, _) -> [pSlot]
+        | RestoreArenaState(_, _, pSlot, _) -> [pSlot]
         | _ -> []
 
 let getReadLocalSlots inst =
@@ -549,7 +549,7 @@ let getReadLocalSlots inst =
         | LoadLocal(_, slot) -> [slot]
         | ConcatStrTip(_, _, _, rStart, rEnd, _) -> [rStart, rEnd]
         | RestoreStackPointer(slot) -> [slot]
-        | RestoreArenaState(_, cSlot, endSlot, _) -> [cSlot, endSlot]
+        | RestoreArenaState(cSlot, endSlot, _, _) -> [cSlot, endSlot]
         | ReclaimArenaChunks(savedEnd, preRestoreEnd, _) -> [savedEnd, preRestoreEnd]
         | TcoResetPending(_, _, readLocals) -> readLocals
         | _ -> []
@@ -843,51 +843,56 @@ let recursive emitSingleStateBodyAux instructions stateStructTemp statusTemp cap
 
 let emitSingleStateBody instructions stateStructTemp statusTemp captureCount startTemp = emitSingleStateBodyAux(instructions)(stateStructTemp)(statusTemp)(captureCount)(startTemp)([])
 
-let recursive emitDispatchChain stateLabels (stateIndex: Int) (totalCount: Int) stateIdxTemp currentTemp acc =
+let plainInstruction kind = IrInstruction(instruction = kind, location = None)
+
+let stateLabelOf (index: Int) = "__state_" + Ashes.Text.fromInt(index)
+
+let dispatchLabelOf (index: Int) = "__dispatch_" + Ashes.Text.fromInt(index)
+
+// The comparisons that send the state index to states `stateIndex` and on, in order: each falls
+// through to the next state's comparison and the last to state 0, which the chain ends by jumping
+// to. Built front to back by the recursion's own results rather than through an accumulator, which
+// stage 0 miscompiles here (a label string read from the accumulated list after the loop is gone).
+let recursive emitDispatchChain (stateIndex: Int) (totalCount: Int) stateIdxTemp currentTemp =
     if stateIndex >= totalCount
     then
-        match listGet(0)(stateLabels) with
-            | Some(state0Label) -> (reverse(IrInstruction(instruction = Jump(state0Label), location = None) :: acc), currentTemp)
-            | None -> (reverse(acc), currentTemp)
+        ([0
+        |> stateLabelOf
+        |> Jump
+        |> plainInstruction], currentTemp)
     else
-        let cmpTemp = currentTemp + 1
-        in
-            let constTemp = currentTemp + 2
-            in
-                let nextTemp = currentTemp + 2
+        match emitDispatchChain(stateIndex + 1)(totalCount)(stateIdxTemp)(currentTemp + 2) with
+            | (rest, finalTemp) ->
+                let cmpTemp = currentTemp + 1
                 in
-                    let loadConst = IrInstruction(instruction = LoadConstInt(constTemp)(stateIndex), location = None)
+                    let constTemp = currentTemp + 2
                     in
-                        let cmpInst = IrInstruction(instruction = CmpIntEq(cmpTemp)(stateIdxTemp)(constTemp), location = None)
+                        let falseTarget =
+                            if stateIndex + 1 < totalCount
+                            then dispatchLabelOf(stateIndex + 1)
+                            else stateLabelOf(0)
                         in
-                            let falseTarget =
-                                if stateIndex + 1 < totalCount
-                                then "__dispatch_" + Ashes.Text.fromInt(stateIndex + 1)
-                                else
-                                    match listGet(0)(stateLabels) with
-                                        | Some(lbl) -> lbl
-                                        | None -> "__state_0"
+                            let tests =
+                                [stateIndex
+                                |> LoadConstInt(constTemp)
+                                |> plainInstruction, constTemp
+                                |> CmpIntEq(cmpTemp)(stateIdxTemp)
+                                |> plainInstruction, falseTarget
+                                |> JumpIfFalse(cmpTemp)
+                                |> plainInstruction, stateIndex
+                                |> stateLabelOf
+                                |> Jump
+                                |> plainInstruction]
                             in
-                                let jumpFalse = IrInstruction(instruction = JumpIfFalse(cmpTemp)(falseTarget), location = None)
-                                in
-                                    let currentLabel =
-                                        match listGet(stateIndex)(stateLabels) with
-                                            | Some(lbl) -> lbl
-                                            | None -> "__state_" + Ashes.Text.fromInt(stateIndex)
-                                    in
-                                        let jumpState = IrInstruction(instruction = Jump(currentLabel), location = None)
-                                        in
-                                            let newAcc = jumpState :: jumpFalse :: cmpInst :: loadConst :: acc
-                                            in
-                                                let newAccWithLabel =
-                                                    if stateIndex + 1 < totalCount
-                                                    then IrInstruction(instruction = Label("__dispatch_" + Ashes.Text.fromInt(stateIndex + 1)), location = None) :: newAcc
-                                                    else newAcc
-                                                in emitDispatchChain(stateLabels)(stateIndex + 1)(totalCount)(stateIdxTemp)(nextTemp)(newAccWithLabel)
+                                if stateIndex + 1 < totalCount
+                                then
+                                    (append(tests)(plainInstruction(stateIndex + 1
+                                    |> dispatchLabelOf
+                                    |> Label) :: rest), finalTemp)
+                                else (append(tests)(rest), finalTemp)
 
 let emitStateDispatch stateLabels stateIdxTemp startTemp =
-    (let count = listLength(stateLabels)
-    in emitDispatchChain(stateLabels)(1)(count)(stateIdxTemp)(startTemp)([]))
+    emitDispatchChain(1)(listLength(stateLabels))(stateIdxTemp)(startTemp)
 
 let recursive restoreLiveTemps temps tempToSlotOffset stateStructTemp clearedConst acc =
     match temps with
