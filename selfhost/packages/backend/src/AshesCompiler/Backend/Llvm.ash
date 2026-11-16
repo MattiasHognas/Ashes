@@ -78,6 +78,10 @@ export (
     value getBufferStart,
     value getBufferSize,
     value disposeMemoryBuffer,
+    value createMemoryBufferWithContentsOfFile,
+    value parseBitcodeInContext,
+    value linkModules,
+    value linkBitcodeFile,
     value objectFileType,
     value assemblyFileType,
     value relocModeStatic,
@@ -227,6 +231,9 @@ external LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef, LLVMModuleRef
 external LLVMGetBufferStart(LLVMMemoryBufferRef) -> *u8 = "LLVMGetBufferStart@libLLVM.so"
 external LLVMGetBufferSize(LLVMMemoryBufferRef) -> u64 = "LLVMGetBufferSize@libLLVM.so"
 external LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef) -> void = "LLVMDisposeMemoryBuffer@libLLVM.so"
+external LLVMCreateMemoryBufferWithContentsOfFile(Str, out LLVMMemoryBufferRef, out *u8) -> Bool = "LLVMCreateMemoryBufferWithContentsOfFile@libLLVM.so"
+external LLVMParseBitcodeInContext2(LLVMContextRef, LLVMMemoryBufferRef, out LLVMModuleRef) -> Bool = "LLVMParseBitcodeInContext2@libLLVM.so"
+external LLVMLinkModules2(LLVMModuleRef, LLVMModuleRef) -> Bool = "LLVMLinkModules2@libLLVM.so"
 external LLVMCreateTargetDataLayout(LLVMTargetMachineRef) -> LLVMTargetDataRef = "LLVMCreateTargetDataLayout@libLLVM.so"
 external LLVMCopyStringRepOfTargetData(LLVMTargetDataRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMCopyStringRepOfTargetData@libLLVM.so"
 external LLVMDisposeTargetData(LLVMTargetDataRef) -> void = "LLVMDisposeTargetData@libLLVM.so"
@@ -708,3 +715,28 @@ let arrayType elementType elementCount = LLVMArrayType2(elementType)(elementCoun
 let constArray elementType constantValues length = LLVMConstArray2(elementType)(constantValues)(length)
 
 let constStruct context constantValues count packed = LLVMConstStructInContext(context)(constantValues)(count)(packed)
+
+// Returns `(failed, memoryBuffer, errorMessage)`: `memoryBuffer` is `Some` when the file was read.
+let createMemoryBufferWithContentsOfFile path = LLVMCreateMemoryBufferWithContentsOfFile(path)
+
+// Returns `(failed, module)`: `module` is `Some` when the buffer held valid bitcode. The buffer is
+// not taken over, and the module is complete once parsed.
+let parseBitcodeInContext context memoryBuffer = LLVMParseBitcodeInContext2(context)(memoryBuffer)
+
+// Links `source` into `destination`, consuming `source`; `true` on failure.
+let linkModules destination source = LLVMLinkModules2(destination)(source)
+
+// Parses the bitcode file at `path` in `context` and links it into `module_`, the target triple of
+// the payload set to the program's first. `Error` names what failed.
+let linkBitcodeFile context module_ triple (path: Str) =
+    match createMemoryBufferWithContentsOfFile(path) with
+        | (false, Some(buffer), _message) ->
+            match parseBitcodeInContext(context)(buffer) with
+                | (false, Some(payload)) ->
+                    let _ = LLVMSetTarget(payload)(triple)
+                    in
+                        if linkModules(module_)(payload)
+                        then Error("Failed to link " + path + " into the program module.")
+                        else Ok(Unit)
+                | _ -> Error("Failed to parse the bitcode in " + path + ".")
+        | _ -> Error("Could not read " + path + ".")

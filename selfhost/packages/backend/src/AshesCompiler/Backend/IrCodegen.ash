@@ -133,6 +133,7 @@ export (
     value codegenEntryFunction,
     value codegenProgram,
     value codegenProgramWith,
+    value programUsesLibm,
     value externalLibraries,
 )
 
@@ -155,6 +156,72 @@ let recursive lookupFloatIntrinsic (name: Str) (intrinsics: List((Str, LLVMValue
             then function_
             else lookupFloatIntrinsic(name)(rest)
 
+// The openlibm functions `CallLibm` names in the program, each with its argument count: stage 0's
+// `EmitCallLibm` declares each f64 function on first use, and the openlibm bitcode linked into the
+// module after optimization defines it.
+let recursive libmArgumentCount (arguments: List(Int)) =
+    match arguments with
+        | [] -> 0
+        | _argument :: rest -> 1 + libmArgumentCount(rest)
+
+let recursive libmSymbolListed (symbol: Str) (found: List((Str, Int))) =
+    match found with
+        | [] -> false
+        | (candidate, _arity) :: rest -> candidate == symbol || libmSymbolListed(symbol)(rest)
+
+let recursive libmCallsIn (instructions: List(IrInstruction)) (found: List((Str, Int))) =
+    match instructions with
+        | [] -> found
+        | IrInstruction { instruction = CallLibm(_target, symbol, arguments) } :: rest ->
+            if libmSymbolListed(symbol)(found)
+            then libmCallsIn(rest)(found)
+            else libmCallsIn(rest)((symbol, libmArgumentCount(arguments)) :: found)
+        | _instruction :: rest -> libmCallsIn(rest)(found)
+
+let recursive libmCallsInFunctions (functions: List(IrFunction)) (found: List((Str, Int))) =
+    match functions with
+        | [] -> found
+        | IrFunction { instructions = instructions } :: rest ->
+            found
+            |> libmCallsIn(instructions)
+            |> libmCallsInFunctions(rest)
+
+let recursive doubleParameters (count: Int) doubleType_ =
+    if count <= 0
+    then []
+    else doubleType_ :: doubleParameters(count - 1)(doubleType_)
+
+let libmArity (count: Int) =
+    match count with
+        | 0 -> 0u32
+        | 1 -> 1u32
+        | 2 -> 2u32
+        | _ -> 3u32
+
+let recursive declareLibmFunctions module_ context (calls: List((Str, Int))) =
+    match calls with
+        | [] -> []
+        | (symbol, arity) :: rest ->
+            let libmType =
+                functionType(doubleType(context))(context
+                |> doubleType
+                |> doubleParameters(arity))(libmArity(arity))(false)
+            in (symbol, addFunction(module_)(symbol)(libmType), libmType) :: declareLibmFunctions(module_)(context)(rest)
+
+let recursive lookupLibmFunction (symbol: Str) (functions: List((Str, LLVMValueRef, LLVMTypeRef))) =
+    match functions with
+        | [] -> Ashes.IO.panic("codegen: undeclared libm function " + symbol)
+        | (candidate, function_, functionType_) :: rest ->
+            if candidate == symbol
+            then (function_, functionType_)
+            else lookupLibmFunction(symbol)(rest)
+
+// Whether the program calls an openlibm function, so the module needs the openlibm payload.
+let programUsesLibm (program: IrProgram) =
+    match libmCallsInFunctions(program.entryFunction :: program.functions)([]) with
+        | [] -> false
+        | _calls -> true
+
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
 // `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,
 // plus the `DirectoryExternals` bundle from `IrCodegen.Filesystem` — declared once per module, matching
@@ -173,6 +240,8 @@ type ExternalFunctions =
     // The f64 LLVM intrinsics `FloatUnaryIntrinsic` names, each declared once, and their type.
     | floatUnaryType: LLVMTypeRef
     | floatIntrinsics: List((Str, LLVMValueRef))
+    // The openlibm functions the program calls, each declared once: name, function, type.
+    | libmFunctions: List((Str, LLVMValueRef, LLVMTypeRef))
     | rcRegion: RcRegionRuntime
 
 // Every allocation goes through the reference-counted region's allocator, which keeps libc's
@@ -205,7 +274,8 @@ let declareExternalFunctions module_ context builder types (leakCheck: Bool) =
                                 memcpyType = memcpyType,
                                 directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types),
                                 floatUnaryType = floatUnaryType,
-                                floatIntrinsics = declareFloatIntrinsics(module_)(floatUnaryType)(floatUnaryIntrinsicNames)
+                                floatIntrinsics = declareFloatIntrinsics(module_)(floatUnaryType)(floatUnaryIntrinsicNames),
+                                libmFunctions = []
                             ))
 
 // Bundles everything that stays fixed for a whole function so it threads through as one value
@@ -444,6 +514,13 @@ let recursive addResolvedSwitchCases switchInst i64 resolved =
                 addCase(switchInst)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(true))(block)
             in addResolvedSwitchCases(switchInst)(i64)(rest)
 
+// A libm call's f64 arguments: each temp's word read back as the double it holds.
+let recursive floatArguments context builder (cx: CodegenContext) (tempEnv: MapTree(Int, LLVMValueRef)) (arguments: List(Int)) =
+    match arguments with
+        | [] -> []
+        | argument :: rest ->
+            buildBitCast(builder)(lookupTemp(cx)(argument)(tempEnv))(doubleType(context))("libm_argument") :: floatArguments(context)(builder)(cx)(tempEnv)(rest)
+
 let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
@@ -593,6 +670,15 @@ let codegenInstructionKind cx builder kind state =
                                                 buildCall(builder)(externals.floatUnaryType)(lookupFloatIntrinsic(intrinsic)(externals.floatIntrinsics))([buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_intrinsic_operand")])(1u32)("float_intrinsic")
                                             in
                                                 (bindTemp(target)(buildBitCast(builder)(result)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CallLibm(target, symbol, arguments) ->
+                                            match lookupLibmFunction(symbol)(externals.libmFunctions) with
+                                                | (libmFunction, libmType) ->
+                                                    let result =
+                                                        buildCall(builder)(libmType)(libmFunction)(floatArguments(context)(builder)(cx)(tempEnv)(arguments))(arguments
+                                                        |> libmArgumentCount
+                                                        |> libmArity)("libm_" + symbol)
+                                                    in
+                                                        (bindTemp(target)(buildBitCast(builder)(result)(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | FloatToInt(target, value) ->
                                             (bindTemp(target)(buildFPToSI(builder)(buildBitCast(builder)(lookupTemp(cx)(value)(tempEnv))(doubleType(context))("float_to_int_value"))(i64)("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AddFloat(target, left, right) ->
@@ -2104,74 +2190,77 @@ let codegenFunctions name context entryFunction functions stringLiterals capabil
                                     in
                                         let builder = createBuilder(context)
                                         in
-                                            let externals = declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
+                                            let declaredExternals = declareExternalFunctions(module_)(context)(builder)(types)(leakCheck)
                                             in
-                                                let usesCopy = functionsUseCopyOut(entryFunction :: functions)
+                                                let externals =
+                                                    declaredExternals with libmFunctions = declareLibmFunctions(module_)(context)(libmCallsInFunctions(entryFunction :: functions)([]))
                                                 in
-                                                    let arena =
-                                                        externals.rcRegion
-                                                        |> emitIsReferenceCountedIn(builder)(types.i64)
-                                                        |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
+                                                    let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                                     in
-                                                        let stringLiteralGlobals =
-                                                            stringLiterals
-                                                            |> buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)
-                                                            |> indexStrEntries
+                                                        let arena =
+                                                            externals.rcRegion
+                                                            |> emitIsReferenceCountedIn(builder)(types.i64)
+                                                            |> defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
                                                         in
-                                                            let declaredFunctions = declareLiftedFunctions(module_)(closureFnType)(functions)
+                                                            let stringLiteralGlobals =
+                                                                stringLiterals
+                                                                |> buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)
+                                                                |> indexStrEntries
                                                             in
-                                                                let liftedFunctions = indexStrEntries(declaredFunctions)
+                                                                let declaredFunctions = declareLiftedFunctions(module_)(closureFnType)(functions)
                                                                 in
-                                                                    let mc =
-                                                                        ModuleCodegen(
-                                                                            moduleRef = module_,
-                                                                            moduleContext = context,
-                                                                            moduleTypes = types,
-                                                                            moduleExternals = externals,
-                                                                            moduleStringLiteralGlobals = stringLiteralGlobals,
-                                                                            moduleLiftedFunctions = liftedFunctions,
-                                                                            moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
-                                                                            moduleClosureFunctionType = closureFnType,
-                                                                            moduleEnvpGlobal = envpGlobal,
-                                                                            moduleProgramArgsGlobal = programArgsGlobal,
-                                                                            moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
-                                                                            moduleExternalSymbols = []
-                                                                            |> collectExternalSymbols(entryFunction :: functions)
-                                                                            |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
-                                                                            moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
-                                                                            |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
-                                                                            |> indexIntEntries,
-                                                                            moduleNullaryCellGlobals = []
-                                                                            |> collectNullaryCellTags(entryFunction :: functions)
-                                                                            |> defineNullaryCellGlobals(module_)(types.i64)
-                                                                            |> indexIntEntries,
-                                                                            moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
-                                                                            moduleArenaRuntime = arena,
-                                                                            moduleCopyRuntime = if usesCopy
-                                                                            then
-                                                                                arena
-                                                                                |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
-                                                                                |> Some
-                                                                            else None,
-                                                                            moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
-                                                                            then
-                                                                                types.ptrType
-                                                                                |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
-                                                                                |> Some
-                                                                            else None,
-                                                                            moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
-                                                                            then
-                                                                                closureFnType
-                                                                                |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
-                                                                                |> Some
-                                                                            else None,
-                                                                            moduleBuilder = builder
-                                                                        )
+                                                                    let liftedFunctions = indexStrEntries(declaredFunctions)
                                                                     in
-                                                                        let _ = codegenLiftedFunctions(mc)(functions)
+                                                                        let mc =
+                                                                            ModuleCodegen(
+                                                                                moduleRef = module_,
+                                                                                moduleContext = context,
+                                                                                moduleTypes = types,
+                                                                                moduleExternals = externals,
+                                                                                moduleStringLiteralGlobals = stringLiteralGlobals,
+                                                                                moduleLiftedFunctions = liftedFunctions,
+                                                                                moduleClosureNormalizers = collectClosureNormalizers(liftedFunctions)(declaredFunctions),
+                                                                                moduleClosureFunctionType = closureFnType,
+                                                                                moduleEnvpGlobal = envpGlobal,
+                                                                                moduleProgramArgsGlobal = programArgsGlobal,
+                                                                                moduleUsesProgramArgs = functionsUseProgramArgs(entryFunction :: functions),
+                                                                                moduleExternalSymbols = []
+                                                                                |> collectExternalSymbols(entryFunction :: functions)
+                                                                                |> declareExternalSymbols(module_)(context)(types)(runtimeDeclaredSymbols(externals)),
+                                                                                moduleCapabilityHandlerGlobals = capabilityHandlerGlobalCount
+                                                                                |> defineCapabilityHandlerGlobals(module_)(types.i64)(0)
+                                                                                |> indexIntEntries,
+                                                                                moduleNullaryCellGlobals = []
+                                                                                |> collectNullaryCellTags(entryFunction :: functions)
+                                                                                |> defineNullaryCellGlobals(module_)(types.i64)
+                                                                                |> indexIntEntries,
+                                                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
+                                                                                moduleArenaRuntime = arena,
+                                                                                moduleCopyRuntime = if usesCopy
+                                                                                then
+                                                                                    arena
+                                                                                    |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleBigIntRuntime = if functionsUseBigInt(entryFunction :: functions)
+                                                                                then
+                                                                                    types.ptrType
+                                                                                    |> defineBigIntRuntime(module_)(context)(builder)(types.i64)(types.i8)
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleTaskRuntime = if functionsUseRunTask(entryFunction :: functions)
+                                                                                then
+                                                                                    closureFnType
+                                                                                    |> defineTaskRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
+                                                                                    |> Some
+                                                                                else None,
+                                                                                moduleBuilder = builder
+                                                                            )
                                                                         in
-                                                                            let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                                                            in (module_, mc.moduleBuilder))
+                                                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                                                            in
+                                                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                                                in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)(0)(false)

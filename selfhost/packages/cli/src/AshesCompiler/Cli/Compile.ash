@@ -556,24 +556,76 @@ let disposeEmission buffer machine builder module_ context =
     |> (given (_) -> disposeModule(module_))
     |> (given (_) -> contextDispose(context))
 
-let emitObjectWithMachine machine builder module_ context =
+// The vendored runtime payloads directory for linux-x64, probed as stage 0's
+// `HermeticRuntimeAssets` probes it: beside the executable, beside its parent directory and its
+// grandparent (a build's `artifacts/<flavor>/` output), and under the working directory.
+let runtimePayloadCandidates (fileName: Str) =
+    (let relative = "runtimes/linux-x64/" + fileName
+    in
+        match Ashes.IO.Environment.executableDirectory(Unit) with
+            | Ok(directory) ->
+                let parent = Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(directory)
+                in
+                    [
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(directory)(relative),
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(parent)(relative),
+                        Ashes.IO.Path.join(Ashes.IO.Path.Unix)(Ashes.IO.Path.parent(Ashes.IO.Path.Unix)(parent))(relative),
+                        relative
+                    ]
+            | Error(_) -> [relative])
+
+let recursive firstExistingPayload (candidates: List(Str)) (fileName: Str) =
+    match candidates with
+        | [] -> Error("Could not locate the runtime payload " + fileName + ": no runtimes/linux-x64 directory beside the executable or under the working directory.")
+        | candidate :: rest ->
+            match Ashes.IO.File.exists(candidate) with
+                | Ok(true) -> Ok(candidate)
+                | _ -> firstExistingPayload(rest)(fileName)
+
+let runtimePayloadPath (fileName: Str) =
+    firstExistingPayload(runtimePayloadCandidates(fileName))(fileName)
+
+// The vendored bitcode payloads the program's runtime calls need: openlibm for a libm call (stage
+// 0's `LinkOpenlibmBitcodeIfNeeded`).
+let runtimePayloadsFor (program: IrProgram) =
+    if programUsesLibm(program)
+    then ["libopenlibm.bc"]
+    else []
+
+// Links each payload into the optimized module, as stage 0 links them after the program's passes:
+// the program's calls into the payload resolve inside the module, with no dynamic import.
+let recursive linkRuntimePayloads context module_ (payloads: List(Str)) =
+    match payloads with
+        | [] -> Ok(Unit)
+        | fileName :: rest ->
+            match runtimePayloadPath(fileName) with
+                | Error(message) -> Error(message)
+                | Ok(path) ->
+                    match linkBitcodeFile(context)(module_)(linuxX64Triple)(path) with
+                        | Error(message) -> Error(message)
+                        | Ok(_) -> linkRuntimePayloads(context)(module_)(rest)
+
+let emitObjectWithMachine (payloads: List(Str)) machine builder module_ context =
     (let _ = setTarget(module_)(linuxX64Triple)
     in
         let _ = applyDataLayout(module_)(machine)
         in
             let _ = runOptimizationPasses(module_)(machine)
             in
-                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                    | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
-                    | (false, _, None) -> Error("LLVM produced no object buffer.")
-                    | (false, _, Some(buffer)) ->
-                        let bytesResult =
-                            buffer
-                            |> getBufferSize
-                            |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
-                        in
-                            let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
-                            in bytesResult)
+                match linkRuntimePayloads(context)(module_)(payloads) with
+                    | Error(message) -> Error(message)
+                    | Ok(_) ->
+                        match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                            | (true, _, _) -> Error("LLVM reported the module as broken during emission.")
+                            | (false, _, None) -> Error("LLVM produced no object buffer.")
+                            | (false, _, Some(buffer)) ->
+                                let bytesResult =
+                                    buffer
+                                    |> getBufferSize
+                                    |> Ashes.Ffi.copyBytes(getBufferStart(buffer))
+                                in
+                                    let _ = disposeEmission(buffer)(machine)(builder)(module_)(context)
+                                    in bytesResult)
 
 // A target machine for `triple` tuned to the host CPU, as `selfhost/tests/backend` resolves it:
 // LLVM's default optimization level and static relocations, matching stage 0's own default build
@@ -609,7 +661,8 @@ let emitObject lowered =
                 | (module_, builder) ->
                     match resolveHostTargetMachine(linuxX64Triple) with
                         | Error(message) -> Error(message)
-                        | Ok(machine) -> emitObjectWithMachine(machine)(builder)(module_)(context))
+                        | Ok(machine) ->
+                            emitObjectWithMachine(runtimePayloadsFor(lowered))(machine)(builder)(module_)(context))
 
 let linkExecutable program objectBytes =
     program
