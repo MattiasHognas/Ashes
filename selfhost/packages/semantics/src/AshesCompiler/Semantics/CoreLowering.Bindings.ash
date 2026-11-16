@@ -226,10 +226,18 @@ let isSelfCallName (name: Str) (state: CoreLoweringState) =
             |> stateRecursiveGroupNames
             |> containsLabel(name)
 
+// Stage 0's `Binding.Self` test of `ProducesFreshValue`: the name is bound as a recursive binding
+// in the lambda being lowered. In a curried stage's body the function and its group siblings are
+// closure captures instead, and a call through one of those promises nothing about its result.
+let isBoundSelfName (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) -> true
+        | _ -> false
+
 // Stage 0's `ProducesFreshValue`: a terminal arm that builds its value — a constructor
 // application, a list, record or tuple literal, a cons, a call to a function compiled with a
-// reference-counted result, or a call to the function itself, whose result is promised
-// reference-counted.
+// reference-counted result, or a call to a recursive binding bound as itself here, whose result
+// is promised reference-counted.
 let producesFreshValue (expression: Expr) (state: CoreLoweringState) =
     match unspanArgument(expression) with
         | ExprCons(_head, _tail) -> true
@@ -243,7 +251,7 @@ let producesFreshValue (expression: Expr) (state: CoreLoweringState) =
                     match constructorLayout(name)(state) with
                         | Some(_layout) -> true
                         | None ->
-                            isSelfCallName(name)(state) || (match state
+                            isBoundSelfName(name)(state) || (match state
                             |> stateLetLambdaLabels
                             |> lookupLetLambdaLabel(name) with
                                 | Some(label) ->
