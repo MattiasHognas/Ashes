@@ -275,10 +275,11 @@ public sealed partial class Lowering
 
         List<int>? cells = inLoop ? null : ArenaCellsOfResult(resultTemp);
         List<GeneralRcOwnedSlot> handedOver = kept;
+        List<int> normalizedParts = [];
         if (cells is { Count: > 0 })
         {
             Dictionary<int, int> borrowedParts = PreserveRequestedBorrowedStringParts((TypeRef.TTuple)Prune(resultType), cells, parts);
-            handedOver = OwnedSlotsReleasedBehindTupleParts((TypeRef.TTuple)Prune(resultType), cells, parts, borrowedParts, out List<IrInst.StoreMemOffset> retainedStores);
+            handedOver = OwnedSlotsReleasedBehindTupleParts((TypeRef.TTuple)Prune(resultType), cells, parts, borrowedParts, out List<IrInst.StoreMemOffset> retainedStores, out normalizedParts);
             RetainTuplePartStoresWhenRequested(retainedStores);
         }
 
@@ -298,6 +299,8 @@ public sealed partial class Lowering
 
             EmitOwnedSlotDropsBehindRetainedParts([.. _generalRcOwnedSlots.Except(kept)], partTemps);
         }
+
+        EmitReferenceCountedPartsOfArenaResult(resultTemp, (TypeRef.TTuple)Prune(resultType), normalizedParts);
 
         EmitTupleResultPartsMask(parts);
         EmitGeneralRcOwnedSlotDrops(handedOver);
@@ -694,10 +697,19 @@ public sealed partial class Lowering
     /// the part stores of a value other than a fresh one, which the cell's reference already hands
     /// over.
     /// </summary>
-    private List<GeneralRcOwnedSlot> OwnedSlotsReleasedBehindTupleParts(TypeRef.TTuple tuple, List<int> cells, int[] parts, IReadOnlyDictionary<int, int> borrowedParts, out List<IrInst.StoreMemOffset> retainedStores)
+    /// <summary>
+    /// The owned slots released when the parts are handed over: the ones no other element of the
+    /// result's cells reaches (a scalar one reaches nothing), and no part reaches other than by
+    /// reading out of an owned value (whose part is retained). <paramref name="retainedStores"/> are
+    /// the part stores of a value other than a fresh one, which the cell's reference already hands
+    /// over. <paramref name="normalizedParts"/> are the parts placed on the reference-counted heap
+    /// when handed over, which reach nothing of the function's once they are.
+    /// </summary>
+    private List<GeneralRcOwnedSlot> OwnedSlotsReleasedBehindTupleParts(TypeRef.TTuple tuple, List<int> cells, int[] parts, IReadOnlyDictionary<int, int> borrowedParts, out List<IrInst.StoreMemOffset> retainedStores, out List<int> normalizedParts)
     {
         retainedStores = [];
         HashSet<int> ownedSlots = [.. _generalRcOwnedSlots.Select(owned => owned.Slot)];
+        List<(IrInst.StoreMemOffset Store, int Source, bool Fresh, bool ReadOut)> partStores = [];
         List<int> pinning = [];
         foreach (IrInst instruction in _inst)
         {
@@ -720,19 +732,95 @@ public sealed partial class Lowering
             // Its arena-copy alternative is still required by callers that request no parts.
             int source = borrowedParts.TryGetValue(store.Source, out int borrowed) ? borrowed : store.Source;
             bool fresh = IsNewlyProducedRcTemp(source);
+            partStores.Add((store, source, fresh, !fresh && IsReadOutOfOwnedValue(source, ownedSlots, [])));
+        }
+
+        normalizedParts = PartsKeepingAliasOwnersAlive(tuple, partStores);
+        foreach ((IrInst.StoreMemOffset store, int source, bool fresh, bool readOut) in partStores)
+        {
+            if (normalizedParts.Contains(store.OffsetBytes / 8))
+            {
+                continue;
+            }
+
             if (!fresh)
             {
                 retainedStores.Add(store);
             }
 
-            if (fresh || !IsReadOutOfOwnedValue(source, ownedSlots, []))
+            if (fresh || !readOut)
             {
                 pinning.Add(source);
             }
         }
 
-        HashSet<int> reached = LocalSlotsReachingTemps(pinning);
+        HashSet<int> visitedTemps = [];
+        HashSet<int> reached = LocalSlotsReachingTemps(pinning, visitedTemps: visitedTemps);
+        AddAliasOwnerRetainsOfReachedAliases(reached, visitedTemps, _generalRcOwnedSlots);
         return [.. _generalRcOwnedSlots.Where(owned => !reached.Contains(owned.Slot))];
+    }
+
+    private static bool AliasOwnerPartNormalizeEnabled =>
+        Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERPARTNORMALIZE") is null;
+
+    // The parts every store of which is an arena alias of an owner only a slot of this function
+    // keeps alive (a record built over a let-bound list): no reference the part could hand over
+    // exists, so the part is placed on the reference-counted heap when the caller asks for it, where
+    // it holds references of its own, and the slot is released behind it.
+    private List<int> PartsKeepingAliasOwnersAlive(TypeRef.TTuple tuple, List<(IrInst.StoreMemOffset Store, int Source, bool Fresh, bool ReadOut)> partStores)
+    {
+        if (!AliasOwnerPartNormalizeEnabled
+            || !AliasOwnerReachRuleEnabled
+            || !_generalRcOwnedSlots.Exists(owned => owned.AliasTemp >= 0))
+        {
+            return [];
+        }
+
+        List<int> normalized = [];
+        foreach (IGrouping<int, (IrInst.StoreMemOffset Store, int Source, bool Fresh, bool ReadOut)> part in partStores.GroupBy(entry => entry.Store.OffsetBytes / 8))
+        {
+            TypeRef elementType = Prune(tuple.Elements[part.Key]);
+            if (CanArenaReset(elementType)
+                || ContainsUnresolvedLayoutType(elementType, [])
+                || !part.All(entry => !entry.Fresh && !entry.ReadOut && ReachesAliasOwnerRetain(entry.Source)))
+            {
+                continue;
+            }
+
+            normalized.Add(part.Key);
+        }
+
+        normalized.Sort();
+        return normalized;
+    }
+
+    private bool ReachesAliasOwnerRetain(int temp)
+    {
+        HashSet<int> visitedTemps = [];
+        HashSet<int> reached = LocalSlotsReachingTemps([temp], visitedTemps: visitedTemps);
+        AddAliasOwnerRetainsOfReachedAliases(reached, visitedTemps, _generalRcOwnedSlots);
+        return _generalRcOwnedSlots.Exists(owned => owned.AliasTemp >= 0 && reached.Contains(owned.Slot));
+    }
+
+    // On the requested path of an arena result: each part in `parts` is replaced in the result by a
+    // reference to it on the reference-counted heap (a retain of one already there, a copy of an
+    // arena one), the reference the part hands over.
+    private void EmitReferenceCountedPartsOfArenaResult(int resultTemp, TypeRef.TTuple tuple, List<int> parts)
+    {
+        foreach (int part in parts)
+        {
+            string skipLabel = NewLabel("tuple_part_absent");
+            int partTemp = NewTemp();
+            Emit(new IrInst.LoadMemOffset(partTemp, resultTemp, part * 8));
+            int zeroTemp = NewTemp();
+            Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+            int presentTemp = NewTemp();
+            Emit(new IrInst.CmpIntNe(presentTemp, partTemp, zeroTemp));
+            Emit(new IrInst.JumpIfFalse(presentTemp, skipLabel));
+            int ownedTemp = EmitRuntimeManagedTcoDeepCopy(partTemp, Prune(tuple.Elements[part]));
+            Emit(new IrInst.StoreMemOffset(resultTemp, part * 8, ownedTemp));
+            Emit(new IrInst.Label(skipLabel));
+        }
     }
 
     // An element of a scalar type (an integer read out of an owned value, say) points into nothing.

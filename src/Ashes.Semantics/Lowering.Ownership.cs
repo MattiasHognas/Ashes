@@ -445,7 +445,7 @@ public sealed partial class Lowering
 
             if (keepOwned)
             {
-                KeepAliasOwnerRetainOwned(ownerTemp, duplicatedTemp, owner.Type);
+                KeepAliasOwnerRetainOwned(ownerTemp, duplicatedTemp, owner.Type, storedTemp);
             }
         }
     }
@@ -453,8 +453,9 @@ public sealed partial class Lowering
     // The reference an escaping arena alias took of an owner it borrows: the arena aggregate never
     // releases it, and a result normalized onto the reference-counted heap retains the owner's value
     // again. It is recorded for the call it is an argument of, or goes to an owned slot released
-    // once the function's result holds references of its own.
-    private void KeepAliasOwnerRetainOwned(int ownerTemp, int retainedTemp, TypeRef? ownerType)
+    // once the function's result holds references of its own. The slot remembers the alias it keeps
+    // the owner alive for: a result reaching the alias reaches the slot.
+    private void KeepAliasOwnerRetainOwned(int ownerTemp, int retainedTemp, TypeRef? ownerType, int aliasTemp)
     {
         if (!GeneralRcEnabled
             || Environment.GetEnvironmentVariable("GRC_NO_ALIASOWNERSLOT") is not null
@@ -471,7 +472,11 @@ public sealed partial class Lowering
 
         int ownedSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownedSlot, retainedTemp));
-        RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
+        GeneralRcOwnedSlot owned = RegisterGeneralRcOwnedSlot(ownedSlot, Prune(ownerType));
+        if (AliasOwnerReachRuleEnabled)
+        {
+            _generalRcOwnedSlots[^1] = owned with { AliasTemp = aliasTemp };
+        }
     }
 
     // A reference-counted value the lowering produced or took a reference to, rather than a

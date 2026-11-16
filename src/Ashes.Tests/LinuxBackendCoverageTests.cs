@@ -4019,6 +4019,32 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_arena_record_over_let_list_in_generic_result_tuple_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // An arena record built over a let-bound reference-counted list, returned in a tuple beside
+        // a generic parameter. The list's let releases it, and the reference the record keeps lives
+        // in an owned slot of its own, which the result reaches through the record: the record is
+        // placed on the reference-counted heap when the caller asks for the tuple's parts, and the
+        // slot is released behind it, so the caller never walks freed cells and nothing leaks.
+        int[] roundCounts = [2000, 20000, 200000];
+        List<MemoryExecutionResult> samples = new(roundCounts.Length);
+        foreach (int rounds in roundCounts)
+        {
+            IrProgram ir = LowerProgram(BuildArenaRecordOverLetListInGenericResultTupleProgram(rounds));
+            MemoryExecutionResult sample = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            sample.Stdout.ShouldBe($"{(long)rounds * (rounds + 1) + rounds}\n");
+            samples.Add(sample);
+        }
+
+        AssertMemoryPlateaus("arena record over a let-bound list in a generic result tuple", samples, maxRssKb: 16_000);
+    }
+
+    [Test]
     public async Task Linux_backend_mutual_recursion_tuple_part_from_owned_slot_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
@@ -16109,6 +16135,39 @@ public sealed class LinuxBackendCoverageTests
 
             0
             |> rounds({{rounds}})(false)
+            |> Ashes.IO.print
+            """;
+
+    private static string BuildArenaRecordOverLetListInGenericResultTupleProgram(int rounds)
+        => $$"""
+            type Context =
+                | labelBlocks: List((Str, Int))
+
+            let recursive createLabelBlocks base names =
+                match names with
+                    | [] -> []
+                    | name :: rest -> (name, base) :: createLabelBlocks(base + 1)(rest)
+
+            let recursive sizeOf (blocks: List((Str, Int))) (n: Int) =
+                match blocks with
+                    | [] -> n
+                    | (_name, b) :: rest -> sizeOf(rest)(n + b)
+
+            let buildContext width instructions =
+                (let labelBlocks = createLabelBlocks(width)(["a", "b"])
+                in
+                    let cx = Context(labelBlocks = labelBlocks)
+                    in (cx, instructions))
+
+            let recursive rounds (n: Int) (acc: Int) =
+                if n == 0
+                then acc
+                else
+                    match buildContext(n)([n]) with
+                        | (cx, _instructions) -> rounds(n - 1)(acc + sizeOf(cx.labelBlocks)(0))
+
+            0
+            |> rounds({{rounds}})
             |> Ashes.IO.print
             """;
 
