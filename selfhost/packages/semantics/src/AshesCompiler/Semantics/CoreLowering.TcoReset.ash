@@ -533,7 +533,11 @@ let managedStrArgumentCanReset (argument: TcoResetArgument) =
 // consumed tail of a list over scalars, or is carried by a runtime-managed parameter — a `Str`
 // accumulator, or a list slot whose successor is a cons cell allocated on the reference-counted
 // heap or the pattern-bound tail of its own value.
-let tcoResetArgumentCanReset (loop: CoreTcoLoop) (argument: TcoResetArgument) (state: CoreLoweringState) = resultSurvivesReset(argument.argumentType)(state) || isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape || consumedScalarListTail(argument.argumentType)(argument.shape)(state) || managedListArgumentCanReset(argument)(state) || managedStrArgumentCanReset(argument)
+// A pass-through counts only at a back edge that hands the parameter on unchanged (stage 0's
+// `passThrough[i]` needs both the loop-invariant parameter and this call's own argument): a
+// back edge that conses onto it, a tail-modulo-cons edge among them, built its successor in the
+// iteration's arena.
+let tcoResetArgumentCanReset (loop: CoreTcoLoop) (argument: TcoResetArgument) (state: CoreLoweringState) = resultSurvivesReset(argument.argumentType)(state) || isResourceHandle(argument.argumentType)(state) || argument.shape == TcoPassThroughShape && argument.passesThrough || consumedScalarListTail(argument.argumentType)(argument.shape)(state) || managedListArgumentCanReset(argument)(state) || managedStrArgumentCanReset(argument)
 
 let recursive anyManagedListArgument (arguments: List(TcoResetArgument)) =
     match arguments with
