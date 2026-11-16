@@ -1664,6 +1664,36 @@ let codegenInstructionKind cx builder kind state =
                                                 | None -> Ashes.IO.panic("codegen: ForkScopedTask without the task scheduler")
                                         | JoinScopedTask(target, joinHandle) ->
                                             (bindTemp(target)(emitJoinScopedTask(builder)(i64)(i8)(ptrType)(lookupTemp(cx)(joinHandle)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpConnectTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpConnectTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpSendTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpSendTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpReceiveTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpCloseTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpListenTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpListenTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateForkWorkersTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(ForkWorkersTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTcpAcceptTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TcpAcceptTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateHttpGetTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpGetTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateHttpPostTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(HttpPostTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsConnectTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsConnectTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsHandshakeTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsServerHandshakeTask(target, first, second, third) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsServerHandshakeTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(lookupTemp(cx)(third)(tempEnv))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsSendTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsSendTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsReceiveTask(target, first, second) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsReceiveTaskState)(lookupTemp(cx)(first)(tempEnv))(lookupTemp(cx)(second)(tempEnv))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
+                                        | CreateTlsCloseTask(target, first) ->
+                                            (bindTemp(target)(emitLeafTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(TlsCloseTaskState)(lookupTemp(cx)(first)(tempEnv))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("t" + Ashes.Text.fromInt(target)))(tempEnv), terminated)
                                         | AsyncSleep(target, milliseconds) ->
                                             let taskRef =
                                                 emitSleepTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(lookupTemp(cx)(milliseconds)(tempEnv))("t" + Ashes.Text.fromInt(target))

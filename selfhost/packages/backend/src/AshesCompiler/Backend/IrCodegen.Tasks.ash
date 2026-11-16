@@ -12,6 +12,7 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
+import AshesCompiler.Backend.IrCodegen.Process.emitProcessPanicMessage
 import AshesCompiler.Semantics.TaskStructLayout
 import Ashes.Number.UInt
 // `Ashes.Task.all(tasks)` and `Ashes.Task.race(tasks)`: a composite over the task list, scheduled
@@ -28,6 +29,7 @@ export (
     value emitCreateScopedTask,
     value emitForkScopedTask,
     value emitJoinScopedTask,
+    value emitLeafTask,
     value defineTaskRuntime,
     value emitRunTask,
 )
@@ -84,6 +86,10 @@ let offsetStateIndex =
 let offsetWaitData0 =
     match taskStructLayout with
         | TaskStructLayout { waitData0 = offset } -> offset
+
+let offsetWaitData1 =
+    match taskStructLayout with
+        | TaskStructLayout { waitData1 = offset } -> offset
 
 let offsetWaiter =
     match taskStructLayout with
@@ -1555,78 +1561,95 @@ let emitSchedulerDispatch (sc: SchedulerContext) (fns: SchedulerFunctions) (bloc
                                                                                         schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSlt)(stateWord)(stateConst(sc.schedI64)(CompletedTaskState))("sched_is_leaf"))(blocks.schedLeafBlock)(blocks.schedCoroutineBlock)
                                                                                     in task)
 
+// "Ashes: socket and TLS tasks are not supported by the self-hosted compiler yet\n": a leaf task
+// other than a sleep stops the program, since only the sleep leaf is stepped here.
+let unportedLeafMessageCodes = [65, 115, 104, 101, 115, 58, 32, 115, 111, 99, 107, 101, 116, 32, 97, 110, 100, 32, 84, 76, 83, 32, 116, 97, 115, 107, 115, 32, 97, 114, 101, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 101, 32, 115, 101, 108, 102, 45, 104, 111, 115, 116, 101, 100, 32, 99, 111, 109, 112, 105, 108, 101, 114, 32, 121, 101, 116, 10]
+
 // A sleeping leaf completes with `Ok(0)` once its remaining time is spent and parks on its timer
 // until then; a coroutine is stepped with its frame and, when it suspends, the task it awaits is
 // scheduled with it as the waiter.
 let emitSchedulerStep (sc: SchedulerContext) (blocks: SchedulerBlocks) runFn closureFnType task =
     (let _ = schedAt(sc)(blocks.schedLeafBlock)
     in
-        let _ =
-            schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSle)(schedWord(sc)(task)(offsetSleepDurationMilliseconds)("sched_sleep_left"))(schedConst(sc)(0))("sched_sleep_elapsed"))(blocks.schedLeafDoneBlock)(blocks.schedLeafParkBlock)
+        let sleepBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_sleep_leaf")
         in
-            let _ = schedAt(sc)(blocks.schedLeafDoneBlock)
+            let unportedBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_unported_leaf")
             in
                 let _ =
-                    (given (_unit) ->
-                        schedOk(sc)(runFn)(schedConst(sc)(0))("sched_sleep_result"))
-                    |> schedWithTaskArena(sc)(runFn)(task)("sched_sleep")
-                    |> schedStore(sc)(task)(offsetResultSlot)
+                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("sched_leaf_state"))(stateConst(sc.schedI64)(SleepingTaskState))("sched_is_sleep"))(sleepBlock)(unportedBlock)
                 in
-                    let _ =
-                        CompletedTaskState
-                        |> stateConst(sc.schedI64)
-                        |> schedStore(sc)(task)(offsetStateIndex)
+                    let _ = schedAt(sc)(unportedBlock)
                     in
-                        let _ =
-                            NoTaskWait
-                            |> taskWaitCode
-                            |> wordConst(sc.schedI64)
-                            |> schedStore(sc)(task)(offsetWaitKind)
+                        let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedLeafMessageCodes)("sched_unported")
                         in
-                            let _ = schedBr(sc)(blocks.schedCompleteBlock)
+                            let _ = schedAt(sc)(sleepBlock)
                             in
-                                let _ = schedAt(sc)(blocks.schedLeafParkBlock)
+                                let _ =
+                                    schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateSle)(schedWord(sc)(task)(offsetSleepDurationMilliseconds)("sched_sleep_left"))(schedConst(sc)(0))("sched_sleep_elapsed"))(blocks.schedLeafDoneBlock)(blocks.schedLeafParkBlock)
                                 in
-                                    let _ =
-                                        TimerTaskWait
-                                        |> taskWaitCode
-                                        |> wordConst(sc.schedI64)
-                                        |> schedStore(sc)(task)(offsetWaitKind)
+                                    let _ = schedAt(sc)(blocks.schedLeafDoneBlock)
                                     in
                                         let _ =
-                                            "sched_parked_head"
-                                            |> schedLoad(sc)(parkedHeadGlobal(sc))
-                                            |> schedStore(sc)(task)(offsetReadyNext)
+                                            (given (_unit) ->
+                                                schedOk(sc)(runFn)(schedConst(sc)(0))("sched_sleep_result"))
+                                            |> schedWithTaskArena(sc)(runFn)(task)("sched_sleep")
+                                            |> schedStore(sc)(task)(offsetResultSlot)
                                         in
                                             let _ =
-                                                schedSet(sc)(parkedHeadGlobal(sc))(task)
+                                                CompletedTaskState
+                                                |> stateConst(sc.schedI64)
+                                                |> schedStore(sc)(task)(offsetStateIndex)
                                             in
-                                                let _ = schedBr(sc)(blocks.schedLoopBlock)
+                                                let _ =
+                                                    NoTaskWait
+                                                    |> taskWaitCode
+                                                    |> wordConst(sc.schedI64)
+                                                    |> schedStore(sc)(task)(offsetWaitKind)
                                                 in
-                                                    let _ = schedAt(sc)(blocks.schedCoroutineBlock)
+                                                    let _ = schedBr(sc)(blocks.schedCompleteBlock)
                                                     in
-                                                        let codeWord = schedWord(sc)(task)(offsetCoroutineFunction)("sched_coroutine_code")
+                                                        let _ = schedAt(sc)(blocks.schedLeafParkBlock)
                                                         in
-                                                            let status =
-                                                                schedWithTaskArena(sc)(runFn)(task)("sched_coroutine")(given (_unit) ->
-                                                                    buildCall(sc.schedBuilder)(closureFnType)(buildIntToPtr(sc.schedBuilder)(codeWord)(sc.schedPtr)("sched_coroutine_fn"))([task, schedConst(sc)(0), schedConst(sc)(0)])(3u32)("sched_coroutine_status"))
+                                                            let _ =
+                                                                TimerTaskWait
+                                                                |> taskWaitCode
+                                                                |> wordConst(sc.schedI64)
+                                                                |> schedStore(sc)(task)(offsetWaitKind)
                                                             in
                                                                 let _ =
-                                                                    schedIf(sc)(schedEq(sc)(status)(schedConst(sc)(0))("sched_suspended"))(blocks.schedSuspendBlock)(blocks.schedCompleteBlock)
+                                                                    "sched_parked_head"
+                                                                    |> schedLoad(sc)(parkedHeadGlobal(sc))
+                                                                    |> schedStore(sc)(task)(offsetReadyNext)
                                                                 in
-                                                                    let _ = schedAt(sc)(blocks.schedSuspendBlock)
+                                                                    let _ =
+                                                                        schedSet(sc)(parkedHeadGlobal(sc))(task)
                                                                     in
-                                                                        let awaited = schedWord(sc)(task)(offsetAwaitedTask)("sched_awaited")
+                                                                        let _ = schedBr(sc)(blocks.schedLoopBlock)
                                                                         in
-                                                                            let _ = schedStore(sc)(awaited)(offsetWaiter)(task)
+                                                                            let _ = schedAt(sc)(blocks.schedCoroutineBlock)
                                                                             in
-                                                                                let _ =
-                                                                                    "sched_owner"
-                                                                                    |> schedWord(sc)(task)(offsetArenaOwner)
-                                                                                    |> schedStore(sc)(awaited)(offsetArenaOwner)
+                                                                                let codeWord = schedWord(sc)(task)(offsetCoroutineFunction)("sched_coroutine_code")
                                                                                 in
-                                                                                    let _ = schedEnqueue(sc)(awaited)
-                                                                                    in schedBr(sc)(blocks.schedLoopBlock))
+                                                                                    let status =
+                                                                                        schedWithTaskArena(sc)(runFn)(task)("sched_coroutine")(given (_unit) ->
+                                                                                            buildCall(sc.schedBuilder)(closureFnType)(buildIntToPtr(sc.schedBuilder)(codeWord)(sc.schedPtr)("sched_coroutine_fn"))([task, schedConst(sc)(0), schedConst(sc)(0)])(3u32)("sched_coroutine_status"))
+                                                                                    in
+                                                                                        let _ =
+                                                                                            schedIf(sc)(schedEq(sc)(status)(schedConst(sc)(0))("sched_suspended"))(blocks.schedSuspendBlock)(blocks.schedCompleteBlock)
+                                                                                        in
+                                                                                            let _ = schedAt(sc)(blocks.schedSuspendBlock)
+                                                                                            in
+                                                                                                let awaited = schedWord(sc)(task)(offsetAwaitedTask)("sched_awaited")
+                                                                                                in
+                                                                                                    let _ = schedStore(sc)(awaited)(offsetWaiter)(task)
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            "sched_owner"
+                                                                                                            |> schedWord(sc)(task)(offsetArenaOwner)
+                                                                                                            |> schedStore(sc)(awaited)(offsetArenaOwner)
+                                                                                                        in
+                                                                                                            let _ = schedEnqueue(sc)(awaited)
+                                                                                                            in schedBr(sc)(blocks.schedLoopBlock))
 
 // A completed task hands its result to its waiter: an `all` composite counts it and is scheduled
 // when the last child is in, an unresolved `race` takes it as its result, cancels the other
@@ -1911,3 +1934,8 @@ let emitJoinScopedTask builder i64 i8 ptrType handleRef name =
         |> wordConst(i64)
         |> storeTaskWord(builder)(i64)(i8)(ptrType)(handleRef)(8)
     in loadTaskWord(builder)(i64)(i8)(ptrType)(handleRef)(0)(name))
+
+// A socket, TLS or HTTP leaf task, stage 0's `EmitCreateLeafNetworkingTask`: a header frame with the
+// leaf's state code and its two operands; the TLS server handshake keeps its key in `WaitData1`.
+let emitLeafTask context function_ builder i64 i8 ptrType (arena: ArenaRuntime) (kind: TaskStateKind) firstRef secondRef thirdRef name =
+    emitHeaderTask(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(taskStateCode(kind))([(offsetIoArgument0, firstRef), (offsetIoArgument1, secondRef), (offsetWaitData1, thirdRef)])(name)
