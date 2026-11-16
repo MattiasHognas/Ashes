@@ -50,6 +50,10 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Backend.LinkNames
+import AshesCompiler.Frontend.ImportHeader.parseImportHeader
+import AshesCompiler.Frontend.ImportHeader.ParsedImportHeader
+import AshesCompiler.Frontend.Parser.parseProgram
+import AshesCompiler.Frontend.Parser.ProgramParseResult
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
@@ -718,6 +722,43 @@ let compileStitchedToExecutable outputPath (explain: ExplainRequest) (reuseEnabl
                         | Error(message) -> Error(message)
                         | Ok(_) -> emitAndLink(outputPath)(optimized)))
 
+let recursive constructorCount (name: Str) (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> 0
+        | TypeConstructor { name = candidate } :: rest ->
+            if candidate == name
+            then 1 + constructorCount(name)(rest)
+            else constructorCount(name)(rest)
+
+// The type of the entry program that declares the constructor `name` more than once.
+let recursive typeDeclaringTwice (name: Str) (items: List(TopLevelItem)) =
+    match items with
+        | [] -> None
+        | TopLevelAt(_span, inner) :: rest -> typeDeclaringTwice(name)(inner :: rest)
+        | TopLevelType(TypeDecl { name = typeName, constructors = constructors }) :: rest ->
+            if constructorCount(name)(constructors) > 1
+            then Some(typeName)
+            else typeDeclaringTwice(name)(rest)
+        | _item :: rest -> typeDeclaringTwice(name)(rest)
+
+let duplicateConstructorOwner (source: Str) (name: Str) =
+    match parseImportHeader(source) with
+        | Ok(ParsedImportHeader { sourceWithoutImports = body }) ->
+            match parseProgram(body) with
+                | ProgramParseResult { program = ProgramSyntax { items = items } } -> typeDeclaringTwice(name)(items)
+        | Error(_error) -> None
+
+// A stitching failure as stage 0 words it: a constructor a type of the entry program declares
+// twice, or a binding the entry program declares twice. Every other failure prints its structural
+// form.
+let stitchErrorText (source: Str) (error: ShippedStitchError) =
+    match error with
+        | ShippedSyntaxStitchError(ProjectSyntaxSemanticError(DuplicateModuleDeclaration(_moduleName, name))) ->
+            match duplicateConstructorOwner(source)(name) with
+                | Some(typeName) -> "Duplicate constructor name '" + name + "' in type '" + typeName + "'."
+                | None -> "ASH013 Duplicate top-level binding '" + name + "'."
+        | other -> Ashes.Trait.Show.show(other)
+
 // Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
 // on the way, and returns the written byte count.
 let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reuseEnabled: Bool) =
@@ -730,7 +771,7 @@ let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) (reus
                     match stitchWithShippedModules(inputStem(inputPath))(inputPath)(source)(shipped) with
                         | Error(error) ->
                             error
-                            |> Ashes.Trait.Show.show
+                            |> stitchErrorText(source)
                             |> Error
                         | Ok(stitched) -> compileStitchedToExecutable(outputPath)(explain)(reuseEnabled)(inputPath)(source)(stitched)
 
