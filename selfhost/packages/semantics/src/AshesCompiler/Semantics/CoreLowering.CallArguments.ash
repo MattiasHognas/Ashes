@@ -1356,12 +1356,21 @@ let emitRequestWord (argumentFlagTemp: Int) (state: CoreLoweringState) =
 // request (bit 1) beside the argument ownership flag (bit 0), when the call passes one. Only the
 // last application of a spine asks: an earlier one yields a closure, which stage 0 sees as a
 // function type, while a self call of a recursive binding whose arrow is still open sees a variable.
+// A call that reads the callee's returns bit never asks: the callee answers a request with an
+// arena copy whatever its bit says, so the bit could no longer select between adopting the result
+// and copying it out, and stage 0 reads the bit only of a call whose result it sees resolved,
+// which it never asks for in the arena.
 let emitArenaResultRequestWord (context: CoreCallContext) (readsResult: Bool) (argumentFlagTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if (requestsArenaResult(resultType)(state) || siblingResultOpen(context)(resultType)(state)) && deferredSelfResultNamedByConsumer(context)(state) == false
     then
-        emitRequestWord(argumentFlagTemp)(if selfResultDeferred(context)(state) || siblingResultPinned(context)(resultType)(state)
-        then state
-        else withStateUnresolvedCallResults(resultType :: stateUnresolvedCallResults(state))(state))
+        let recorded =
+            if selfResultDeferred(context)(state) || siblingResultPinned(context)(resultType)(state)
+            then state
+            else withStateUnresolvedCallResults(resultType :: stateUnresolvedCallResults(state))(state)
+        in
+            if readsResult
+            then (recorded, argumentFlagTemp)
+            else emitRequestWord(argumentFlagTemp)(recorded)
     else
         if requestsArenaResultFromUnknownCallee(context)(readsResult)(resultType)(state)
         then emitRequestWord(argumentFlagTemp)(state)
