@@ -33,6 +33,7 @@ export (
     value resolveLoweredPendingBlocks,
     value arenaDeepCopySupported,
     value canNormalizeResultIntoArena,
+    value emitArenaResultDeepCopy,
     value emitArenaResultRelease,
     value isOwnedSlotOf,
     value isScalarFieldVariant,

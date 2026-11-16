@@ -32,6 +32,7 @@ import AshesCompiler.Semantics.CoreLowering.LoopPlacement
 import AshesCompiler.Semantics.CoreLowering.LoopFrames
 import AshesCompiler.Semantics.CoreLowering.CallArguments
 import AshesCompiler.Semantics.CoreLowering.CallResults
+import AshesCompiler.Semantics.CoreLowering.ResultHandOver
 export (
     value lowerIfThenBranch,
     value finishIfElseBranch,
@@ -1639,6 +1640,79 @@ let lowerBodyNamingEscapingCapture (name: Str) (body: Expr) lowerBody (expressio
                 lowered with state = withStateEscapingCaptureNames(stateEscapingCaptureNames(state))(loweredState)
     else lowerBody(expression)(state)
 
+// Stage 0's `ResultMayViewCallArgument`: whether a scope's result can name the bytes of `name`. A
+// call reading the binding scrutinized where the result is decided may hand back a view of it
+// (`unconsText(text)`'s tail), and the result reaches that view through a `let` body, a branch, or
+// an arm. The name test does not follow shadowing, so a rebinding still counts.
+let recursive resultMayViewCallArgument (name: Str) (depth: Int) (body: Expr) =
+    if depth > 16
+    then false
+    else
+        match body with
+            | ExprAt(_span, inner) -> resultMayViewCallArgument(name)(depth)(inner)
+            | ExprLet(_bound, _value, nested, _parameters, _annotation, _requirements) -> resultMayViewCallArgument(name)(depth + 1)(nested)
+            | ExprIf(_condition, thenBranch, elseBranch) -> resultMayViewCallArgument(name)(depth + 1)(thenBranch) || resultMayViewCallArgument(name)(depth + 1)(elseBranch)
+            | ExprMatch(scrutinee, cases, _position) -> scrutineeCallReads(name)(scrutinee) || anyArmMayViewCallArgument(name)(depth + 1)(cases)
+            | _ -> false
+and scrutineeCallReads (name: Str) (scrutinee: Expr) =
+    match unspanArgument(scrutinee) with
+        | ExprCall(_callee, _argument, _isPipe, _layout) -> exprMentionsName(name)(scrutinee)
+        | _ -> false
+and anyArmMayViewCallArgument (name: Str) (depth: Int) (cases: List((Pattern, Expr, Maybe(Expr)))) =
+    match cases with
+        | [] -> false
+        | (_pattern, armBody, _guard) :: rest -> resultMayViewCallArgument(name)(depth)(armBody) || anyArmMayViewCallArgument(name)(depth)(rest)
+
+// Stage 0's `TypeCarriesTextBytes`: only a string or a bytes value is ever a view, so only a type
+// that reaches one can carry a released backing out. A named type is answered once per walk.
+let recursive typeCarriesTextBytes (visited: List(Str)) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> true
+        | SemBytes -> true
+        | SemTuple(elements) -> anyTypeCarriesTextBytes(visited)(elements)(state)
+        | SemList(element) -> typeCarriesTextBytes(visited)(element)(state)
+        | SemNamed(_symbolId, name, arguments) ->
+            if containsName(name)(visited)
+            then false
+            else
+                anyTypeCarriesTextBytes(name :: visited)(arguments)(state) || anyConstructorCarriesTextBytes(name :: visited)(stateConstructorsOfType(name)(state))(state)
+        | _ -> false
+and anyTypeCarriesTextBytes (visited: List(Str)) (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> false
+        | head :: rest -> typeCarriesTextBytes(visited)(head)(state) || anyTypeCarriesTextBytes(visited)(rest)(state)
+and anyConstructorCarriesTextBytes (visited: List(Str)) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> false
+        | layout :: rest ->
+            match layoutFieldTypes(layout)(state) with
+                | (fieldTypes, _resultType) -> anyTypeCarriesTextBytes(visited)(fieldTypes)(state) || anyConstructorCarriesTextBytes(visited)(rest)(state)
+
+// Stage 0's `MarkOwnerViewedByResult` and `MaterializeScopeResultViews`: a `let` owning a
+// reference-counted string or bytes value whose result may name its bytes materializes the result
+// before the binding is released. A result the arena deep copy reproduces is copied into the
+// arena; one of the contract's types is normalized onto the reference-counted heap instead; for
+// anything else the binding is kept alive rather than released, a leak being the safe side of a
+// view left pointing into freed memory. Returns the state, the result temp, and whether the
+// binding's release is withheld.
+let materializeLetResultViews (name: Str) (body: Expr) (valueType: SemanticType) (ownerSlot: Int) (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if runtimeOwnerStateOf(ownerSlot)(state) != Some(true) || !typeCarriesTextBytes([])(valueType)(state) || !resultMayViewCallArgument(name)(0)(body) || !typeCarriesTextBytes([])(resultType)(state) || isRuntimeTemp(resultTemp)(state)
+    then (state, resultTemp, false)
+    else
+        if canNormalizeResultIntoArena(resultType)(state)
+        then
+            match emitArenaResultDeepCopy(resultTemp)(resultType)(state) with
+                | (copied, copyTemp) -> (copied, copyTemp, false)
+        else
+            if isGeneralRcValueType(resultType)(state)
+            then
+                match generalCopyPlanOf(resultType)(state) with
+                    | Some(plan) ->
+                        match emitGuardedDeepCopy(resultTemp)(plan)(state) with
+                            | (copied, normalizedTemp) -> (markRuntimeTemp(normalizedTemp)(RuntimeNewlyProduced)(copied), normalizedTemp, false)
+                    | None -> (state, resultTemp, true)
+            else (state, resultTemp, true)
+
 // The body lowers through `lowerBody`, which an operation arm points at the rest of its own body;
 // every analysis of the body still reads `body`.
 let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindings state =
@@ -1662,11 +1736,17 @@ let lowerArenaBracketedNestedLetWith name value body lowerBody lower outerBindin
                             |> armOwnerReleasePlan(value)
                             |> finishLetValueInSlot(name)(value)(body)(body)(escapingLetBodyRequest(body)(consumerRequestOf(state))(state))(lowerBodyNamingEscapingCapture(name)(body)(lowerBody))(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
-                                | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match bodyState
-                                    |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
-                                    |> closeOwnedLetBracket(letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
-                                        | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
+                                | (LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = resultType, error = None }, ownerSlot) ->
+                                    match materializeLetResultViews(name)(body)(loweredValue.semanticType)(ownerSlot)(bodyTemp)(resultType)(bodyState) with
+                                        | (viewState, resultTemp, keepsOwner) ->
+                                            match (if keepsOwner
+                                            then retireRuntimeOwner(ownerSlot)(viewState)
+                                            else viewState)
+                                            |> settleLetScopedTakenOver(ownerSlot)(loweredValue.temp)
+                                            |> closeOwnedLetBracket(if keepsOwner
+                                            then None
+                                            else letOwnedTypeName(value)(loweredValue)(state))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType) with
+                                                | (closed, finalTemp) -> finishClosedLetResult(finalTemp)(resultType)(closed)
 
 let lowerArenaBracketedNestedLet name value body lower outerBindings state = lowerArenaBracketedNestedLetWith(name)(value)(body)(lower)(lower)(outerBindings)(state)
 
