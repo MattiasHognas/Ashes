@@ -235,10 +235,24 @@ Order of work. Each step lands separately and is useful if the later ones are de
    replay passes, pending and proven trait goals, deferred operators and dictionaries, the
    per-binding plan, and body re-lowering.
 
+   First slice, in place: `lowerCoreNumberedProgram` and `lowerCoreNumberedProgramWithSourceAndReuse`
+   take the numbered, deriving-expanded program and the table (the compile command uses them when
+   `ASHES_TYPED_LOWERING=1`). Lowering sees through `ExprNode` where it sees through `ExprAt`,
+   keeps the wrapper when a rewrite copies a node, and remembers the current node. With an empty
+   table its IR is byte-identical to the old entry point's on every swept program that infers. A
+   binary operator whose operands are both still open takes its operand type from the table when
+   the recorded type has no variable and no named type (named types carry the inference's own
+   symbol ids). Three swept programs change, all to the form stage 0 emits: a string `+` in a
+   handler arm, and one whose operands only a later call resolves. Measured over the test
+   programs: deferred operator goals 73 to 47, structural equality goals 7 to 2, replay passes 15
+   to 14. Over the whole compiler: deferred operator goals 19 to 2, pending trait goals 7 to 2,
+   re-lowered bodies unchanged at 2,167 and 2,138, and the replay pass still runs (discovery
+   about 820 s and replay about 760 s with a `-O0` driver, either entry point). What keeps the
+   replay is the remaining trait goals (unary trait methods and dictionaries), not operators; what
+   keeps the re-lowerings is call results whose type the body resolves late, which the table
+   answers but lowering does not yet read.
+
    What the table does not yet give lowering:
-   - Lowering must receive the numbered tree, skip its own `deriving` expansion, see through
-     `ExprNode` wherever it sees through `ExprAt`, and keep the wrapper when a rewrite copies a
-     node.
    - Nodes that lowering synthesizes (evidence rewrites, specialized copies) have no identity;
      they need a rule such as the source node's identity plus an instantiation.
    - Handler operation arm parameters and `resume` are not recorded.
