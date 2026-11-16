@@ -194,7 +194,7 @@ type TypeInferenceError =
     | InferenceTypeResolutionError(TypeResolutionError)
     | DuplicatePatternBinding(Str)
     | UnknownPatternConstructor(Str)
-    | ConstructorPatternArityMismatch(Str)
+    | ConstructorPatternArityMismatch(Str, Int, Int)
     | UnknownRecordPatternField(Str, Str)
     | DuplicateRecordPatternField(Str)
     | UnknownRecordType(Str)
@@ -1547,10 +1547,11 @@ let coverageConstructorName pattern environment =
                 | None -> None
         | _ -> None
 
-// Every constructor of an ADT, in declaration order, as (name, arity).
+// Every constructor of an ADT, in declaration order, as (name, arity). The environment holds the
+// most recently added constructor first, so collecting them front to back restores the order.
 let recursive coverageAdtConstructors (definitions: List(ConstructorInferenceDefinition)) (adtName: Str) acc =
     match definitions with
-        | [] -> reverse(acc)
+        | [] -> acc
         | ConstructorInferenceDefinition { name = name, scheme = TypeScheme { body = body } } :: rest ->
             match splitConstructorType(body)([]) with
                 | ConstructorTypeShape { parameters = parameters, resultType = SemNamed(_id, candidate, _arguments) } ->
@@ -2279,9 +2280,14 @@ let matchCoverageError cases (valueType: SemanticType) environment =
                     | Some(error) -> Some(error)
                     | None -> coverageExhaustiveness(environment)(valueType)(expanded))
 
+// Arms whose constructor patterns belong to different ADTs fail to unify with each other; that
+// failure is reported as the arms' own error, as stage 0 reports it.
 let checkMatchCoverage cases scrutineeType environment (result: TypeInferenceResult) =
     match result with
-        | TypeInferenceResult { error = Some(_error) } -> result
+        | TypeInferenceResult { error = Some(_error) } ->
+            match coverageDistinctAdts(coverageExpandCases(cases)(environment)([]))(environment)([]) with
+                | first :: second :: more -> result with error = Some(ConstructorPatternsFromDifferentAdts(first :: second :: more))
+                | _ -> result
         | TypeInferenceResult { substitution = substitution } ->
             match matchCoverageError(cases)(applySubstitution(substitution)(scrutineeType))(environment) with
                 | None -> result
@@ -3279,7 +3285,9 @@ and inferConstructorPatternArguments constructorName patterns parameterTypes res
                 substitution,
                 supply,
                 names,
-                ConstructorPatternArityMismatch(constructorName)
+                0
+                |> coverageLength(patterns)
+                |> ConstructorPatternArityMismatch(constructorName)(coverageLength(parameterTypes)(0))
             )
 and inferRecordPatternFields constructorName fields fieldNames fieldTypes resultType environment substitution supply names seenFields =
     match fields with
@@ -4089,16 +4097,31 @@ and inferPattern pattern environment substitution supply names =
                         | InstantiationResult { semanticType = constructorType, constraints = _constraints, supply = constructorSupply } ->
                             match splitConstructorType(constructorType)([]) with
                                 | ConstructorTypeShape { parameters = parameterTypes, resultType = resultType } ->
-                                    inferConstructorPatternArguments(
-                                        name,
-                                        patterns,
-                                        parameterTypes,
-                                        resultType,
-                                        environment,
-                                        substitution,
-                                        constructorSupply,
-                                        names
-                                    )
+                                    let expectedCount = coverageLength(parameterTypes)(0)
+                                    in
+                                        let actualCount = coverageLength(patterns)(0)
+                                        in
+                                            if expectedCount != actualCount
+                                            then
+                                                patternFailure(
+                                                    SemNever,
+                                                    environment,
+                                                    substitution,
+                                                    constructorSupply,
+                                                    names,
+                                                    ConstructorPatternArityMismatch(name)(expectedCount)(actualCount)
+                                                )
+                                            else
+                                                inferConstructorPatternArguments(
+                                                    name,
+                                                    patterns,
+                                                    parameterTypes,
+                                                    resultType,
+                                                    environment,
+                                                    substitution,
+                                                    constructorSupply,
+                                                    names
+                                                )
         | PatternRecord(name, fields) ->
             match resolveConstructorBinding(name)(environment) with
                 | None ->
