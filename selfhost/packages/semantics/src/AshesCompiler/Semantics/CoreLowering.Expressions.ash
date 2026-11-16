@@ -541,10 +541,15 @@ let recordFullyReusingSpecialization (callee: Str) (accumulatorType: SemanticTyp
                                     else lowered
 
 // Stage 0's `BuildReuseSpecializationFunctionType`: the specialization's body is lowered at the
-// candidate's own declared type, instantiated afresh, so a parameter whose type its body pins only
-// in a later arm (a key a comparison reads) is already known where an earlier arm stores it, and a
-// constructor field built from it is relocated into to-space by its concrete type.
-let pinSpecializationType (callee: Str) (prepared: PreparedCoreRecursiveGroup) =
+// call's function type, so a parameter whose type its body pins only in a later arm (a key a
+// comparison reads) is already known where an earlier arm stores it, and a constructor field built
+// from it is relocated into to-space by its concrete type. The candidate's declared type is
+// instantiated afresh and its accumulator parameter bound to the accumulator the call passes: a
+// type parameter the body never constrains (a map's value type) takes the call's type argument
+// from there, as it does in stage 0, where the arguments are lowered first. Left open, such a field
+// is stored by reference, and a fresh value the body builds for it (an update's new value) stays in
+// the arena scratch the enclosing call windows reclaim.
+let pinSpecializationType (callee: Str) (accumulatorType: SemanticType) (argumentCount: Int) (prepared: PreparedCoreRecursiveGroup) =
     match prepared with
         | PreparedCoreRecursiveGroup { state = state, members = (PreparedCoreRecursiveBinding { semanticType = semanticType } as member) :: [], error = None } ->
             match lookupBinding(callee)(state.bindings) with
@@ -553,7 +558,15 @@ let pinSpecializationType (callee: Str) (prepared: PreparedCoreRecursiveGroup) =
                     match instantiateBinding(binding)(state) with
                         | InstantiatedBinding { state = instantiatedState, semanticType = declared } ->
                             match bindType(semanticType)(declared)(instantiatedState) with
-                                | (boundState, None) -> PreparedCoreRecursiveGroup(state = boundState, members = [member], error = None)
+                                | (boundState, None) ->
+                                    let accumulatorBound =
+                                        match appliedAccumulatorType(resolveType(boundState)(declared))(argumentCount)(None) with
+                                            | Some(parameterType) ->
+                                                match bindType(parameterType)(accumulatorType)(boundState) with
+                                                    | (pinnedState, None) -> pinnedState
+                                                    | (_failedState, Some(_error)) -> boundState
+                                            | None -> boundState
+                                    in PreparedCoreRecursiveGroup(state = accumulatorBound, members = [member], error = None)
                                 | (_failedState, Some(_error)) -> prepared
         | _ -> prepared
 
@@ -644,7 +657,7 @@ let generateReuseSpecializedCall (callee: Str) (parameter: Str) (parameters: Lis
                 |> withStateSpecializationFreshInputs(Some(parameters))
                 |> withStateReuseSpecializations((cacheKey, label) :: stateReuseSpecializations(state)))
                 |> relabelReuseSpecialization(label)
-                |> pinSpecializationType(callee)
+                |> pinSpecializationType(callee)(accumulatorType)(coreListLength(arguments))
                 |> lowerPreparedRecursiveGroupWith([(callee, value)])(specializedCallExpression(ExprVar(callee))(arguments))(lower)(continueReuseSpecializedCall(label)(coreListLength(arguments))(concrete)(outerBindings)(unrouted)(lower))(outerBindings)
                 |> recordFullyReusingSpecialization(callee)(accumulatorType)(state)
                 |> restoreSpecializationScope(state))
