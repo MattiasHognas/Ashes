@@ -1,13 +1,16 @@
 // The task emitters for `AshesCompiler.Backend.IrCodegen` and the run-queue scheduler that drives
 // tasks, over the task frame layout `TaskStructLayout` shares with lowering. Task values: a task
 // already completed with its result (`CreateCompletedTask`), a coroutine task over a closure
-// (`CreateTask`), a sleeping leaf (`AsyncSleep`), and the `all`/`race` composites over a task list
-// (`AsyncAll`, `AsyncRace`), each an arena frame laid out as stage 0 lays it out. `RunTask` runs
-// stage 0's `ashes_scheduler_run`: tasks link into a FIFO run queue; a popped coroutine is stepped
-// and, when it suspends, the task it awaits is scheduled with it as the waiter; a completed task
-// hands its result to its waiter; a sleeping leaf parks until the earliest parked timer elapses;
-// a composite schedules its children and completes when they have. Socket and TLS leaves, detached
-// (`spawn`) and scoped tasks, per-task arenas and frame teardown are not ported.
+// (`CreateTask`), a sleeping leaf (`AsyncSleep`), the `all`/`race` composites over a task list
+// (`AsyncAll`, `AsyncRace`), task scopes (`scope`, `fork`, `join`), spawned tasks, and socket, TLS
+// and HTTP leaves, each an arena frame laid out as stage 0 lays it out. `RunTask` runs stage 0's
+// `ashes_scheduler_run`: tasks link into a FIFO run queue; a popped coroutine is stepped and, when it
+// suspends, the task it awaits is scheduled with it as the waiter; a completed task hands its result
+// to its waiter; a sleeping leaf parks until the earliest parked timer elapses; a composite
+// schedules its children and completes when they have; a spawned task runs in a private arena
+// installed around each of its steps. Of the socket leaves only the TCP connect is stepped, and a
+// parked socket is polled rather than waited on with epoll; frame teardown and reclaiming a spawned
+// task's arena are not ported.
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Arena
@@ -94,6 +97,10 @@ let offsetWaitData1 =
 let offsetWaiter =
     match taskStructLayout with
         | TaskStructLayout { waiter = offset } -> offset
+
+let offsetWaitHandle =
+    match taskStructLayout with
+        | TaskStructLayout { waitHandle = offset } -> offset
 
 let offsetWaitKind =
     match taskStructLayout with
@@ -1034,6 +1041,434 @@ let defineForkScoped module_ (sc: SchedulerContext) =
                                                                                                                                                                                                                                             |> buildRet(sc.schedBuilder)
                                                                                                                                                                                                                                         in (forkFn, forkType))
 
+// "Ashes.Net.Tcp.connect() failed": stage 0's `TcpConnectFailedMessage`.
+let tcpConnectFailedCodes = [65, 115, 104, 101, 115, 46, 78, 101, 116, 46, 84, 99, 112, 46, 99, 111, 110, 110, 101, 99, 116, 40, 41, 32, 102, 97, 105, 108, 101, 100]
+
+let recursive storeStringBytes (sc: SchedulerContext) baseRef (index: Int) (codes: List(Int)) =
+    match codes with
+        | [] -> Unit
+        | code :: rest ->
+            let _ =
+                "string_byte"
+                |> memOffsetPtr(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(baseRef)(8 + index)
+                |> buildStore(sc.schedBuilder)(constInt(sc.schedI8)(Ashes.Number.UInt.fromInt64(code))(false))
+            in storeStringBytes(sc)(baseRef)(index + 1)(rest)
+
+// A string with fixed ASCII contents in the arena, `[len][bytes]`.
+let schedStringLiteral (sc: SchedulerContext) function_ (codes: List(Int)) name =
+    (let length = Ashes.Collection.List.length(codes)
+    in
+        let text = emitArenaAlloc(sc.schedContext)(function_)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(8 + length)(name)
+        in
+            let _ =
+                length
+                |> schedConst(sc)
+                |> schedStore(sc)(text)(0)
+            in
+                let _ = storeStringBytes(sc)(text)(0)(codes)
+                in text)
+
+// `Error(message)` as a fresh arena cell, `[tag 1][message]`.
+let schedError (sc: SchedulerContext) function_ messageRef name =
+    (let cell = emitArenaAlloc(sc.schedContext)(function_)(sc.schedBuilder)(sc.schedI64)(sc.schedArena)(16)(name)
+    in
+        let _ =
+            1
+            |> schedConst(sc)
+            |> schedStore(sc)(cell)(0)
+        in
+            let _ = schedStore(sc)(cell)(8)(messageRef)
+            in cell)
+
+// Stage 0's `EmitResolveHostIpv4OrLocalhost` without the result cell: `localhost` or a dotted
+// IPv4 address, as the 32-bit address with octet `i` in bits `8 i` (network order in memory).
+// Answers whether it resolved, and the address; the parse runs in a loop over the host's bytes.
+let emitResolveHost (sc: SchedulerContext) function_ hostRef =
+    (let block =
+        given (name) -> appendBasicBlock(sc.schedContext)(function_)(name)
+    in
+        let okSlot = schedSlot(sc)("resolve_ok")
+        in
+            let addressSlot = schedSlot(sc)("resolve_address")
+            in
+                let indexSlot = schedSlot(sc)("resolve_index")
+                in
+                    let partSlot = schedSlot(sc)("resolve_part")
+                    in
+                        let currentSlot = schedSlot(sc)("resolve_current")
+                        in
+                            let seenSlot = schedSlot(sc)("resolve_seen_digit")
+                            in
+                                match emitStringParts(sc.schedBuilder)(sc.schedI64)(sc.schedPtr)(hostRef)("resolve_host") with
+                                    | (hostLength, hostBytes) ->
+                                        let localhostBlock = block("resolve_localhost")
+                                        in
+                                            let notLocalhostBlock = block("resolve_not_localhost")
+                                            in
+                                                let loopBlock = block("resolve_loop")
+                                                in
+                                                    let inspectBlock = block("resolve_inspect")
+                                                    in
+                                                        let digitBlock = block("resolve_digit")
+                                                        in
+                                                            let dotCheckBlock = block("resolve_dot_check")
+                                                            in
+                                                                let dotBlock = block("resolve_dot")
+                                                                in
+                                                                    let finalizeBlock = block("resolve_finalize")
+                                                                    in
+                                                                        let doneBlock = block("resolve_done")
+                                                                        in
+                                                                            let _ =
+                                                                                0
+                                                                                |> schedConst(sc)
+                                                                                |> schedSet(sc)(okSlot)
+                                                                            in
+                                                                                let _ =
+                                                                                    0
+                                                                                    |> schedConst(sc)
+                                                                                    |> schedSet(sc)(addressSlot)
+                                                                                in
+                                                                                    let _ =
+                                                                                        0
+                                                                                        |> schedConst(sc)
+                                                                                        |> schedSet(sc)(indexSlot)
+                                                                                    in
+                                                                                        let _ =
+                                                                                            0
+                                                                                            |> schedConst(sc)
+                                                                                            |> schedSet(sc)(partSlot)
+                                                                                        in
+                                                                                            let _ =
+                                                                                                0
+                                                                                                |> schedConst(sc)
+                                                                                                |> schedSet(sc)(currentSlot)
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    0
+                                                                                                    |> schedConst(sc)
+                                                                                                    |> schedSet(sc)(seenSlot)
+                                                                                                in
+                                                                                                    let lengthIsNine =
+                                                                                                        schedEq(sc)(hostLength)(schedConst(sc)(9))("resolve_length_nine")
+                                                                                                    in
+                                                                                                        let _ = schedIf(sc)(lengthIsNine)(notLocalhostBlock)(loopBlock)
+                                                                                                        in
+                                                                                                            let _ = schedAt(sc)(notLocalhostBlock)
+                                                                                                            in
+                                                                                                                let firstWord =
+                                                                                                                    buildLoad(sc.schedBuilder)(sc.schedI64)(buildIntToPtr(sc.schedBuilder)(hostBytes)(sc.schedPtr)("resolve_first_word_ptr"))("resolve_first_word")
+                                                                                                                in
+                                                                                                                    let lastByte =
+                                                                                                                        buildLoad(sc.schedBuilder)(sc.schedI8)(memOffsetPtr(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(sc.schedPtr)(hostBytes)(8)("resolve_last_byte_ptr"))("resolve_last_byte")
+                                                                                                                    in
+                                                                                                                        let startsLocalhos =
+                                                                                                                            schedEq(sc)(firstWord)(constInt(sc.schedI64)(8317981851476258668u64)(false))("resolve_localhos")
+                                                                                                                        in
+                                                                                                                            let endsT =
+                                                                                                                                buildICmp(sc.schedBuilder)(intPredicateEq)(lastByte)(constInt(sc.schedI8)(116u64)(false))("resolve_ends_t")
+                                                                                                                            in
+                                                                                                                                let _ =
+                                                                                                                                    schedIf(sc)(buildAnd(sc.schedBuilder)(startsLocalhos)(endsT)("resolve_is_localhost"))(localhostBlock)(loopBlock)
+                                                                                                                                in
+                                                                                                                                    let _ = schedAt(sc)(localhostBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ =
+                                                                                                                                            16777343
+                                                                                                                                            |> schedConst(sc)
+                                                                                                                                            |> schedSet(sc)(addressSlot)
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                1
+                                                                                                                                                |> schedConst(sc)
+                                                                                                                                                |> schedSet(sc)(okSlot)
+                                                                                                                                            in
+                                                                                                                                                let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                in
+                                                                                                                                                    let _ = schedAt(sc)(loopBlock)
+                                                                                                                                                    in
+                                                                                                                                                        let index = schedLoad(sc)(indexSlot)("resolve_index_value")
+                                                                                                                                                        in
+                                                                                                                                                            let _ =
+                                                                                                                                                                schedIf(sc)(schedEq(sc)(index)(hostLength)("resolve_at_end"))(finalizeBlock)(inspectBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let _ = schedAt(sc)(inspectBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let byte =
+                                                                                                                                                                        buildZExt(sc.schedBuilder)(buildLoad(sc.schedBuilder)(sc.schedI8)(buildIntToPtr(sc.schedBuilder)(buildAdd(sc.schedBuilder)(hostBytes)(index)("resolve_byte_addr"))(sc.schedPtr)("resolve_byte_ptr"))("resolve_byte"))(sc.schedI64)("resolve_byte_wide")
+                                                                                                                                                                    in
+                                                                                                                                                                        let digit =
+                                                                                                                                                                            buildSub(sc.schedBuilder)(byte)(schedConst(sc)(48))("resolve_digit_value")
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUlt)(digit)(schedConst(sc)(10))("resolve_is_digit"))(digitBlock)(dotCheckBlock)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = schedAt(sc)(digitBlock)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let next =
+                                                                                                                                                                                        buildAdd(sc.schedBuilder)(buildMul(sc.schedBuilder)(schedLoad(sc)(currentSlot)("resolve_current_value"))(schedConst(sc)(10))("resolve_times_ten"))(digit)("resolve_next_value")
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let storeDigitBlock = block("resolve_store_digit")
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                schedIf(sc)(buildICmp(sc.schedBuilder)(intPredicateUgt)(next)(schedConst(sc)(255))("resolve_octet_too_large"))(doneBlock)(storeDigitBlock)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ = schedAt(sc)(storeDigitBlock)
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ = schedSet(sc)(currentSlot)(next)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                            1
+                                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                                            |> schedSet(sc)(seenSlot)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                "resolve_index_next"
+                                                                                                                                                                                                                |> buildAdd(sc.schedBuilder)(index)(schedConst(sc)(1))
+                                                                                                                                                                                                                |> schedSet(sc)(indexSlot)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let _ = schedBr(sc)(loopBlock)
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ = schedAt(sc)(dotCheckBlock)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            schedIf(sc)(schedEq(sc)(byte)(schedConst(sc)(46))("resolve_is_dot"))(dotBlock)(doneBlock)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ = schedAt(sc)(dotBlock)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let part = schedLoad(sc)(partSlot)("resolve_part_value")
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let storeDotBlock = block("resolve_store_dot")
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let dotValid =
+                                                                                                                                                                                                                                            buildAnd(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateNe)(schedLoad(sc)(seenSlot)("resolve_seen_value"))(schedConst(sc)(0))("resolve_dot_seen"))(buildICmp(sc.schedBuilder)(intPredicateUlt)(part)(schedConst(sc)(3))("resolve_part_below_three"))("resolve_dot_valid")
+                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                            let _ = schedIf(sc)(dotValid)(storeDotBlock)(doneBlock)
+                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                let _ = schedAt(sc)(storeDotBlock)
+                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                    let shifted =
+                                                                                                                                                                                                                                                        buildShl(sc.schedBuilder)(schedLoad(sc)(currentSlot)("resolve_octet"))(buildMul(sc.schedBuilder)(part)(schedConst(sc)(8))("resolve_octet_shift"))("resolve_shifted_octet")
+                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                            "resolve_address_next"
+                                                                                                                                                                                                                                                            |> buildOr(sc.schedBuilder)(schedLoad(sc)(addressSlot)("resolve_address_value"))(shifted)
+                                                                                                                                                                                                                                                            |> schedSet(sc)(addressSlot)
+                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                                                "resolve_part_next"
+                                                                                                                                                                                                                                                                |> buildAdd(sc.schedBuilder)(part)(schedConst(sc)(1))
+                                                                                                                                                                                                                                                                |> schedSet(sc)(partSlot)
+                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                                                    0
+                                                                                                                                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                                                                                                                                    |> schedSet(sc)(currentSlot)
+                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                        0
+                                                                                                                                                                                                                                                                        |> schedConst(sc)
+                                                                                                                                                                                                                                                                        |> schedSet(sc)(seenSlot)
+                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                            "resolve_index_after_dot"
+                                                                                                                                                                                                                                                                            |> buildAdd(sc.schedBuilder)(index)(schedConst(sc)(1))
+                                                                                                                                                                                                                                                                            |> schedSet(sc)(indexSlot)
+                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                            let _ = schedBr(sc)(loopBlock)
+                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(finalizeBlock)
+                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                    let storeFinalBlock = block("resolve_store_final")
+                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                        let finalValid =
+                                                                                                                                                                                                                                                                                            buildAnd(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateNe)(schedLoad(sc)(seenSlot)("resolve_final_seen"))(schedConst(sc)(0))("resolve_final_seen_digit"))(schedEq(sc)(schedLoad(sc)(partSlot)("resolve_final_part"))(schedConst(sc)(3))("resolve_final_part_three"))("resolve_final_valid")
+                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                            let _ = schedIf(sc)(finalValid)(storeFinalBlock)(doneBlock)
+                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(storeFinalBlock)
+                                                                                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                                                                                                        "resolve_final_address"
+                                                                                                                                                                                                                                                                                                        |> buildOr(sc.schedBuilder)(schedLoad(sc)(addressSlot)("resolve_address_before_final"))(buildShl(sc.schedBuilder)(schedLoad(sc)(currentSlot)("resolve_last_octet"))(schedConst(sc)(24))("resolve_last_shifted"))
+                                                                                                                                                                                                                                                                                                        |> schedSet(sc)(addressSlot)
+                                                                                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                                                                                                            1
+                                                                                                                                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                                                                                                                                            |> schedSet(sc)(okSlot)
+                                                                                                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                                                                                                            let _ = schedBr(sc)(doneBlock)
+                                                                                                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                                                                                                let _ = schedAt(sc)(doneBlock)
+                                                                                                                                                                                                                                                                                                                in (schedLoad(sc)(okSlot)("resolve_ok_value"), schedLoad(sc)(addressSlot)("resolve_address_final")))
+
+// Stage 0's `ashes_step_tcp_connect_task` for Linux: the first step resolves the host, checks the
+// port, opens a non-blocking socket and keeps it and the address in `WaitData0`/`WaitData1`; every
+// step then connects. A finished connect completes with `Ok(socket)`; one in progress parks on the
+// socket becoming writable; anything else completes with stage 0's failure message. Answers 1 when
+// the task completed.
+let defineStepTcpConnect module_ (sc: SchedulerContext) =
+    (let stepType = functionType(sc.schedI64)([sc.schedI64])(1u32)(false)
+    in
+        let stepFn = addInternalFunction(module_)("__ashes_step_tcp_connect")(stepType)
+        in
+            let block =
+                given (name) -> appendBasicBlock(sc.schedContext)(stepFn)(name)
+            in
+                let entryBlock = block("entry")
+                in
+                    let setupBlock = block("tcp_connect_setup")
+                    in
+                        let openBlock = block("tcp_connect_open")
+                        in
+                            let connectBlock = block("tcp_connect_connect")
+                            in
+                                let pendingCheckBlock = block("tcp_connect_pending_check")
+                                in
+                                    let successBlock = block("tcp_connect_success")
+                                    in
+                                        let pendingBlock = block("tcp_connect_pending")
+                                        in
+                                            let failBlock = block("tcp_connect_fail")
+                                            in
+                                                let task = getParam(stepFn)(0u32)
+                                                in
+                                                    let _ = schedAt(sc)(entryBlock)
+                                                    in
+                                                        let sockaddr =
+                                                            buildAlloca(sc.schedBuilder)(arrayType(sc.schedI64)(2u64))("tcp_connect_sockaddr")
+                                                        in
+                                                            let port = schedWord(sc)(task)(offsetIoArgument1)("tcp_connect_port")
+                                                            in
+                                                                let _ =
+                                                                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetWaitData0)("tcp_connect_cached_socket"))(schedConst(sc)(0))("tcp_connect_first_step"))(setupBlock)(connectBlock)
+                                                                in
+                                                                    let _ = schedAt(sc)(setupBlock)
+                                                                    in
+                                                                        match "tcp_connect_host"
+                                                                        |> schedWord(sc)(task)(offsetIoArgument0)
+                                                                        |> emitResolveHost(sc)(stepFn) with
+                                                                            | (resolved, address) ->
+                                                                                let portValid =
+                                                                                    buildAnd(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSgt)(port)(schedConst(sc)(0))("tcp_connect_port_positive"))(buildICmp(sc.schedBuilder)(intPredicateSle)(port)(schedConst(sc)(65535))("tcp_connect_port_in_range"))("tcp_connect_port_valid")
+                                                                                in
+                                                                                    let _ =
+                                                                                        schedIf(sc)(buildAnd(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateNe)(resolved)(schedConst(sc)(0))("tcp_connect_resolved"))(portValid)("tcp_connect_can_open"))(openBlock)(failBlock)
+                                                                                    in
+                                                                                        let _ = schedAt(sc)(openBlock)
+                                                                                        in
+                                                                                            let socket =
+                                                                                                emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(41))(schedConst(sc)(2))(schedConst(sc)(1))(schedConst(sc)(0))("tcp_connect_socket")
+                                                                                            in
+                                                                                                let _ = schedStore(sc)(task)(offsetWaitData0)(socket)
+                                                                                                in
+                                                                                                    let _ = schedStore(sc)(task)(offsetWaitData1)(address)
+                                                                                                    in
+                                                                                                        let flags =
+                                                                                                            emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(72))(socket)(schedConst(sc)(3))(schedConst(sc)(0))("tcp_connect_get_flags")
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(72))(socket)(schedConst(sc)(4))(buildOr(sc.schedBuilder)(flags)(schedConst(sc)(2048))("tcp_connect_nonblocking_flags"))("tcp_connect_set_flags")
+                                                                                                            in
+                                                                                                                let _ = schedBr(sc)(connectBlock)
+                                                                                                                in
+                                                                                                                    let _ = schedAt(sc)(connectBlock)
+                                                                                                                    in
+                                                                                                                        let connectSocket = schedWord(sc)(task)(offsetWaitData0)("tcp_connect_socket_value")
+                                                                                                                        in
+                                                                                                                            let portNetwork =
+                                                                                                                                buildOr(sc.schedBuilder)(buildMul(sc.schedBuilder)(buildAnd(sc.schedBuilder)(port)(schedConst(sc)(255))("tcp_connect_port_low"))(schedConst(sc)(256))("tcp_connect_port_low_shifted"))(buildAnd(sc.schedBuilder)(buildSDiv(sc.schedBuilder)(port)(schedConst(sc)(256))("tcp_connect_port_high"))(schedConst(sc)(255))("tcp_connect_port_high_masked"))("tcp_connect_port_network")
+                                                                                                                            in
+                                                                                                                                let firstWord =
+                                                                                                                                    buildOr(sc.schedBuilder)(buildOr(sc.schedBuilder)(schedConst(sc)(2))(buildShl(sc.schedBuilder)(portNetwork)(schedConst(sc)(16))("tcp_connect_port_field"))("tcp_connect_family_port"))(buildShl(sc.schedBuilder)(schedWord(sc)(task)(offsetWaitData1)("tcp_connect_address"))(schedConst(sc)(32))("tcp_connect_address_field"))("tcp_connect_sockaddr_word")
+                                                                                                                                in
+                                                                                                                                    let sockaddrAddress = buildPtrToInt(sc.schedBuilder)(sockaddr)(sc.schedI64)("tcp_connect_sockaddr_address")
+                                                                                                                                    in
+                                                                                                                                        let _ = schedStore(sc)(sockaddrAddress)(0)(firstWord)
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                0
+                                                                                                                                                |> schedConst(sc)
+                                                                                                                                                |> schedStore(sc)(sockaddrAddress)(8)
+                                                                                                                                            in
+                                                                                                                                                let result =
+                                                                                                                                                    emitLinuxSyscallCall(sc.schedBuilder)(sc.schedI64)(schedConst(sc)(42))(connectSocket)(sockaddrAddress)(schedConst(sc)(16))("tcp_connect_call")
+                                                                                                                                                in
+                                                                                                                                                    let succeeded =
+                                                                                                                                                        buildOr(sc.schedBuilder)(buildICmp(sc.schedBuilder)(intPredicateSge)(result)(schedConst(sc)(0))("tcp_connect_ok"))(schedEq(sc)(result)(schedConst(sc)(-106))("tcp_connect_is_connected"))("tcp_connect_succeeded")
+                                                                                                                                                    in
+                                                                                                                                                        let _ = schedIf(sc)(succeeded)(successBlock)(pendingCheckBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = schedAt(sc)(pendingCheckBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let pending =
+                                                                                                                                                                    buildOr(sc.schedBuilder)(schedEq(sc)(result)(schedConst(sc)(-115))("tcp_connect_in_progress"))(schedEq(sc)(result)(schedConst(sc)(-114))("tcp_connect_already"))("tcp_connect_is_pending")
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = schedIf(sc)(pending)(pendingBlock)(failBlock)
+                                                                                                                                                                    in
+                                                                                                                                                                        let _ = schedAt(sc)(successBlock)
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                "tcp_connect_result"
+                                                                                                                                                                                |> schedOk(sc)(stepFn)(connectSocket)
+                                                                                                                                                                                |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ =
+                                                                                                                                                                                    0
+                                                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                                                    |> schedStore(sc)(task)(offsetWaitKind)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ =
+                                                                                                                                                                                        CompletedTaskState
+                                                                                                                                                                                        |> stateConst(sc.schedI64)
+                                                                                                                                                                                        |> schedStore(sc)(task)(offsetStateIndex)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ =
+                                                                                                                                                                                            1
+                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                            |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let _ = schedAt(sc)(pendingBlock)
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                    SocketWriteTaskWait
+                                                                                                                                                                                                    |> taskWaitCode
+                                                                                                                                                                                                    |> wordConst(sc.schedI64)
+                                                                                                                                                                                                    |> schedStore(sc)(task)(offsetWaitKind)
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let _ = schedStore(sc)(task)(offsetWaitHandle)(connectSocket)
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                            0
+                                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                                            |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = schedAt(sc)(failBlock)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let message = schedStringLiteral(sc)(stepFn)(tcpConnectFailedCodes)("tcp_connect_message")
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ =
+                                                                                                                                                                                                                        "tcp_connect_failure"
+                                                                                                                                                                                                                        |> schedError(sc)(stepFn)(message)
+                                                                                                                                                                                                                        |> schedStore(sc)(task)(offsetResultSlot)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            0
+                                                                                                                                                                                                                            |> schedConst(sc)
+                                                                                                                                                                                                                            |> schedStore(sc)(task)(offsetWaitKind)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ =
+                                                                                                                                                                                                                                CompletedTaskState
+                                                                                                                                                                                                                                |> stateConst(sc.schedI64)
+                                                                                                                                                                                                                                |> schedStore(sc)(task)(offsetStateIndex)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ =
+                                                                                                                                                                                                                                    1
+                                                                                                                                                                                                                                    |> schedConst(sc)
+                                                                                                                                                                                                                                    |> buildRet(sc.schedBuilder)
+                                                                                                                                                                                                                                in (stepFn, stepType))
+
 // Stage 0's `EmitStepComposite` for `all` and `race`. The first step schedules every child with the
 // composite as its waiter and counts them (`all` waits for that many completions, `race` for one);
 // an empty list completes at once, `all` with `Ok([])`. The step after the children finish
@@ -1409,6 +1844,8 @@ type SchedulerFunctions =
     | dequeueType: LLVMTypeRef
     | forkScopedFn: LLVMValueRef
     | forkScopedType: LLVMTypeRef
+    | stepTcpConnectFn: LLVMValueRef
+    | stepTcpConnectType: LLVMTypeRef
 
 // Cancels every child of a resolved race but its winner.
 let emitCancelRaceLosers (sc: SchedulerContext) (fns: SchedulerFunctions) runFn cursorSlot race winner =
@@ -1562,13 +1999,49 @@ let emitSchedulerDispatch (sc: SchedulerContext) (fns: SchedulerFunctions) (bloc
                                                                                     in task)
 
 // "Ashes: socket and TLS tasks are not supported by the self-hosted compiler yet\n": a leaf task
-// other than a sleep stops the program, since only the sleep leaf is stepped here.
+// other than a sleep or a TCP connect stops the program, since only those two are stepped here.
 let unportedLeafMessageCodes = [65, 115, 104, 101, 115, 58, 32, 115, 111, 99, 107, 101, 116, 32, 97, 110, 100, 32, 84, 76, 83, 32, 116, 97, 115, 107, 115, 32, 97, 114, 101, 32, 110, 111, 116, 32, 115, 117, 112, 112, 111, 114, 116, 101, 100, 32, 98, 121, 32, 116, 104, 101, 32, 115, 101, 108, 102, 45, 104, 111, 115, 116, 101, 100, 32, 99, 111, 109, 112, 105, 108, 101, 114, 32, 121, 101, 116, 10]
+
+// A leaf other than a sleep: a TCP connect is stepped, completing or parking on its socket (the
+// aggregate wait has no socket readiness yet, so a parked socket leaf is stepped again once the
+// queue drains); any other leaf stops the program.
+let emitOtherLeaf (sc: SchedulerContext) (fns: SchedulerFunctions) (blocks: SchedulerBlocks) runFn task =
+    (let connectBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_tcp_connect_leaf")
+    in
+        let parkBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_socket_park")
+        in
+            let unportedBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_unported_kind")
+            in
+                let _ =
+                    schedIf(sc)(schedEq(sc)(schedWord(sc)(task)(offsetStateIndex)("sched_other_leaf_state"))(stateConst(sc.schedI64)(TcpConnectTaskState))("sched_is_tcp_connect"))(connectBlock)(unportedBlock)
+                in
+                    let _ = schedAt(sc)(unportedBlock)
+                    in
+                        let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedLeafMessageCodes)("sched_unported")
+                        in
+                            let _ = schedAt(sc)(connectBlock)
+                            in
+                                let status =
+                                    schedWithTaskArena(sc)(runFn)(task)("sched_tcp_connect")(given (_unit) -> buildCall(sc.schedBuilder)(fns.stepTcpConnectType)(fns.stepTcpConnectFn)([task])(1u32)("sched_tcp_connect_status"))
+                                in
+                                    let _ =
+                                        schedIf(sc)(schedEq(sc)(status)(schedConst(sc)(0))("sched_tcp_connect_pending"))(parkBlock)(blocks.schedCompleteBlock)
+                                    in
+                                        let _ = schedAt(sc)(parkBlock)
+                                        in
+                                            let _ =
+                                                "sched_socket_parked_head"
+                                                |> schedLoad(sc)(parkedHeadGlobal(sc))
+                                                |> schedStore(sc)(task)(offsetReadyNext)
+                                            in
+                                                let _ =
+                                                    schedSet(sc)(parkedHeadGlobal(sc))(task)
+                                                in schedBr(sc)(blocks.schedLoopBlock))
 
 // A sleeping leaf completes with `Ok(0)` once its remaining time is spent and parks on its timer
 // until then; a coroutine is stepped with its frame and, when it suspends, the task it awaits is
 // scheduled with it as the waiter.
-let emitSchedulerStep (sc: SchedulerContext) (blocks: SchedulerBlocks) runFn closureFnType task =
+let emitSchedulerStep (sc: SchedulerContext) (fns: SchedulerFunctions) (blocks: SchedulerBlocks) runFn closureFnType task =
     (let _ = schedAt(sc)(blocks.schedLeafBlock)
     in
         let sleepBlock = appendBasicBlock(sc.schedContext)(runFn)("sched_sleep_leaf")
@@ -1580,7 +2053,7 @@ let emitSchedulerStep (sc: SchedulerContext) (blocks: SchedulerBlocks) runFn clo
                 in
                     let _ = schedAt(sc)(unportedBlock)
                     in
-                        let _ = emitProcessPanicMessage(sc.schedBuilder)(sc.schedI64)(sc.schedI8)(unportedLeafMessageCodes)("sched_unported")
+                        let _ = emitOtherLeaf(sc)(fns)(blocks)(runFn)(task)
                         in
                             let _ = schedAt(sc)(sleepBlock)
                             in
@@ -1769,7 +2242,7 @@ let defineSchedulerRun module_ (sc: SchedulerContext) (fns: SchedulerFunctions) 
                                                     in
                                                         let task = emitSchedulerDispatch(sc)(fns)(blocks)(runFn)(mainTask)(taskSlot)
                                                         in
-                                                            let _ = emitSchedulerStep(sc)(blocks)(runFn)(closureFnType)(task)
+                                                            let _ = emitSchedulerStep(sc)(fns)(blocks)(runFn)(closureFnType)(task)
                                                             in
                                                                 let _ = emitSchedulerComplete(sc)(fns)(blocks)(runFn)(taskSlot)(raceCursorSlot)
                                                                 in
@@ -1840,8 +2313,8 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                         | (cancelFn, cancelType) ->
                             match defineStepScope(module_)(sc)(cancelFn)(cancelType) with
                                 | (scopeFn, scopeType) ->
-                                    match (defineReadyDequeue(module_)(context)(builder)(i64)(i8)(ptrType)(globals), defineStepComposite(module_)(sc)(scopeFn)(scopeType), defineWaitParked(module_)(sc), defineForkScoped(module_)(sc)) with
-                                        | ((dequeueFn, dequeueType), (stepCompositeFn, stepCompositeType), (waitParkedFn, waitParkedType), (forkScopedFn, forkScopedType)) ->
+                                    match (defineReadyDequeue(module_)(context)(builder)(i64)(i8)(ptrType)(globals), defineStepComposite(module_)(sc)(scopeFn)(scopeType), defineWaitParked(module_)(sc), defineForkScoped(module_)(sc), defineStepTcpConnect(module_)(sc)) with
+                                        | ((dequeueFn, dequeueType), (stepCompositeFn, stepCompositeType), (waitParkedFn, waitParkedType), (forkScopedFn, forkScopedType), (stepTcpConnectFn, stepTcpConnectType)) ->
                                             closureFnType |> defineSchedulerRun(module_)(sc)(SchedulerFunctions(
                                                 stepCompositeFn = stepCompositeFn,
                                                 stepCompositeType = stepCompositeType,
@@ -1852,7 +2325,9 @@ let defineTaskRuntime module_ context builder i64 i8 ptrType (arena: ArenaRuntim
                                                 dequeueFn = dequeueFn,
                                                 dequeueType = dequeueType,
                                                 forkScopedFn = forkScopedFn,
-                                                forkScopedType = forkScopedType
+                                                forkScopedType = forkScopedType,
+                                                stepTcpConnectFn = stepTcpConnectFn,
+                                                stepTcpConnectType = stepTcpConnectType
                                             )))
 
 // `Ashes.Task.spawn(task)`, stage 0's `EmitSpawnTask` on the run queue: the task's frame is copied
