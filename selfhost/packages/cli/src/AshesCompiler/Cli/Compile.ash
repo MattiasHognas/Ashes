@@ -47,6 +47,7 @@ import AshesCompiler.Cli.DiagnosticIrDump
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
+import AshesCompiler.Backend.LinkNames
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.CoreLowering
@@ -568,13 +569,37 @@ let writeExecutable outputPath executableBytes =
                             |> Ashes.Byte.length
                             |> Ok
 
+// With `ASHES_LINK_MAP` set to a path, the link map of the executable (one line per function,
+// `<hex address> <hex size> <name>`, sorted by address) is written there, and the origin of every
+// IR function to `<path>.names`. The executable itself is the same either way.
+let writeLinkMapFiles path optimized objectBytes =
+    match linuxLinkMapText(objectBytes) with
+        | Error(message) -> Error(message)
+        | Ok(mapText) ->
+            match Ashes.IO.File.writeText(path)(mapText) with
+                | Error(message) -> Error("Could not write " + path + ": " + message)
+                | Ok(_) ->
+                    match optimized
+                    |> linkNamesText
+                    |> Ashes.IO.File.writeText(path + ".names") with
+                        | Error(message) -> Error("Could not write " + path + ".names: " + message)
+                        | Ok(_) -> Ok(Unit)
+
+let writeRequestedLinkMap optimized objectBytes =
+    match Ashes.IO.Environment.get("ASHES_LINK_MAP") with
+        | Ok(Some(path)) when path != "" -> writeLinkMapFiles(path)(optimized)(objectBytes)
+        | _ -> Ok(Unit)
+
 let emitAndLink outputPath optimized =
     match emitObject(optimized) with
         | Error(message) -> Error(message)
         | Ok(objectBytes) ->
-            match linkExecutable(optimized)(objectBytes) with
+            match writeRequestedLinkMap(optimized)(objectBytes) with
                 | Error(message) -> Error(message)
-                | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                | Ok(_) ->
+                    match linkExecutable(optimized)(objectBytes) with
+                        | Error(message) -> Error(message)
+                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
 
 // With `ASHES_SHADOW_INFERENCE` set to a non-empty value, the standalone type inference runs on
 // the stitched program before it is lowered and reports one line to stderr: whether it succeeded

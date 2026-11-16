@@ -18,4 +18,5 @@
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
+import AshesCompiler.Backend.LinkNames
 Unit

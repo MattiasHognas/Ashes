@@ -40,9 +40,11 @@ import Ashes.Byte
 import Ashes.Number.UInt
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
+import Ashes.Collection.List.sortBy as sortList
 export (
     value linkLinuxExecutable,
     value linkLinuxExecutableWithImports,
+    value linuxLinkMapText,
 )
 
 type ElfSectionHeader =
@@ -1514,3 +1516,83 @@ let linkLinuxExecutableWithImports objectBytes entrySymbolName (declaredLibrarie
 
 // Compatibility entry for objects that only use the compiler runtime imports.
 let linkLinuxExecutable objectBytes entrySymbolName = linkLinuxExecutableWithImports(objectBytes)(entrySymbolName)([])
+
+// Lowercase hexadecimal digits of a non-negative value, without a prefix.
+let hexDigitText digit =
+    match digit with
+        | 10 -> "a"
+        | 11 -> "b"
+        | 12 -> "c"
+        | 13 -> "d"
+        | 14 -> "e"
+        | 15 -> "f"
+        | _ -> Ashes.Text.fromInt(digit)
+
+let recursive hexText value =
+    if value < 16
+    then hexDigitText(value)
+    else hexText(value >> 4) + hexDigitText(value & 15)
+
+// The `.text` function symbols of the object, each as (virtual address in the linked executable,
+// symbol size, name). Both link paths place the object's `.text` right after the process-entry
+// trampoline at the start of the text segment, so one base serves both.
+let recursive collectLinkMapEntries bytes symtabOffset symbolCount strtabOffset textSectionIndex objectTextVa index acc =
+    if index >= symbolCount
+    then acc
+    else
+        let symbol = readSymbol(bytes)(symtabOffset)(index)
+        in
+            if symbol.symType == 2 && symbol.symSectionIndex == textSectionIndex
+            then
+                let name = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
+                in
+                    let size = getU64(bytes)(symtabOffset + index * 24 + 16)
+                    in collectLinkMapEntries(bytes)(symtabOffset)(symbolCount)(strtabOffset)(textSectionIndex)(objectTextVa)(index + 1)((objectTextVa + symbol.symValue, size, name) :: acc)
+            else collectLinkMapEntries(bytes)(symtabOffset)(symbolCount)(strtabOffset)(textSectionIndex)(objectTextVa)(index + 1)(acc)
+
+let linkMapEntryBefore (left: (Int, Int, Str)) (right: (Int, Int, Str)) =
+    match (left, right) with
+        | ((leftAddress, _, _), (rightAddress, _, _)) -> leftAddress <= rightAddress
+
+let linkMapLine (entry: (Int, Int, Str)) =
+    match entry with
+        | (address, size, name) -> hexText(address) + " " + hexText(size) + " " + name + "\n"
+
+let recursive linkMapLines (entries: List((Int, Int, Str))) (acc: List(Str)) =
+    match entries with
+        | [] -> reverseList(acc)
+        | entry :: rest -> linkMapLines(rest)(linkMapLine(entry) :: acc)
+
+// The link map of the executable `linkLinuxExecutableWithImports` builds from `objectBytes`: one
+// line per function symbol of the object's `.text`, `<hex address> <hex size> <name>`, sorted by
+// address, preceded by a line for the process-entry trampoline. It reads the object only; the
+// executable's bytes do not depend on it.
+let linuxLinkMapText objectBytes =
+    (let shoff = getU64(objectBytes)(40)
+    in
+        let shentsize = getU16(objectBytes)(58)
+        in
+            let shnum = getU16(objectBytes)(60)
+            in
+                let shstrtabHeader =
+                    62
+                    |> getU16(objectBytes)
+                    |> readSectionHeader(objectBytes)(shoff)(shentsize)
+                in
+                    let shstrtabOffset = shstrtabHeader.sectionOffset
+                    in
+                        match findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(".text")(0) with
+                            | None -> Error("linker: object has no .text section")
+                            | Some((textSectionIndex, _)) ->
+                                match findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(".symtab")(0) with
+                                    | None -> Error("linker: object has no symbol table")
+                                    | Some((_, symtabSection)) ->
+                                        let strtabSection = readSectionHeader(objectBytes)(shoff)(shentsize)(symtabSection.sectionLink)
+                                        in
+                                            let textVa = elfBaseVa + pageSize
+                                            in
+                                                let entries = collectLinkMapEntries(objectBytes)(symtabSection.sectionOffset)(symtabSection.sectionSize / 24)(strtabSection.sectionOffset)(textSectionIndex)(textVa + linuxTrampolineLength)(0)([])
+                                                in
+                                                    let lines =
+                                                        linkMapLines(sortList(linkMapEntryBefore)(entries))([])
+                                                    in Ok(linkMapLine((textVa, linuxTrampolineLength, "__ashes_process_entry")) + Ashes.Text.join("")(lines)))
