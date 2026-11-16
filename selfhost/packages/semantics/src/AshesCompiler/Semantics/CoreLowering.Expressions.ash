@@ -2409,6 +2409,7 @@ let specializationCallInstantiation (accumulatorParameterType: SemanticType) (ar
 let persistentCollectionOperation (callee: Str) = Ashes.Text.startsWith(callee)("Ashes_Collection_Map_") || Ashes.Text.startsWith(callee)("Ashes_Collection_HashMap_")
 
 // Stage 0's `FlowingCallArguments`: a call routed to a reuse specialization of a persistent
+        | ExprResultMapErrorPipe(left, right) -> lowerResultMapErrorPipe(left)(right)(lowerCore)(state)
 // collection's operation rebuilding a named accumulator flows the arguments the specialization
 // stores by reference; any other call flows what its callee's summary admits.
 let flowCallFlagsOf (call: Expr) (state: CoreLoweringState) =
@@ -2472,10 +2473,12 @@ let requestAtConstrainedReference (expression: Expr) (request: ConsumerRequest) 
             else dispatched
 
 let recursive lowerCore expression state =
-    match state
+    match (expression, state
     |> resolveLoopCallFlow
-    |> consumerRequestOf with
-        | request ->
+    |> consumerRequestOf) with
+        | (ExprLetResult(name, value, body), _request) ->
+            lowerCore(letResultMatch(name)(value)(body))(state)
+        | (_expression, request) ->
             match if isEmptyConsumerRequest(request)
             then request
             else
@@ -2489,3 +2492,5 @@ let recursive lowerCore expression state =
                     |> lowerCoreDispatch(expression)(lowerCore)
                     |> withLoweredConsumerRequest(emptyConsumerRequest)
                     |> unifyUnforwardedExpectedType(expression)(request)
+// A `let?` is lowered as the match it means, under the whole request: its body stands where the
+// `let?` does, as stage 0's `LowerLetResult` lowers it.

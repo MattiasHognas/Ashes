@@ -30,6 +30,8 @@ export (
     value operationEtaExpansion,
     value lowerHandle,
     value lowerResultPipe,
+    value lowerResultMapErrorPipe,
+    value letResultMatch,
     value expressionName,
     value unifyOptionalExpectedResult,
 )
@@ -1172,6 +1174,61 @@ let lowerResultPipe left right lower state =
                                             |> lower(right) with
                                                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                                                 | LoweredCoreValue { state = rightState, temp = funcTemp, semanticType = funcType, error = None } -> lowerResultPipeMapper(leftTemp)(funcTemp)(funcType)(successType)(errorType)(okLayout)(rightState)
+
+// Stage 0's `LowerResultMapErrorPipe`: `left |!> f` compares the left operand's tag with
+// `Error`'s, passes the error payload through the mapper and rewraps the mapped value in `Error`;
+// an `Ok` operand flows through unchanged. The branches are the success pipe's with the roles of
+// the two constructors exchanged.
+let emitResultMapErrorPipe leftTemp funcTemp (errorLayout: CoreConstructorLayout) (pipeType: SemanticType) (state: CoreLoweringState) =
+    match freshLabel("result_map_error")(state) with
+        | FreshLabel { state = errorLabelState, label = errorLabel } ->
+            match freshLabel("result_map_error_end")(errorLabelState) with
+                | FreshLabel { state = labelState, label = endLabel } ->
+                    match emitResultPipeBranches(leftTemp)(funcTemp)(errorLayout.tag)(errorLayout.tagless)(false)(errorLabel)(endLabel)(labelState.nextTemp)(labelState.nextLocal) with
+                        | CoreResultPipeEmission { instructions = instructions, nextTemp = nextTemp, nextLocal = nextLocal, resultTemp = resultTemp } ->
+                            labelState
+                            |> emitInstructions(instructions)
+                            |> withNextTemp(nextTemp)
+                            |> withNextLocal(nextLocal)
+                            |> success(resultTemp)(pipeType)
+
+let lowerResultMapErrorMapper leftTemp funcTemp funcType successType errorType (errorLayout: CoreConstructorLayout) state =
+    match freshType(state) with
+        | FreshType { state = mappedState, semanticType = mappedErrorType } ->
+            match bindType(funcType)(SemFunction(errorType)(mappedErrorType)(None))(mappedState) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (typedState, None) ->
+                    emitResultMapErrorPipe(leftTemp)(funcTemp)(errorLayout)(SemNamed(0)("Result")([mappedErrorType, successType]))(typedState)
+
+let lowerResultMapErrorPipe left right lower state =
+    match constructorLayout("Error")(state) with
+        | None -> failure(state)(UnknownLoweringBinding("Error"))
+        | Some(errorLayout) ->
+            match state
+            |> clearConsumerRequest
+            |> lower(left) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                | LoweredCoreValue { state = leftState, temp = leftTemp, semanticType = leftType, error = None } ->
+                    match freshType(leftState) with
+                        | FreshType { state = errorTypeState, semanticType = errorType } ->
+                            match freshType(errorTypeState) with
+                                | FreshType { state = successTypeState, semanticType = successType } ->
+                                    match bindType(leftType)(SemNamed(0)("Result")([errorType, successType]))(successTypeState) with
+                                        | (failedState, Some(error)) -> failure(failedState)(error)
+                                        | (boundState, None) ->
+                                            match boundState
+                                            |> clearConsumerRequest
+                                            |> lower(right) with
+                                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                                | LoweredCoreValue { state = rightState, temp = funcTemp, semanticType = funcType, error = None } -> lowerResultMapErrorMapper(leftTemp)(funcTemp)(funcType)(successType)(errorType)(errorLayout)(rightState)
+
+// Stage 0's `LowerLetResult` as the match it means: `let? name = value in body` binds the `Ok`
+// payload for the body and hands an `Error` operand back as an `Error` of the body's type.
+let letResultMatch (name: Str) (value: Expr) (body: Expr) =
+    ExprMatch(value)([
+        (PatternConstructor("Ok")([PatternVar(name)]), body, None),
+        (PatternConstructor("Error")([PatternVar("__let_result_error")]), ExprCall(ExprVar("Error"))(ExprVar("__let_result_error"))(false)(callArgumentsInline), None)
+    ])(None)
 
 let expressionName expression =
     match expression with
